@@ -4,8 +4,9 @@ import { addSessionSystemRecordPlainContentPayloadIssue } from './sessionSystemR
 import { SessionSystemRecordContentSchema } from './sessionSystemRecordContent.js';
 import { SessionSystemRecordKindSchema } from './sessionSystemRecordKind.js';
 import { SessionSystemRecordNamespaceSchema } from './sessionSystemRecordNamespace.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const SessionSystemRecordSchema = z
+export const SessionSystemRecordSchema = lazySchema(() => z
   .object({
     id: z.string().trim().min(1),
     accountId: z.string().trim().min(1).optional(),
@@ -18,5 +19,5 @@ export const SessionSystemRecordSchema = z
     updatedAt: z.string().trim().min(1),
   })
   .passthrough()
-  .superRefine(addSessionSystemRecordPlainContentPayloadIssue);
+  .superRefine(addSessionSystemRecordPlainContentPayloadIssue));
 export type SessionSystemRecord = z.infer<typeof SessionSystemRecordSchema>;

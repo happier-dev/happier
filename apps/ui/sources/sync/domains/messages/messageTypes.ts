@@ -59,6 +59,12 @@ export type ModeSwitchMessage = {
     meta?: MessageMeta;
 } & TranscriptObservationMetadata;
 
+/** Sender of a teammate, cross-session or subagent hand-back delivery shown in the agent's conversation. */
+export type PeerMessageSender = Readonly<{
+    name: string | null;
+    handback: boolean;
+}>;
+
 export type AgentTextMessage = {
     kind: 'agent-text';
     id: string;
@@ -69,6 +75,7 @@ export type AgentTextMessage = {
     createdAt: number;
     text: string;
     isThinking?: boolean;
+    peer?: PeerMessageSender;
     meta?: MessageMeta;
 } & TranscriptObservationMetadata;
 

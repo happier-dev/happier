@@ -17,6 +17,7 @@ export async function upsertSessionLabel(params: Readonly<{
         ...params.request,
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
             credentials: params.credentials,
+            serverUrl: params.serverUrl,
             envelope: params.request.display,
         }),
     };

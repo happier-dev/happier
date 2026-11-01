@@ -2,11 +2,13 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include <sherpa-onnx/c-api/c-api.h>
+#include "HappierSherpaOnlineAsr.h"
 
 namespace {
 
@@ -18,6 +20,20 @@ std::string NsToStd(NSString *s) {
 
 bool Exists(const std::string &path) {
   return SherpaOnnxFileExists(path.c_str()) != 0;
+}
+
+std::string JoinTranscript(const std::string &committed, const std::string &segment) {
+  if (committed.empty()) return segment;
+  if (segment.empty()) return committed;
+  return committed + " " + segment;
+}
+
+std::string ReadStreamText(const SherpaOnnxOnlineRecognizer *recognizer, const SherpaOnnxOnlineStream *stream) {
+  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(recognizer, stream);
+  std::string text;
+  if (result && result->text) text = std::string(result->text);
+  if (result) SherpaOnnxDestroyOnlineRecognizerResult(result);
+  return text;
 }
 
 }  // namespace
@@ -36,12 +52,20 @@ bool Exists(const std::string &path) {
 @end
 
 @interface HappierSherpaOnlineAsrStream () {
+  // Keeps the engine (and its recognizer) alive for the stream's lifetime, even after the module drops it.
+  HappierSherpaOnlineAsrEngine *_engine;
   const SherpaOnnxOnlineRecognizer *_recognizer;
   const SherpaOnnxOnlineStream *_stream;
+  int32_t _inputSampleRate;
+  // Text of segments already closed by an endpoint. The stream is reset at each endpoint (otherwise the
+  // utterance-length rule keeps reporting an endpoint on every frame), and callers receive the whole
+  // transcript so far rather than only the open segment.
+  std::string _committedText;
   std::mutex _mutex;
 }
-- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
-                             stream:(const SherpaOnnxOnlineStream *)stream;
+- (instancetype)initWithEngine:(HappierSherpaOnlineAsrEngine *)engine
+                    recognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
+                        stream:(const SherpaOnnxOnlineStream *)stream;
 @end
 
 @implementation HappierSherpaOnlineAsrEngine
@@ -100,7 +124,10 @@ bool Exists(const std::string &path) {
   // Default endpointing tuned for streaming turn-taking. Units are seconds.
   config.rule1_min_trailing_silence = 1.2f;
   config.rule2_min_trailing_silence = 0.6f;
-  config.rule3_min_utterance_length = 15.0f;
+  // Rule 3 fires on utterance length alone, i.e. mid-speech. The stream resets on every endpoint and
+  // the UI ends the hands-free turn on it, so only the trailing-silence rules may report one. Zero
+  // would select the sherpa-onnx default (20 s), so disable it with an unreachable length.
+  config.rule3_min_utterance_length = std::numeric_limits<float>::max();
 
   const SherpaOnnxOnlineRecognizer *recognizer = SherpaOnnxCreateOnlineRecognizer(&config);
   if (!recognizer) {
@@ -130,19 +157,22 @@ bool Exists(const std::string &path) {
     if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:204 userInfo:@{NSLocalizedDescriptionKey: @"Failed to create ASR stream"}];
     return nil;
   }
-  return [[HappierSherpaOnlineAsrStream alloc] initWithRecognizer:_recognizer stream:stream];
+  return [[HappierSherpaOnlineAsrStream alloc] initWithEngine:self recognizer:_recognizer stream:stream];
 }
 
 @end
 
 @implementation HappierSherpaOnlineAsrStream
 
-- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
-                             stream:(const SherpaOnnxOnlineStream *)stream {
+- (instancetype)initWithEngine:(HappierSherpaOnlineAsrEngine *)engine
+                    recognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
+                        stream:(const SherpaOnnxOnlineStream *)stream {
   self = [super init];
   if (!self) return nil;
+  _engine = engine;
   _recognizer = recognizer;
   _stream = stream;
+  _inputSampleRate = 16000;
   return self;
 }
 
@@ -183,22 +213,20 @@ bool Exists(const std::string &path) {
     }
   }
 
+  _inputSampleRate = sr;
   SherpaOnnxOnlineStreamAcceptWaveform(_stream, sr, mono.data(), static_cast<int32_t>(mono.size()));
 
   while (SherpaOnnxIsOnlineStreamReady(_recognizer, _stream)) {
     SherpaOnnxDecodeOnlineStream(_recognizer, _stream);
   }
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(_recognizer, _stream);
-  std::string text;
-  if (result && result->text) {
-    text = std::string(result->text);
-  }
-  if (result) {
-    SherpaOnnxDestroyOnlineRecognizerResult(result);
-  }
-
+  const std::string segment = ReadStreamText(_recognizer, _stream);
   const bool endpoint = SherpaOnnxOnlineStreamIsEndpoint(_recognizer, _stream) != 0;
+  const std::string text = JoinTranscript(_committedText, segment);
+  if (endpoint) {
+    _committedText = text;
+    SherpaOnnxOnlineStreamReset(_recognizer, _stream);
+  }
 
   return @{
     @"text": [NSString stringWithUTF8String:text.c_str()],
@@ -213,19 +241,9 @@ bool Exists(const std::string &path) {
     return @"";
   }
 
-  SherpaOnnxOnlineStreamInputFinished(_stream);
-  while (SherpaOnnxIsOnlineStreamReady(_recognizer, _stream)) {
-    SherpaOnnxDecodeOnlineStream(_recognizer, _stream);
-  }
+  happier_sherpa::FinishOnlineTransducer(_recognizer, _stream, _inputSampleRate);
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(_recognizer, _stream);
-  std::string text;
-  if (result && result->text) {
-    text = std::string(result->text);
-  }
-  if (result) {
-    SherpaOnnxDestroyOnlineRecognizerResult(result);
-  }
+  const std::string text = JoinTranscript(_committedText, ReadStreamText(_recognizer, _stream));
 
   SherpaOnnxDestroyOnlineStream(_stream);
   _stream = nullptr;

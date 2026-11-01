@@ -11,7 +11,7 @@ services:
       - relay-data:/data
 
   auth-bootstrap:
-    image: node:22-bookworm-slim
+    image: node:24-bookworm-slim
     volumes:
       - ${REPO_ROOT:?Missing REPO_ROOT}/scripts/release/release-assets-e2e/bin:/opt/happier-npm-e2e/bin:ro
 

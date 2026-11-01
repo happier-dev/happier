@@ -2064,6 +2064,61 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         await hook.unmount();
     });
 
+    it('explains a restart policy refusal and restores the current authentication selection', async () => {
+        setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'restart_disallowed_by_execution_policy',
+            diagnostics: { failurePhase: 'continuity', attemptedAction: 'restart_requested', retryable: true },
+        });
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1',
+            agentId: 'claude',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            agentCore: {
+                id: 'claude',
+                connectedServices: {
+                    supportedServiceIds: ['anthropic'],
+                    sessionAuthSwitch: { continuityMode: 'restart_same_home' },
+                },
+            },
+            sessionMetadata: {
+                connectedServices: { v: 1, bindingsByServiceId: { anthropic: { source: 'native' } } },
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: {},
+                connectedServicesDefaultProfileByServiceId: {},
+            },
+            switchingDisabledReason: null,
+            sessionActive: true,
+        }));
+        type PopoverProps = {
+            setBindingForService: (serviceId: string, binding: unknown) => void;
+            bindingsByServiceId: Record<string, unknown>;
+        };
+        const popover = renderChipPopover(
+            hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent,
+        ) as React.ReactElement<PopoverProps>;
+
+        await act(async () => {
+            popover.props.setBindingForService('anthropic', {
+                source: 'connected', selection: 'group', groupId: 'team', profileId: 'work',
+            });
+        });
+
+        expect(modalAlertMock).toHaveBeenCalledWith(
+            'common.error',
+            'connectedServices.authSwitch.errors.restartDisallowedByExecutionPolicy',
+        );
+        const restoredPopover = renderChipPopover(
+            hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent,
+        ) as React.ReactElement<PopoverProps>;
+        expect(restoredPopover.props.bindingsByServiceId.anthropic).toEqual({ source: 'native' });
+        expect(hook.getCurrent().actionableState).toBeNull();
+        expect(routerPushMock).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('surfaces account-settings freshness failures as a dedicated switch notice', async () => {
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,

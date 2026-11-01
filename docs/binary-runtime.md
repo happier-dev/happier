@@ -20,7 +20,9 @@ Do not introduce direct product-runtime calls to:
 - shell installers from UI/daemon/runtime code
 - PATH-only provider detection as the sole source of truth
 
-These are allowed only behind centralized managed runtime/tooling abstractions.
+These calls require the canonical runtime/tooling owner. Happier-owned prerequisites
+use managed runtimes; explicitly configured external commands retain the user's
+chosen executable and its prerequisites.
 
 Before adding or changing a provider/runtime/install/update flow, classify it as one of:
 
@@ -32,11 +34,47 @@ Before adding or changing a provider/runtime/install/update flow, classify it as
 
 Provider detection, install status, daemon validation, runtime spawning, and UI/installables must reuse the same source of truth. Backend CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
 
+In current development source (not yet released), MCP package-runner resolution
+honors configured `npx`, `npm`, `yarn`, `pnpm`, and `bunx` commands, including explicit
+executable paths. `normalizePackageRunnerInvocation` resolves the executable using
+the configured environment while preserving its arguments; MCP materialization
+launches it in the session directory. A missing executable produces an actionable
+prerequisite warning, or an error in strict mode. It never triggers managed pnpm
+bootstrap or a substitute runner, including after an execution error. Managed pnpm
+remains the installation tool for Happier-owned managed packages.
+
+In current development source (not yet released), managed pnpm and JavaScript
+runtime bootstrap accept the shared `ManagedToolBootstrapOptions`: an abort signal
+and progress callbacks for lock waiting, release lookup, download bytes, and
+installation. Their lock waits and downloads honor cancellation; failed bootstrap
+propagates its error instead of silently falling back to a PATH command. Installers
+that expose progress and errors consume these signals through their existing
+output. This adds no elapsed-time cutoff, persistent cooldown, or download resume.
+
+In current development source, Windows command discovery and invocation share
+`packages/cli-common/windowsCommandInvocation.mjs`. A recognized npm wrapper that
+only forwards arguments to an existing native `.exe` resolves to that executable,
+avoiding `cmd.exe`'s smaller command-line limit (including Claude Code's native npm
+installation). Other command scripts retain shell execution and its existing
+quoting, including npm JavaScript wrappers and wrappers whose target is missing
+or still a text placeholder. Recognition does not choose a different installation
+or modify the subprocess environment.
+
 In current development source, vendor installers preserve the Windows process
 environment's `Path` spelling; cloning that environment and replacing it with an
 empty `PATH` prevents executable resolution. Only POSIX recipes prepend user
 install directories. Windows recipes declare `powershell.exe` in the shared
 provider catalog, which also supplies the copyable installation guidance.
+
+In current development source, managed Codex archives retain the shared extractor's
+path, link, entry-count, checksum, and decompression protections. The provider
+catalog allows 384 MiB per file and 512 MiB across all archive files, including
+members that are not published into the managed runtime. The digest-verified
+Windows x64 `rust-v0.163.0` archive expands to 465,689,987 bytes and therefore
+exceeds the previous 384 MiB total. Extraction failures preserve the previous
+managed runtime. The shared extractor's `archive-expanded-byte-limit` failure is
+carried through install/update responses so the Updates UI can show localized
+upgrade guidance while keeping raw diagnostics behind View log.
 
 In current development source, Pi's vendor-managed launcher is a system-install candidate
 in the shared provider resolver: `PI_CODING_AGENT_DIR/bin/pi`, then `~/.pi/agent/bin/pi`,
@@ -47,6 +85,32 @@ An unresolved required CLI throws `ProviderCliNotFoundError` at the shared comma
 boundary. The primary-session classifier preserves it as `dependency_failure` with code
 `provider_cli_not_found` and the canonical remediation, without exposing raw paths or
 mistaking runner turn allocation for provider prompt acceptance.
+
+In current development source (not yet released), Windows x64 CLI and hstack payloads carry
+`happier-service-launcher.exe`, the native task launcher described in
+[CLI architecture](cli-architecture.md), beside their executable; the npm CLI and stack packages
+carry it under the bundled cli-common package at `native/windows/bin/windows-x64/`. It is a
+release-time artifact built from `packages/cli-common/native/windows/service-launcher.cpp` by
+`scripts/pipeline/release/build-windows-service-launcher.mjs` in the Windows release job, and the
+existing Ubuntu jobs consume that exact build. Installed hosts never compile it, and source
+checkouts must run the build script before installing a Windows service. A self-contained binary
+resolves the launcher from its runtime root
+(`packages/cli-common/src/firstPartyRuntime/resolveSelfContainedCliRuntimeRoot.ts`, the same root
+the CLI's `resolveCliRuntimeAssetPath` uses): a `~/.happier/bin/happier|hprev|hdev` shortcut is a
+hardlink or copy, so it maps to `~/.happier/<cli root>/current`; any other self-contained binary
+uses its own directory. Node and Bun processes use the package asset. Windows hstack has no
+supported shortcut installer today, so a binary hstack resolves the launcher beside itself; a
+future Windows hstack shortcut must be added to that runtime-root mapping.
+
+## Installer GitHub authentication
+
+In current development source, the standalone Bash and PowerShell installers prefer
+`HAPPIER_GITHUB_TOKEN` over `GITHUB_TOKEN`. A token rejected with HTTP 401 triggers
+an anonymous retry and a visible warning, including outside verbose mode. Other
+failures retain authentication for the existing retry policy. Bash buffers metadata
+responses so a failed transfer cannot contaminate a later successful response.
+The canonical request helpers live in `scripts/release/installers/install.sh` and
+`install.ps1`; website copies are generated by `release:sync:installers`.
 
 ## Installer state home
 
@@ -64,6 +128,53 @@ otherwise it follows `HAPPIER_INSTALL_DIR`, falling back to `%USERPROFILE%\.happ
 The binary install directory can remain separate from an explicit data home.
 On Windows, `HAPPIER_NO_PATH_UPDATE` skips PATH changes only, not state-home persistence.
 This does not copy or migrate credentials from a previous data home.
+
+## Desktop executable identity
+
+In current development source, desktop builds retain the full dev/preview semantic
+version in Tauri's app configuration, matching the updater feed on every platform.
+The Windows build pipeline sets the separate `bundle.windows.wix.version` numeric
+MSI version; converting the app version itself would make the updater offer the
+installed build repeatedly. Build preparation and bundle finalization use the same
+version projection in `scripts/pipeline/tauri/build-updater-artifacts.mjs`.
+
+Current development source configures `mainBinaryName` per desktop channel:
+`happier-desktop`, `happier-desktop-preview`, and `happier-desktop-dev`. These names
+keep Linux executables and icons distinct between channels and from the `happier`
+CLI. The Tauri configs own the names; candidate transfer, AppImage diagnostics, and
+macOS updater architecture inspection read them through the shared channel-config
+resolver instead of assuming the Cargo template name `app`.
+
+After an upgrade, open the app once so it can observe the computer's login-start
+setting. The existing autostart writer re-enables the same channel's login item
+with the current executable and `--menu-bar`, or removes it when login start is
+off. An unknown setting leaves the item untouched; failures remain visible in
+the tray and retry on the next setting observation. This reuses the existing
+login-item migration rather than adding another startup preference or writer.
+
+## Linux desktop rendering runtime
+
+In development source, the desktop release pipeline prepares WebKitGTK 2.54.1
+for AppImage bundling. The trusted Linux finalizer opts into
+`.github/actions/install-tauri-linux-dependencies`; its checksum-pinned source
+recipe builds on Ubuntu 22.04 with Clang 18 and GCC 12's standard library.
+An exact Actions cache reuses the staged SDK. Missing helpers, unresolved native
+dependencies, the wrong engine version or a newer libc ABI fail validation rather
+than falling back to the distribution engine. The AppImage artifact audit repeats
+the runtime validation after bundling.
+
+Candidate compilation keeps Ubuntu's native WebKit headers. DEB and RPM packages
+continue to use the installed distribution runtime; the SDK and additional GPU
+helper are bundled only into AppImage. Direct Tauri development commands retain
+their system-runtime behavior; the pinned runtime contract belongs to the release
+pipeline. This source change does not establish availability in a published release.
+
+WebKit can migrate IndexedDB when opening an existing desktop profile. An older
+engine may then be unable to open that database; replacing the executable does
+not reverse the migration. Follow the downgrade warning on the
+[downloads page](../apps/docs/content/docs/getting-started/get-the-apps.mdx),
+preserve pending drafts and messages, and do not delete the profile to diagnose
+rendering performance. No second storage writer or profile migration is added.
 
 ## Desktop-initiated CLI acquisition
 
@@ -444,6 +555,28 @@ host dependency vendoring and explicit external-package bundles. Remove it when 
 Transformers distribution declares the dependency or stops importing it. Validate this closure
 outside the repository's hoisted `node_modules`, which otherwise masks the missing dependency.
 
+Current development source keeps each Sharp dependency tree together with Yarn's existing
+`nohoist` policy: the CLI, server and website use Sharp 0.35.5, while older transitive consumers
+retain their own native addon and matching libvips. `sharpRuntimeSidecars.ts` resolves the
+CLI/server closure from the importing workspace and stages the target packages together beside
+the executable. CLI packaging excludes Sharp from its generic dependency copier so this shared
+projection owns both binary layouts. Target validation resolves packages within the payload;
+dependencies in the source checkout cannot satisfy a missing packaged native dependency.
+
+Both binaries use `packages/cli-common/scripts/buildBunBinary.mjs`. It bundles Sharp's public
+CJS entry, preserving Sharp's platform selection, CPU checks and error reporting, and redirects
+only the resolved native addon import to its staged file. The filename comes from the actual
+native import, preserving libvips adjacency without embedding renamed Bun native assets.
+These redirects are virtual modules: compilation does not read optional foreign-platform
+addon files that Sharp never selects on the requested target. A selected missing addon still
+fails visibly through Sharp's runtime loading path. The platform shims' guarded
+`require.resolve('@img/sharp-libvips-*/binary')` hints stay external, so the executable does not
+embed every installed platform's libvips; the selected library ships only as its sidecar.
+This does not enable Bun's package-json autoloader; the CLI also keeps dotenv autoloading
+disabled. The canonical Bun compiler defaults disable bunfig autoloading for standalone CLI, server, hsetup, hstack and Prisma
+migration executables, so a working directory cannot inject a preload before startup.
+Both custom Bun build adapters consume the same defaults.
+
 Binary artifact finalization projects native dependencies from the requested artifact target,
 not the build host: ONNX Runtime Node retains its target OS/architecture directory with all
 support libraries, and PTY packages retain target prebuilds plus source-built Release/Debug
@@ -455,7 +588,15 @@ types and helpers, including Homebridge's unconditionally imported `prebuild-fil
 The shared PTY permission owner
 repairs `spawn-helper` in both build and prebuild locations during package installation and
 artifact finalization. Foreign `ps-list` fastlist executables are omitted on non-Windows targets;
-Windows keeps them. Happier's Agent SDK runner always supplies the separately installed Claude
+Windows keeps them. In current development source, the shared Bun compiler loads `ps-list`
+on Windows from the existing on-disk dependency payload through the canonical CLI runtime-root resolver,
+including installed channel shortcuts. This preserves the dependency's own parser and Windows
+helper lookup: bundling its `import.meta.url` would point at Bun's virtual filesystem instead.
+POSIX keeps the dependency's JavaScript embedded, including in detached installer runners.
+The legacy Claude SDK launcher records unverified process cleanup through the existing
+primary-session turn lifecycle, allocating a failed turn when idle, before preserving the
+resume identity and exiting. Failed issue publication is logged and does not admit a replacement.
+Happier's Agent SDK runner always supplies the separately installed Claude
 Code executable, so standalone artifacts keep the SDK's JavaScript package but omit its unused
 optional native CLI fallback packages. Target-specific standalone payloads retain executable
 source maps for Bun and Node diagnostics and dependency declarations for SDK/plugin authoring.
@@ -470,10 +611,18 @@ dependency copies is removed only when the surviving ancestor is reachable from 
 the two trees are recursively byte-identical without symbolic links, and direct peer resolution is
 unchanged; missing, shadowed, divergent, peer-dependent, or linked copies are retained.
 
-The PTY provider uses `node-pty` first. On POSIX Bun it skips the Homebridge native
-fallback because that package writes through a `tty.ReadStream` that is not writable
-in Bun, then uses the existing external relay when available. Node-hosted Homebridge
-and Windows backend selection are unchanged.
+In current development source, the PTY provider uses the existing Python relay on
+POSIX Bun. Both native packages use `tty.ReadStream` for a nonblocking PTY master;
+Bun can return a successful spawn without working input/output
+([upstream issue](https://github.com/oven-sh/bun/issues/25822), reported on macOS through
+Bun 1.4.2 and still open). On Linux x64, a `node-pty` interactive input/output and exit probe
+passes on both Bun 1.4.2 and the bundled 1.4.4, so it cannot show the issue is fixed; macOS has
+not been re-checked on 1.4.4. Module-load success
+therefore cannot establish backend usability. Re-enable native POSIX selection
+only after the bundled runtime passes interactive input/output and cleanup checks.
+The relay requires Python 3, applies the initial window size, and reports
+`terminal_resize_unavailable` for subsequent resizes. Node-hosted and Windows
+backend selection are unchanged.
 
 ## Internal dependency closure
 

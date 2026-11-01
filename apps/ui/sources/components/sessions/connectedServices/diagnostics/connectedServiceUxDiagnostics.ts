@@ -275,3 +275,36 @@ export function resolveConnectedServiceUxDiagnosticPresentation(
         })),
     };
 }
+
+export function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
+    errorCode: string | null | undefined,
+): TranslationKey {
+    switch (errorCode) {
+        case 'restart_disallowed_by_execution_policy':
+            return 'connectedServices.authSwitch.errors.restartDisallowedByExecutionPolicy';
+        case 'group_generation_conflict':
+            return 'connectedServices.authSwitch.errors.groupGenerationConflict';
+        case 'provider_state_sharing_unavailable':
+            return 'connectedServices.authSwitch.errors.providerStateSharingUnavailable';
+        case 'profile_disconnected':
+            return 'connectedServices.authSwitch.errors.profileDisconnected';
+        case 'profile_missing':
+            return 'connectedServices.authSwitch.errors.profileMissing';
+        case 'group_missing':
+            return 'connectedServices.authSwitch.errors.groupMissing';
+        case 'metadata_update_failed':
+            return 'connectedServices.authSwitch.errors.metadataUpdateFailed';
+        case 'restart_failed':
+            return 'connectedServices.authSwitch.errors.restartFailed';
+        case 'hot_apply_failed':
+            return 'connectedServices.authSwitch.errors.hotApplyFailed';
+        case 'agent_mismatch':
+            return 'connectedServices.authSwitch.errors.agentMismatch';
+        case 'session_not_found':
+            return 'connectedServices.authSwitch.errors.sessionNotFound';
+        case 'unsupported_service':
+            return 'connectedServices.authSwitch.errors.unsupportedService';
+        default:
+            return 'connectedServices.authSwitch.switchFailed';
+    }
+}

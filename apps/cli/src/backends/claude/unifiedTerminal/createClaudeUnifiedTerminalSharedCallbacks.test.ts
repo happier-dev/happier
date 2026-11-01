@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createClaudeUnifiedTerminalSharedCallbacks } from './createClaudeUnifiedTerminalSharedCallbacks';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { applyClaudeEffectiveModelUpdate } from '../sessionModels/effectiveModelUpdate';
 import { createClaudeSessionModelsReconciler } from '../sessionModels/reconcileClaudeSessionModelsState';
 
 describe('createClaudeUnifiedTerminalSharedCallbacks', () => {
@@ -16,13 +17,14 @@ describe('createClaudeUnifiedTerminalSharedCallbacks', () => {
         id: 'claude-sonnet-4-6', name: 'Sonnet', modelOptions: [{ id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high' }],
       }],
     } }) });
+    const sessionClient = {
+      sendSessionEvent: vi.fn(),
+      hasActiveCanonicalTurn: () => false,
+      getMetadataSnapshot: () => metadata,
+      updateMetadata: async (updater: (prev: Metadata) => Metadata) => { metadata = updater(metadata); },
+    };
     const callbacks = createClaudeUnifiedTerminalSharedCallbacks({
-      sessionClient: {
-        sendSessionEvent: vi.fn(),
-        hasActiveCanonicalTurn: () => false,
-        getMetadataSnapshot: () => metadata,
-        updateMetadata: async (updater: (prev: Metadata) => Metadata) => { metadata = updater(metadata); },
-      },
+      sessionClient,
       reconcileModels,
       observeInFlightSteerAvailabilitySnapshot: vi.fn(),
       sustainedPendingDeliveryBlockHandler: {
@@ -53,6 +55,15 @@ describe('createClaudeUnifiedTerminalSharedCallbacks', () => {
     unregister?.();
     expect(metadataApplier).toBeNull();
 
+    callbacks.tuiRuntimeControl.emitRuntimeConfigOutcome({ status: 'applied', timing: 'before_next_prompt', message: '',
+      changes: [{ key: 'reasoningEffort', requested: 'low', effective: 'low' }],
+    });
+    // A catalog/selection currentModelId is not evidence that Claude is running it.
+    expect(metadata.sessionAppliedModelV1).toBeUndefined();
+    expect(metadata.sessionModelsV1?.availableModels[0]?.modelOptions?.[0]?.currentValue).toBe('high');
+    applyClaudeEffectiveModelUpdate({
+      client: sessionClient, reconcileModels, modelId: 'claude-sonnet-4-6', source: 'statusline', logPrefix: '[test]',
+    });
     callbacks.tuiRuntimeControl.emitRuntimeConfigOutcome({ status: 'applied', timing: 'before_next_prompt', message: '',
       changes: [{ key: 'reasoningEffort', requested: 'low', effective: 'low' }],
     });

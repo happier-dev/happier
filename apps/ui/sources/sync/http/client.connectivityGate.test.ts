@@ -83,13 +83,18 @@ describe('serverFetch connectivity supervision', () => {
         installTokenStorageMock();
         const runtimeFetchMock = installRuntimeFetchMock();
 
-        const { serverFetch } = await import('./client');
+        const { serverFetch, ServerFetchConnectivityTimeoutError } = await import('./client');
+        const { HappyError } = await import('@/utils/errors/errors');
+        const { t } = await import('@/text');
         const promise = serverFetch('/v1/account/profile');
         const assertion = expect(promise).rejects.toMatchObject({
             name: 'ServerFetchConnectivityTimeoutError',
+            kind: 'network',
+            message: t('errors.connectionTimeout'),
         });
-        await vi.advanceTimersByTimeAsync(5);
-        await assertion;
+        await Promise.all([assertion, vi.advanceTimersByTimeAsync(5)]);
+        await expect(promise).rejects.toBeInstanceOf(HappyError);
+        await expect(promise).rejects.toBeInstanceOf(ServerFetchConnectivityTimeoutError);
 
         expect(runtimeFetchMock).toHaveBeenCalled();
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);

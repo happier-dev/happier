@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 import {
   buildWindowsHostedTerminalArgs,
@@ -9,6 +10,18 @@ import {
 } from './windowsHostedSessionRuntime';
 
 describe('windowsHostedSessionRuntime', () => {
+  it('retains hosted terminal context without consuming literal provider arguments', () => {
+    const baseArgs = ['codex', '--', '--happy-terminal-mode', 'tmux'];
+    const argv = buildWindowsHostedTerminalArgs({
+      baseArgs, actualMode: 'windows_terminal', requestedMode: 'windows_terminal',
+      windowId: 'happier', title: 'Session title',
+    });
+    expect(parseAndStripTerminalRuntimeFlags(argv)).toEqual({
+      terminal: { mode: 'windows_terminal', requested: 'windows_terminal', windowId: 'happier', title: 'Session title' },
+      argv: baseArgs,
+    });
+  });
+
   it('uses one shared Windows Terminal window id and a per-session tab title', () => {
     expect(buildWindowsTerminalWindowIdentity({
       existingSessionId: 'sess_123',

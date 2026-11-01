@@ -23,6 +23,18 @@ const EMPTY_ROW_STATE: SessionListRowStateSnapshot = {
 };
 
 describe('resolveSessionListRowModelAdjacency', () => {
+    it('updates the appearance of one row and retains its model for equivalent colour snapshots', () => {
+        const item = createSessionItem(createRenderable('coloured'));
+        const cache = createSessionListRowModelsCache();
+        const settings = createSettings();
+        const adjacency = resolveSessionListRowModelAdjacency([item], 0);
+        const first = buildCachedSessionListRowModel({ item, cache, settings, adjacency, snapshot: EMPTY_ROW_STATE });
+        const snapshot = { ...EMPTY_ROW_STATE, appearanceColor: { kind: 'accent', key: 'blue' } as const };
+        const coloured = buildCachedSessionListRowModel({ item, cache, settings, adjacency, snapshot });
+        expect(coloured).toMatchObject({ appearanceColor: { kind: 'accent', key: 'blue' } });
+        expect(coloured).not.toBe(first);
+        expect(buildCachedSessionListRowModel({ item, cache, settings, adjacency, snapshot: { ...snapshot, appearanceColor: { ...snapshot.appearanceColor } } })).toBe(coloured);
+    });
     it('reuses the canonical adjacency value when list identity changes without changing neighbors', () => {
         const session = createSessionItem(createRenderable('stable-adjacency'));
         const first = resolveSessionListRowModelAdjacency([session], 0);
@@ -169,6 +181,22 @@ describe('buildCachedSessionListRowModel', () => {
     // within a group keeps the row's group, session and snapshot exactly as they
     // were, so a signature that ignores the reason hands back the row the person
     // just changed.
+    it('updates a cached background row when unread presentation preference changes', () => {
+        const cache = createSessionListRowModelsCache();
+        const item = createSessionItem(createRenderable('background-unread', {
+            active: true, activeAt: NOW_MS, hasUnreadMessages: true, lastViewedSessionSeq: 1,
+            runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: NOW_MS, runtimeActivityRevision: 1,
+        }));
+        const adjacency = { isFirst: true, isLast: true, isSingle: true };
+        const input = { item, snapshot: EMPTY_ROW_STATE, adjacency, cache };
+        const initial = buildCachedSessionListRowModel({ ...input, settings: createSettings({ backgroundWorkAttentionMode: 'keepWorking' }) });
+        const changed = buildCachedSessionListRowModel({ ...input, settings: createSettings({ backgroundWorkAttentionMode: 'keepWorkingUnread' }) });
+        expect(initial.attention.rowState).toBe('working');
+        expect(changed.attention.rowState).toBe('unread');
+        expect(changed.hasUnreadMessages).toBe(true);
+    });
+
     it('rebuilds a row when its attention placement reason changes', () => {
         const cache = createSessionListRowModelsCache();
         const session = createRenderable('s1');

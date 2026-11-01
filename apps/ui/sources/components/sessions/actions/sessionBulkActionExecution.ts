@@ -1,5 +1,10 @@
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
-import { resolveSessionStopFailureMessage } from '@/components/sessions/sessionStopArchiveFlow';
+import { resolveSessionArchiveServerId } from '@/sync/domains/session/listing/sessionArchiveState';
+import {
+    archiveSessionWithPendingState,
+    isSessionArchivePending,
+    resolveSessionStopFailureMessage,
+} from '@/components/sessions/sessionStopArchiveFlow';
 
 import {
     createSessionBulkActionProgressTracker,
@@ -368,7 +373,10 @@ async function executeArchiveAction(params: Readonly<{
 
     return executeNetworkTargets({
         actionId: SESSION_BULK_ACTION_IDS.archive,
-        targets: params.targets,
+        targets: params.targets.map((target) => ({
+            ...target,
+            serverId: resolveSessionArchiveServerId(target.serverId),
+        })),
         context: params.context,
         runTarget: async (target) => {
             if (target.archived === true) {
@@ -385,6 +393,14 @@ async function executeArchiveAction(params: Readonly<{
                 });
             }
 
+            // An archive of this session is already in flight; a second one would race its lifecycle.
+            if (isSessionArchivePending(target.sessionId, target.serverId)) {
+                return createTargetResult(target, 'skipped', {
+                    reasonCode: 'archive_in_progress',
+                    reason: 'Session is already being archived',
+                });
+            }
+
             if (target.active === true) {
                 if (!stopSession || !stopSessionAndMaybeArchive) {
                     return createTargetResult(target, 'failed', {
@@ -393,24 +409,27 @@ async function executeArchiveAction(params: Readonly<{
                     });
                 }
 
-                await stopSessionAndMaybeArchive({
+                const result = await stopSessionAndMaybeArchive({
                     target,
                     sessionId: target.sessionId,
                     hideInactiveSessions: params.context.hideInactiveSessions === true,
                     isPinned: target.pinned === true,
                     archiveAfterStop: 'always',
                     stopSession: () => stopSession(target),
-                    archiveSession: () => archiveSession(target),
+                    archiveSession: (options) => archiveSession(target, options),
                     stopErrorMessage: params.context.stopErrorMessage ?? DEFAULT_STOP_ERROR_MESSAGE,
                     archiveErrorMessage: params.context.archiveErrorMessage ?? DEFAULT_ARCHIVE_ERROR_MESSAGE,
                 });
+                if (result === false) return createTargetResult(target, 'skipped', { reasonCode: 'archive_in_progress', reason: 'Session is already being archived' });
                 return createTargetResult(target, 'succeeded');
             }
 
+            const result = await archiveSessionWithPendingState(target.sessionId, async () => await archiveSession(target), target.serverId);
+            if (result === false) return createTargetResult(target, 'skipped', { reasonCode: 'archive_in_progress', reason: 'Session is already being archived' });
             return resultFromMutation(
                 target,
-                await archiveSession(target),
-                DEFAULT_ARCHIVE_ERROR_MESSAGE,
+                result,
+                params.context.archiveErrorMessage ?? DEFAULT_ARCHIVE_ERROR_MESSAGE,
             );
         },
     });
@@ -501,12 +520,6 @@ async function executeMoveToFolderAction(params: Readonly<{
         targets: params.targets,
         context: params.context,
         runTarget: async (target) => {
-            if (target.canMoveToFolder === false) {
-                return createTargetResult(target, 'skipped', {
-                    reasonCode: 'folder_assignment_unavailable',
-                    reason: 'Session folder assignment is unavailable',
-                });
-            }
             await setSessionFolderAssignment({
                 target,
                 folderId: params.action.folderId,

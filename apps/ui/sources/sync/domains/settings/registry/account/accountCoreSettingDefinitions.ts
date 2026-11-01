@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { QUOTA_GAUGE_WINDOW_MODES } from '@/sync/domains/connectedServices/quotaGaugeWindows';
 import { AvatarStyleIdSchema, DEFAULT_AVATAR_STYLE_ID } from './avatarStyleSetting';
 import { SessionFolderViewModeV1Schema } from '@/sync/domains/session/folders';
+import { SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import {
     SESSION_LIST_ATTENTION_PROMOTION_MODE_VALUES,
     SESSION_LIST_WORKING_PLACEMENT_MODE_VALUES,
@@ -323,6 +324,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.enum(SESSION_LIST_ATTENTION_PROMOTION_MODE_VALUES),
         default: 'off',
         description: 'Where sessions waiting for the user or ready to review appear in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListBackgroundWorkAttentionModeV1: {
+        schema: z.enum(SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES),
+        default: 'keepWorking',
+        description: 'How unread replies appear while background work continues',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

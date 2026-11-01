@@ -15,7 +15,7 @@ export default function LegacyAccountRoute() {
         if (typeof params.accountConnectKey === 'string' && params.accountConnectKey.trim()) {
             return {
                 kind: 'approve' as const,
-                authUrl: buildAccountConnectDeepLink({ publicKeyB64Url: params.accountConnectKey }),
+                authUrl: buildAccountConnectDeepLink({ publicKeyB64Url: params.accountConnectKey, supportsCredentialVariants: params.supportsCredentialVariants === '1' }),
             };
         }
         if (typeof params.server === 'string' && params.server) {
@@ -25,7 +25,7 @@ export default function LegacyAccountRoute() {
             };
         }
         return { kind: 'redirect' as const, href: '/settings/account' as const };
-    }, [params.accountConnectKey, params.server]);
+    }, [params.accountConnectKey, params.server, params.supportsCredentialVariants]);
     const handledRequestRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {

@@ -1,47 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { ToolViewComponent } from './_registry';
-
-// `_registry` imports every tool view module. For these mapping tests we only care
-// about registry behavior, so all views are mocked to keep imports light and deterministic.
-vi.mock('../fileOps/EditView', () => ({ EditView: () => null }));
-vi.mock('../system/BashView', () => ({ BashView: () => null }));
-vi.mock('../fileOps/WriteView', () => ({ WriteView: () => null }));
-vi.mock('../workflow/TodoView', () => ({ TodoView: () => null }));
-vi.mock('../workflow/ExitPlanToolView', () => ({ ExitPlanToolView: () => null }));
-vi.mock('../fileOps/MultiEditView', () => ({ MultiEditView: () => null }));
-vi.mock('../workflow/EnterPlanModeView', () => ({ EnterPlanModeView: () => null }));
-vi.mock('../workflow/SubAgentView', () => ({ SubAgentView: () => null }));
-vi.mock('../fileOps/PatchView', () => ({ PatchView: () => null }));
-vi.mock('../fileOps/DiffView', () => ({ DiffView: () => null }));
-vi.mock('../workflow/AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));
-vi.mock('../system/AcpHistoryImportView', () => ({ AcpHistoryImportView: () => null }));
-vi.mock('../fileOps/GlobView', () => ({ GlobView: () => null }));
-vi.mock('../fileOps/GrepView', () => ({ GrepView: () => null }));
-vi.mock('../fileOps/LSView', () => ({ LSView: () => null }));
-vi.mock('../web/WebFetchView', () => ({ WebFetchView: () => null }));
-vi.mock('../web/WebSearchView', () => ({ WebSearchView: () => null }));
-vi.mock('../fileOps/CodeSearchView', () => ({ CodeSearchView: () => null }));
-vi.mock('../workflow/ReasoningView', () => ({ ReasoningView: () => null }));
-vi.mock('../workflow/SubAgentRunView', () => ({ SubAgentRunView: () => null }));
-vi.mock('../workflow/AgentTeamView', () => ({ AgentTeamView: () => null }));
-vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
-vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null }));
-vi.mock('../system/UnknownToolView', () => ({ UnknownToolView: () => null }));
-vi.mock('../system/TaskOutputView', () => ({ TaskOutputView: () => null }));
-vi.mock('../system/TaskStopView', () => ({ TaskStopView: () => null }));
-vi.mock('../system/MCPToolView', () => ({
-    MCPToolView: () => null,
-    formatMCPTitle: () => 'MCP',
-    formatMCPSubtitle: () => '',
-}));
-
-async function loadRegistry() {
-    const [{ getToolViewComponent }, views] = await Promise.all([import('./_registry'), import('./_registry')]);
-    return {
-        getToolViewComponent: getToolViewComponent as (name: string) => ToolViewComponent | null,
-        views,
-    };
-}
+import { describe, expect, it } from 'vitest';
 
 describe('toolViewRegistry', () => {
     it('registers a Read view for lowercase read tool name', async () => {
@@ -50,7 +7,7 @@ describe('toolViewRegistry', () => {
     });
 
     it('maps ACP lowercase tool names to canonical renderers (search/glob/grep/ls/write/delete)', async () => {
-        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+        const { getToolViewComponent, toolViewRegistry } = await import('./_registry');
 
         expect(getToolViewComponent('search')).toBe(toolViewRegistry.CodeSearch);
         expect(getToolViewComponent('glob')).toBe(toolViewRegistry.Glob);
@@ -62,7 +19,7 @@ describe('toolViewRegistry', () => {
     });
 
     it('maps Claude task helper tools to SubAgentView (TaskCreate/TaskList/TaskUpdate)', async () => {
-        const [{ getToolViewComponent }, { SubAgentView }] = await Promise.all([import('./_registry'), import('./_registry')]);
+        const [{ getToolViewComponent }, { SubAgentView }] = await Promise.all([import('./_registry'), import('../workflow/SubAgentView')]);
 
         expect(getToolViewComponent('TaskCreate')).toBe(SubAgentView);
         expect(getToolViewComponent('TaskList')).toBe(SubAgentView);
@@ -90,7 +47,7 @@ describe('toolViewRegistry', () => {
     });
 
     it('keeps the snake_case background-task spellings off the subagent card too', async () => {
-        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+        const { getToolViewComponent, toolViewRegistry } = await import('./_registry');
 
         // `permissionHandler.ts` already treats `task_output` as a real alias of `TaskOutput`.
         expect(getToolViewComponent('task_output')).toBe(toolViewRegistry.TaskOutput);
@@ -98,22 +55,22 @@ describe('toolViewRegistry', () => {
     });
 
     it('maps Workflow to the workflow activity renderer', async () => {
-        const [{ getToolViewComponent }, { WorkflowActivityView }] = await Promise.all([import('./_registry'), import('./_registry')]);
+        const [{ getToolViewComponent }, { WorkflowActivityView }] = await Promise.all([import('./_registry'), import('../workflow/WorkflowActivityView')]);
         expect(getToolViewComponent('Workflow')).toBe(WorkflowActivityView);
     });
 
     it('returns a renderer for canonical Patch tools', async () => {
-        const { getToolViewComponent } = await loadRegistry();
+        const { getToolViewComponent } = await import('./_registry');
         expect(getToolViewComponent('Patch')).not.toBeNull();
     });
 
     it('maps SubAgentRun to its dedicated view', async () => {
-        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+        const { getToolViewComponent, toolViewRegistry } = await import('./_registry');
         expect(getToolViewComponent('SubAgentRun')).toBe(toolViewRegistry.SubAgentRun);
     });
 
     it('maps Agent Team tools to a dedicated view', async () => {
-        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+        const { getToolViewComponent, toolViewRegistry } = await import('./_registry');
         expect(getToolViewComponent('AgentTeamCreate')).toBe(toolViewRegistry.AgentTeamCreate);
         expect(getToolViewComponent('AgentTeamDelete')).toBe(toolViewRegistry.AgentTeamDelete);
         expect(getToolViewComponent('AgentTeamSendMessage')).toBe(toolViewRegistry.AgentTeamSendMessage);

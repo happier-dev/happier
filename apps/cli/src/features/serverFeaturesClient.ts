@@ -68,31 +68,31 @@ async function requestServerFeaturesSnapshot(
   const token = params.token?.trim();
   const fetchImpl = params.fetchImpl ?? fetch;
   try {
-    const response = await withAbortTimeout(params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS, async (timeoutSignal) =>
-      await fetchImpl(`${key}/v1/features`, {
+    return await withAbortTimeout<CliServerFeaturesSnapshot>(params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS, async (timeoutSignal) => {
+      const response = await fetchImpl(`${key}/v1/features`, {
         method: 'GET',
         redirect: 'manual',
         ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
         signal: params.signal ? AbortSignal.any([timeoutSignal, params.signal]) : timeoutSignal,
-      }),
-    );
+      });
 
-    if (!response.ok) {
-      return isEndpointMissing(response.status)
-        ? { status: 'unsupported', reason: 'endpoint_missing' }
-        : { status: 'error', reason: 'response_status', httpStatus: response.status };
-    }
+      if (!response.ok) {
+        return isEndpointMissing(response.status)
+          ? { status: 'unsupported', reason: 'endpoint_missing' }
+          : { status: 'error', reason: 'response_status', httpStatus: response.status };
+      }
 
-    const payload: unknown = await response.json();
-    const parsed = parseServerFeatures(payload);
-    if (!parsed) {
-      return { status: 'unsupported', reason: 'invalid_payload' };
-    }
+      const payload: unknown = await response.json();
+      const parsed = parseServerFeatures(payload);
+      if (!parsed) {
+        return { status: 'unsupported', reason: 'invalid_payload' };
+      }
 
-    return {
-      status: 'ready',
-      features: parsed,
-    };
+      return {
+        status: 'ready',
+        features: parsed,
+      };
+    });
   } catch (error) {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return {

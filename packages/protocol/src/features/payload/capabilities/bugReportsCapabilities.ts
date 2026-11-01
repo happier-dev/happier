@@ -2,15 +2,16 @@ import { z } from 'zod';
 
 import { normalizeBugReportProviderUrl } from '../../../bugReports/sanitize.js';
 import { isRecord } from '../isRecord.js';
+import { lazySchema } from '../../../lazySchema.js';
 
-export const BugReportsCapabilitiesSchema = z.object({
+export const BugReportsCapabilitiesSchema = lazySchema(() => z.object({
   providerUrl: z.string().url().nullable(),
   defaultIncludeDiagnostics: z.boolean(),
   maxArtifactBytes: z.number().int().positive(),
   acceptedArtifactKinds: z.array(z.string().min(1)).min(1),
   uploadTimeoutMs: z.number().int().positive(),
   contextWindowMs: z.number().int().min(1000).max(24 * 60 * 60 * 1000),
-});
+}));
 
 export type BugReportsCapabilities = z.infer<typeof BugReportsCapabilitiesSchema>;
 

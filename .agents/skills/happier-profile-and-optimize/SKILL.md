@@ -40,6 +40,7 @@ Route to the instrument by what it can observe:
 | Component tree, props/state identity, *why* something re-rendered | `react-devtools` |
 | CDP `evaluate`, arming an in-app probe, reading the log registry | `argent-metro-debugger` |
 | Server/database cost: which index a query actually seeks, what falls into `Filter:`, whether a predicate forces a scan | the planner — `EXPLAIN QUERY PLAN` (SQLite) and `EXPLAIN` (PostgreSQL), on a seeded table, post-`ANALYZE` |
+| Network transfer: requests per route, decoded vs encoded bytes, Socket.IO frames and bytes per event type, per phase | `packages/tests/src/testkit/uiE2e/networkTransfer.ts` (CDP collector) and its UI E2E spec `session.networkTransfer.spec.ts`, which CI reports per phase |
 
 Do not restate their contents; open the one you need.
 
@@ -49,13 +50,15 @@ Do not restate their contents; open the one you need.
 
 For unexplained growth after a controlled warmed repeat, the next investigation must identify surviving allocations and their lifetime owner, not merely repeat or widen navigation and collect another total. Disabled React profiling does not establish an empty developer-tool baseline: inspect buffered DevTools operations/history and use its existing connection/flush lifecycle as a diagnostic control before attributing that retention to the app. Object counts and shortest root paths are not dominator-retained sizes; account for weak-key/ephemeron semantics when interpreting a heap graph. For a native/external residual, compare app-specific allocation generations and allocating stacks, then inspect native ownership or memory graphs; RSS alone cannot distinguish live allocations, leaked ownership, allocator reserve, and mapped memory.
 
+**Network work counts what was sent and to whom.** Split a transfer total by phase (cold/warm bootstrap, idle, foreground, open), by HTTP route class and by Socket.IO event type, and keep decoded and encoded bytes separate: compression can shrink the wire while the decoded documents still regress. Mark missing evidence `unavailable`, never zero. Then ask, per class, who consumed it: the 2026-10 audit found 3.26 MB of message bodies per 72 s of idle Home going to a device that displayed none of them, and a list refresh replayed in full for every row change. Prove reductions as work avoided (frames or requests not sent, rows not re-read) on the same workload, not as a percentage across different account states.
+
 **Locate in time, then in code.** Block timing (e.g. a 16 ms drift sampler armed over the phase) tells you *when* the thread was stolen; a CPU profile with call paths tells you *what* stole it. Never fix something located only in time — a time window plus a plausible suspect is a hypothesis, not an attribution.
 
 ## 3. Label the waste, then write the hypothesis
 
 Force one of these labels before proposing anything. The label constrains the fix:
 
-`TOO EARLY` (work done before it is needed) · `TOO OFTEN` (repeated per event/commit/row) · `TOO MUCH` (correct work, oversized input) · `TOO SERIAL` (awaited in sequence, parallelizable) · `WRONG SHAPE` (data structure forces a scan) · `N+1` (per-item round trip) · `RENDER CHURN` (re-render without changed output) · `CACHE HAZARD` (missing key input, no in-flight sharing, or a stale/poisoned entry).
+`TOO EARLY` (work done before it is needed) · `TOO OFTEN` (repeated per event/commit/row) · `TOO MUCH` (correct work, oversized input) · `TOO SERIAL` (awaited in sequence, parallelizable) · `WRONG SHAPE` (data structure forces a scan) · `N+1` (per-item round trip) · `FAN-OUT` (payload delivered to a client that does not consume it, or carrying fields its consumer never reads) · `RENDER CHURN` (re-render without changed output) · `CACHE HAZARD` (missing key input, no in-flight sharing, or a stale/poisoned entry).
 
 Then, before any edit:
 

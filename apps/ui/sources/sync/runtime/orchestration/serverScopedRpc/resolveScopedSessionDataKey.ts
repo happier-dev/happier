@@ -8,6 +8,7 @@ import {
 
 import { createScopedCacheTokenKeyRegistry } from './scopedCacheTokenKey';
 import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlight';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -20,7 +21,7 @@ function toSessionDataKeyCacheKey(serverId: string, sessionId: string, token: st
 
 export type ScopedSessionCryptoContext =
   | Readonly<{ encryptionMode: 'plain'; sessionDataKey: null }>
-  | Readonly<{ encryptionMode: 'e2ee'; sessionDataKey: Uint8Array }>
+  | Readonly<{ encryptionMode: 'e2ee'; sessionDataKey: Uint8Array | null }>
   | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null }>;
 
 const sessionCryptoContextCache = new Map<string, ScopedSessionCryptoContext>();
@@ -61,6 +62,7 @@ async function fetchSessionCryptoContext(params: Readonly<{
   sessionId: string;
   decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
   timeoutMs: number;
+  networkMode?: 'background-task';
 }>): Promise<ScopedSessionCryptoContext> {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs)) : null;
@@ -79,6 +81,7 @@ async function fetchSessionCryptoContext(params: Readonly<{
         ...(controller ? { signal: controller.signal } : {}),
       },
       timeoutMs: params.timeoutMs,
+      networkMode: params.networkMode,
     });
     if (!response.ok) {
       if (isAuthenticationResponseStatus(response.status)) {
@@ -98,7 +101,10 @@ async function fetchSessionCryptoContext(params: Readonly<{
       return { encryptionMode: 'plain', sessionDataKey: null };
     }
 
-    const dek = typeof session.dataEncryptionKey === 'string' ? session.dataEncryptionKey : null;
+    // Authenticated legacy rows use the existing credential-key encryptor.
+    // A published envelope that cannot be opened must never take that path.
+    if (session.dataEncryptionKey === null) return { encryptionMode: 'e2ee', sessionDataKey: null };
+    const dek = session.dataEncryptionKey;
     if (!dek) return { encryptionMode: 'unknown', sessionDataKey: null };
 
     const sessionDataKey = await params.decryptEncryptionKey(dek);
@@ -121,11 +127,12 @@ export async function resolveScopedSessionCryptoContext(params: Readonly<{
   sessionId: string;
   decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
   timeoutMs?: number;
+  networkMode?: 'background-task';
 }>): Promise<ScopedSessionCryptoContext> {
   const sessionId = normalizeId(params.sessionId);
   const serverId = normalizeId(params.serverId);
   const token = String(params.token ?? '');
-  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
+  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
   const keyCacheKey = toSessionDataKeyCacheKey(serverId, sessionId, token);
 
   const cached = getSessionCryptoContextFromCache(keyCacheKey);
@@ -137,13 +144,17 @@ export async function resolveScopedSessionCryptoContext(params: Readonly<{
   // server, the session and the bearer token, and the token determines the credentials
   // behind the caller's `decryptEncryptionKey`, so a joiner can only ever adopt a result
   // computed from its own inputs.
-  return await sessionCryptoContextResolutions.run(keyCacheKey, async () => {
+  // A foreground resolution may be waiting for app resume. OS task work must
+  // not join that paused flight; the resulting authenticated cache is shared.
+  const flightKey = params.networkMode === 'background-task' ? `${keyCacheKey}:background-task` : keyCacheKey;
+  return await sessionCryptoContextResolutions.run(flightKey, async () => {
     const context = await fetchSessionCryptoContext({
       serverUrl: params.serverUrl,
       token,
       sessionId,
       decryptEncryptionKey: params.decryptEncryptionKey,
       timeoutMs,
+      networkMode: params.networkMode,
     });
     // Cache only stable outcomes; transient fetch failures should be retried.
     if (context.encryptionMode !== 'unknown') {

@@ -38,6 +38,7 @@
     "allow-system-tasks-open-log-path",
     "allow-respond-system-task-prompt",
     "allow-desktop-get-window-chrome-policy",
+    "allow-desktop-set-native-title-bar",
     "allow-desktop-get-window-state",
     "allow-desktop-minimize-window",
     "allow-desktop-toggle-window-maximize",

@@ -13,6 +13,7 @@ import {
 } from '@/sync/domains/session/organization/attentionStanding';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { sessionTagKey } from '../sessionTagUtils';
+import { areSessionAppearanceColorsEqual, sessionAppearanceColorKey } from '@/sync/domains/session/organization/appearanceColor';
 
 type CacheEntry = Readonly<{
     model: SessionListRowModel;
@@ -54,6 +55,7 @@ type StablePresentationSettingsRefs = Readonly<{
     activeColorMode: SessionListRowPresentationSettings['activeColorMode'];
     workingIndicatorMode: SessionListRowPresentationSettings['workingIndicatorMode'];
     workingTextMode: SessionListRowPresentationSettings['workingTextMode'];
+    backgroundWorkAttentionMode: SessionListRowPresentationSettings['backgroundWorkAttentionMode'];
     hideInactiveSessions: SessionListRowPresentationSettings['hideInactiveSessions'];
     showServerBadge: SessionListRowPresentationSettings['showServerBadge'];
     showPinnedServerBadge: SessionListRowPresentationSettings['showPinnedServerBadge'];
@@ -120,6 +122,7 @@ function buildStablePresentationSettingsRefs(
         activeColorMode: settings.activeColorMode,
         workingIndicatorMode: settings.workingIndicatorMode,
         workingTextMode: settings.workingTextMode,
+        backgroundWorkAttentionMode: settings.backgroundWorkAttentionMode,
         hideInactiveSessions: settings.hideInactiveSessions,
         showServerBadge: settings.showServerBadge,
         showPinnedServerBadge: settings.showPinnedServerBadge,
@@ -149,6 +152,7 @@ function areStablePresentationSettingsRefsEqual(
         && previous.activeColorMode === next.activeColorMode
         && previous.workingIndicatorMode === next.workingIndicatorMode
         && previous.workingTextMode === next.workingTextMode
+        && previous.backgroundWorkAttentionMode === next.backgroundWorkAttentionMode
         && previous.hideInactiveSessions === next.hideInactiveSessions
         && previous.showServerBadge === next.showServerBadge
         && previous.showPinnedServerBadge === next.showPinnedServerBadge
@@ -190,6 +194,7 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, item.attentionPromotionReason);
     appendSignaturePart(parts, item.workingPlacementReason);
     appendSignaturePart(parts, item.variant);
+    appendSignaturePart(parts, item.session.archiving === true ? 1 : 0);
     appendSignaturePart(parts, item.serverId);
     appendSignaturePart(parts, item.serverName);
     appendSignaturePart(parts, input.adjacency.isFirst ? 1 : 0);
@@ -203,6 +208,7 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, settings.activeColorMode);
     appendSignaturePart(parts, settings.workingIndicatorMode);
     appendSignaturePart(parts, settings.workingTextMode);
+    appendSignaturePart(parts, settings.backgroundWorkAttentionMode);
     appendSignaturePart(parts, settings.hideInactiveSessions ? 1 : 0);
     appendSignaturePart(parts, settings.showServerBadge ? 1 : 0);
     appendSignaturePart(parts, settings.showPinnedServerBadge ? 1 : 0);
@@ -237,6 +243,7 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, input.snapshot.messages?.messagesVersion ?? null);
     appendSignaturePart(parts, input.snapshot.pending?.messages.length ?? null);
     appendSignaturePart(parts, input.snapshot.draft?.preview ?? null);
+    appendSignaturePart(parts, sessionAppearanceColorKey(input.snapshot.appearanceColor));
     return parts.join('|');
 }
 
@@ -277,6 +284,7 @@ function canReuseEntry(
         && entry.messagesRef === snapshot.messages
         && entry.pendingRef === snapshot.pending
         && entry.draftPreview === (snapshot.draft?.preview ?? null)
+        && areSessionAppearanceColorsEqual(entry.model.appearanceColor, snapshot.appearanceColor)
         && isCachedActivityFresh(entry.model, settings.relativeNowMs)
         && isCachedRuntimeFresh(entry.model, settings.runtimeNowMs);
 }
@@ -299,6 +307,7 @@ function canReuseEntryWithoutSignature(input: Readonly<{
         && entry.messagesRef === input.snapshot.messages
         && entry.pendingRef === input.snapshot.pending
         && entry.draftPreview === (input.snapshot.draft?.preview ?? null)
+        && areSessionAppearanceColorsEqual(entry.model.appearanceColor, input.snapshot.appearanceColor)
         && areStablePresentationSettingsRefsEqual(entry.stableSettings, input.stableSettings)
         && isCachedActivityFresh(entry.model, input.settings.relativeNowMs)
         && isCachedRuntimeFresh(entry.model, input.settings.runtimeNowMs);

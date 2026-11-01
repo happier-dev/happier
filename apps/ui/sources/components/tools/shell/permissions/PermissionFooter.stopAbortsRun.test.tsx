@@ -1,197 +1,214 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred, createServerFetchWithReachabilityProbe, createSessionFixture, createSocketHarness, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerId, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
+import { resetScopedSessionDataKeyCacheForTests } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const runtime = vi.hoisted(() => ({
-    flavor: 'opencode' as 'claude' | 'codex' | 'opencode' | 'gemini',
-    protocol: 'claude' as 'codexDecision' | 'claude',
-    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'claude' | 'codex' | 'opencode' | 'gemini') {
-        this.protocol = protocol;
-        this.flavor = flavor;
-    },
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const { rpcBoundary, connectSocket } = vi.hoisted(() => ({
+    rpcBoundary: vi.fn<(method: string, payload: unknown) => Promise<unknown>>(),
+    connectSocket: vi.fn(),
 }));
-
-const ops = vi.hoisted(() => ({
-    sessionDeny: vi.fn(async (..._args: unknown[]) => {}),
-    sessionAbort: vi.fn(async (..._args: unknown[]) => {}),
+vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => connectSocket(...args) }));
+vi.mock('@/sync/api/session/apiSocket', () => ({
+    apiSocket: { sessionRPC: (_sessionId: string, method: string, payload: unknown) => rpcBoundary(method, payload) },
 }));
-
-const sessionStore = vi.hoisted(() => ({
-    updateSessionPermissionMode: vi.fn((..._args: unknown[]) => {}),
-}));
-
-const syncMock = vi.hoisted(() => ({
-    sendMessage: vi.fn(async (..._args: unknown[]) => {}),
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-installPermissionShellCommonModuleMocks({
-    storage: async (importOriginal) => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            importOriginal,
-            storage: { getState: () => sessionStore },
-        });
-    },
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity', ActivityIndicator: 'ActivityIndicator',
+        Platform: { OS: 'ios', select: <T,>(value: { ios?: T; default?: T }) => value.ios ?? value.default },
+    });
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
 });
 
-vi.mock('@/sync/ops', () => ({
-    sessionAllow: vi.fn(async () => {}),
-    sessionAllowWithPermissionUpdates: vi.fn(async () => {}),
-    sessionDeny: ops.sessionDeny,
-    sessionAbort: ops.sessionAbort,
-}));
+const initialStorageState = storage.getState();
+let sessionSequence = 0;
+let sessionId: string;
+let originalServerId: string;
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        sendMessage: syncMock.sendMessage,
-    },
-}));
+function accountToken(accountId: string): string {
+    return `e30.${btoa(JSON.stringify({ sub: accountId }))}.signature`;
+}
 
-vi.mock('@/agents/catalog/resolve', () => ({
-    resolveAgentIdForPermissionUi: () => runtime.flavor,
-}));
+async function renderFooter(flavor: 'claude' | 'codex' | 'opencode' | 'gemini' = 'opencode') {
+    const { PermissionFooter } = await import('./PermissionFooter');
+    return await renderScreen(React.createElement(PermissionFooter, {
+        permission: { id: 'p1', status: 'pending' }, sessionId,
+        toolName: flavor === 'claude' ? 'Read' : 'execute', toolInput: { command: 'pwd' }, metadata: { flavor },
+    }));
+}
 
-vi.mock('@/agents/catalog/permissionUiCopy', () => ({
-    getPermissionFooterCopy: () => {
-        if (runtime.protocol === 'codexDecision') {
-            return {
-                protocol: 'codexDecision',
-                yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
-                yesForSessionKey: 'codex.permissions.yesForSession',
-                stopKey: 'codex.permissions.stop',
-            };
-        }
-        return {
-            protocol: 'claude',
-            yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
-            yesForToolKey: 'claude.permissions.yesForTool',
-            stopKey: 'claude.permissions.stop',
-        };
-    },
-}));
+function replaceAccount() {
+    vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token: accountToken('account-after') });
+    storage.setState({ profileScope: { serverId: getActiveServerId(), accountId: 'account-after' } });
+    storage.getState().applySessions([createSessionFixture({
+        id: sessionId, thinking: true, thinkingAt: Date.now() + 1,
+        metadata: null, agentState: { requests: { p1: { tool: 'Bash', arguments: {}, occurrenceId: 'new-account-request' } } },
+    })]);
+    storage.getState().markSessionOptimisticThinking(sessionId);
+    return storage.getState().sessions[sessionId];
+}
 
 describe('PermissionFooter stop action', () => {
+    beforeEach(() => {
+        rpcBoundary.mockReset().mockResolvedValue({ ok: true });
+        connectSocket.mockReset();
+        storage.setState(initialStorageState, true);
+        sessionId = `permission-stop-${++sessionSequence}`;
+        const serverId = getActiveServerId();
+        originalServerId = serverId;
+        storage.setState({ profileScope: { serverId, accountId: 'account-before' } });
+        storage.getState().applySessions([createSessionFixture({ id: sessionId, metadata: null, thinking: true, thinkingAt: 1 })]);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const token = accountToken('account-before');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const response = V2SessionByIdResponseSchema.parse({ session: {
+            id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1, archivedAt: null,
+            metadata: 'metadata', metadataVersion: 1, agentState: null, agentStateVersion: 0,
+            pendingCount: 0, pendingVersion: 0, encryptionMode: 'plain', dataEncryptionKey: null,
+        } });
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => new Response(JSON.stringify(response), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+        }))));
+        const emitWithAck = async (_event: string, packet: { method: string; params: unknown }) => ({
+            ok: true, result: await rpcBoundary(packet.method.slice(sessionId.length + 1), packet.params),
+        });
+        connectSocket.mockReturnValue({
+            ...createSocketHarness<Record<string, unknown>>(), connected: true, connect: () => {}, disconnect: () => {},
+            timeout: () => ({ emitWithAck }), emitWithAck,
+        });
+    });
+    afterEach(() => {
+        setActiveServerId(originalServerId);
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedSessionDataKeyCacheForTests();
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
     it.each([
-        {
-            name: 'codex decision protocol',
-            protocol: 'codexDecision' as const,
-            flavor: 'codex' as const,
-            toolName: 'execute',
-            toolInput: { command: 'pwd' },
-            shouldSendFollowupPrompt: false,
-            shouldAbortRun: false,
-            expectedDecision: 'denied' as const,
-        },
-        {
-            name: 'codex decision protocol on non-codex agent',
-            protocol: 'codexDecision' as const,
-            flavor: 'opencode' as const,
-            toolName: 'bash',
-            toolInput: { command: 'pwd' },
-            shouldSendFollowupPrompt: false,
-            shouldAbortRun: true,
-            expectedDecision: 'abort' as const,
-        },
-        {
-            name: 'non-codex protocol',
-            protocol: 'claude' as const,
-            flavor: 'claude' as const,
-            toolName: 'Read',
-            toolInput: { filepath: '/etc/hosts' },
-            shouldSendFollowupPrompt: false,
-            shouldAbortRun: true,
-            shouldSetReadOnlyMode: true,
-            expectedDecision: 'abort' as const,
-        },
-        {
-            name: 'gemini stop/explain should not force read-only mode',
-            protocol: 'codexDecision' as const,
-            flavor: 'gemini' as const,
-            toolName: 'execute',
-            toolInput: { command: "bash -lc 'echo hi > /tmp/x'" },
-            shouldSendFollowupPrompt: false,
-            shouldAbortRun: true,
-            shouldSetReadOnlyMode: false,
-            expectedDecision: 'abort' as const,
-        },
-    ])('Stop denies permission and handles run control for $name', async ({ protocol, flavor, toolName, toolInput, shouldSendFollowupPrompt, shouldAbortRun, shouldSetReadOnlyMode, expectedDecision }) => {
-        runtime.setProtocol(protocol, flavor);
-        ops.sessionDeny.mockClear();
-        ops.sessionAbort.mockClear();
-        syncMock.sendMessage.mockClear();
-        sessionStore.updateSessionPermissionMode.mockClear();
-
-        const { PermissionFooter } = await import('../permissions/PermissionFooter');
-        const screen = await renderScreen(React.createElement(PermissionFooter, {
-            permission: { id: 'p1', status: 'pending' },
-            sessionId: 's1',
-            toolName,
-            toolInput,
-            metadata: { flavor },
-        }));
-
-        const buttons = screen.findAllByType('TouchableOpacity' as any);
-        const stopButton = buttons.at(-1);
-        expect(stopButton).toBeTruthy();
-
-        await pressTestInstanceAsync(stopButton, 'stop button');
-
-        expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
-        expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe(expectedDecision);
-        if (shouldAbortRun) {
-            expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
-        } else {
-            expect(ops.sessionAbort).not.toHaveBeenCalled();
-        }
-        if (shouldSetReadOnlyMode) {
-            expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledTimes(1);
-            expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledWith('s1', 'read-only');
-        } else {
-            expect(sessionStore.updateSessionPermissionMode).not.toHaveBeenCalled();
-        }
-        if (shouldSendFollowupPrompt) {
-            expect(syncMock.sendMessage).toHaveBeenCalledTimes(1);
-            if (shouldSetReadOnlyMode) {
-                expect(sessionStore.updateSessionPermissionMode.mock.invocationCallOrder[0]).toBeLessThan(
-                    syncMock.sendMessage.mock.invocationCallOrder[0],
-                );
-            }
-            expect(syncMock.sendMessage.mock.calls[0]?.[0]).toBe('s1');
-            expect(String(syncMock.sendMessage.mock.calls[0]?.[1] ?? '')).toMatch(/explain/i);
-        } else {
-            expect(syncMock.sendMessage).not.toHaveBeenCalled();
+        { flavor: 'codex', aborts: false, readOnly: false },
+        { flavor: 'opencode', aborts: true, readOnly: false },
+        { flavor: 'claude', aborts: true, readOnly: true },
+        { flavor: 'gemini', aborts: true, readOnly: false },
+    ] as const)('preserves $flavor Stop behavior at the RPC boundary', async ({ flavor, aborts, readOnly }) => {
+        const screen = await renderFooter(flavor);
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'permission-footer.stop' }), 'Stop');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(aborts ? ['permission', 'abort'] : ['permission']);
+        expect(rpcBoundary.mock.calls[0]?.[1]).toMatchObject({ id: 'p1', approved: false, decision: aborts ? 'abort' : 'denied' });
+        expect(storage.getState().sessions[sessionId]?.permissionMode === 'read-only').toBe(readOnly);
+        if (aborts) {
+            expect(connectSocket).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                auth: expect.objectContaining({ token: accountToken('account-before') }),
+            }));
         }
     });
 
     it('dispatches one denial and one abort when Stop is activated twice before React commits', async () => {
-        runtime.setProtocol('codexDecision', 'opencode');
-        ops.sessionDeny.mockClear();
-        ops.sessionAbort.mockClear();
-
-        const { PermissionFooter } = await import('../permissions/PermissionFooter');
-        const screen = await renderScreen(React.createElement(PermissionFooter, {
-            permission: { id: 'p-double-stop', status: 'pending' },
-            sessionId: 's1',
-            toolName: 'execute',
-            toolInput: { command: 'touch /tmp/permission-stop-test' },
-            metadata: { flavor: 'opencode' },
-        }));
+        const screen = await renderFooter();
         const stop = screen.findByProps({ testID: 'permission-footer.stop' });
+        await act(async () => { await Promise.all([stop.props.onPress(), stop.props.onPress()]); });
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission', 'abort']);
+    });
 
-        await act(async () => {
-            await Promise.all([stop.props.onPress(), stop.props.onPress()]);
+    it.each(['claude', 'opencode'] as const)('Deny leaves the %s run active', async (flavor) => {
+        const screen = await renderFooter(flavor);
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'permission-footer.deny' }), 'Deny');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission']);
+        expect(rpcBoundary.mock.calls[0]?.[1]).toMatchObject({ id: 'p1', approved: false, decision: 'denied' });
+        expect(storage.getState().sessions[sessionId]?.permissionMode).not.toBe('read-only');
+    });
+
+    it('does not abort or settle Stop when the CLI rejects the permission decision', async () => {
+        const rejected = { ok: false, errorCode: 'permission_request_not_found' };
+        rpcBoundary.mockResolvedValueOnce(rejected);
+        const before = storage.getState().sessions[sessionId];
+        const screen = await renderFooter();
+        const stop = screen.findByProps({ testID: 'permission-footer.stop' });
+        await pressTestInstanceAsync(stop, 'Stop');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission']);
+        expect(storage.getState().sessions[sessionId]).toBe(before);
+        // A rejected decision remains retryable through the real shared dispatch guard.
+        await pressTestInstanceAsync(stop, 'retry Stop');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission', 'permission', 'abort']);
+    });
+
+    it('does not abort a replacement Account after the permission acknowledgment', async () => {
+        let replacement: ReturnType<typeof replaceAccount> | undefined;
+        rpcBoundary.mockImplementation(async (method) => {
+            if (method === 'permission') replacement = replaceAccount();
+            return { ok: true };
         });
+        const screen = await renderFooter();
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'permission-footer.stop' }), 'Stop');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission']);
+        expect(storage.getState().sessions[sessionId]).toBe(replacement);
+    });
 
-        expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
-        expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
+    it('does not issue Stop with credentials from a replacement Account', async () => {
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token: accountToken('account-after') });
+        const before = storage.getState().sessions[sessionId];
+        const screen = await renderFooter();
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'permission-footer.stop' }), 'Stop');
+        expect(rpcBoundary.mock.calls).toEqual([]);
+        expect(storage.getState().sessions[sessionId]).toBe(before);
+    });
+
+    it('finishes Stop in its original Account when server focus changes', async () => {
+        let focusedSession: ReturnType<typeof replaceAccount> | undefined;
+        rpcBoundary.mockImplementation(async (method) => {
+            if (method === 'permission') {
+                const other = upsertServerProfile({ serverUrl: 'https://permission-stop-other.example.test' });
+                setActiveServerId(other.id);
+                storage.setState({ profileScope: { serverId: other.id, accountId: 'focused-account' } });
+                storage.getState().applySessions([createSessionFixture({ id: sessionId, thinking: true, thinkingAt: Date.now() + 1 })]);
+                storage.getState().markSessionOptimisticThinking(sessionId);
+                focusedSession = storage.getState().sessions[sessionId];
+            }
+            return { ok: true };
+        });
+        const screen = await renderFooter('claude');
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'permission-footer.stop' }), 'Stop');
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission', 'abort']);
+        expect(storage.getState().sessions[sessionId]).toBe(focusedSession);
+    });
+
+    it('does not apply a delayed abort acknowledgment to a replacement Account', async () => {
+        const issued = createDeferred<void>();
+        const acknowledgment = createDeferred<{ ok: true }>();
+        rpcBoundary.mockImplementation(async (method) => {
+            if (method !== 'abort') return { ok: true };
+            issued.resolve();
+            return await acknowledgment.promise;
+        });
+        const screen = await renderFooter('claude');
+        const stop = screen.findByProps({ testID: 'permission-footer.stop' });
+        await act(async () => {
+            const pending = stop.props.onPress();
+            await issued.promise;
+            const replacement = replaceAccount();
+            acknowledgment.resolve({ ok: true });
+            await pending;
+            expect(storage.getState().sessions[sessionId]).toBe(replacement);
+        });
+        expect(rpcBoundary.mock.calls.map(([method]) => method)).toEqual(['permission', 'abort']);
     });
 });

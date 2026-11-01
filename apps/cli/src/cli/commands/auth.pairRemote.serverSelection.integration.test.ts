@@ -5,6 +5,7 @@ import tweetnacl from 'tweetnacl';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { registerTerminalApprovalAccountFixture } from '@/testkit/http/terminalApprovalAccountFixture';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
@@ -52,10 +53,11 @@ describe('auth pair-remote server selection', () => {
   it('pairs in text mode with an explicit remote server URL while approving through the local API URL', async () => {
     const requests = new Map<string, { response: string | null }>();
     const app = fastify({ logger: false });
+    const { token: localToken } = registerTerminalApprovalAccountFixture(app);
 
     app.post('/v1/auth/response', async (req, reply) => {
       const authHeader = String((req.headers as any)?.authorization ?? '');
-      if (authHeader !== 'Bearer local-token') return reply.code(401).send({ error: 'unauthorized' });
+      if (authHeader !== `Bearer ${localToken}`) return reply.code(401).send({ error: 'unauthorized' });
       const body = req.body as { publicKey?: unknown; response?: unknown } | undefined;
       const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
       const response = typeof body?.response === 'string' ? body.response : '';
@@ -81,7 +83,7 @@ describe('auth pair-remote server selection', () => {
       });
       vi.resetModules();
       const { writeCredentialsLegacy } = await import('@/persistence');
-      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: localToken });
 
       const remoteKeypair = tweetnacl.box.keyPair();
       const remotePublicKey = Buffer.from(remoteKeypair.publicKey).toString('base64');
@@ -143,10 +145,11 @@ describe('auth pair-remote server selection', () => {
   it('prompts with current-machine reachable address choices when the selected relay is loopback-only', async () => {
     const requests = new Map<string, { response: string | null }>();
     const app = fastify({ logger: false });
+    const { token: localToken } = registerTerminalApprovalAccountFixture(app);
 
     app.post('/v1/auth/response', async (req, reply) => {
       const authHeader = String((req.headers as any)?.authorization ?? '');
-      if (authHeader !== 'Bearer local-token') return reply.code(401).send({ error: 'unauthorized' });
+      if (authHeader !== `Bearer ${localToken}`) return reply.code(401).send({ error: 'unauthorized' });
       const body = req.body as { publicKey?: unknown; response?: unknown } | undefined;
       const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
       const response = typeof body?.response === 'string' ? body.response : '';
@@ -168,7 +171,7 @@ describe('auth pair-remote server selection', () => {
       });
       vi.resetModules();
       const { writeCredentialsLegacy } = await import('@/persistence');
-      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: localToken });
 
       const remoteKeypair = tweetnacl.box.keyPair();
       const remotePublicKey = Buffer.from(remoteKeypair.publicKey).toString('base64');
@@ -259,6 +262,7 @@ describe('auth pair-remote server selection', () => {
   it('stops before approval when the remote request reports a different relay', async () => {
     const requests = new Map<string, { response: string | null }>();
     const app = fastify({ logger: false });
+    const { token: localToken } = registerTerminalApprovalAccountFixture(app);
 
     app.post('/v1/auth/response', async (req, reply) => {
       const body = req.body as { publicKey?: unknown; response?: unknown } | undefined;
@@ -286,7 +290,7 @@ describe('auth pair-remote server selection', () => {
       });
       vi.resetModules();
       const { writeCredentialsLegacy } = await import('@/persistence');
-      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: localToken });
 
       const remotePublicKey = Buffer.from(tweetnacl.box.keyPair().publicKey).toString('base64');
       spawnSyncMock

@@ -11,6 +11,11 @@ import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType'
 import { applyPaneFocusModeLayoutOverride } from './layout/applyPaneFocusModeLayoutOverride';
 import { useAppPaneActionRailVisible } from './hooks/useAppPaneActionRailVisible';
 import { PaneActionRailContext, PANE_ACTION_RAIL_WIDTH } from './PaneActionRailContext';
+import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
+
+function withoutScreenBackdrop(pane: React.ReactNode): React.ReactNode {
+    return pane == null ? null : <ScreenBackdropBoundary>{pane}</ScreenBackdropBoundary>;
+}
 
 export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
@@ -66,18 +71,23 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
 
     // `MultiPaneHost` uses pane node presence as the logical "open" signal. Keep the
     // nodes null when closed so hidden layouts don't accidentally mount expensive panes.
-    const rightPane =
+    // Side and bottom panes never own the screen backdrop painted under the side safe-area insets.
+    // Memoized on the pane node so a stable pane keeps a stable wrapper.
+    const rightPaneNode =
         rightOpen
             ? (props.rightPane ?? driver?.renderRightPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
-    const detailsPane =
+    const detailsPaneNode =
         detailsOpen
             ? (props.detailsPane ?? driver?.renderDetailsPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
-    const bottomPane =
+    const bottomPaneNode =
         bottomOpen
             ? (props.bottomPane ?? driver?.renderBottomPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
+    const rightPane = React.useMemo(() => withoutScreenBackdrop(rightPaneNode), [rightPaneNode]);
+    const detailsPane = React.useMemo(() => withoutScreenBackdrop(detailsPaneNode), [detailsPaneNode]);
+    const bottomPane = React.useMemo(() => withoutScreenBackdrop(bottomPaneNode), [bottomPaneNode]);
 
     const scaledRightPreferredPx = resolveScaledPaneWidthPxUncapped({
         preferredWidthPx: rightPaneWidthPx,

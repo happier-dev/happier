@@ -29,7 +29,8 @@ const VoiceLocalSttLocalNeuralSchema = z
   .prefault({});
 
 const VoiceLocalSttSchemaV2 = z.object({
-  provider: VoiceLocalSttProviderSchema.default('openai_compat'),
+  // Device speech works with no configuration; network providers need a base URL or API key first.
+  provider: VoiceLocalSttProviderSchema.default('device'),
   openaiCompat: VoiceLocalSttOpenAiCompatSchema,
   googleGemini: VoiceLocalSttGoogleGeminiSchema,
   localNeural: VoiceLocalSttLocalNeuralSchema,

@@ -15,9 +15,9 @@ Public links do not depend on Friends and are available without turning anything
 
 Worth knowing before you share anything, because it is about other people's data, not yours.
 
-**Every access to a shared session is logged with the viewer's IP address and user agent** — for direct shares and public links alike. For a public link you can decide whether the viewer is told: **Require consent** shows them *"This link requires your consent to log your IP address and user agent"* and makes them accept before the session opens.
+Opening a public link creates an access record. With **Require consent** enabled, Happier shows *"This link requires your consent to log your IP address and user agent"* and requires acceptance before opening the session and recording those details.
 
-Turning consent off does not stop the logging. It removes the notice. If you are sending a link outside your team, leaving consent on is the honest default.
+With **Require consent** disabled, the access record omits the IP address and user agent. When IP logging is enabled, self-hosted servers use the same [trusted proxy configuration](/self-hosting/env#networking--reverse-proxy) as their API rate limits.
 
 ## Direct sharing
 
@@ -51,7 +51,7 @@ When you create or regenerate one, you choose:
 
 - **Expires in** — 7 days, 30 days, or Never
 - **Maximum uses** — Unlimited, 10 uses, or 50 uses
-- **Require consent** — whether viewers are told their access is logged
+- **Require consent** — require acceptance before recording the viewer's IP address and user agent
 
 Afterwards Happier shows a QR code, the URL, the expiry, the usage count, and whether consent is required.
 

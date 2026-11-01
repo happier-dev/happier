@@ -1,3 +1,5 @@
+import type { ClientOptions } from 'minio';
+
 import { ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, writeLightPublicFile } from '@/flavors/light/files';
 
 export type ImageRef = {
@@ -39,8 +41,7 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         port: s3Port,
         useSSL: s3UseSSL,
         region: s3Region,
-        accessKey: requiredEnv(env, 'S3_ACCESS_KEY'),
-        secretKey: requiredEnv(env, 'S3_SECRET_KEY'),
+        ...resolveS3Credentials(env, Minio),
     });
 
     backend = {
@@ -56,6 +57,28 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         async writePublicFile(path: string, data: Uint8Array) {
             await s3client.putObject(s3bucket, path, Buffer.from(data));
         },
+    };
+}
+
+// Static keys win whenever either is set, so existing deployments keep their
+// behavior. Without them, AWS web identity (EKS IRSA or any other projected
+// token file) supplies credentials: MinIO's IamAwsProvider exchanges the token
+// for temporary STS credentials and fetches new ones shortly before they
+// expire. The provider reads AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE,
+// AWS_ROLE_SESSION_NAME and AWS_REGION from process.env itself, and uses the
+// global STS endpoint when AWS_REGION is unset.
+function resolveS3Credentials(
+    env: NodeJS.ProcessEnv,
+    Minio: typeof import('minio'),
+): Pick<ClientOptions, 'accessKey' | 'secretKey' | 'credentialsProvider'> {
+    const hasStaticKey = Boolean(env.S3_ACCESS_KEY?.trim() || env.S3_SECRET_KEY?.trim());
+    const hasWebIdentity = Boolean(env.AWS_ROLE_ARN?.trim() && env.AWS_WEB_IDENTITY_TOKEN_FILE?.trim());
+    if (!hasStaticKey && hasWebIdentity) {
+        return { credentialsProvider: new Minio.IamAwsProvider({}) };
+    }
+    return {
+        accessKey: requiredEnv(env, 'S3_ACCESS_KEY'),
+        secretKey: requiredEnv(env, 'S3_SECRET_KEY'),
     };
 }
 

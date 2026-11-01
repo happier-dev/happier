@@ -56,7 +56,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
       status: mapped.status,
       mode: mapped.mode,
       canStop: mapped.status !== 'disconnected',
-      ...(local.error ? { errorCode: local.error, errorMessage: local.error } : {}),
+      ...(local.error ? { errorCode: local.error, errorMessage: local.errorMessage ?? local.error } : {}),
     };
   };
 

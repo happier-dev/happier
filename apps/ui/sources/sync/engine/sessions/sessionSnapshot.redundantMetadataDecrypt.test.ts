@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { Encryption } from '@/sync/encryption/encryption';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     buildSessionListRenderableFromSession,
@@ -251,6 +252,24 @@ afterEach(() => {
 });
 
 describe('session-list snapshot metadata decryption', () => {
+    it('keeps plain sessions readable when a keyless account also has unavailable encrypted history', async () => {
+        const encrypted = { ...buildEncryptedRow(FIRST), dataEncryptionKey: 'unavailable-history-key' };
+        const metadata = { path: '/plain/project', host: 'plain-host' };
+        const plain = { ...buildEncryptedRow(FIRST), id: 'session-plain', encryptionMode: 'plain', metadata: JSON.stringify(metadata), agentState: null, dataEncryptionKey: null };
+        const sessions: Array<{ id: string; metadata: unknown }> = [];
+        await fetchAndApplySessions({
+            credentials: { token: 'plain-token' },
+            encryption: Encryption.createWithoutKeyMaterial(),
+            sessionDataKeys: new Map(),
+            request: async () => jsonResponse({ sessions: [encrypted, plain], nextCursor: null, hasNext: false }),
+            applySessions: (values) => sessions.push(...values),
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        expect(sessions.find((session) => session.id === 'session-plain')?.metadata).toEqual(expect.objectContaining(metadata));
+        expect(sessions.find((session) => session.id === encrypted.id)?.metadata ?? null).toBeNull();
+    });
+
     it('does not re-decrypt unchanged metadata when a streaming tick moves seq and runtime activity', async () => {
         const harness = createSnapshotHarness({ withStoredSessions: true });
 

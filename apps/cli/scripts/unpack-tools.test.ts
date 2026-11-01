@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { copyFile, cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { createRequire } from 'node:module';
@@ -277,5 +278,42 @@ describe('unpack-tools script', () => {
       success: true,
       alreadyUnpacked: false,
     });
+  });
+});
+
+describe('unpack-tools CLI entry', () => {
+  it('finishes a successful postinstall unpack through natural exit, never process.exit()', async () => {
+    // process.exit() can wedge Node 24 in NodePlatform::Shutdown (nodejs/node#54918);
+    // the CI install hung right after this script printed its success line.
+    const cliRoot = resolve(dirname(require.resolve('./unpack-tools.cjs')), '..');
+    const root = await mkdtemp(join(tmpdir(), 'happier-unpack-tools-entry-'));
+    await mkdir(join(root, 'scripts'), { recursive: true });
+    await copyFile(join(cliRoot, 'scripts', 'unpack-tools.cjs'), join(root, 'scripts', 'unpack-tools.cjs'));
+    await cp(join(cliRoot, 'tools', 'archives'), join(root, 'tools', 'archives'), { recursive: true });
+    const exitLog = join(root, 'process-exit.log');
+    const preload = join(root, 'record-process-exit.cjs');
+    await writeFile(preload, [
+      "const fs = require('node:fs');",
+      'const exit = process.exit;',
+      'process.exit = function recordedExit(code) {',
+      "  fs.writeFileSync(process.env.HAPPIER_TEST_EXIT_LOG, String(code));",
+      '  return exit.call(process, code);',
+      '};',
+    ].join('\n'));
+
+    const result = spawnSync(process.execPath, ['--require', preload, join(root, 'scripts', 'unpack-tools.cjs')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HAPPIER_TEST_EXIT_LOG: exitLog,
+        NODE_PATH: [join(cliRoot, 'node_modules'), join(cliRoot, '..', '..', 'node_modules')].join(delimiter),
+      },
+    });
+
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Tools unpacked successfully');
+    expect(existsSync(exitLog)).toBe(false);
   });
 });

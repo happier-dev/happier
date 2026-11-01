@@ -5,11 +5,12 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
 import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
-import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
+import type { MarkdownSelectionAction, MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
 import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
+import { MarkdownContainerView } from './MarkdownContainerView';
 
 type MarkdownSegmentViewProps = Readonly<{
     segment: MarkdownRenderSegment;
@@ -32,6 +33,7 @@ type MarkdownSegmentViewProps = Readonly<{
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -55,10 +57,24 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 streamingRevealPreset={props.streamingRevealPreset}
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
+                selectionActions={props.selectionActions}
                 agentTexMath={props.agentTexMath}
             />
         )
-        : (
+        : props.segment.type === 'container-block' ? (
+            <MarkdownContainerView
+                block={props.segment.container}
+                sourceStart={props.segment.sourceStart}
+                selectable={props.selectable}
+                profile={props.profile}
+                onLinkPress={props.onLinkPress}
+                textStyle={props.textStyle}
+                streamingReveal={props.streamingReveal}
+                streamingRevealPreset={props.streamingRevealPreset}
+                selectionActions={props.selectionActions}
+                agentTexMath={props.agentTexMath}
+            />
+        ) : (
             <SpecialMarkdownBlockView
             blocks={props.segment.blocks}
             first={props.segment.first}

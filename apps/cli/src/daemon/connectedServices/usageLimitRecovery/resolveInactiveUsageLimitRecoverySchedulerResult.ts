@@ -29,6 +29,13 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
 }>): UsageLimitRecoverySchedulerRecoveryResult {
   const resultStatus = readStatus(input.result);
   const recovery = readRecovery(input.result);
+  const result = input.result;
+  const confirmedCancellation = result !== null && typeof result === 'object' && !Array.isArray(result)
+    && (('ok' in result && result.ok === true && resultStatus === 'cancelled')
+      || ('errorCode' in result && result.errorCode === 'usage_limit_recovery_attempt_superseded'));
+  if (confirmedCancellation) {
+    return { status: 'superseded', lastProbeError: recovery?.lastProbeError ?? null };
+  }
   if (resultStatus === 'ready') {
     return {
       status: 'pause',
@@ -38,7 +45,7 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
   }
   if (resultStatus === 'resumed') {
     return {
-      status: 'ready',
+      status: 'resumed',
       ...(recovery?.selectedAuth ? { selectedAuth: recovery.selectedAuth } : {}),
       ...(recovery?.recoveryCredits ? { recoveryCredits: recovery.recoveryCredits } : {}),
     };

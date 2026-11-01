@@ -1,4 +1,5 @@
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,6 +17,42 @@ afterEach(() => {
 });
 
 describe('fetchServerFeaturesSnapshot', () => {
+  it('times out a stalled response body and permits a subsequent healthy observation', async () => {
+    let shouldStall = true;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      if (shouldStall) {
+        response.write('{"features":');
+      } else {
+        response.end(JSON.stringify(payload));
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a TCP listener');
+      const serverUrl = `http://127.0.0.1:${address.port}`;
+      const observation = observeServerFeaturesSnapshot({ serverUrl, timeoutMs: 1_000 });
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          observation,
+          new Promise<'still_waiting'>((resolve) => {
+            guard = setTimeout(() => resolve('still_waiting'), 2_000);
+          }),
+        ]);
+        expect(result).toEqual({ status: 'error', reason: 'timeout' });
+      } finally {
+        clearTimeout(guard);
+      }
+      shouldStall = false;
+      await expect(observeServerFeaturesSnapshot({ serverUrl })).resolves.toMatchObject({ status: 'ready' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('supports a fresh bearer-authenticated public observation through an injected fetch boundary', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify(payload), {
       status: 200,

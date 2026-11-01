@@ -7,6 +7,8 @@ import type {
     MachineUpdateMetadataResponse,
     SpawnSessionResult,
 } from '@happier-dev/protocol';
+import { BugReportSessionDiagnosticsSchema, type BugReportLogSelection } from '@happier-dev/protocol';
+import { z } from 'zod';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from './machineRpcPollInterval';
 import {
     SPAWN_SESSION_ERROR_CODES,
@@ -43,12 +45,11 @@ import { createUiSessionSpawnUserAttemptId } from '../domains/session/spawn/spaw
 import { storage } from '../domains/state/storage';
 import { readMachineDaemonCliVersionForServerScope } from '../domains/machines/readMachineDaemonCliVersionForServerScope';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
 import {
     MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
@@ -958,25 +959,24 @@ export type MachinePreviewEnvResult =
     | { supported: true; response: PreviewEnvResponse }
     | { supported: false };
 
-export type BugReportCollectDiagnosticsResult = {
-    daemonState: {
-        pid: number;
-        httpPort: number;
-        startedAt: number;
-        startedWithCliVersion: string;
-        hasControlToken: boolean;
-        daemonLogPath: string | null;
-    } | null;
-    daemonLogs: Array<{ file: string; path: string; modifiedAt: string }>;
-    runtime: { cwd: string; platform: string; nodeVersion: string };
-    stackContext?: {
-        stackName: string | null;
-        stackEnvPath: string | null;
-        runtimeStatePath: string | null;
-        runtimeState: string | null;
-        logCandidates: string[];
-    } | null;
-};
+const BugReportCollectDiagnosticsResultSchema = z.object({
+    daemonState: z.object({
+        pid: z.number(), httpPort: z.number(), startedAt: z.number(),
+        startedWithCliVersion: z.string(), hasControlToken: z.boolean(), daemonLogPath: z.string().nullable(),
+    }).nullable(),
+    daemonLogs: z.array(z.object({ file: z.string(), path: z.string(), modifiedAt: z.string() })),
+    runtime: z.object({ cwd: z.string(), platform: z.string(), nodeVersion: z.string() }),
+    // Diagnosis/System Status own doctor parsing; collection never serializes this
+    // arbitrary payload into a bug report without the user's explicit pasted input.
+    doctorSnapshot: z.unknown().optional(),
+    stackContext: z.object({
+        stackName: z.string().nullable(), stackEnvPath: z.string().nullable(), runtimeStatePath: z.string().nullable(),
+        runtimeState: z.string().nullable(), logCandidates: z.array(z.string()),
+    }).nullable().optional(),
+    sessionDiagnostics: BugReportSessionDiagnosticsSchema.optional(),
+});
+
+export type BugReportCollectDiagnosticsResult = z.infer<typeof BugReportCollectDiagnosticsResultSchema>;
 
 export type BugReportLogTailResult =
     | { ok: true; path: string; tail: string }
@@ -1082,15 +1082,19 @@ export async function machinePreviewEnv(
 
 export async function machineCollectBugReportDiagnostics(
     machineId: string,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; serverId?: string | null; accountId?: string | null; sessionId?: string; logSelection?: BugReportLogSelection },
 ): Promise<BugReportCollectDiagnosticsResult | null> {
     try {
-        return await apiSocket.machineRPC<BugReportCollectDiagnosticsResult, {}>(
+        const response = await machineRpcWithServerScope<unknown, { sessionId?: string; logSelection?: BugReportLogSelection }>({
             machineId,
-            RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
-            {},
-            options,
-        );
+            method: RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
+            payload: { ...(options?.sessionId ? { sessionId: options.sessionId } : {}), ...(options?.logSelection ? { logSelection: options.logSelection } : {}) },
+            serverId: options?.serverId ?? null,
+            accountId: options?.accountId ?? null,
+            timeoutMs: options?.timeoutMs,
+        });
+        const parsed = BugReportCollectDiagnosticsResultSchema.safeParse(response);
+        return parsed.success ? parsed.data : null;
     } catch {
         return null;
     }

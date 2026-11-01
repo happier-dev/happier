@@ -5,13 +5,14 @@ import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { MachineReplacementReasonSchema } from './machineReplacement.js';
+import { lazySchema } from '../../lazySchema.js';
 
 const CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX = 'content-public-key-sha256:' as const;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
 
-export const ContentPublicKeyFingerprintSchema = z.string()
-  .regex(new RegExp(`^${CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX}[a-f0-9]{64}$`, 'u'));
+export const ContentPublicKeyFingerprintSchema = lazySchema(() => z.string()
+  .regex(new RegExp(`^${CONTENT_PUBLIC_KEY_FINGERPRINT_PREFIX}[a-f0-9]{64}$`, 'u')));
 
 export type ContentPublicKeyFingerprint = z.infer<typeof ContentPublicKeyFingerprintSchema>;
 
@@ -49,22 +50,22 @@ function validateBase64UrlEncodedBytes(
   }
 }
 
-export const MachineInstallationPublicKeySchema = z.string().trim().min(1)
+export const MachineInstallationPublicKeySchema = lazySchema(() => z.string().trim().min(1)
   .superRefine((value, ctx) => {
     validateBase64UrlEncodedBytes(value, 'installationPublicKey', tweetnacl.sign.publicKeyLength, ctx);
-  });
+  }));
 
-export const MachineInstallationPrivateKeySchema = z.string().trim().min(1)
+export const MachineInstallationPrivateKeySchema = lazySchema(() => z.string().trim().min(1)
   .superRefine((value, ctx) => {
     validateBase64UrlEncodedBytes(value, 'privateKey', tweetnacl.sign.secretKeyLength, ctx);
-  });
+  }));
 
-export const MachineInstallationProofSignatureSchema = z.string().trim().min(1)
+export const MachineInstallationProofSignatureSchema = lazySchema(() => z.string().trim().min(1)
   .superRefine((value, ctx) => {
     validateBase64UrlEncodedBytes(value, 'signature', tweetnacl.sign.signatureLength, ctx);
-  });
+  }));
 
-export const MachineInstallationIdentityV1Schema = z.object({
+export const MachineInstallationIdentityV1Schema = lazySchema(() => z.object({
   version: z.literal(1),
   installationId: z.string().trim().min(1),
   createdAt: z.number().int().nonnegative(),
@@ -73,11 +74,11 @@ export const MachineInstallationIdentityV1Schema = z.object({
 }).superRefine((identity, ctx) => {
   validateBase64UrlEncodedBytes(identity.publicKey, 'publicKey', tweetnacl.sign.publicKeyLength, ctx, ['publicKey']);
   validateBase64UrlEncodedBytes(identity.privateKey, 'privateKey', tweetnacl.sign.secretKeyLength, ctx, ['privateKey']);
-});
+}));
 
 export type MachineInstallationIdentityV1 = z.infer<typeof MachineInstallationIdentityV1Schema>;
 
-export const MachineInstallationProofPayloadV1Schema = z.object({
+export const MachineInstallationProofPayloadV1Schema = lazySchema(() => z.object({
   version: z.literal(1),
   installationId: z.string().trim().min(1),
   machineId: z.string().trim().min(1),
@@ -85,15 +86,15 @@ export const MachineInstallationProofPayloadV1Schema = z.object({
   replacementReason: MachineReplacementReasonSchema.optional(),
   contentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.optional(),
   accountId: z.string().trim().min(1).optional(),
-});
+}));
 
 export type MachineInstallationProofPayloadV1 = z.infer<typeof MachineInstallationProofPayloadV1Schema>;
 
-export const MachineInstallationProofV1Schema = z.object({
+export const MachineInstallationProofV1Schema = lazySchema(() => z.object({
   version: z.literal(1),
   algorithm: z.literal('ed25519'),
   signature: MachineInstallationProofSignatureSchema,
-});
+}));
 
 export type MachineInstallationProofV1 = z.infer<typeof MachineInstallationProofV1Schema>;
 

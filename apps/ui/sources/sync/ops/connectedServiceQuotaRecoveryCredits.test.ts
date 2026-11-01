@@ -20,7 +20,7 @@ describe('connectedServiceQuotaRecoveryCredits ops', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             receipt: {
-                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit:credit-1',
+                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit-observation:["credit-1",1000]',
                 providerCreditId: 'credit-1',
                 status: 'consumed',
             },
@@ -57,13 +57,13 @@ describe('connectedServiceQuotaRecoveryCredits ops', () => {
                 serviceId: 'openai-codex',
                 profileId: 'work',
                 providerCreditId: 'credit-1',
-                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit:credit-1',
+                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit-observation:["credit-1",1000]',
             },
         });
         expect(result).toEqual({
             ok: true,
             receipt: {
-                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit:credit-1',
+                idempotencyKey: 'connected-service-quota-recovery-credit:v1:openai-codex:work:credit-observation:["credit-1",1000]',
                 providerCreditId: 'credit-1',
                 status: 'consumed',
             },

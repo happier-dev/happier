@@ -1,4 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Service commands are probed on the real PATH before spawnSync (mocked per test) runs them.
+let serviceCommandDir = '';
+let originalServicePath: string | undefined;
+
+beforeEach(() => {
+  serviceCommandDir = mkdtempSync(join(tmpdir(), 'happier-relay-uninstall-commands-'));
+  for (const command of ['launchctl', 'schtasks.exe', 'powershell.exe']) {
+    writeFileSync(join(serviceCommandDir, command), '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(join(serviceCommandDir, command), 0o755);
+  }
+  originalServicePath = process.env.PATH;
+  process.env.PATH = serviceCommandDir;
+});
+
+afterEach(() => {
+  if (originalServicePath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalServicePath;
+  rmSync(serviceCommandDir, { recursive: true, force: true });
+});
 
 describe('RelayHostEngine (local uninstall cleanup)', () => {
   it('preserves relay data and persistent configuration during uninstall', async () => {
@@ -304,10 +328,9 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
 
   it('uninstalls the legacy unsuffixed scheduled task when the preview lane still owns that install root', async () => {
     const originalPlatform = process.platform;
-    const originalPath = process.env.PATH;
+    const windowsSystem32 = serviceCommandDir;
 
     Object.defineProperty(process, 'platform', { value: 'win32' });
-    process.env.PATH = '/tmp/windows-system32';
 
     const invoked: string[] = [];
     const installRoot = 'C:\\Users\\tester\\.happier\\self-host-preview';
@@ -356,7 +379,7 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
           ...actual,
           existsSync: (path: string) =>
             path.endsWith('happier-server.ps1')
-            || path === '/tmp/windows-system32/powershell.exe',
+            || path === join(windowsSystem32, 'powershell.exe'),
         };
       });
 
@@ -402,8 +425,6 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
       )).toBe(true);
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
-      if (originalPath === undefined) delete process.env.PATH;
-      else process.env.PATH = originalPath;
       vi.resetModules();
       vi.clearAllMocks();
     }

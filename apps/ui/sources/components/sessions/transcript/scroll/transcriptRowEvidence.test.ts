@@ -175,6 +175,7 @@ describe('resolveTranscriptRowContentCount (N1.3)', () => {
             },
             {
                 kind: 'tool-group-footer',
+                hasVisibleTools: false,
                 id: `${groupId}#footer`,
                 groupId,
                 toolMessageIds,

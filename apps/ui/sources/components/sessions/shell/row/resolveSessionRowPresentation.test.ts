@@ -265,7 +265,7 @@ describe('resolveSessionRowPresentation', () => {
         });
     });
 
-    it('uses the normal working indicator for background activity while retaining precise status and higher-priority attention', () => {
+    it('keeps attention indicators over background activity while retaining the background status line', () => {
         expect(resolveSessionRowPresentation({
             attentionState: 'unread',
             backgroundActive: true,
@@ -273,7 +273,7 @@ describe('resolveSessionRowPresentation', () => {
             requestedSecondaryLineMode: 'path',
             hasPathSubtitle: true,
         })).toEqual({
-            attentionIndicator: 'working',
+            attentionIndicator: 'unread',
             titleTone: 'emphasized',
             secondaryLine: 'status',
             backgroundActivityStatusLine: true,
@@ -285,11 +285,13 @@ describe('resolveSessionRowPresentation', () => {
             requestedSecondaryLineMode: 'status',
             hasPathSubtitle: false,
         })).toEqual({
-            attentionIndicator: 'working',
+            attentionIndicator: 'pending',
             titleTone: 'emphasized',
             secondaryLine: 'status',
             backgroundActivityStatusLine: true,
         });
+        // A finished turn awaiting review says so: that reply is what needs the person, not the
+        // background work still running beside it.
         expect(resolveSessionRowPresentation({
             attentionState: 'ready',
             backgroundActive: true,
@@ -297,10 +299,10 @@ describe('resolveSessionRowPresentation', () => {
             requestedSecondaryLineMode: 'status',
             hasPathSubtitle: false,
         })).toEqual({
-            attentionIndicator: 'working',
+            attentionIndicator: 'ready',
             titleTone: 'emphasized',
             secondaryLine: 'status',
-            backgroundActivityStatusLine: true,
+            statusTextKey: 'status.readyForReview',
         });
         expect(resolveSessionRowPresentation({
             attentionState: 'permission_required',

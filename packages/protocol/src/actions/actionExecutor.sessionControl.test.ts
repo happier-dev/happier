@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { RpcError } from '../rpcErrors.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
@@ -49,6 +50,43 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (session control)', () => {
+  it('sets generic live config options through the same Action for UI and agents', async () => {
+    const applied: unknown[] = [];
+    const executor = createExecutor({
+      sessionConfigOptionSet: async (input) => { applied.push(input); return { ok: true }; },
+      resolveServerIdForSessionId: () => 'server-a',
+    });
+    const input = { configId: ' effort ', valueId: ' high ' };
+    for (const surface of ['ui_button', 'session_agent', 'mcp'] as const) {
+      expect(await executor.execute('session.config_option.set', input, { surface, defaultSessionId: 's1' }))
+        .toEqual({ ok: true, result: { ok: true } });
+    }
+    expect(applied).toEqual(Array.from({ length: 3 }, () => ({ sessionId: 's1', ...input, serverId: 'server-a' })));
+    expect(await executor.execute('session.config_option.set', { ...input, configId: ' ' }, { surface: 'mcp', defaultSessionId: 's1' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(applied).toHaveLength(3);
+    expect(await createExecutor().execute('session.config_option.set', input, { surface: 'mcp', defaultSessionId: 's1' }))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+
+  it.each([
+    { rejection: new RpcError('Request no longer pending', 'permission_request_not_found'), expectedCode: 'permission_request_not_found' },
+    { rejection: Object.assign(new Error('Session missing'), { code: 'session_not_found' }), expectedCode: 'session_not_found' },
+    { rejection: Object.assign(new Error('Connection refused'), { code: 'ECONNREFUSED' }), expectedCode: 'server_unreachable' },
+    { rejection: Object.assign(new Error('Unclassified failure'), { code: 'private_adapter_code' }), expectedCode: 'action_failed' },
+    { rejection: { rpcErrorCode: 'private_adapter_code', message: 'Unclassified carrier' }, expectedCode: 'action_failed' },
+  ])('preserves the public action error classification $expectedCode', async ({ rejection, expectedCode }) => {
+    const executor = createExecutor({
+      // The host's outbound operation reports its genuine RPC/system error.
+      sessionPermissionRespond: async () => { throw rejection; },
+    });
+    await expect(executor.execute(
+      'session.permission.respond',
+      { sessionId: 's1', requestId: 'request1', decision: 'allow' },
+      { surface: 'voice_tool' },
+    )).resolves.toMatchObject({ ok: false, errorCode: expectedCode });
+  });
+
   it('executes session.message.send via deps.sessionSendMessage (including optional overrides)', async () => {
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionSendMessage });

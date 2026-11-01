@@ -18,8 +18,8 @@ export type BuiltInAcpConfig = Readonly<{
   promptImageSupport: BuiltInAcpYesNoAuto;
   /** Whether Happier's MCP server list is passed to the ACP session/new request. */
   mcpServers?: 'pass' | 'drop';
-  /** Provider ACP mode selected for each explicit Happier permission intent. Null means no override. */
-  permissionModeMapping?: Readonly<Partial<Record<PermissionMode, string | null>>>;
+  /** A mode id, or ordered candidates resolved against advertised modes. Null means no override. */
+  permissionModeMapping?: Readonly<Partial<Record<PermissionMode, string | readonly string[] | null>>>;
 }>;
 
 function providerLauncherCommand(agentId: AgentId): string {
@@ -98,7 +98,8 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     permissionModeMapping: {
       default: null,
       'read-only': 'ask',
-      'safe-yolo': 'code',
+      // FX 0.0.14 renamed 0.0.13's automatic-review mode from code to auto.
+      'safe-yolo': ['auto', 'code'],
     },
   },
   droid: {
@@ -150,6 +151,15 @@ export function hasBuiltInAcpConfig(agentId: AgentId): boolean {
 
 export function getBuiltInAcpConfig(agentId: AgentId): BuiltInAcpConfig | null {
   return BUILT_IN_ACP_CONFIG[agentId] ?? null;
+}
+
+/** Resolve a preset's native id without inventing an unadvertised candidate. */
+export function resolveAcpPermissionModeId(
+  mapping: string | ReadonlyArray<string> | null | undefined,
+  availableModes: ReadonlyArray<Readonly<{ id: string }>>,
+): string | null {
+  if (typeof mapping === 'string') return mapping;
+  return mapping?.find((id) => availableModes.some((mode) => mode.id === id)) ?? null;
 }
 
 /**

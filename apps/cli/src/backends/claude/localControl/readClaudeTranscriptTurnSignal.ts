@@ -1,11 +1,13 @@
 import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { isClaudeInternalTranscriptMessage } from '../utils/isClaudeInternalTranscriptMessage';
+import { readClaudeControlCommandRowShape } from '../utils/controlCommandRows';
 import { isClaudeRuntimeAuthFailureEvidence } from '../connectedServices/classifyClaudeConnectedServiceRuntimeAuthFailure';
 import { isClaudeTranscriptTaskNotification } from './readClaudeTranscriptProviderActivity';
 
 const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:\n';
 const REQUEST_INTERRUPTED_TEXT = '[Request interrupted by user]';
+const REQUEST_INTERRUPTED_FOR_TOOL_USE_TEXT = '[Request interrupted by user for tool use]';
 const SYNTHETIC_NO_RESPONSE_TEXT = 'No response requested.';
 
 function firstTextContent(value: unknown): string | null {
@@ -150,11 +152,12 @@ export function readClaudeTranscriptTurnSignal(message: RawJSONLines): LocalTurn
 
   if (message.type !== 'user') return null;
   if (isClaudeInternalTranscriptMessage(message)) return null;
+  if (readClaudeControlCommandRowShape(message)?.kind === 'shell_output') return null;
 
   const content = readMessageRecord(message)?.content;
   const text = firstTextContent(content);
 
-  if (text === REQUEST_INTERRUPTED_TEXT) {
+  if (text === REQUEST_INTERRUPTED_TEXT || text === REQUEST_INTERRUPTED_FOR_TOOL_USE_TEXT) {
     return {
       type: 'turn_terminal',
       providerTurnId: null,

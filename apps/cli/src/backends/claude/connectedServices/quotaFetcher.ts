@@ -1,11 +1,19 @@
-import type { ConnectedServiceCredentialRecordV1, ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import {
+  readClaudeOauthCredentialMetadata,
+  readClaudeOauthCredentialOrganizationId,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceQuotaMeterV1,
+} from '@happier-dev/protocol';
 import { createHash } from 'node:crypto';
 
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
 import { claudeResetRequestId, parseClaudeQuotaResets } from './quotaResets';
 import { logger } from '@/ui/logger';
 
-import { resolveMissingClaudeSubscriptionClaudeCodeScopes } from '@/daemon/connectedServices/descriptors/connectedAccountDescriptors';
+import {
+  fetchClaudeSubscriptionProfileContext,
+  resolveMissingClaudeSubscriptionClaudeCodeScopes,
+} from '@/daemon/connectedServices/descriptors/connectedAccountDescriptors';
 import { isRecord, normalizePct, resolveConnectedServiceQuotaAccountLabel } from '@/daemon/connectedServices/quotas/quotaNormalization';
 import { parseRetryAfterHeader } from '@/daemon/connectedServices/quotas/normalization';
 import {
@@ -60,22 +68,10 @@ function resolveAccountLabel(record: ConnectedServiceCredentialRecordV1): string
   return resolveConnectedServiceQuotaAccountLabel(record);
 }
 
-function normalizePlanLabel(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  return trimmed ? trimmed : null;
-}
-
 function resolveClaudeSubscriptionPlanLabel(record: ConnectedServiceCredentialRecordV1): string | null {
   if (record.kind !== 'oauth') return null;
-  const raw = isRecord(record.oauth.raw) ? record.oauth.raw : null;
-  const claudeAiOauth = isRecord(raw?.claudeAiOauth)
-    ? raw.claudeAiOauth
-    : isRecord(raw?.['claude.ai_oauth'])
-      ? raw['claude.ai_oauth']
-      : null;
-  return normalizePlanLabel(claudeAiOauth?.subscriptionType)
-    ?? normalizePlanLabel(claudeAiOauth?.rateLimitTier);
+  const metadata = readClaudeOauthCredentialMetadata(record.oauth.raw);
+  return metadata?.subscriptionType ?? metadata?.rateLimitTier ?? null;
 }
 
 function buildCredentialBackoffKey(record: ConnectedServiceCredentialRecordV1): string | null {
@@ -657,6 +653,23 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     providerBackoffCredentialKeys.add(key);
   }
 
+  async function fetchProfileContext(record: Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>, now: number, signal: AbortSignal) {
+    return await fetchClaudeSubscriptionProfileContext({
+      accessToken: record.oauth.accessToken,
+      expectedProviderAccountId: record.oauth.providerAccountId,
+      profileUrl: new URL('./profile', usageUrl).toString(),
+      signal,
+      fetcher: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set('User-Agent', userAgent);
+        headers.set('anthropic-beta', betaHeaderValue);
+        const response = await fetch(url, { ...init, headers });
+        observeRateLimit(response, record, now);
+        return response;
+      },
+    });
+  }
+
   async function discoverResets(record: ConnectedServiceCredentialRecordV1, now: number, signal: AbortSignal) {
     if (record.kind !== 'oauth') return undefined;
     const response = await fetchUsage({ usageUrl: resetUsageUrl.toString(), accessToken: record.oauth.accessToken,
@@ -733,14 +746,18 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         if (!providerLimitIds.some((id) => clears.includes(id) && exhaustedIds.has(id))) return 'not_available';
       }
       signal.throwIfAborted();
-      const profileResponse = await fetchUsage({ usageUrl: new URL('./profile', usageUrl).toString(),
-        accessToken: record.oauth.accessToken, betaHeaderValue, userAgent, signal });
-      observeRateLimit(profileResponse, record, now);
-      if (!profileResponse.ok) await throwUsageError(profileResponse);
-      const profile: unknown = await profileResponse.json();
-      const organization = isRecord(profile) && isRecord(profile.organization) ? profile.organization : null;
-      const organizationId = typeof organization?.uuid === 'string' ? organization.uuid.trim() : '';
+      const profile = await fetchProfileContext(record, now, signal);
+      if (profile.status === 'rejected') {
+        throw new ConnectedServiceQuotaFetchError('Claude reset profile authentication failed.', {
+          status: profile.providerStatus, quotaFetchErrorCode: 'auth_failure',
+        });
+      }
+      const organizationId = profile.status === 'accepted' ? readClaudeOauthCredentialOrganizationId(profile.raw) : null;
       if (!organizationId) throw new ConnectedServiceQuotaFetchError('Claude reset organization is unavailable.', { quotaFetchErrorCode: 'malformed' });
+      const credentialOrganizationId = readClaudeOauthCredentialOrganizationId(record.oauth.raw);
+      if (credentialOrganizationId && organizationId !== credentialOrganizationId) {
+        throw new ConnectedServiceQuotaFetchError('Claude reset organization does not match the selected credential.', { quotaFetchErrorCode: 'malformed' });
+      }
       const resetUrl = new URL(`/api/organizations/${encodeURIComponent(organizationId)}/reset_rate_limits`, usageUrl).toString();
       signal.throwIfAborted();
       let response: Response;
@@ -782,6 +799,8 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
     fetch: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;
       const planLabel = resolveClaudeSubscriptionPlanLabel(record);
+      const providerAccountId = record.oauth.providerAccountId?.trim() || null;
+      const providerOrganizationId = readClaudeOauthCredentialOrganizationId(record.oauth.raw);
       if (resolveMissingClaudeSubscriptionClaudeCodeScopes(record.oauth.scope).length > 0) {
         throw createMissingClaudeCodeScopeQuotaError();
       }
@@ -790,6 +809,9 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
           v: 1,
           serviceId: record.serviceId,
           profileId: record.profileId,
+          providerId: 'claude',
+          ...(providerAccountId ? { activeAccountId: providerAccountId } : {}),
+          ...(providerOrganizationId ? { providerOrganizationId } : {}),
           fetchedAt: now,
           staleAfterMs,
           planLabel,
@@ -867,6 +889,9 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         v: 1,
         serviceId: record.serviceId,
         profileId: record.profileId,
+        providerId: 'claude',
+        ...(providerAccountId ? { activeAccountId: providerAccountId } : {}),
+        ...(providerOrganizationId ? { providerOrganizationId } : {}),
         fetchedAt: now,
         staleAfterMs,
         planLabel,

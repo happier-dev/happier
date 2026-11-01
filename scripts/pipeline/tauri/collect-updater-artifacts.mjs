@@ -1,6 +1,7 @@
 // @ts-check
 
 import fs from 'node:fs';
+import { readTauriMainBinaryName } from './channel-config.mjs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -100,8 +101,8 @@ function resolveArtifactExt(artifactFilename) {
   return '';
 }
 
-/** @param {string} artifactPath @param {string} platformKey */
-function validateMacosUpdaterArchitecture(artifactPath, platformKey) {
+/** @param {string} artifactPath @param {string} platformKey @param {string} mainBinaryName */
+function validateMacosUpdaterArchitecture(artifactPath, platformKey, mainBinaryName) {
   const architecture = platformKey === 'darwin-x86_64' ? 'x86_64'
     : platformKey === 'darwin-aarch64' ? 'arm64' : null;
   if (!architecture) throw new Error(`Unsupported macOS architecture: ${platformKey}`);
@@ -112,7 +113,7 @@ function validateMacosUpdaterArchitecture(artifactPath, platformKey) {
     execFileSync('tar', ['-xzf', artifactPath, '-C', scratch], { stdio: 'pipe' });
     const apps = fs.readdirSync(scratch).filter((name) => name.endsWith('.app'));
     if (apps.length !== 1) throw new Error('Expected exactly one macOS app in the updater archive');
-    for (const executable of ['app', 'hsetup']) {
+    for (const executable of [mainBinaryName, 'hsetup']) {
       const binary = path.join(scratch, apps[0], 'Contents', 'MacOS', executable);
       const architectures = execFileSync('lipo', ['-archs', binary], { encoding: 'utf8', stdio: 'pipe' }).trim().split(/\s+/u);
       if (!architectures.includes(architecture)) {
@@ -212,7 +213,10 @@ function main() {
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
       fail(`Missing updater artifact for signature: ${rel(sigPath)}`);
     }
-    if (platformKey.startsWith('darwin-')) validateMacosUpdaterArchitecture(artifactPath, platformKey);
+    if (platformKey.startsWith('darwin-')) {
+      validateMacosUpdaterArchitecture(artifactPath, platformKey,
+        readTauriMainBinaryName({ environment, tauriDir: path.join(absUiDir, 'src-tauri') }));
+    }
   }
 
   const ext = resolveArtifactExt(path.basename(artifactPath));

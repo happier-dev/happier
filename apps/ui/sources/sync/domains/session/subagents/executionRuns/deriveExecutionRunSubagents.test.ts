@@ -68,6 +68,19 @@ function deriveSingleRun(messages: readonly Message[]) {
 }
 
 describe('deriveExecutionRunSubagents — terminal status truthfulness (D-1)', () => {
+    it('does not resurrect a completed run when an unsequenced row separates conflicting timestamps', () => {
+        const run = deriveSingleRun([
+            createSubAgentRunMessage({
+                id: 'completed', seq: 2, createdAt: 1_000, state: 'completed',
+                result: { status: 'succeeded', runId: RUN_ID },
+            }),
+            { ...createAgentTextMessage({ id: 'unsequenced', text: 'Working.' }), createdAt: 2_000 },
+            createSubAgentRunMessage({ id: 'started', seq: 1, createdAt: 3_000, state: 'running' }),
+        ]);
+
+        expect(run.status).toBe('succeeded');
+    });
+
     it('never renders a timeout run as succeeded', () => {
         const run = deriveSingleRun([
             createSubAgentRunMessage({

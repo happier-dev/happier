@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SESSION_WORKFLOW_RUN_RECORD_REVISION_PATTERN } from './sessionWorkflowRunRecordRevision.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Provider-agnostic durable workflow run snapshot.
@@ -25,7 +26,7 @@ export const SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX = 4000;
  */
 export const SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION = 1;
 
-export const SessionWorkflowRunStatusV1Schema = z.enum([
+export const SessionWorkflowRunStatusV1Schema = lazySchema(() => z.enum([
   'active',
   'complete',
   'failed',
@@ -33,7 +34,7 @@ export const SessionWorkflowRunStatusV1Schema = z.enum([
   'blocked',
   'cancelled',
   'unknown',
-]);
+]));
 export type SessionWorkflowRunStatusV1 = z.infer<typeof SessionWorkflowRunStatusV1Schema>;
 
 /**
@@ -43,12 +44,12 @@ export type SessionWorkflowRunStatusV1 = z.infer<typeof SessionWorkflowRunStatus
  * reconciliation / graceful teardown). Clients may render a distinct tone; absence means the
  * status was reached by a real provider transition.
  */
-export const SessionWorkflowRunStatusReasonV1Schema = z.enum([
+export const SessionWorkflowRunStatusReasonV1Schema = lazySchema(() => z.enum([
   'interrupted',
-]);
+]));
 export type SessionWorkflowRunStatusReasonV1 = z.infer<typeof SessionWorkflowRunStatusReasonV1Schema>;
 
-export const SessionWorkflowAgentStatusV1Schema = z.enum([
+export const SessionWorkflowAgentStatusV1Schema = lazySchema(() => z.enum([
   'pending',
   'active',
   'complete',
@@ -56,20 +57,20 @@ export const SessionWorkflowAgentStatusV1Schema = z.enum([
   'blocked',
   'cancelled',
   'unknown',
-]);
+]));
 export type SessionWorkflowAgentStatusV1 = z.infer<typeof SessionWorkflowAgentStatusV1Schema>;
 
-export const SessionWorkflowPhaseSnapshotV1Schema = z
+export const SessionWorkflowPhaseSnapshotV1Schema = lazySchema(() => z
   .object({
     id: z.string().trim().min(1),
     title: z.string().trim().min(1).max(SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX).optional(),
     order: z.number().int().nonnegative().optional(),
     agentIds: z.array(z.string().trim().min(1)),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkflowPhaseSnapshotV1 = z.infer<typeof SessionWorkflowPhaseSnapshotV1Schema>;
 
-export const SessionWorkflowAgentSnapshotV1Schema = z
+export const SessionWorkflowAgentSnapshotV1Schema = lazySchema(() => z
   .object({
     id: z.string().trim().min(1),
     title: z.string().trim().min(1).max(SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX),
@@ -103,10 +104,10 @@ export const SessionWorkflowAgentSnapshotV1Schema = z
     completedAt: z.number().int().nonnegative().optional(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkflowAgentSnapshotV1 = z.infer<typeof SessionWorkflowAgentSnapshotV1Schema>;
 
-export const SessionWorkflowRunSnapshotV1Schema = z
+export const SessionWorkflowRunSnapshotV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     projectionVersion: z.literal(SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION),
@@ -135,5 +136,5 @@ export const SessionWorkflowRunSnapshotV1Schema = z
     phases: z.array(SessionWorkflowPhaseSnapshotV1Schema),
     agents: z.array(SessionWorkflowAgentSnapshotV1Schema),
   })
-  .passthrough();
+  .passthrough());
 export type SessionWorkflowRunSnapshotV1 = z.infer<typeof SessionWorkflowRunSnapshotV1Schema>;

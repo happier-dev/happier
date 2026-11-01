@@ -41,7 +41,6 @@ describe('Pi ACP runtime prompt-preparation failure', () => {
       getPermissionMode: () => 'default',
       providerInputConsumer: createSessionProviderInputConsumerFixture(),
       credentials,
-      fallbackToolDelivery: 'shell_bridge',
       accountSettings: {},
     });
 

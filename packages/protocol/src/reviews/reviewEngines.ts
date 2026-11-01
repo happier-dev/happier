@@ -1,14 +1,15 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const NativeReviewEngineIdSchema = z.enum(['coderabbit']);
+export const NativeReviewEngineIdSchema = lazySchema(() => z.enum(['coderabbit']));
 export type NativeReviewEngineId = z.infer<typeof NativeReviewEngineIdSchema>;
 
-export const NativeReviewEngineSpecSchema = z
+export const NativeReviewEngineSpecSchema = lazySchema(() => z
   .object({
     id: NativeReviewEngineIdSchema,
     title: z.string().min(1),
   })
-  .strict();
+  .strict());
 export type NativeReviewEngineSpec = z.infer<typeof NativeReviewEngineSpecSchema>;
 
 const NATIVE_REVIEW_ENGINES: readonly NativeReviewEngineSpec[] = Object.freeze([

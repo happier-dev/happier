@@ -109,6 +109,14 @@ The embedded terminal depends on all of the following:
 
 If the daemon is offline or the machine target is unavailable, Happier shows a terminal error state instead of a live shell.
 
+<Callout type="info">
+  In the current development build (unreleased), standalone CLI terminals on
+  macOS and Linux use Python 3 on the connected machine. This avoids a Bun
+  runtime incompatibility that can leave the terminal blank despite a successful
+  shell launch. These terminals use their initial row and column dimensions;
+  later panel resizes do not resize the shell.
+</Callout>
+
 ## Important things to know
 
 - Commands run on the connected machine for the current session.

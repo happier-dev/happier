@@ -24,7 +24,7 @@ import {
     refreshQuotaSnapshot,
     subscribeQuotaSnapshotEntry,
     type QuotaSnapshotLoadContext,
-} from './connectedServiceQuotaSnapshotStore';
+} from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 import { useConnectedServiceRecoveryCreditMachineTarget } from './useConnectedServiceRecoveryCreditMachineTarget';
 
 export type UseConnectedServiceQuotaSnapshotResult = Readonly<{

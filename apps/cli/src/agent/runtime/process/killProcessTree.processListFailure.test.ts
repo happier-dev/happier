@@ -34,12 +34,18 @@ describe('killProcessTree process-list failure', () => {
 
     await expect(killProcessTree(parent, { graceMs: 250 })).rejects.toMatchObject({
       code: 'process_tree_termination_incomplete',
+      discoveryFailed: true,
+      probeFailed: false,
+      signallingFailed: false,
     });
     await expect(waitForProcessExit(parent.pid!, { timeoutMs: 3_000 })).resolves.toBe(true);
     expect(isPidAlive(childPid)).toBe(true);
     logger.flushSync();
     const diagnostic = readFileSync(logger.getLogPath(), 'utf8').slice(before.length);
     expect(diagnostic).toContain('process_tree_termination_incomplete');
+    expect(diagnostic).toMatch(/"discoveryFailed":\s*true/);
+    expect(diagnostic).toMatch(/"probeFailed":\s*false/);
+    expect(diagnostic).toMatch(/"signallingFailed":\s*false/);
     expect(diagnostic).not.toContain('private-native-value');
   });
 });

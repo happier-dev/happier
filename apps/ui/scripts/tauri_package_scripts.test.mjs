@@ -74,6 +74,21 @@ test('apps/ui Tauri channel configs use the expected desktop product names', asy
 
   assert.equal(publicDev?.productName, 'Happier (dev)');
   assert.equal(publicDev?.app?.windows?.[0]?.title, 'Happier (dev)');
+
+  // Linux installs executables and icons in shared directories. Distinct bundle
+  // identifiers alone do not prevent channels (or the Happier CLI) colliding.
+  const binaryNames = [stable, preview, publicDev].map((config) => config.mainBinaryName);
+  for (const name of binaryNames) {
+    assert.equal(typeof name, 'string');
+    assert.match(name, /^[a-z][a-z0-9-]+$/);
+    assert.notEqual(name, 'app');
+    assert.notEqual(name, 'happier');
+  }
+  assert.equal(new Set(binaryNames).size, 3);
+  assert.equal(stable.bundle.category, 'DeveloperTool');
+  assert.ok(stable.bundle.publisher);
+  assert.ok(stable.bundle.shortDescription);
+  assert.ok(stable.bundle.longDescription);
 });
 
 test('apps/ui Tauri channel configs leave HTML5 file drag-and-drop available to the frontend', async () => {

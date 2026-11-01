@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { Metadata } from '@/api/types';
 import { Session } from './session';
+import { logger } from '@/ui/logger';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';
 import { getProjectPath } from './utils/path';
@@ -15,16 +17,57 @@ import { createClaudeUnifiedRuntimeControlBridge } from './unifiedTerminal/runti
 import { createClaudeUnifiedTuiControlController } from './unifiedTerminal/tuiControls/controller';
 import { createFakeControlPort } from './unifiedTerminal/tuiControls/fakeControlPort';
 import { createClaudeSettingsGuard } from './unifiedTerminal/tuiControls/settingsGuard';
+import { ClaudeUnifiedDialogChoiceBroker } from './unifiedTerminal/dialogChoice/claudeUnifiedDialogChoiceBroker';
 import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from './unifiedTerminal/tuiControls/types';
 import { claudeRemoteAgentSdk } from './remote/claudeRemoteAgentSdk';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { z } from 'zod';
+import { buildConnectedServiceCredentialRecord, SessionConnectedServiceAuthApplyGenerationRequestV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupGenerationConsumer } from '@/daemon/connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
+import { createConnectedServiceCurrentGroupTruthNotifier } from '@/daemon/connectedServices/accountGroups/generation/createConnectedServiceCurrentGroupTruthNotifier';
+import { reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
+import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '@/daemon/connectedServices/sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import { applyClaudeSharedGroupGenerationApplication } from './connectedServices/applyClaudeSharedGroupGenerationApplication';
+import { createClaudeUnifiedSustainedPendingDeliveryBlockHandler } from './unifiedTerminal/claudeUnifiedPendingDeliveryBlockHandling';
+import type { ApiClient } from '@/api/api';
+import { createConnectedServiceGroupMutationCurrentnessValidator } from '@/daemon/connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { startAnthropicSseBoundary } from './sdk/anthropicSseBoundary.testkit';
 import type {
   SessionRuntimeActivityContributionHandle,
 } from '@/session/runtimeActivity/types';
 
+// The filesystem is an external boundary; forward every stat except the inaccessible
+// transcript injected by the identity-decision regression.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, statSync: vi.fn(actual.statSync) };
+});
+
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
+
+it('preserves primary tool identity for consumers registered after the native broker until Session retires it', async () => {
+  const session = createSession(createSessionClientStub());
+  const broker = new ClaudeUnifiedDialogChoiceBroker(session);
+  session.addClaudeSessionHookCallback((data) => broker.observeSessionHook(data));
+  const facts = { sessionId: 'native-session', toolName: 'ExitPlanMode', toolInput: { plan: '# Harmless plan' } };
+  try {
+    session.onClaudeSessionHook({ hook_event_name: 'PreToolUse', session_id: facts.sessionId,
+      tool_name: facts.toolName, tool_input: facts.toolInput, tool_use_id: 'primary-tool-id' });
+    session.onClaudeSessionHook({ hook_event_name: 'Stop', session_id: facts.sessionId, agent_id: 'headless-agent' });
+    expect(session.claudeToolHookCorrelation.findToolUseId(facts)).toBe('primary-tool-id');
+    let observedToolId: unknown;
+    session.addClaudeSessionHookCallback((data) => {
+      if (data.hook_event_name === 'PostToolUse') observedToolId = session.claudeToolHookCorrelation.get('primary-tool-id')?.tool_use_id;
+    });
+    session.onClaudeSessionHook({ hook_event_name: 'PostToolUse', session_id: facts.sessionId, tool_use_id: 'primary-tool-id' });
+    expect(observedToolId).toBe('primary-tool-id');
+    expect(session.claudeToolHookCorrelation.get('primary-tool-id')).toBeUndefined();
+  } finally {
+    await broker.dispose();
+    session.cleanup();
+  }
+});
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {
@@ -58,7 +101,8 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
     discardPendingMessageQueueV2All: vi.fn(async () => 0),
     discardCommittedMessageLocalIds: vi.fn(async () => 0),
     updateMetadata: vi.fn(),
-    updateAgentState: vi.fn(),
+    updateAgentStateRequestSettlement: vi.fn(async () => {}),
+      updateAgentState: vi.fn(),
     sendSessionDeath: vi.fn(),
     flush: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
@@ -388,6 +432,131 @@ describe('Session', () => {
     session.cleanup();
   });
 
+  it.each(['apply', 'already-applied legacy projection'] as const)(
+    'releases unavailable Claude input and Pending after %s through the frozen reader', async (path) => {
+      // Exact current-truth reader from cli-v0.2.15, 22ac8263cfdbcdb845441b9044ff18199cf7652e.
+      // In particular, it rejects nullable revisions; do not replace with the current schema.
+      const frozenTruthReader = z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('current_auth_group_unavailable'), groupId: z.string().trim().min(1),
+          unavailableReason: z.enum(['group_missing', 'active_profile_missing']) }).passthrough(),
+        z.object({ kind: z.literal('current_auth_group_available'), groupId: z.string().trim().min(1),
+          generation: z.number().int().nonnegative(),
+          credentialRevision: z.string().regex(/^csr_[A-Za-z0-9_-]{22,64}$/) }).passthrough(),
+      ]);
+      const activeServerDir = mkdtempSync(join(tmpdir(), 'happier-legacy-availability-'));
+      const session = createSession(createSessionClientStub());
+      const controller = new AbortController();
+      let pendingBlocked = false;
+      const pending = createClaudeUnifiedSustainedPendingDeliveryBlockHandler({
+        // These are the Pending server's block/wake boundary, not mocked domain logic.
+        blockPendingMessageDelivery: async () => { pendingBlocked = true; return true; },
+        wakePendingMaterialization: () => {
+          pendingBlocked = false;
+          session.queue.push('Continue interrupted work.', { permissionMode: 'default' });
+        },
+        logPrefix: '[test]', logDebug: () => {},
+      });
+      const unregister = session.registerConnectedServiceExactApplicationHandler(async () => {
+        pending.wakePendingMaterialization();
+      });
+      const notify = createConnectedServiceCurrentGroupTruthNotifier({
+        resolveTransport: async (sessionId) => ({ sessionId }),
+        callRpc: async ({ request }) => {
+          const parsed = SessionConnectedServiceAuthApplyGenerationRequestV1Schema.parse(request);
+          frozenTruthReader.parse(parsed.authGeneration);
+          return await session.applyConnectedServiceAuthGeneration(parsed);
+        },
+      });
+      const committed = buildConnectedServiceAuthGroupCommittedGenerationFact({
+        decisionId: 'read-back-failed', provenance: 'reconciliation',
+        decisionCommittedTarget: {
+          serviceId: 'claude-subscription', groupId: 'team', profileId: 'backup', generation: 2,
+          credentialRevision: null,
+        },
+      });
+      // A legacy DB row still has a server-resolved csr digest on a pool-capable server.
+      // Resolved by the real server owner for rowId=legacy-availability-row, metadata={v:2}.
+      const credentialRevision = 'csr_qMAFYPwqb7Ulai7se9UH-MHchuy3eVAkTXkJwxwv-lE';
+      const record = buildConnectedServiceCredentialRecord({
+        now: 1_000, serviceId: 'claude-subscription', profileId: 'backup', kind: 'token',
+        token: { token: 'sk-ant-oat01-availability-placeholder', providerAccountId: null, providerEmail: null },
+      });
+      const validateCurrent = createConnectedServiceGroupMutationCurrentnessValidator({
+        credentials: { token: 'fixture', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        // Genuine server boundary; resolver, binding checks and write-currentness stay real.
+        api: {
+          getConnectedServiceAuthGroup: async () => ({ activeProfileId: 'backup', generation: 2 }),
+          getAccountEncryptionMode: async () => 'plain',
+          getConnectedServiceCredentialPlain: async () => ({ revisionSemantics: 'revisioned', credentialRevision,
+            content: { t: 'plain', v: record } }),
+          getConnectedServiceCredentialSealed: async () => null,
+        } as unknown as ApiClient,
+      });
+      const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+        resolveGenerationApplicationScope: async () => ({
+          status: 'supported', scope: 'shared_group_auth_surface', ownerId: 'claude',
+        }),
+        verifySharedGenerationApplication: async () => null,
+        applyCommittedGeneration: async () => { throw new Error('Shared provider owner must apply'); },
+        applySharedGenerationApplication: async () => {
+          const proof = await applyClaudeSharedGroupGenerationApplication({
+            activeServerDir, ...committed.decisionCommittedTarget, credentialRevision, record,
+            validateCurrentBeforeMutation: async () => await validateCurrent({ ...committed.decisionCommittedTarget, credentialRevision }),
+          });
+          if (proof.status !== 'verified') throw new Error('Expected actual shared credential proof');
+          return { reconciliationDisposition: 'converged', errorCode: null,
+            providerAdoptedTarget: { ...committed.decisionCommittedTarget, credentialRevision, proof } };
+        },
+        notifyCurrentGroupTruth: notify,
+      });
+      let inputReleased = false;
+      try {
+        await consumer.consumeUnavailable({ serviceId: 'claude-subscription', groupId: 'team',
+          unavailableReason: 'active_profile_missing',
+          sessions: [{ sessionId: session.client.sessionId, activity: 'live', applicationOwnerId: 'claude' }] });
+        await pending.blockForSustainedBlocker({ localIds: ['pending-recovery'],
+          blocker: { kind: 'provider_unavailable', source: 'readiness', detail: 'claude_usage_limit_dialog' },
+          isCanonicalTurnActive: false });
+        const input = session.connectedServiceAuthGroupRequestFence.waitUntilAvailable(controller.signal)
+          .then(async () => {
+            const batch = await session.queue.waitForMessagesAndGetAsString(controller.signal);
+            inputReleased = batch?.message === 'Continue interrupted work.';
+          }).catch(() => undefined);
+        expect(pendingBlocked).toBe(true);
+        expect(inputReleased).toBe(false);
+        if (path === 'apply') {
+          await expect(consumer.consume({ committedGeneration: committed, switchReason: 'automatic_runtime_failure',
+            executionAuthority: 'runtime_recovery', sessions: [{ sessionId: session.client.sessionId,
+              activity: 'live', applicationOwnerId: 'claude' }] })).resolves.toMatchObject({ acknowledgeable: true });
+        } else {
+          await reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
+            target: { sessionId: session.client.sessionId, agentId: 'claude',
+              activeBindings: [{ ...committed.decisionCommittedTarget }],
+              connectedServiceMaterializationIdentityV1: { id: 'csm_legacy_projection' },
+              connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+                'claude-subscription': { source: 'connected', selection: 'group', groupId: 'team', profileId: 'backup' },
+              } } },
+            consumer, executionAuthority: 'passive_projection',
+            listCurrentGroups: async () => [{ v: 1, serviceId: 'claude-subscription', groupId: 'team',
+              activeProfileId: 'backup', generation: 2 }],
+            resolveCredentialRevision: () => null,
+            resolveCredentialBoundary: () => ({ status: 'present', revisionSemantics: 'legacy_unfenced', credentialRevision: null }),
+          });
+        }
+        // Observe the real fence/Queue result; do not await a permanently blocked input on RED.
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(pendingBlocked).toBe(false);
+        expect(session.connectedServiceAuthGroupRequestFence.readCurrentTruth()?.kind).toBe('current_auth_group_available');
+        await input;
+        expect(inputReleased).toBe(true);
+      } finally {
+        controller.abort(); unregister(); session.cleanup();
+        rmSync(activeServerDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('tracks recent user abort requests', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-02-26T07:46:00.000Z'));
@@ -702,6 +871,34 @@ describe('Session', () => {
     }
   });
 
+  it.each([
+    { hook_event_name: 'SessionEnd' },
+    { hookEventName: 'SessionEnd' },
+    { hook_event_name: 'Stop' },
+    { hook_event_name: 'UserPromptSubmit' },
+  ])('keeps lifecycle hooks from replacing the native resume identity: %j', async (event) => {
+    const session = createSession(createSessionClientStub(), ['--resume', 'sess_reachable']);
+    const transcriptPath = '/tmp/sess_reachable.jsonl';
+    session.transcriptPath = transcriptPath;
+    const discoveredSessions: string[] = [];
+    session.addSessionFoundCallback((info) => discoveredSessions.push(info.sessionId));
+
+    try {
+      session.onSessionFound('sess_missing', {
+        ...event,
+        transcript_path: '/tmp/sess_missing.jsonl',
+      });
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      session.consumeOneTimeFlags();
+
+      expect(session.sessionId).toBe('sess_reachable');
+      expect(session.transcriptPath).toBe(transcriptPath);
+      expect(discoveredSessions).toEqual([]);
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('preserves the established resume identity while a changed Claude session remains provisional', async () => {
     let metadata: Metadata = createMetadataStub({
       startedBy: 'daemon',
@@ -743,7 +940,7 @@ describe('Session', () => {
     });
 
     try {
-      session.onSessionFound('sess_missing', hookWithTranscript('/tmp/sess_missing.jsonl'));
+      session.onSessionFound('sess_missing', { ...hookWithTranscript('/tmp/sess_missing.jsonl'), hook_event_name: 'SessionStart' });
       await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
 
       expect(metadata.claudeSessionId).toBe('sess_reachable');
@@ -755,6 +952,183 @@ describe('Session', () => {
       expect(session.transcriptPath).toBe('/tmp/sess_missing.jsonl');
     } finally {
       session.cleanup();
+    }
+  });
+
+  it('keeps a hook-observed session id provisional for remote resume until its transcript materializes', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', tempDir);
+    const transcriptDir = join(tempDir, 'projects', 'project-a');
+    mkdirSync(transcriptDir, { recursive: true });
+    const transcriptPath = join(transcriptDir, 'sess_zero_turn.jsonl');
+    const session = createSession(createSessionClientStub());
+    const provisionalLog = vi.spyOn(logger, 'infoFile');
+
+    try {
+      session.transcriptPath = transcriptPath;
+      expect(session.getResumableSessionIdentity()).toBeNull();
+      // Zero-turn terminal birth: SessionStart observed an id before any turn wrote the transcript.
+      session.onSessionFound('sess_zero_turn', hookWithTranscript(transcriptPath));
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+
+      expect(session.sessionId).toBe('sess_zero_turn');
+      expect(session.getResumableSessionId()).toBeNull();
+      expect(session.getResumableSessionIdentity()).toBeNull();
+      expect(provisionalLog).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        event: 'claude_provisional_resume_identity',
+      }));
+
+      // An allocated-but-empty transcript has not materialized a conversation either.
+      writeFileSync(transcriptPath, '', 'utf8');
+      expect(session.getResumableSessionId()).toBeNull();
+
+      // The first turn materializes the transcript; resumability follows without re-observation.
+      writeClaudeTranscriptInit(transcriptPath, 'sess_zero_turn');
+      expect(session.getResumableSessionId()).toBe('sess_zero_turn');
+      expect(session.getResumableSessionIdentity()).toEqual({ sessionId: 'sess_zero_turn', transcriptPath });
+    } finally {
+      provisionalLog.mockRestore();
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['getResumableSessionId', 'getResumableSessionIdentity', 'clearSessionId'] as const)('preserves a provisional identity and reports unavailable resume state when %s cannot inspect its transcript', async operation => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    const transcriptPath = join(tempDir, 'sess_unreadable.jsonl');
+    const session = createSession(createSessionClientStub());
+    try {
+      session.onSessionFound('sess_unreadable', hookWithTranscript(transcriptPath));
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      writeFileSync(transcriptPath, '', 'utf8');
+      const denied = Object.assign(new Error('Transcript access denied'), { code: 'EACCES' });
+      const stat = vi.mocked(fs.statSync).mockImplementationOnce(() => { throw denied; });
+      try {
+        expect(() => session[operation]()).toThrow(expect.objectContaining({
+          code: 'claude_resume_session_unavailable',
+          providerSessionId: 'sess_unreadable',
+          cause: denied,
+        }));
+        expect(session.sessionId).toBe('sess_unreadable');
+        expect(session.transcriptPath).toBe(transcriptPath);
+      } finally { stat.mockClear(); }
+    } finally {
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['observed', 'published'] as const)('preserves an established %s identity when its transcript disappears, including clear/restore', async proof => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', tempDir);
+    const transcriptDir = join(tempDir, 'projects', 'project-a');
+    mkdirSync(transcriptDir, { recursive: true });
+    const transcriptPath = join(transcriptDir, 'sess_established.jsonl');
+    const session = createSession(createSessionClientStub());
+    try {
+      if (proof === 'published') writeClaudeTranscriptInit(transcriptPath, 'sess_established');
+      session.onSessionFound('sess_established', hookWithTranscript(transcriptPath));
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      if (proof === 'observed') {
+        writeClaudeTranscriptInit(transcriptPath, 'sess_established');
+        expect(session.getResumableSessionId()).toBe('sess_established');
+      }
+      rmSync(transcriptPath);
+      expect(session.getResumableSessionId()).toBe('sess_established');
+      const cleared = session.clearSessionId();
+      expect(session.getResumableSessionId()).toBeNull();
+      if (!cleared) throw new Error('Expected an established identity');
+      session.restoreClearedSessionIdentity(cleared);
+      expect(session.getResumableSessionId()).toBe('sess_established');
+    } finally {
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['resume', 'fork', 'compact'])('preserves native %s context before its transcript is available', async source => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    const session = createSession(createSessionClientStub());
+    try {
+      // Resuming an already observed idle ID must establish context too.
+      if (source === 'resume') session.onSessionFound('sess_native');
+      session.onSessionFound('sess_native', {
+        ...hookWithTranscript(join(tempDir, 'sess_native.jsonl')),
+        hook_event_name: 'SessionStart', source,
+      });
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      expect(session.getResumableSessionId()).toBe('sess_native');
+    } finally {
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats an explicitly requested --resume id as resumable from birth', () => {
+    const session = createSession(createSessionClientStub(), ['--resume', 'sess_requested']);
+
+    try {
+      expect(session.getResumableSessionId()).toBe('sess_requested');
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('resets requested-resume semantics when Claude reports a different session id', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    const session = createSession(createSessionClientStub(), ['--resume', 'sess_requested']);
+
+    try {
+      session.onSessionFound('sess_forked', hookWithTranscript(join(tempDir, 'sess_forked.jsonl')));
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+
+      expect(session.sessionId).toBe('sess_forked');
+      expect(session.getResumableSessionId()).toBeNull();
+    } finally {
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('restores requested-resume semantics when an unconfirmed fork rolls back a cleared identity', () => {
+    const session = createSession(createSessionClientStub(), ['--resume', 'sess_requested']);
+
+    try {
+      expect(session.getResumableSessionId()).toBe('sess_requested');
+
+      const cleared = session.clearSessionId();
+      expect(session.getResumableSessionId()).toBeNull();
+      expect(cleared).toEqual({
+        sessionId: 'sess_requested',
+        transcriptPath: null,
+        mustResume: true,
+      });
+
+      session.restoreClearedSessionIdentity(cleared!);
+      // The restored id keeps fail-closed resumability even though its transcript
+      // does not exist.
+      expect(session.getResumableSessionId()).toBe('sess_requested');
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('keeps a provisional identity provisional across a cleared-identity rollback', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-claude-session-'));
+    const session = createSession(createSessionClientStub(), []);
+
+    try {
+      session.onSessionFound('sess_zero_turn', hookWithTranscript(join(tempDir, 'sess_zero_turn.jsonl')));
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+
+      const cleared = session.clearSessionId();
+      expect(cleared?.mustResume).toBe(false);
+
+      session.restoreClearedSessionIdentity(cleared!);
+      expect(session.getResumableSessionId()).toBeNull();
+    } finally {
+      session.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

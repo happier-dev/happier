@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../../../lazySchema.js';
 
 export const DEFAULT_SESSION_MESSAGES_CAPABILITIES = Object.freeze({
   role: false,
@@ -11,19 +12,19 @@ export const DEFAULT_SESSION_MESSAGES_CAPABILITIES = Object.freeze({
   turns: false,
 });
 
-export const SessionMessagesCapabilitiesSchema = z
+export const SessionMessagesCapabilitiesSchema = lazySchema(() => z
   .object({
     role: z.boolean().optional().default(DEFAULT_SESSION_MESSAGES_CAPABILITIES.role),
     turns: z.boolean().optional().default(DEFAULT_SESSION_MESSAGES_CAPABILITIES.turns),
   })
   .optional()
-  .default(DEFAULT_SESSION_MESSAGES_CAPABILITIES);
+  .default(DEFAULT_SESSION_MESSAGES_CAPABILITIES));
 
 export type SessionMessagesCapabilities = z.infer<typeof SessionMessagesCapabilitiesSchema>;
 
-const SessionProtocolCapabilitySchema = z.object({
+const SessionProtocolCapabilitySchema = lazySchema(() => z.object({
   protocolVersion: z.number().int().positive(),
-}).strict();
+}).strict());
 
 export const SessionRuntimeActivityCapabilitiesSchema = SessionProtocolCapabilitySchema;
 export const SessionPendingInputCapabilitiesSchema = SessionProtocolCapabilitySchema;
@@ -35,13 +36,13 @@ export const DEFAULT_SESSION_CAPABILITIES = Object.freeze({
   messages: DEFAULT_SESSION_MESSAGES_CAPABILITIES,
 });
 
-export const SessionCapabilitiesSchema = z
+export const SessionCapabilitiesSchema = lazySchema(() => z
   .object({
     messages: SessionMessagesCapabilitiesSchema,
     runtimeActivity: SessionRuntimeActivityCapabilitiesSchema.optional(),
     pendingInput: SessionPendingInputCapabilitiesSchema.optional(),
   })
   .optional()
-  .default(DEFAULT_SESSION_CAPABILITIES);
+  .default(DEFAULT_SESSION_CAPABILITIES));
 
 export type SessionCapabilities = z.infer<typeof SessionCapabilitiesSchema>;

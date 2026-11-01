@@ -68,6 +68,7 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
     promptStore: NewSessionPromptStore;
     hasLocalEdit: () => boolean;
     preferInitialPrompt?: boolean;
+    onDraftRemoved?: () => void;
 }>): void {
     const address = React.useMemo(() => ({ kind: 'newSession', draftId: params.draftId } as const), [params.draftId]);
 
@@ -75,8 +76,18 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
         const scope = params.scope;
         if (!scope) return;
         let isInitialProjection = true;
+        let observedDraft = false;
         const project = () => {
             const snapshot = getSessionDraftSnapshot(scope, address);
+            if (!snapshot && observedDraft) {
+                observedDraft = false;
+                // Retire the old editor's autosave before notifying prompt subscribers.
+                // A projection of deletion must not create another edit of the removed draft.
+                params.onDraftRemoved?.();
+                params.promptStore.setPrompt('');
+                return;
+            }
+            observedDraft = snapshot !== null;
             const durableText = snapshot?.document.composer.text.value;
             const localText = params.promptStore.getPrompt();
             if (isInitialProjection && (params.hasLocalEdit() || params.preferInitialPrompt === true) && durableText !== localText) {
@@ -95,5 +106,5 @@ export function useNewSessionDraftPromptProjection(params: Readonly<{
         const unsubscribe = subscribeSessionDraft(scope, address, project);
         project();
         return unsubscribe;
-    }, [address, params.draftId, params.hasLocalEdit, params.preferInitialPrompt, params.promptStore, params.scope]);
+    }, [address, params.draftId, params.hasLocalEdit, params.onDraftRemoved, params.preferInitialPrompt, params.promptStore, params.scope]);
 }

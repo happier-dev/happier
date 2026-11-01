@@ -1,25 +1,26 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const E2eProviderProtocolSchema = z.enum(['acp', 'claude', 'codex']);
+export const E2eProviderProtocolSchema = lazySchema(() => z.enum(['acp', 'claude', 'codex']));
 
-export const E2eRequiredBinarySchema = z.union([
+export const E2eRequiredBinarySchema = lazySchema(() => z.union([
   z.string(),
   z.object({
     bin: z.string().min(1),
     envOverride: z.string().min(1).optional(),
     requireExists: z.boolean().optional(),
   }),
-]);
+]));
 
-export const E2eCliSpecSchema = z.object({
+export const E2eCliSpecSchema = lazySchema(() => z.object({
   subcommand: z.string().min(1),
   extraArgs: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   // Map CLI env var -> test-runner env var
   envFrom: z.record(z.string(), z.string()).optional(),
-});
+}));
 
-export const E2eCliProviderAuthOverlaySchema = z.object({
+export const E2eCliProviderAuthOverlaySchema = lazySchema(() => z.object({
   /**
    * Env vars that must exist to select this auth mode.
    *
@@ -48,9 +49,9 @@ export const E2eCliProviderAuthOverlaySchema = z.object({
    * while keeping CI hermetic via API keys.
    */
   envUnset: z.array(z.string().min(1)).optional(),
-});
+}));
 
-export const E2eCliProviderAuthSchema = z.object({
+export const E2eCliProviderAuthSchema = lazySchema(() => z.object({
   /**
    * How the harness should select an auth mode.
    *
@@ -61,9 +62,9 @@ export const E2eCliProviderAuthSchema = z.object({
   mode: z.enum(['auto', 'env', 'host']).optional(),
   env: E2eCliProviderAuthOverlaySchema.optional(),
   host: E2eCliProviderAuthOverlaySchema.optional(),
-});
+}));
 
-export const E2eCliProviderPermissionsV1Schema = z.object({
+export const E2eCliProviderPermissionsV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   acp: z
     .object({
@@ -147,9 +148,9 @@ export const E2eCliProviderPermissionsV1Schema = z.object({
       permissionSurfaceOutsideWorkspaceYolo: z.boolean().optional(),
     })
     .optional(),
-});
+}));
 
-export const E2eCliProviderSpecV1Schema = z.object({
+export const E2eCliProviderSpecV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   id: z.string().min(1),
   enableEnvVar: z.string().min(1),
@@ -173,6 +174,6 @@ export const E2eCliProviderSpecV1Schema = z.object({
   permissions: E2eCliProviderPermissionsV1Schema.optional(),
   requiredBinaries: z.array(E2eRequiredBinarySchema).optional(),
   cli: E2eCliSpecSchema,
-});
+}));
 
 export type E2eCliProviderSpecV1 = z.infer<typeof E2eCliProviderSpecV1Schema>;

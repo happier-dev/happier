@@ -9,8 +9,9 @@ import {
   type ActionToolExposureSurface,
 } from './actionSpecs.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
+import { lazySchema } from '../lazySchema.js';
 
-const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
+const ActionSurfaceKeySchema = lazySchema(() => ActionSurfaceSchema.keyof());
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
@@ -32,14 +33,14 @@ function normalizeActionToolExposureModes(raw: unknown): Partial<Record<ActionTo
   return next;
 }
 
-const ActionSettingsToolExposureModesSchema = z.preprocess(
+const ActionSettingsToolExposureModesSchema = lazySchema(() => z.preprocess(
   normalizeActionToolExposureModes,
   z.object({
     session_agent: ActionToolExposureModeSchema.optional(),
     mcp: ActionToolExposureModeSchema.optional(),
     cli: ActionToolExposureModeSchema.optional(),
   }).default({}),
-);
+));
 
 function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -53,7 +54,7 @@ function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   return next;
 }
 
-const ActionSettingsOverrideSchema = z.preprocess(
+const ActionSettingsOverrideSchema = lazySchema(() => z.preprocess(
   normalizeLegacyActionSettingsOverride,
   z
     .object({
@@ -65,10 +66,10 @@ const ActionSettingsOverrideSchema = z.preprocess(
       toolExposureModes: ActionSettingsToolExposureModesSchema,
     })
     .strict(),
-);
+));
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
-export const ActionsSettingsV1Schema = z
+export const ActionsSettingsV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     // Accept unknown keys but filter them down to known ActionIds during transform so settings
@@ -85,7 +86,7 @@ export const ActionsSettingsV1Schema = z
       next[parsedId.data] = override;
     }
     return { v: 1 as const, actions: next };
-  });
+  }));
 
 export type ActionsSettingsV1 = z.infer<typeof ActionsSettingsV1Schema>;
 

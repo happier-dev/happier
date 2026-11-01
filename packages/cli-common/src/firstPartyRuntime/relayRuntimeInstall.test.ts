@@ -3,10 +3,41 @@ import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { resolveRelayRuntimeDefaults } from './relayRuntime.js';
 import { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';
+
+const windowsLauncherFixture = vi.hoisted(() => ({ path: '' }));
+
+// The packaged Windows service launcher is a release-built native asset that clean checkouts and
+// non-Windows runners do not have. Windows-target installs here stage a minimal launcher PE; the
+// real resolver and the native binary have their own tests.
+vi.mock('../service/windowsLauncher.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../service/windowsLauncher.js')>();
+  return {
+    ...actual,
+    resolvePackagedWindowsServiceLauncherInstallSpec: () =>
+      actual.resolveWindowsServiceLauncherInstallSpec(windowsLauncherFixture.path),
+  };
+});
+
+beforeAll(async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-launcher-'));
+  const bytes = Buffer.alloc(512);
+  bytes.writeUInt16LE(0x5a4d, 0);
+  bytes.writeUInt32LE(0x80, 0x3c);
+  bytes.writeUInt32LE(0x00004550, 0x80);
+  bytes.writeUInt16LE(0x8664, 0x84);
+  bytes.writeUInt16LE(0x20b, 0x98);
+  bytes.writeUInt16LE(2, 0x98 + 68);
+  bytes.write('HAPPIER_SERVICE_LAUNCHER_V1', 0x120, 'ascii');
+  windowsLauncherFixture.path = join(dir, 'happier-service-launcher.exe');
+  await writeFile(windowsLauncherFixture.path, bytes);
+  return async () => {
+    await rm(dir, { recursive: true, force: true });
+  };
+});
 
 describe('installOrUpdateRelayRuntimeLocal', () => {
   it('returns the env-overridden baseUrl instead of the default relay port', async () => {

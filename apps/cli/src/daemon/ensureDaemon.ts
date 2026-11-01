@@ -58,11 +58,21 @@ export function shouldAutoStartDaemonAfterAuth(
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
 }
 
-export function applyDaemonAutostartEnvForInvocation(params: Readonly<{ args: string[]; env: NodeJS.ProcessEnv }>): void {
+export function applyDaemonAutostartEnvForInvocation(params: Readonly<{
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  autostartInInteractiveTerminal?: boolean;
+}>): void {
+  const startedBy = readStartedByArg(params.args);
+  const current = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
+  if (!current && params.autostartInInteractiveTerminal === false
+    && startedBy.value !== 'daemon' && !(startedBy.present && startedBy.value === null)
+    && process.stdin.isTTY && process.stdout.isTTY) {
+    params.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '0';
+  }
   if (!shouldEnsureDaemonForInvocation({ args: params.args })) return;
   if (readStartedByArg(params.args).value === 'daemon') return;
-  const current = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
-  if (current.length > 0) return;
+  if ((params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim().length > 0) return;
   params.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
 }
 

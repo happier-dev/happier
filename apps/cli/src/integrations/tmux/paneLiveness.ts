@@ -57,6 +57,16 @@ export async function evaluateTmuxPaneLiveness(params: Readonly<{
   observedAt?: number;
 }>): Promise<TerminalHostLiveness> {
   const observedAt = params.observedAt ?? Date.now();
+  // display-message may return the session's current pane for a missing window.
+  // Resolve existence first; a successful format expansion is not ownership proof.
+  const targetProbe = await params.executor(['has-session', '-t', params.target]);
+  if (!targetProbe || targetProbe.timedOut === true || targetProbe.returncode !== 0) {
+    return failedProbeLiveness({
+      stderr: targetProbe?.stderr,
+      observedAt,
+      targetAbsent: Boolean(targetProbe && !targetProbe.timedOut && isExactTmuxTargetAbsent(targetProbe.stderr)),
+    });
+  }
   const result = await params.executor([
     'display-message',
     '-p',
@@ -78,23 +88,8 @@ export async function evaluateTmuxPaneLiveness(params: Readonly<{
 
   const parsedOutput = parsePaneLivenessOutput(result.stdout);
   if (!parsedOutput) {
-    // `tmux display-message` can return rc=0 with empty format fields for a missing
-    // target. Ask tmux's target resolver before deciding that the exact pane died.
-    const targetProbe = await params.executor(['has-session', '-t', params.target]);
-    if (
-      targetProbe
-      && targetProbe.timedOut !== true
-      && targetProbe.returncode !== 0
-      && isExactTmuxTargetAbsent(targetProbe.stderr)
-    ) {
-      return failedProbeLiveness({
-        stderr: targetProbe.stderr,
-        observedAt,
-        targetAbsent: true,
-      });
-    }
     return failedProbeLiveness({
-      stderr: targetProbe?.stderr || result.stderr,
+      stderr: result.stderr,
       observedAt,
       targetAbsent: false,
     });

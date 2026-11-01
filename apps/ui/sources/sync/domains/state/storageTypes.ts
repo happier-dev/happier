@@ -339,6 +339,7 @@ const AgentStateObjectSchema = z.object({
         canDetach: z.boolean().nullish(),
     }).nullish(),
     requests: z.record(z.string(), z.object({
+        occurrenceId: z.string().optional(),
         tool: z.string(),
         kind: z.string().optional(),
         source: z.string().optional(),

@@ -125,6 +125,34 @@ For the full user-facing MCP guide in Happier, see:
 
 - [MCP servers](/extending/mcp-servers)
 
+## Reasoning summaries
+
+In development builds, Codex settings include **Reasoning summaries** with a
+**Generation** choice. **Default** keeps your Codex configuration and model
+default. **Enabled** requests readable summaries where supported, and **Disabled**
+requests no summaries. The choice applies when starting or resuming a session.
+
+Generation is separate from the transcript's thinking-display preference. Hiding
+thinking does not disable generation; showing thinking does not enable it.
+Changing generation does not change reasoning effort.
+
+Summaries depend on what Codex and the selected model return. An enabled setting
+can still produce no readable thinking. OpenAI distinguishes readable summaries
+from private reasoning tokens; see its [reasoning documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-summaries).
+Happier displays available readable reasoning in live transcripts, Direct
+transcripts, and mirrored terminal sessions. Encrypted reasoning is never
+displayed as text.
+
+## Interrupting a turn and stopping a session
+
+With the App Server backend, **Stop run** in the main session composer requests interruption of the active Codex turn and keeps the session available for your next message.
+
+Codex manages shell commands separately from the turn. A command can remain running after interruption, even when you interrupt before its first tool response. This behavior is present in Codex CLI 0.163.0-alpha.10.2: its [native command lifecycle](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/core/src/unified_exec/process_manager.rs#L605-L656) retains the process before waiting for output. The session returning to **online** indicates that the agent is no longer working on that turn; it does not confirm that every command has exited.
+
+To stop the whole Happier session, open its action menu and choose **Stop session**. This uses the session shutdown path instead of turn interruption. Session history remains available, and you can resume when the session supports it. For the CLI equivalent, see [CLI sessions](/apps/cli-sessions).
+
+If a particular command must stop, verify its exit on the machine running it. Detached processes or work submitted to another service may need separate termination. Neither control undoes effects a command has already completed.
+
 ## Codex ACP installables behavior
 
 Codex ACP depends on a machine-local **Codex ACP** installable.
@@ -226,6 +254,7 @@ Codex enforcement is a combination of:
 Important notes:
 
 - Read-only is enforced by Happier by **denying write-like actions** (edits/patches/exec) when Happier is the approver.
+- In development builds, Codex App Server Read-only also requests a native read-only sandbox with network access for sandboxed commands and approval-based escalation disabled. Happier reapplies that policy when starting or resuming a session and before each prompt.
 - Auto and YOLO control whether Happier prompts vs auto-approves actions it can approve.
 - On a Codex app-server that rejects granular Auto approvals under a managed policy but allows `on-request`, Happier retries once with `on-request` and keeps the workspace sandbox. That session then sends approval requests to you for review; its Auto review behavior is unavailable. If Codex also rejects `on-request`, the session reports the policy error.
 - Codex backends may have sandbox policies that are **fixed at session start**. Changing permission mode mid-session can still update Happier’s approval behavior, but it may not change Codex’s internal sandbox until you start a new Codex session.

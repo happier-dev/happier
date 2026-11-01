@@ -13,6 +13,7 @@ import {
 describe('structured-question RPC contract', () => {
   it('classifies only legacy and v1 approval methods as delegated approvals', () => {
     expect(isDelegatedSessionApprovalRpcMethod(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY)).toBe(true);
+    expect(isDelegatedSessionApprovalRpcMethod('session.permission.respondToOccurrence.v1')).toBe(true);
     expect(isDelegatedSessionApprovalRpcMethod(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1)).toBe(true);
     expect(isDelegatedSessionApprovalRpcMethod(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND)).toBe(false);
     expect(isDelegatedSessionApprovalRpcMethod('permission.extra')).toBe(false);

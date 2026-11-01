@@ -1056,6 +1056,47 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         });
     });
 
+    it('holds the review comments and attach chips while the session is being created', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const { buildCollapsedExtraControlActions } = await import('@/components/sessions/agentInput/controls/buildCollapsedExtraControlActions');
+        featureEnabledSpy.mockImplementation((featureId: string) => (
+            featureId === 'files.reviewComments' || featureId === 'attachments.uploads'
+        ));
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo', [{
+            id: 'draft-launching',
+            filePath: 'src/index.ts',
+            source: 'file',
+            anchor: { kind: 'fileLine', startLine: 3 },
+            snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+            body: 'Keep this.',
+            createdAt: 1,
+        }]);
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-launching-review-comments',
+            isCreating: true,
+            promptStore: createNewSessionPromptStore('launching'),
+            handleCreateSession: vi.fn(),
+            selectedProfileId: null,
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo',
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        const chips = hook.getCurrent().extraActionChips;
+        expect(chips.find((chip) => chip.key === 'review-comments')).toBeTruthy();
+        const collapsed = buildCollapsedExtraControlActions({
+            chips,
+            tint: 'currentColor',
+            dismiss: vi.fn(),
+            blurInput: vi.fn(),
+            openCollapsedOptionsPopover: vi.fn(),
+        });
+        expect(collapsed.reviewComments?.every((action) => action.disabled === true)).toBe(true);
+        expect(collapsed.attachments?.every((action) => action.disabled === true)).toBe(true);
+    });
+
     it('keeps attachment metadata when selected review comments are sent with uploads', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();

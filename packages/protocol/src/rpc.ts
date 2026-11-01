@@ -17,6 +17,7 @@ export const RPC_METHODS = {
   DAEMON_MEMORY_ENSURE_UP_TO_DATE: 'daemon.memory.ensureUpToDate',
   DAEMON_MEMORY_STATUS: 'daemon.memory.status',
   DAEMON_SERVER_WORK_STATUS: 'daemon.serverWork.status',
+  DAEMON_NOTIFICATIONS_TEST_PUSH: 'daemon.notifications.testPush',
   DAEMON_MEMORY_SETTINGS_GET: 'daemon.memory.settings.get',
   DAEMON_MEMORY_SETTINGS_SET: 'daemon.memory.settings.set',
   DAEMON_MCP_SERVERS_TEST: 'daemon.mcpServers.test',
@@ -287,6 +288,7 @@ export const RPC_ERROR_MESSAGES = {
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
 export const SESSION_RPC_METHODS = {
   SESSION_PERMISSION_RESPOND_LEGACY: 'permission',
+  SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1: 'session.permission.respondToOccurrence.v1',
   SESSION_STRUCTURED_QUESTION_RESPOND_V1: 'session.structuredQuestion.respond.v1',
   SESSION_USER_MESSAGE_SEND: 'session.userMessage.send',
   SESSION_PENDING_QUEUE_MATERIALIZE_NEXT: 'session.pendingQueue.materializeNext',
@@ -328,6 +330,7 @@ export const SESSION_RPC_METHODS = {
 
 export function isDelegatedSessionApprovalRpcMethod(methodSuffix: string): boolean {
   return methodSuffix === SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY
+    || methodSuffix === SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1
     || methodSuffix === SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1;
 }
 

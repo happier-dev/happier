@@ -1,3 +1,4 @@
+import { matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const resolveContextSpy = vi.hoisted(() => vi.fn());
@@ -91,7 +92,7 @@ describe('fetchSessionByIdWithServerScope', () => {
         expect(params.credentials).toEqual({ token: 'scoped-token', secret: '' });
         await params.request('/v2/sessions/session-1', { method: 'GET', headers: { 'X-Test': '1' } });
         const sessionRequest = runtimeFetchSpy.mock.calls.find(
-            ([url]) => url === 'https://server-b.example.test/v2/sessions/session-1',
+            ([url]) => matchServerFetchUrl('https://server-b.example.test/v2/sessions/session-1').asymmetricMatch(url),
         );
         expect(sessionRequest).toBeDefined();
         expect(sessionRequest?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));

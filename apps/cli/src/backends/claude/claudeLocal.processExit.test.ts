@@ -3,6 +3,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import * as childProcess from 'node:child_process';
+
+// Observe the OS spawn boundary while still launching the real fixture processes.
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
+it.each(['before-start', 'during-setup'] as const)('does not spawn local Claude when cancelled %s', async phase => {
+    vi.resetModules();
+    const directory = mkdtempSync(join(tmpdir(), 'happier-claude-local-cancel-'));
+    const executable = join(directory, 'provider.cjs');
+    const env = createEnvKeyScope(['HAPPIER_CLAUDE_PATH', 'CLAUDE_CONFIG_DIR']);
+    const stdinWasPaused = process.stdin.isPaused();
+    writeFileSync(executable, 'process.exit(0);\n');
+    env.patch({ HAPPIER_CLAUDE_PATH: executable, CLAUDE_CONFIG_DIR: join(directory, 'config') });
+    const abort = new AbortController();
+    if (phase === 'before-start') abort.abort();
+    try {
+        const { claudeLocal } = await import('./claudeLocal');
+        vi.mocked(childProcess.spawn).mockClear();
+        await claudeLocal({ abort: abort.signal, sessionId: null, path: directory,
+            onSessionFound: () => { if (phase === 'during-setup') abort.abort(); } });
+        expect(vi.mocked(childProcess.spawn).mock.calls.length).toBe(0);
+    } finally {
+        env.restore();
+        if (stdinWasPaused) process.stdin.pause();
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
 
 it.each([
     { kind: 'native', callbackFails: false },

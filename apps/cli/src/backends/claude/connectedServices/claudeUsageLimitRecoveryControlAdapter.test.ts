@@ -90,7 +90,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       machineId: 'machine-local', agentRuntimeDescriptorV1: { v: 1, providerId: 'claude' },
     }, { latestTurnStatus: 'failed', lastRuntimeIssue: createClaudeUsageLimitIssue() }))).resolves.toMatchObject({
       ok: true, status, metadata: { sessionUsageLimitRecoveryV1: {
-        status: recoveryStatus, resetAtMs: null, nextCheckAtMs, attemptCount: 1,
+        status: recoveryStatus, resetAtMs: null, nextCheckAtMs, attemptCount: 0,
         selectedAuth: { kind: 'group', serviceId: 'claude-subscription', groupId: 'claude-group', profileId: 'claude-profile-1' },
       } },
     });
@@ -101,7 +101,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
       const intent = scenario === 'unpersisted' ? null : createNativeSourceRecovery(sourceId,
         scenario === 'paused native' ? { status: 'paused', nextCheckAtMs: null, attemptCount: 1 }
-          : scenario === 'daemon-owned' ? { issueFingerprint: 'owned-attempt', runtimeAuthRecoveryAttemptId: 'owned-attempt' } : {});
+          : scenario === 'daemon-owned' ? { runtimeAuthRecoveryAttemptId: 'owned-attempt' } : {});
       const issue = createClaudeUsageLimitIssue({ resetAtMs: intent?.resetAtMs });
       const metadata = {
         ...(intent ? { sessionUsageLimitRecoveryV1: intent } : {}),
@@ -116,7 +116,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
         lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
           connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
       }))).resolves.toMatchObject({ ok: true, status: 'ready', metadata: { sessionUsageLimitRecoveryV1: {
-        ...intent, status: 'paused', nextCheckAtMs: null, attemptCount: (intent?.attemptCount ?? 0) + 1, selectedAuth,
+        ...intent, status: 'paused', nextCheckAtMs: null, attemptCount: intent?.attemptCount ?? 0, selectedAuth,
       } } });
     },
   );
@@ -149,7 +149,7 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       metadata: {
         sessionUsageLimitRecoveryV1: {
           status: 'exhausted',
-          attemptCount: 2,
+          attemptCount: 1,
         },
       },
     });

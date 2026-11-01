@@ -19,7 +19,7 @@ type SessionPendingLike = {
     messages?: Array<{ id?: string; localId?: string | null; createdAt?: number }>;
 };
 
-export type LatestSessionSnapshot = {
+export type SelectedSessionSnapshot = {
     sessionId: string;
     createdAt: number | null;
     updatedAt: number | null;
@@ -52,7 +52,8 @@ function compareMessageChronology(left: SessionMessageLike, right: SessionMessag
     return String(left.id).localeCompare(String(right.id));
 }
 
-export function buildLatestSessionSnapshot(input: {
+export function buildSelectedSessionSnapshot(input: {
+    sessionId: string;
     sessions: Record<string, SessionLike>;
     sessionMessages: Record<string, {
         messages?: SessionMessageLike[];
@@ -60,15 +61,11 @@ export function buildLatestSessionSnapshot(input: {
         messagesById?: Record<string, SessionMessageLike | undefined>;
     }>;
     sessionPending: Record<string, SessionPendingLike>;
-}): LatestSessionSnapshot | null {
-    const sessions = Object.values(input.sessions);
-    if (sessions.length === 0) return null;
-    const latestSession = sessions
-        .slice()
-        .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0];
-    if (!latestSession) return null;
+}): SelectedSessionSnapshot | null {
+    const selectedSession = input.sessions[input.sessionId];
+    if (!selectedSession) return null;
 
-    const sessionMessagesState = input.sessionMessages[latestSession.id];
+    const sessionMessagesState = input.sessionMessages[selectedSession.id];
     const sessionMessages = (() => {
         if (!sessionMessagesState) return [];
         if (Array.isArray(sessionMessagesState.messages)) return sessionMessagesState.messages;
@@ -78,7 +75,7 @@ export function buildLatestSessionSnapshot(input: {
         const byId = sessionMessagesState.messagesById ?? {};
         return ids.map((id) => byId[id]).filter(Boolean) as SessionMessageLike[];
     })();
-    const pendingMessages = input.sessionPending[latestSession.id]?.messages ?? [];
+    const pendingMessages = input.sessionPending[selectedSession.id]?.messages ?? [];
 
     const recentMessages = sessionMessages
         .slice()
@@ -92,13 +89,13 @@ export function buildLatestSessionSnapshot(input: {
         }));
 
     return {
-        sessionId: latestSession.id,
-        createdAt: normalizeTimestamp(latestSession.createdAt),
-        updatedAt: normalizeTimestamp(latestSession.updatedAt),
-        agent: typeof latestSession.agent === 'string' ? latestSession.agent : null,
-        machineId: typeof latestSession.machineId === 'string' ? latestSession.machineId : null,
-        permissionMode: typeof latestSession.permissionMode === 'string' ? latestSession.permissionMode : null,
-        modelMode: typeof latestSession.modelMode === 'string' ? latestSession.modelMode : null,
+        sessionId: selectedSession.id,
+        createdAt: normalizeTimestamp(selectedSession.createdAt),
+        updatedAt: normalizeTimestamp(selectedSession.updatedAt),
+        agent: typeof selectedSession.agent === 'string' ? selectedSession.agent : null,
+        machineId: typeof selectedSession.machineId === 'string' ? selectedSession.machineId : null,
+        permissionMode: typeof selectedSession.permissionMode === 'string' ? selectedSession.permissionMode : null,
+        modelMode: typeof selectedSession.modelMode === 'string' ? selectedSession.modelMode : null,
         messageCount: sessionMessages.length,
         pendingCount: pendingMessages.length,
         recentMessages,

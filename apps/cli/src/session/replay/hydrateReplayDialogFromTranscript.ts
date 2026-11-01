@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
@@ -86,6 +86,7 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
     };
   }
 
+  requireEncryptionCredentials(params.credentials);
   if (params.credentials.encryption.type !== 'dataKey') {
     return null;
   }

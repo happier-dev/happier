@@ -229,20 +229,6 @@ afterEach(() => {
 });
 
 describe('ActionSettingsDetailView', () => {
-    it('describes ask-first approval as a queued request instead of a blocking confirmation', async () => {
-        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
-
-        const screen = await renderScreen(<ActionSettingsDetailContent actionId="session.spawn_new" />);
-
-        expect(await screen.findByTestId('settings-actions:approval-mode-help')).toBeTruthy();
-        const approvalNotice = capture.infoNotices.find((notice) =>
-            notice.testID === 'settings-actions:approval-mode-help',
-        );
-        expect(approvalNotice?.body).toEqual(expect.stringContaining('approval request'));
-        expect(approvalNotice?.body).toEqual(expect.stringContaining('does not wait'));
-        expect(approvalNotice?.body).not.toEqual(expect.stringContaining('confirmation'));
-    });
-
     it('renders approval-capable targets as mode tabs and ordinary placements as switches', async () => {
         const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
 

@@ -20,6 +20,13 @@ class FakeSession {
         return this.agentState;
     }
 
+    async updateAgentStateRequestSettlement(
+        updater: Parameters<FakeSession['updateAgentState']>[0],
+    ): Promise<void> {
+        this.agentState = updater(this.agentState);
+    }
+
+
     updateAgentState(updater: (state: AgentState) => AgentState) {
         this.agentState = updater(this.agentState);
     }
@@ -61,6 +68,271 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
 }
 
 describe('PermissionRequestCoordinator', () => {
+    it.each(['admitted', 'failed'] as const)('preserves a replacement occurrence after an older cancelAll is %s', async (outcome) => {
+        const { coordinator, session } = createHarness();
+        const original = coordinator.requestDecision(bashRequest);
+        const originalRejected = expect(original).rejects.toThrow('retired old request');
+        let admit!: () => void;
+        let fail!: (error: Error) => void;
+        session.updateAgentStateRequestSettlement = async (updater) => {
+            updater(session.agentState); // Capture before disk admission; replay still uses current state.
+            await new Promise<void>((resolve, reject) => { admit = resolve; fail = reject; });
+            // Non-ACK admission does not run the later transport replay here.
+        };
+        const cancellation = coordinator.cancelAll('old reset');
+        const cancellationResult = outcome === 'admitted'
+            ? expect(cancellation).resolves.toBeUndefined()
+            : expect(cancellation).rejects.toThrow('journal unavailable');
+        coordinator.cancelRequest(bashRequest.requestId, 'retired old request');
+        await originalRejected;
+        const replacement = coordinator.requestDecision({ ...bashRequest, toolInput: { command: ['echo replacement'] }, createdAt: 101 });
+        void replacement.catch(() => undefined);
+        if (outcome === 'admitted') admit();
+        else fail(new Error('journal unavailable'));
+        await cancellationResult;
+        expect(coordinator.getResponseContext(bashRequest.requestId)).toMatchObject({ status: 'live', createdAt: 101 });
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        expect(await coordinator.completeRpcResponse({ context, completion: { result: approve(), completedRequest: { status: 'approved' } } })).toBe(true);
+        await expect(replacement).resolves.toEqual(approve());
+    });
+
+    it.each(['toolu_test', 'next-turn'] as const)('retains the newer %s cached decision when an older cancellation completes', async (nextId) => {
+        const { coordinator, session } = createHarness();
+        const original = coordinator.requestDecision(bashRequest);
+        const originalRejected = expect(original).rejects.toThrow('retired old request');
+        let admit!: () => void;
+        session.updateAgentStateRequestSettlement = async (updater) => {
+            updater(session.agentState); // Capture before disk admission; replay still uses current state.
+            await new Promise<void>((resolve) => { admit = resolve; });
+            // Non-ACK admission does not run the later transport replay here.
+        };
+        const cancellation = coordinator.cancelAll('old reset');
+        coordinator.cancelRequest(bashRequest.requestId, 'retired old request');
+        await originalRejected;
+        const request = { ...bashRequest, requestId: nextId, createdAt: 101, toolInput: { command: ['echo next'] } };
+        const next = coordinator.requestDecision(request);
+        const context = coordinator.getResponseContext(nextId)!;
+        await coordinator.completeRpcResponse({ context, completion: { result: approve(nextId), completedRequest: { status: 'approved' } } });
+        await expect(next).resolves.toEqual(approve(nextId));
+        admit();
+        await cancellation;
+        const cached = coordinator.requestDecision(request);
+        expect(coordinator.getLocallyOwnedLiveResponseContext(nextId)).toBeNull();
+        await expect(cached).resolves.toEqual(approve(nextId));
+    });
+
+    it('does not detach a replacement waiter when an older concurrent cancellation admission fails', async () => {
+        const { coordinator, session } = createHarness();
+        const original = coordinator.requestDecision(bashRequest);
+        const admissions: { admit: () => void; fail: () => void }[] = [];
+        session.updateAgentStateRequestSettlement = async (updater) => {
+            const updated = updater(session.agentState);
+            await new Promise<void>((resolve, reject) => {
+                admissions.push({ admit: resolve, fail: () => reject(new Error('journal unavailable')) });
+            });
+            session.agentState = updated;
+        };
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        const first = coordinator.completeCancellationResponse({ context, result: { decision: 'abort' }, reason: 'stopped' });
+        const second = coordinator.completeCancellationResponse({ context, result: { decision: 'abort' }, reason: 'stopped' });
+        const secondFailure = expect(second).rejects.toThrow('journal unavailable');
+        expect(admissions).toHaveLength(2);
+        admissions[0]!.admit();
+        await expect(first).resolves.toBe(true);
+        await expect(original).resolves.toEqual({ decision: 'abort' });
+
+        const replacement = coordinator.requestDecision({ ...bashRequest, createdAt: 101 });
+        let replacementSettled = false;
+        void replacement.then(() => { replacementSettled = true; }, () => { replacementSettled = true; });
+        admissions[1]!.fail();
+        await secondFailure;
+        expect(coordinator.getResponseContext(bashRequest.requestId)).toMatchObject({ status: 'live', createdAt: 101 });
+        expect(replacementSettled).toBe(false);
+        expect(session.agentState.requests?.[bashRequest.requestId]?.createdAt).toBe(101);
+        coordinator.cancelRequest(bashRequest.requestId, 'test cleanup');
+        await expect(replacement).rejects.toThrow('test cleanup');
+    });
+
+    it('does not grant an in-flight UI approval while a single lifecycle cancellation is admitted', async () => {
+        const { coordinator, session } = createHarness();
+        const provider = coordinator.requestDecision(bashRequest);
+        let acknowledge!: () => void;
+        const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+        let admitCancellation!: () => void;
+        const cancellationAdmission = new Promise<void>((resolve) => { admitCancellation = resolve; });
+        session.updateAgentState = async (updater) => {
+            const updated = updater(session.agentState);
+            await acknowledgement;
+            session.agentState = updated;
+        };
+        session.updateAgentStateRequestSettlement = async (updater) => {
+            updater(session.agentState);
+            await cancellationAdmission;
+        };
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        let granted = false;
+        const approval = coordinator.completeRpcResponse({
+            context,
+            completion: { result: approve(), completedRequest: { status: 'approved' } },
+            onAdmitted: () => { granted = true; },
+        });
+        const canceled = { decision: 'abort' };
+        const cancellation = coordinator.completeCancellationResponse({ context, result: canceled, reason: 'stopped' });
+        acknowledge();
+        try {
+            await approval;
+            expect(granted).toBe(false);
+        } finally {
+            admitCancellation();
+            await cancellation;
+        }
+        await expect(provider).resolves.toEqual(canceled);
+    });
+
+    it('does not apply an approval after cancellation retired its pending entry', async () => {
+        const { coordinator, session } = createHarness();
+        const pending = coordinator.requestDecision(bashRequest);
+        let approveAdmission!: () => void;
+        const acknowledgement = new Promise<void>((resolve) => { approveAdmission = resolve; });
+        const apply = session.updateAgentState.bind(session);
+        session.updateAgentState = async (updater) => { await acknowledgement; apply(updater); };
+        const rejected = expect(pending).rejects.toThrow('canceled');
+        let granted = false;
+        coordinator.completeResponse({
+            context: coordinator.getResponseContext(bashRequest.requestId)!,
+            completion: { result: approve(), completedRequest: { status: 'approved' } },
+            onAdmitted: () => { granted = true; },
+        });
+        await coordinator.cancelAll('canceled');
+        await rejected;
+        approveAdmission();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(granted).toBe(false);
+    });
+    it('does not grant approval while its cancellation is awaiting durable admission', async () => {
+        const { coordinator, session } = createHarness();
+        const pending = coordinator.requestDecision(bashRequest);
+        const admissions = new Map<string, () => void>();
+        const apply = session.updateAgentState.bind(session);
+        session.updateAgentState = async (updater) => {
+            await new Promise<void>((resolve) => { admissions.set('approved', resolve); });
+            apply(updater);
+        };
+        session.updateAgentStateRequestSettlement = async (updater) => {
+            await new Promise<void>((resolve) => { admissions.set('canceled', resolve); });
+            apply(updater);
+        };
+        const rejected = expect(pending).rejects.toThrow('canceled');
+        let granted = false;
+        coordinator.completeResponse({
+            context: coordinator.getResponseContext(bashRequest.requestId)!,
+            completion: { result: approve(), completedRequest: { status: 'approved' } },
+            onAdmitted: () => { granted = true; },
+        });
+        const cancellation = coordinator.cancelAll('canceled');
+        admissions.get('approved')!();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(granted).toBe(false);
+        admissions.get('canceled')!();
+        await cancellation;
+        await rejected;
+    });
+    it('does not release a provider waiter claimed while durable admission is pending', async () => {
+        const { coordinator, session } = createHarness();
+        const pending = coordinator.requestDecision(bashRequest);
+        let admit!: () => void;
+        const acknowledgement = new Promise<void>((resolve) => { admit = resolve; });
+        const apply = session.updateAgentState.bind(session);
+        session.updateAgentState = async (updater) => { await acknowledgement; apply(updater); };
+        let resumed = false;
+        void pending.then(() => { resumed = true; }, () => {});
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        coordinator.completeResponse({ context, completion: { result: approve(), completedRequest: { status: 'approved' } } });
+        const claimed = {
+            ...session.agentState.requests![bashRequest.requestId]!,
+            permissionResponseClaimV1: { owner: 'another-runtime' },
+        };
+        session.agentState.requests![bashRequest.requestId] = claimed;
+        admit();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(resumed).toBe(false);
+        coordinator.cancelRequest(bashRequest.requestId, 'test cleanup');
+        await expect(pending).rejects.toThrow('test cleanup');
+    });
+    it('holds the provider waiter until request settlement obtains durable custody', async () => {
+        const { coordinator, session } = createHarness();
+        const provider = coordinator.requestDecision(bashRequest);
+        let admit!: () => void;
+        const acknowledgement = new Promise<void>((resolve) => { admit = resolve; });
+        const apply = session.updateAgentState.bind(session);
+        session.updateAgentState = async (updater) => { await acknowledgement; apply(updater); };
+        let providerResumed = false;
+        void provider.then(() => { providerResumed = true; });
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        expect(coordinator.completeResponse({ context, completion: {
+            result: approve(), completedRequest: { status: 'approved' },
+        } })).toBe(true);
+        await Promise.resolve();
+        expect(providerResumed).toBe(false);
+        admit();
+        await expect(provider).resolves.toEqual(approve());
+    });
+    it.each(['native', 'rpc'] as const)('rejects canceled provider waiters after admission failure and fences a late %s approval before writing', async (channel) => {
+        const { coordinator, session } = createHarness();
+        const provider = coordinator.requestDecision(bashRequest);
+        let outcome = 'pending';
+        void provider.then(() => { outcome = 'approved'; }, () => { outcome = 'canceled'; });
+        const admit = session.updateAgentStateRequestSettlement.bind(session);
+        session.updateAgentStateRequestSettlement = async () => { throw new Error('journal unavailable'); };
+        await expect(coordinator.cancelAll('stopped')).rejects.toThrow('journal unavailable');
+        await Promise.resolve();
+        expect(outcome).toBe('canceled');
+        expect(coordinator.getResponseContext(bashRequest.requestId)).toMatchObject({ status: 'detached' });
+        const beforeApproval = structuredClone(session.agentState);
+        const response = {
+            context: coordinator.getResponseContext(bashRequest.requestId)!,
+            completion: { result: approve(), completedRequest: { status: 'approved' } },
+        };
+        if (channel === 'rpc') await expect(coordinator.completeRpcResponse(response)).resolves.toBe(false);
+        else expect(coordinator.completeResponse(response)).toBe(false);
+        expect(session.agentState).toEqual(beforeApproval);
+        expect(session.agentState.requests?.[bashRequest.requestId]).toBeDefined();
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).toBeUndefined();
+        session.updateAgentStateRequestSettlement = admit;
+        await coordinator.cancelAll('stopped');
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).toMatchObject({ status: 'canceled' });
+        expect(coordinator.getResponseContext(bashRequest.requestId)).toBeNull();
+    });
+
+    it.each(['rebase', 'returned-outcome'] as const)('does not grant a pre-effect approval superseded during the acknowledged write (%s)', async (conflict) => {
+        const { coordinator, session } = createHarness();
+        const provider = coordinator.requestDecision(bashRequest);
+        void provider.catch(() => {});
+        let granted = false;
+        session.updateAgentState = async (updater) => {
+            // Simulate a CAS attempt followed by the newer authoritative server snapshot.
+            updater(session.agentState);
+            session.agentState = { requests: {}, completedRequests: {
+                [bashRequest.requestId]: {
+                    tool: bashRequest.toolName, arguments: bashRequest.toolInput,
+                    createdAt: bashRequest.createdAt, completedAt: Date.now() + 1, status: 'denied',
+                },
+            } };
+            if (conflict === 'rebase') session.agentState = updater(session.agentState);
+        };
+        await expect(coordinator.completeRpcResponse({
+            context: coordinator.getResponseContext(bashRequest.requestId)!,
+            completion: { result: approve(), completedRequest: { status: 'approved' } },
+            onAdmitted: () => { granted = true; },
+        })).rejects.toThrow();
+        expect(granted).toBe(false);
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).toMatchObject({ status: 'denied' });
+        coordinator.cancelRequest(bashRequest.requestId, 'cleanup');
+    });
+
     it('rejects invalid AskUserQuestion input before request publication or waiter insertion', async () => {
         const { coordinator, session } = createHarness();
         const invalid = {
@@ -92,7 +364,7 @@ describe('PermissionRequestCoordinator', () => {
                     publishCount += 1;
                     if (rejectPublication) throw new InvalidAskUserQuestionInputError();
                 },
-                completeRequest: () => {},
+                completeRequest: async () => {},
                 hasOutstandingRequest: () => false,
                 isOutstandingRequestClaimed: () => false,
                 readOutstandingRequest: () => null,
@@ -240,11 +512,13 @@ describe('PermissionRequestCoordinator', () => {
     });
 
     it('exposes structured-response ownership only while a local waiter is live', async () => {
-        const { coordinator } = createHarness();
+        const { coordinator, session } = createHarness();
         const abort = new AbortController();
         const pending = coordinator.requestDecision(bashRequest, { signal: abort.signal });
-
-        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId)).toEqual(
+        const occurrenceId = session.agentState.requests?.[bashRequest.requestId]?.occurrenceId;
+        expect(occurrenceId).toEqual(expect.any(String));
+        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId, 'stale-occurrence')).toBeNull();
+        expect(coordinator.getLocallyOwnedLiveResponseContext(bashRequest.requestId, occurrenceId)).toEqual(
             expect.objectContaining({
                 requestId: bashRequest.requestId,
                 correlation: 'record',
@@ -375,6 +649,7 @@ describe('PermissionRequestCoordinator', () => {
         ).toBe(true);
 
         const retryAbort = new AbortController();
+        await expect.poll(() => coordinator.getResponseContext(bashRequest.requestId)).toBeNull();
         const retry = coordinator.requestDecision(
             {
                 ...bashRequest,
@@ -415,6 +690,7 @@ describe('PermissionRequestCoordinator', () => {
         ).toBe(true);
 
         const incompatibleAbort = new AbortController();
+        await expect.poll(() => coordinator.getResponseContext(bashRequest.requestId)).toBeNull();
         const incompatible = coordinator.requestDecision(
             {
                 ...bashRequest,
@@ -558,7 +834,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         ).toBe(true);
 
-        coordinator.cancelAll('Session ended');
+        await coordinator.cancelAll('Session ended');
 
         const retryAbort = new AbortController();
         const retry = coordinator.requestDecision(bashRequest, { signal: retryAbort.signal });

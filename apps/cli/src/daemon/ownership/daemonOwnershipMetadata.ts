@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS = ['stable', 'preview', 'dev'] as const;
-export const DaemonPublicReleaseChannelLabelSchema = z.enum(DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS);
+export const DaemonPublicReleaseChannelLabelSchema = lazySchema(() => z.enum(DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS));
 
 export const DAEMON_STARTUP_SOURCE_VALUES = [
   'manual',
@@ -11,7 +12,7 @@ export const DAEMON_STARTUP_SOURCE_VALUES = [
   'unknown',
 ] as const;
 
-export const DaemonStartupSourceSchema = z.enum(DAEMON_STARTUP_SOURCE_VALUES);
+export const DaemonStartupSourceSchema = lazySchema(() => z.enum(DAEMON_STARTUP_SOURCE_VALUES));
 
 export type DaemonStartupSource = z.infer<typeof DaemonStartupSourceSchema>;
 

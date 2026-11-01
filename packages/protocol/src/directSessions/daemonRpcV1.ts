@@ -7,11 +7,12 @@ import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeD
 import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
 import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1.js';
 import { SessionMessageRoleSchema } from '../sessionMessages/sessionMessageRole.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const DirectSessionsProviderIdSchema = AgentProviderIdV1Schema;
 export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
 
-const DirectSessionsCodexHomeSourceSchema = z
+const DirectSessionsCodexHomeSourceSchema = lazySchema(() => z
   .object({
     kind: z.literal('codexHome'),
     home: z.enum(['user', 'connectedService']),
@@ -37,73 +38,73 @@ const DirectSessionsCodexHomeSourceSchema = z
     if (value.connectedServiceGroupId) {
       ctx.addIssue({ code: 'custom', message: 'connectedServiceGroupId is not allowed when home=user', path: ['connectedServiceGroupId'] });
     }
-  });
+  }));
 
-const DirectSessionsClaudeConfigSourceSchema = z
+const DirectSessionsClaudeConfigSourceSchema = lazySchema(() => z
   .object({
     kind: z.literal('claudeConfig'),
     configDir: z.string().min(1).max(10_000).nullish(),
     projectId: z.string().min(1).max(2000).nullish(),
   })
-  .passthrough();
+  .passthrough());
 
-const DirectSessionsOpenCodeServerSourceSchema = z
+const DirectSessionsOpenCodeServerSourceSchema = lazySchema(() => z
   .object({
     kind: z.literal('opencodeServer'),
     baseUrl: z.string().url().nullish(),
     directory: z.string().min(1).max(10_000).nullish(),
   })
-  .passthrough();
+  .passthrough());
 
-const DirectSessionsPiAgentDirSourceSchema = z
+const DirectSessionsPiAgentDirSourceSchema = lazySchema(() => z
   .object({
     kind: z.literal('piAgentDir'),
     // Resolved ~/.pi/agent directory; falls back to env PI_CODING_AGENT_DIR / ~/.pi/agent when nullish.
     agentDir: z.string().min(1).max(10_000).nullish(),
   })
-  .passthrough();
+  .passthrough());
 
 /**
  * Generic source for agents whose ACP server advertises `session/list`. It carries no provider
  * identity and no filesystem location: candidates are produced by the agent itself over ACP and are
  * resume-only. `cwd` is the optional ACP working-directory filter and must be absolute.
  */
-const DirectSessionsAcpSessionListSourceSchema = z
+const DirectSessionsAcpSessionListSourceSchema = lazySchema(() => z
   .object({
     kind: z.literal('acpSessionList'),
     cwd: z.string().min(1).max(10_000).nullish(),
   })
-  .passthrough();
+  .passthrough());
 
-export const DirectSessionsSourceSchema = z.discriminatedUnion('kind', [
+export const DirectSessionsSourceSchema = lazySchema(() => z.discriminatedUnion('kind', [
   DirectSessionsCodexHomeSourceSchema,
   DirectSessionsClaudeConfigSourceSchema,
   DirectSessionsOpenCodeServerSourceSchema,
   DirectSessionsPiAgentDirSourceSchema,
   DirectSessionsAcpSessionListSourceSchema,
-]);
+]));
 export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;
 
 /**
  * Negotiates only the generic ACP `session/list` browse source. This capability is intentionally
  * resume-only and grants no transcript, follow, takeover, terminal, or writer authority.
  */
-export const DirectSessionsAcpSessionListCapabilityRequestSchema = z.object({}).strict();
+export const DirectSessionsAcpSessionListCapabilityRequestSchema = lazySchema(() => z.object({}).strict());
 export type DirectSessionsAcpSessionListCapabilityRequest = z.infer<typeof DirectSessionsAcpSessionListCapabilityRequestSchema>;
 
-export const DirectSessionsAcpSessionListCapabilityResponseSchema = z.object({
+export const DirectSessionsAcpSessionListCapabilityResponseSchema = lazySchema(() => z.object({
   ok: z.literal(true),
   capability: z.literal('acp_session_list_v1'),
   protocolVersion: z.literal(1),
   sourceKind: z.literal('acpSessionList'),
   resumeOnly: z.literal(true),
-}).strict();
+}).strict());
 export type DirectSessionsAcpSessionListCapabilityResponse = z.infer<typeof DirectSessionsAcpSessionListCapabilityResponseSchema>;
 
-export const DirectSessionsSearchModeSchema = z.enum(['fast', 'full']);
+export const DirectSessionsSearchModeSchema = lazySchema(() => z.enum(['fast', 'full']));
 export type DirectSessionsSearchMode = z.infer<typeof DirectSessionsSearchModeSchema>;
 
-export const DirectSessionsCandidatesListRequestSchema = z
+export const DirectSessionsCandidatesListRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     providerId: DirectSessionsProviderIdSchema,
@@ -113,10 +114,10 @@ export const DirectSessionsCandidatesListRequestSchema = z
     searchTerm: z.string().min(1).max(2000).optional(),
     searchMode: DirectSessionsSearchModeSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionsCandidatesListRequest = z.infer<typeof DirectSessionsCandidatesListRequestSchema>;
 
-export const DirectSessionsCandidatesListResponseSchema = z.union([
+export const DirectSessionsCandidatesListResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -135,30 +136,30 @@ export const DirectSessionsCandidatesListResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionsCandidatesListResponse = z.infer<typeof DirectSessionsCandidatesListResponseSchema>;
 
-export const DirectSessionCandidateDeleteRequestSchema = z
+export const DirectSessionCandidateDeleteRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     providerId: DirectSessionsProviderIdSchema,
     source: DirectSessionsSourceSchema,
     remoteSessionId: z.string().min(1).max(2000),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionCandidateDeleteRequest = z.infer<typeof DirectSessionCandidateDeleteRequestSchema>;
 
-export const DirectSessionCandidateDeleteResponseSchema = z.union([
+export const DirectSessionCandidateDeleteResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true), deleted: z.literal(true) }).passthrough(),
   z.object({
     ok: z.literal(false),
     errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
     error: z.string().min(1),
   }).passthrough(),
-]);
+]));
 export type DirectSessionCandidateDeleteResponse = z.infer<typeof DirectSessionCandidateDeleteResponseSchema>;
 
-export const DirectSessionLinkEnsureRequestSchema = z
+export const DirectSessionLinkEnsureRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     providerId: DirectSessionsProviderIdSchema,
@@ -169,11 +170,11 @@ export const DirectSessionLinkEnsureRequestSchema = z
     runtimeDescriptor: AgentRuntimeDescriptorV1Schema.optional(),
     source: DirectSessionsSourceSchema,
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionLinkEnsureRequest = z.infer<typeof DirectSessionLinkEnsureRequestSchema>;
 
 
-export const DirectSessionLinkEnsureResponseSchema = z.union([
+export const DirectSessionLinkEnsureResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -188,13 +189,13 @@ export const DirectSessionLinkEnsureResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionLinkEnsureResponse = z.infer<typeof DirectSessionLinkEnsureResponseSchema>;
 
-export const DirectSessionActivityV1Schema = z.enum(['running', 'active_recently', 'idle', 'unknown']);
+export const DirectSessionActivityV1Schema = lazySchema(() => z.enum(['running', 'active_recently', 'idle', 'unknown']));
 export type DirectSessionActivityV1 = z.infer<typeof DirectSessionActivityV1Schema>;
 
-export const DirectSessionCandidateV1Schema = z
+export const DirectSessionCandidateV1Schema = lazySchema(() => z
   .object({
     remoteSessionId: z.string().min(1).max(2000),
     title: z.string().min(1).max(10_000).optional(),
@@ -204,10 +205,10 @@ export const DirectSessionCandidateV1Schema = z
     archived: z.boolean().optional(),
     details: z.object({}).passthrough().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionCandidateV1 = z.infer<typeof DirectSessionCandidateV1Schema>;
 
-export const DirectSessionStatusGetRequestSchema = z
+export const DirectSessionStatusGetRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -215,10 +216,10 @@ export const DirectSessionStatusGetRequestSchema = z
     remoteSessionId: z.string().min(1).max(2000),
     source: DirectSessionsSourceSchema,
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionStatusGetRequest = z.infer<typeof DirectSessionStatusGetRequestSchema>;
 
-export const DirectSessionAttachRequestSchema = z
+export const DirectSessionAttachRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -228,10 +229,10 @@ export const DirectSessionAttachRequestSchema = z
     leaseId: z.string().min(1).max(2000).optional(),
     ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionAttachRequest = z.infer<typeof DirectSessionAttachRequestSchema>;
 
-export const DirectSessionAttachResponseSchema = z.union([
+export const DirectSessionAttachResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -247,19 +248,19 @@ export const DirectSessionAttachResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionAttachResponse = z.infer<typeof DirectSessionAttachResponseSchema>;
 
-export const DirectSessionDetachRequestSchema = z
+export const DirectSessionDetachRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     leaseId: z.string().min(1).max(2000),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionDetachRequest = z.infer<typeof DirectSessionDetachRequestSchema>;
 
-export const DirectSessionDetachResponseSchema = z.union([
+export const DirectSessionDetachResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -273,10 +274,10 @@ export const DirectSessionDetachResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionDetachResponse = z.infer<typeof DirectSessionDetachResponseSchema>;
 
-export const DirectSessionFollowPolicySetRequestSchema = z
+export const DirectSessionFollowPolicySetRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -285,10 +286,10 @@ export const DirectSessionFollowPolicySetRequestSchema = z
     source: DirectSessionsSourceSchema,
     enabled: z.boolean(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionFollowPolicySetRequest = z.infer<typeof DirectSessionFollowPolicySetRequestSchema>;
 
-export const DirectSessionFollowPolicySetResponseSchema = z.union([
+export const DirectSessionFollowPolicySetResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -304,10 +305,10 @@ export const DirectSessionFollowPolicySetResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionFollowPolicySetResponse = z.infer<typeof DirectSessionFollowPolicySetResponseSchema>;
 
-export const DirectSessionStatusGetResponseSchema = z.union([
+export const DirectSessionStatusGetResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -328,10 +329,10 @@ export const DirectSessionStatusGetResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionStatusGetResponse = z.infer<typeof DirectSessionStatusGetResponseSchema>;
 
-export const DirectTranscriptRawMessageV1Schema = z
+export const DirectTranscriptRawMessageV1Schema = lazySchema(() => z
   .object({
     id: z.string().min(1),
     createdAtMs: z.number().int().min(0),
@@ -339,10 +340,10 @@ export const DirectTranscriptRawMessageV1Schema = z
     messageRole: SessionMessageRoleSchema.nullable().optional(),
     raw: z.object({}).passthrough(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectTranscriptRawMessageV1 = z.infer<typeof DirectTranscriptRawMessageV1Schema>;
 
-export const DirectTranscriptPageRequestSchema = z
+export const DirectTranscriptPageRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     providerId: DirectSessionsProviderIdSchema,
@@ -353,14 +354,14 @@ export const DirectTranscriptPageRequestSchema = z
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectTranscriptPageRequest = z.infer<typeof DirectTranscriptPageRequestSchema>;
 
 // Keep `truncated` for released readers; only a page limit permits adjacent continuation.
-export const DirectTranscriptTruncationReasonSchema = z.enum(['page_limit', 'source_discontinuity']);
+export const DirectTranscriptTruncationReasonSchema = lazySchema(() => z.enum(['page_limit', 'source_discontinuity']));
 export type DirectTranscriptTruncationReason = z.infer<typeof DirectTranscriptTruncationReasonSchema>;
 
-export const DirectTranscriptPageResponseSchema = z.union([
+export const DirectTranscriptPageResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -388,10 +389,10 @@ export const DirectTranscriptPageResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectTranscriptPageResponse = z.infer<typeof DirectTranscriptPageResponseSchema>;
 
-export const DirectTranscriptReadAfterRequestSchema = z
+export const DirectTranscriptReadAfterRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     providerId: DirectSessionsProviderIdSchema,
@@ -401,7 +402,7 @@ export const DirectTranscriptReadAfterRequestSchema = z
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectTranscriptReadAfterRequest = z.infer<typeof DirectTranscriptReadAfterRequestSchema>;
 
 export function resolveDirectTranscriptContinuation(params: Readonly<{
@@ -412,7 +413,7 @@ export function resolveDirectTranscriptContinuation(params: Readonly<{
   return params.truncationReason ?? (params.truncated === true ? 'source_discontinuity' : 'complete');
 }
 
-export const DirectTranscriptReadAfterResponseSchema = z.union([
+export const DirectTranscriptReadAfterResponseSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -438,7 +439,7 @@ export const DirectTranscriptReadAfterResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectTranscriptReadAfterResponse = z.infer<typeof DirectTranscriptReadAfterResponseSchema>;
 
 export const DIRECT_SESSION_TAKEOVER_ACTION_IDS = Object.freeze({
@@ -446,7 +447,7 @@ export const DIRECT_SESSION_TAKEOVER_ACTION_IDS = Object.freeze({
   persisted: 'session.direct.takeover_persist',
 } as const);
 
-export const DirectSessionTakeoverRequestSchema = z
+export const DirectSessionTakeoverRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -454,10 +455,10 @@ export const DirectSessionTakeoverRequestSchema = z
     requestId: z.string().trim().min(1).optional(),
     terminal: SpawnSessionTerminalSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionTakeoverRequest = z.infer<typeof DirectSessionTakeoverRequestSchema>;
 
-export const DirectSessionTakeoverResponseSchema = z.union([
+export const DirectSessionTakeoverResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   z
     .object({
@@ -466,10 +467,10 @@ export const DirectSessionTakeoverResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionTakeoverResponse = z.infer<typeof DirectSessionTakeoverResponseSchema>;
 
-export const DirectSessionTakeoverPersistRequestSchema = z
+export const DirectSessionTakeoverPersistRequestSchema = lazySchema(() => z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -477,10 +478,10 @@ export const DirectSessionTakeoverPersistRequestSchema = z
     requestId: z.string().trim().min(1).optional(),
     terminal: SpawnSessionTerminalSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type DirectSessionTakeoverPersistRequest = z.infer<typeof DirectSessionTakeoverPersistRequestSchema>;
 
-export const DirectSessionTakeoverPersistResponseSchema = z.union([
+export const DirectSessionTakeoverPersistResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true), converted: z.boolean().optional() }).passthrough(),
   z
     .object({
@@ -489,16 +490,16 @@ export const DirectSessionTakeoverPersistResponseSchema = z.union([
       error: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type DirectSessionTakeoverPersistResponse = z.infer<typeof DirectSessionTakeoverPersistResponseSchema>;
 
 // Start acknowledges the same daemon-local Action Operation observed via list/get/cancel.
-export const DirectSessionTakeoverPersistStartResponseSchema = z.union([
+export const DirectSessionTakeoverPersistStartResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true), operation: ActionOperationSnapshotV1Schema }),
   z.object({
     ok: z.literal(false),
     errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
     error: z.string().min(1),
   }),
-]);
+]));
 export type DirectSessionTakeoverPersistStartResponse = z.infer<typeof DirectSessionTakeoverPersistStartResponseSchema>;

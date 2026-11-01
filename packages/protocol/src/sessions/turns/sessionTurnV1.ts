@@ -4,24 +4,25 @@ import {
   PrimaryTurnStatusV1Schema,
   SessionRuntimeIssueV1Schema,
 } from '../control/runtimeIssueV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
 export const SessionIndexedIdentifierMaxLengthV1 = 191;
-export const SessionTurnIdentifierV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-export const SessionTurnProviderV1Schema = z.string().trim().min(1).max(128);
-export const SessionTurnTimestampV1Schema = z.number().finite().int().nonnegative();
-export const SessionTurnSeqV1Schema = z.number().finite().int().nonnegative();
+export const SessionTurnIdentifierV1Schema = lazySchema(() => z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1));
+export const SessionTurnProviderV1Schema = lazySchema(() => z.string().trim().min(1).max(128));
+export const SessionTurnTimestampV1Schema = lazySchema(() => z.number().finite().int().nonnegative());
+export const SessionTurnSeqV1Schema = lazySchema(() => z.number().finite().int().nonnegative());
 
 export const SessionTurnLifecycleStatusV1Schema = PrimaryTurnStatusV1Schema;
 export type SessionTurnLifecycleStatusV1 = z.infer<typeof SessionTurnLifecycleStatusV1Schema>;
 
-export const SessionTurnRollbackStateV1Schema = z.enum([
+export const SessionTurnRollbackStateV1Schema = lazySchema(() => z.enum([
   'not_eligible',
   'eligible',
   'rolled_back',
-]);
+]));
 export type SessionTurnRollbackStateV1 = z.infer<typeof SessionTurnRollbackStateV1Schema>;
 
-export const SessionTurnTranscriptAnchorsV1Schema = z
+export const SessionTurnTranscriptAnchorsV1Schema = lazySchema(() => z
   .object({
     startUserMessageSeq: SessionTurnSeqV1Schema.optional(),
     userMessageSeqs: z.array(SessionTurnSeqV1Schema).readonly().optional(),
@@ -29,25 +30,25 @@ export const SessionTurnTranscriptAnchorsV1Schema = z
     endSeqInclusive: SessionTurnSeqV1Schema.nullable().optional(),
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnTranscriptAnchorsV1 = z.infer<typeof SessionTurnTranscriptAnchorsV1Schema>;
 
-export const SessionTurnRollbackFacetBaseV1Schema = z
+export const SessionTurnRollbackFacetBaseV1Schema = lazySchema(() => z
   .object({
     state: SessionTurnRollbackStateV1Schema,
     reason: z.string().trim().min(1).max(256).optional(),
     providerRollbackOrdinal: z.number().finite().int().nonnegative().optional(),
   })
-  .passthrough();
+  .passthrough());
 
-export const SessionTurnRollbackFacetV1Schema = SessionTurnRollbackFacetBaseV1Schema
+export const SessionTurnRollbackFacetV1Schema = lazySchema(() => SessionTurnRollbackFacetBaseV1Schema
   .extend({
     updatedAt: SessionTurnTimestampV1Schema,
   })
-  .readonly();
+  .readonly());
 export type SessionTurnRollbackFacetV1 = z.infer<typeof SessionTurnRollbackFacetV1Schema>;
 
-export const SessionTurnV1Schema = z
+export const SessionTurnV1Schema = lazySchema(() => z
   .object({
     turnId: SessionTurnIdentifierV1Schema,
     provider: SessionTurnProviderV1Schema.optional(),
@@ -62,7 +63,7 @@ export const SessionTurnV1Schema = z
     lastMutationId: SessionTurnIdentifierV1Schema.optional(),
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnV1 = z.infer<typeof SessionTurnV1Schema>;
 
 export function buildSessionTurnV1(params: Readonly<SessionTurnV1 & Record<string, unknown>>): SessionTurnV1 {

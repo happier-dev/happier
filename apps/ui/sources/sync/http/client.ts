@@ -1,8 +1,11 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { Platform } from 'react-native';
+import { log } from '@/log';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { redactPublicShareCapabilityUrl, withConnectedServiceReaderSupport } from '@happier-dev/protocol';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { SupersededOperationError } from '@/utils/timing/time';
 import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
 import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
 import {
@@ -13,6 +16,7 @@ import {
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import {
     readServerReachabilityWaitTimeoutMs,
+    readServerReadInactivityTimeoutMs,
 } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { observeUiClientUpgradeRequiredResponse } from '@/sync/runtime/clientCompatibility/uiClientUpgradeRequired';
 import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
@@ -33,11 +37,11 @@ export class ServerFetchAbortedForServerSwitchError extends Error {
     }
 }
 
-export class ServerFetchConnectivityTimeoutError extends Error {
+export class ServerFetchConnectivityTimeoutError extends ServerReachabilityWaitTimeoutError {
     public readonly retryable = false;
 
     constructor() {
-        super('Timed out waiting for server reachability');
+        super();
         this.name = 'ServerFetchConnectivityTimeoutError';
     }
 }
@@ -57,6 +61,10 @@ export class ServerFetchWriteTimeoutError extends Error {
 }
 
 type ServerFetchOptions = Readonly<{
+    /** GET/HEAD are cancellable by default; only paged reads get a native deadline.
+     * POST-based reads must opt in; mutations must not.
+     */
+    recoveryRead?: 'paged' | 'unbounded' | false;
     includeAuth?: boolean;
     /**
      * When `none`, perform a single direct `runtimeFetch` attempt and skip reachability gating and
@@ -73,6 +81,11 @@ type ServerFetchOptions = Readonly<{
     timeoutMs?: number;
 }>;
 
+export type ServerReadRequestInit = RequestInit & Readonly<{
+    /** The read owner verified a server-enforced page/response bound; permits a native deadline. */
+    responseSizeBounded?: boolean;
+}>;
+
 function resolveRequestTimeoutMs(optionTimeoutMs: number | undefined): number {
     if (typeof optionTimeoutMs === 'number' && Number.isFinite(optionTimeoutMs)) {
         return Math.max(0, Math.trunc(optionTimeoutMs));
@@ -80,19 +93,132 @@ function resolveRequestTimeoutMs(optionTimeoutMs: number | undefined): number {
     return 0;
 }
 
-const inFlightControllers = new Set<AbortController>();
+type InFlightFetch = { readOnly: boolean; reason?: unknown };
+const inFlightControllers = new Map<AbortController, InFlightFetch>();
 let abortSequence = 0;
+
+export class ServerFetchReadTimeoutError extends Error {
+    readonly retryable = true;
+
+    constructor() {
+        super('Server recovery read made no progress within the peer-liveness window');
+        this.name = 'ServerFetchReadTimeoutError';
+    }
+}
+
+export class ServerFetchReadSupersededError extends SupersededOperationError {
+    constructor() {
+        super('Server recovery read superseded by manual retry');
+        this.name = 'ServerFetchReadSupersededError';
+    }
+}
 
 const debugLogThrottleMs = 5_000;
 const lastDebugLogMsByKey = new Map<string, number>();
 let didLogActiveServerSnapshot = false;
 
-export function abortServerFetches(reason: string = 'server-switch'): void {
-    abortSequence += 1;
-    for (const controller of inFlightControllers) {
+export function abortServerFetches(reason: string = 'server-switch', scope?: Readonly<{ readOnly: true }>): void {
+    if (!scope?.readOnly) abortSequence += 1;
+    for (const [controller, request] of inFlightControllers) {
+        if (scope?.readOnly && !request.readOnly) continue;
+        request.reason = reason;
         controller.abort(reason);
     }
-    inFlightControllers.clear();
+}
+
+/** Shared by active and scoped adapters. The transport retains its own cancellation through
+ * the supplied consumer, so abort still reaches the network after headers have arrived.
+ */
+export async function withServerReadLifetime<T = Response>(
+    init: ServerReadRequestInit | undefined,
+    request: (init: RequestInit, consume: (response: Response) => Promise<Response | T>) => Promise<Response | T>,
+    consumeResponse?: (response: Response) => Promise<T>,
+): Promise<Response | T> {
+    const controller = new AbortController();
+    // RN's abort-controller polyfill discards abort(reason); keep the cause with the existing
+    // cancellation owner so timeout and supersession classification also survives on native.
+    const cancellation: InFlightFetch = { readOnly: true };
+    inFlightControllers.set(controller, cancellation);
+    const upstream = init?.signal;
+    const abortFromUpstream = () => {
+        cancellation.reason = upstream?.reason;
+        controller.abort(upstream?.reason);
+    };
+    const timeoutMs = readServerReadInactivityTimeoutMs();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    // Native XHR fetch cannot expose progress before resolution. Large unpaged responses must
+    // remain cancellable without a total deadline until native fetch exposes streaming progress.
+    let canObserveInactivity = Platform.OS === 'web' || init?.responseSizeBounded === true;
+    const resetInactivity = () => {
+        clearTimeout(timer);
+        if (!canObserveInactivity) return;
+        timer = setTimeout(() => {
+            log.log(`[serverFetch] recovery read inactivity timeout (${timeoutMs}ms)`);
+            cancellation.reason = new ServerFetchReadTimeoutError();
+            controller.abort(cancellation.reason);
+        }, timeoutMs);
+    };
+    const cancelled = new Promise<never>((_resolve, reject) => {
+        controller.signal.addEventListener('abort', () => {
+            const reason: unknown = cancellation.reason ?? controller.signal.reason;
+            const error = reason instanceof ServerFetchReadTimeoutError ? reason
+                : reason === 'manual-retry' ? new ServerFetchReadSupersededError()
+                : reason === 'server-switch' ? new ServerFetchAbortedForServerSwitchError()
+                : Object.assign(new Error('Aborted'), { name: 'AbortError' });
+            reject(error);
+            // Some synthetic/platform streams do not observe fetch's signal themselves.
+            void reader?.cancel(error).catch(() => {});
+        }, { once: true });
+    });
+    if (upstream?.aborted) abortFromUpstream();
+    else upstream?.addEventListener('abort', abortFromUpstream, { once: true });
+    resetInactivity();
+    try {
+        if (controller.signal.aborted) return await cancelled;
+        const requestInit = { ...init, signal: controller.signal };
+        delete requestInit.responseSizeBounded;
+        return await Promise.race([cancelled, request(requestInit, async response => {
+            if (controller.signal.aborted) return await cancelled;
+            resetInactivity();
+            let ownedResponse = response;
+            if (typeof response.body?.getReader === 'function') {
+                canObserveInactivity = true;
+                resetInactivity();
+                reader = response.body.getReader();
+                const bodyReader = reader;
+                ownedResponse = new Response(new ReadableStream<Uint8Array>({
+                    async pull(body) {
+                        try {
+                            const chunk = await bodyReader.read();
+                            if (chunk.done) body.close();
+                            else {
+                                if (chunk.value.byteLength > 0) resetInactivity();
+                                body.enqueue(chunk.value);
+                            }
+                        } catch (error) {
+                            body.error(error);
+                        }
+                    },
+                    cancel: reason => bodyReader.cancel(reason),
+                }), { status: response.status, statusText: response.statusText, headers: response.headers });
+            }
+            // Response-returning adapters must finish the body here too. Their callers receive a
+            // buffered response, so subsequent json()/clone() cannot outlive cancellation ownership.
+            const result = consumeResponse ? await consumeResponse(ownedResponse)
+                : reader ? new Response(await ownedResponse.blob(), {
+                    status: response.status, statusText: response.statusText, headers: response.headers,
+                }) : response;
+            if (controller.signal.aborted) return await cancelled;
+            return result;
+        })]);
+    } finally {
+        clearTimeout(timer);
+        upstream?.removeEventListener('abort', abortFromUpstream);
+        // A callback may finish on status alone. Release an unread body as well as its timer.
+        void reader?.cancel().catch(() => {});
+        inFlightControllers.delete(controller);
+    }
 }
 
 function normalizePath(path: string): string {
@@ -163,11 +289,28 @@ function maybeLogRuntimeFetchFailure(params: {
     }
 }
 
-export async function serverFetch(
+export function serverFetch(path: string, init?: ServerReadRequestInit, options?: ServerFetchOptions): Promise<Response>;
+/** Await response consumption before releasing caller, Home-switch, and opted-in timeout cancellation. */
+export function serverFetch<T>(
     path: string,
-    init?: RequestInit,
+    init: ServerReadRequestInit | undefined,
+    options: ServerFetchOptions,
+    consumeResponse: (response: Response) => Promise<T>,
+): Promise<T>;
+export async function serverFetch<T>(
+    path: string,
+    init?: ServerReadRequestInit,
     options: ServerFetchOptions = {},
-): Promise<Response> {
+    consumeResponse?: (response: Response) => Promise<T>,
+): Promise<Response | T> {
+    const method = String(init?.method ?? 'GET').toUpperCase();
+    const readPolicy = options.recoveryRead ?? (method === 'GET' || method === 'HEAD' ? 'unbounded' : false);
+    if (readPolicy) {
+        const readInit = { ...init, responseSizeBounded: readPolicy === 'paged' || init?.responseSizeBounded === true };
+        return await withServerReadLifetime<T>(readInit,
+            (ownedInit, consume) => serverFetch(path, ownedInit, { ...options, recoveryRead: false }, consume),
+            consumeResponse);
+    }
     const localAbortSequence = abortSequence;
     const snapshot = getActiveServerSnapshot();
     const normalizedPath = normalizePath(path);
@@ -234,7 +377,7 @@ export async function serverFetch(
     if (hasAuthorization) requestUrl = withConnectedServiceReaderSupport(requestUrl);
 
     const requestController = new AbortController();
-    inFlightControllers.add(requestController);
+    inFlightControllers.set(requestController, { readOnly: false });
     if (abortSequence !== localAbortSequence) {
         requestController.abort('server-switch');
     }
@@ -251,10 +394,8 @@ export async function serverFetch(
         }
     }
 
-    const method = String(init?.method ?? 'GET').toUpperCase();
-
     // A request owner may opt into a bound when it can recover safely from an
-    // ambiguous timeout. Generic reads and writes remain unbounded here.
+    // ambiguous write timeout. Read liveness is owned by withServerReadLifetime above.
     const effectiveTimeoutMs = resolveRequestTimeoutMs(options.timeoutMs);
     let didWriteTimeout = false;
     let writeTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -264,6 +405,20 @@ export async function serverFetch(
             requestController.abort('write-timeout');
         }, effectiveTimeoutMs);
     }
+
+    const throwIfRequestAborted = (error: unknown, reportTimeout: boolean): void => {
+        if (!requestController.signal.aborted && !(error instanceof Error && error.name === 'AbortError')) return;
+        const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
+        if (reason === 'server-switch' || abortSequence !== localAbortSequence) {
+            throw new ServerFetchAbortedForServerSwitchError();
+        }
+        if (didWriteTimeout) {
+            if (reportTimeout) reportServerUnreachable(snapshot.serverUrl, error);
+            throw new ServerFetchWriteTimeoutError();
+        }
+        // Caller cancellation does not establish a server reachability failure.
+        throw error;
+    };
 
     const retryMode: 'default' | 'none' = options.retry ?? 'default';
     const isActiveOrigin =
@@ -293,20 +448,8 @@ export async function serverFetch(
                             acceptAuthFailed: true,
                         });
                     } catch (error) {
-                        const aborted =
-                            requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
-                        if (aborted) {
-                            const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
-                            const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
-                            if (serverSwitchAbort) {
-                                throw new ServerFetchAbortedForServerSwitchError();
-                            }
-                            if (didWriteTimeout) {
-                                reportServerUnreachable(snapshot.serverUrl, error);
-                                throw new ServerFetchWriteTimeoutError();
-                            }
-                            throw error;
-                        }
+                        // The surrounding transport catch owns timeout reachability reporting.
+                        throwIfRequestAborted(error, false);
                         if (error instanceof ServerReachabilityWaitTimeoutError) {
                             throw new ServerFetchConnectivityTimeoutError();
                         }
@@ -341,24 +484,7 @@ export async function serverFetch(
                     activeServerId: snapshot.serverId,
                     error,
                 });
-                const aborted =
-                    requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
-                if (aborted) {
-                    const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
-                    const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
-                    if (serverSwitchAbort) {
-                        throw new ServerFetchAbortedForServerSwitchError();
-                    }
-                    if (didWriteTimeout) {
-                        // The server accepted the connection but never responded within the write
-                        // bound. Report unreachable (so backoff/reachability track it) and surface a
-                        // retryable timeout so the pending outbox re-POSTs with the same localId.
-                        reportServerUnreachable(snapshot.serverUrl, error);
-                        throw new ServerFetchWriteTimeoutError();
-                    }
-                    // Caller aborts should not poison reachability state.
-                    throw error;
-                }
+                throwIfRequestAborted(error, true);
                 if (error instanceof ServerFetchConnectivityTimeoutError) {
                     // Reachability wait timeouts already represent a "paused/offline" state; do not report an extra
                     // transport failure which can reset backoff scheduling.
@@ -410,6 +536,23 @@ export async function serverFetch(
 
             break;
         }
+        if (!response) throw new Error('serverFetch did not attempt the request');
+        if (!consumeResponse) return response;
+
+        // A body-consuming owner keeps cancellation attached until its read settles. Parsing
+        // failures stay outside the transport retry/classification path and never replay a write.
+        try {
+            const result = await consumeResponse(response);
+            if (requestController.signal.aborted) {
+                const error = new Error('Aborted');
+                error.name = 'AbortError';
+                throw error;
+            }
+            return result;
+        } catch (error) {
+            throwIfRequestAborted(error, false);
+            throw error;
+        }
     } finally {
         if (writeTimeoutHandle) {
             clearTimeout(writeTimeoutHandle);
@@ -417,10 +560,4 @@ export async function serverFetch(
         removeUpstreamListener();
         inFlightControllers.delete(requestController);
     }
-
-    if (!response) {
-        // Defensive: loop always runs at least once, but keep return type strict.
-        throw new Error('serverFetch did not attempt the request');
-    }
-    return response;
 }

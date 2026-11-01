@@ -15,6 +15,7 @@ vi.mock("@/app/events/eventRouter", async () => {
 });
 
 import { db } from "@/storage/db";
+import { buildConnectedServiceCredentialRecord } from "@happier-dev/protocol";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -70,6 +71,25 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
         vi.clearAllMocks();
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it("derives the public organization identity from the plaintext credential at the write boundary", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none" });
+        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1000, serviceId: "claude-subscription", profileId: "work", kind: "oauth",
+            oauth: { accessToken: "access", refreshToken: "refresh", idToken: null, scope: null, tokenType: null,
+                providerAccountId: "same-user", providerEmail: null, raw: { claudeAiOauth: { organizationUuid: "org-work" } } },
+        });
+        const app = createTestApp();
+        connectRoutes(app);
+        const response = await app.inject({ method: "POST", url: "/v3/connect/claude-subscription/profiles/work/credential",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id }, payload: { content: { t: "plain", v: record } } });
+        expect(response.statusCode).toBe(200);
+        const stored = await db.serviceAccountToken.findUnique({ where: { accountId_vendor_profileId: {
+            accountId: user.id, vendor: "claude-subscription", profileId: "work",
+        } } });
+        expect(stored?.metadata).toMatchObject({ providerAccountId: "same-user", providerOrganizationId: "org-work" });
     });
 
     it("stores and returns a plaintext credential envelope for plaintext accounts (server sealed at rest)", async () => {

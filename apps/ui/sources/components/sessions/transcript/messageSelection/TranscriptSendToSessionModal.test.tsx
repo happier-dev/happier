@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createSessionFixture,
@@ -12,6 +12,9 @@ import type { SessionListViewItem } from '@/sync/domains/session/listing/session
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { TranscriptSendToSessionModal } from './TranscriptSendToSessionModal';
+import { installAgentAssetLoader } from '@/dev/testkit/mocks/agentAssets';
+
+beforeEach(installAgentAssetLoader);
 
 const sessionsRef = vi.hoisted((): { current: Session[] } => ({ current: [] }));
 const sessionListViewDataByServerIdRef = vi.hoisted((): { current: Record<string, SessionListViewItem[] | null> } => ({ current: {} }));
@@ -37,9 +40,6 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => keyboardLayoutState.keyboardHeight,
 }));
 
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: 'AgentIcon',
-}));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSessions: () => sessionsRef.current,

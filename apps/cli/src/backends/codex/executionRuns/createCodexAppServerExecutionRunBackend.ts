@@ -103,6 +103,7 @@ async function waitForCodexAppServerPrompt(
 
 export function createCodexAppServerExecutionRunBackend(args: Readonly<{
   cwd: string;
+  reasoningSummary?: 'auto' | 'none';
   env?: NodeJS.ProcessEnv;
   permissionMode: PermissionMode;
   start?: ExecutionRunBackendStartContext | null;
@@ -224,6 +225,7 @@ export function createCodexAppServerExecutionRunBackend(args: Readonly<{
 
   const runtime = createCodexAppServerRuntime({
     directory: args.cwd,
+    reasoningSummary: args.reasoningSummary,
     activeServerDir: args.cwd,
     processEnv: args.env ?? process.env,
     session: sessionAdapter,

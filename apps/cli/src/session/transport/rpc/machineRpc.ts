@@ -1,6 +1,6 @@
 import { createUserScopedSocket } from '@/api/session/sockets';
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
-import { resolveMachineEncryptionContext } from '@/api/client/encryptionKey';
+import { MachineRpcEncryptionError, resolveMachineRpcEncryption } from '@/api/machine/resolveMachineRpcEncryption';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { Credentials } from '@/persistence';
 import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
@@ -39,7 +39,6 @@ export async function callExactMachineRpc(params: Readonly<{
   const connectTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
     ? params.timeoutMs
     : resolveSessionControlSocketConnectTimeoutMs();
-  const machineEncryption = resolveMachineEncryptionContext(params.credentials);
   const requestId = randomUUID();
   let requestEmitted = false;
   let responseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -66,13 +65,14 @@ export async function callExactMachineRpc(params: Readonly<{
   };
 
   try {
+    const machineEncryption = await resolveMachineRpcEncryption({ credentials: params.credentials, machineId, timeoutMs: connectTimeoutMs });
     const connectPromise = waitForSocketConnect(socket as unknown as import('socket.io-client').Socket, connectTimeoutMs);
     const connectedOrDisconnected = Promise.race([connectPromise, disconnectGuard.disconnected]);
     socket.connect();
     await connectedOrDisconnected;
     disconnectGuard.throwIfDisconnected();
 
-    const encryptedRequest = encodeBase64(encrypt(
+    const encodedRequest = machineEncryption.encryptionVariant === 'plain' ? params.request : encodeBase64(encrypt(
       machineEncryption.encryptionKey,
       machineEncryption.encryptionVariant,
       params.request,
@@ -92,7 +92,7 @@ export async function callExactMachineRpc(params: Readonly<{
           SOCKET_RPC_EVENTS.CALL,
           {
             method: `${machineId}:${params.method}`,
-            params: encryptedRequest,
+            params: encodedRequest,
             requestId,
             ...(timeoutMs !== null ? { timeoutMs } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),
@@ -111,13 +111,21 @@ export async function callExactMachineRpc(params: Readonly<{
         errorCode: response.errorCode,
       });
     }
-    const encryptedResult = typeof response.result === 'string' ? response.result.trim() : '';
-    if (!encryptedResult) return null;
-    return decrypt(
-      machineEncryption.encryptionKey,
-      machineEncryption.encryptionVariant,
-      decodeBase64(encryptedResult, 'base64'),
-    );
+    if (machineEncryption.encryptionVariant === 'plain') return response.result;
+    try {
+      if (typeof response.result !== 'string' || !response.result.trim()) {
+        throw new MachineRpcEncryptionError('response_invalid');
+      }
+      const result: unknown = decrypt(
+        machineEncryption.encryptionKey,
+        machineEncryption.encryptionVariant,
+        decodeBase64(response.result, 'base64'),
+      );
+      if (result === null) throw new MachineRpcEncryptionError('response_invalid');
+      return result;
+    } catch {
+      throw new MachineRpcEncryptionError('response_invalid');
+    }
   } catch (error) {
     throw readRpcRequestDisposition(error) === null
       ? markRpcRequestDisposition(error, requestEmitted ? 'outcomeUnknown' : 'notSent')

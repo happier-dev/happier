@@ -83,7 +83,7 @@ describe('connectedServiceAuthSwitchOutcome', () => {
     expect(withoutProof.errorCode).toBe('provider_adoption_unproven');
   });
 
-  it('never reports adoption when the desired revision is missing or provider proof names another revision', () => {
+  it('requires a current server revision without requiring the committed revision', () => {
     const unknownRevision = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'old-shape',
       provenance: 'reconciliation',
@@ -116,7 +116,7 @@ describe('connectedServiceAuthSwitchOutcome', () => {
         proof: { status: 'verified', source: 'provider_read', credentialRevision: null },
       },
       observedAfterApplyTarget: unknownRevision.decisionCommittedTarget,
-    })).toMatchObject({ reconciliationDisposition: 'failed', errorCode: 'credential_revision_unproven' });
+    })).toMatchObject({ reconciliationDisposition: 'failed', errorCode: 'credential_revision_missing' });
 
     expect(finalizeConnectedServiceAuthGenerationApplication({
       sessionId: 'wrong',

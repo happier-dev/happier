@@ -98,12 +98,12 @@ describe('useSessionListA11yAnnouncements', () => {
             result: {
                 instruction: { kind: 'blocked', reason: 'workspace-scope-mismatch' },
                 visual: { kind: 'none' },
-                sessionListBlockReason: 'direct-session',
+                sessionListBlockReason: 'feature-disabled',
             },
         });
 
         expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
-            expect.stringContaining('sessionsList.dragA11yBlockedDirectSession'),
+            expect.stringContaining('sessionsList.dragA11yBlockedFeatureDisabled'),
         );
         expect(announceForAccessibilitySpy).not.toHaveBeenCalledWith(
             expect.stringContaining('sessionsList.dragA11yBlockedWorkspaceScope'),

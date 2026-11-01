@@ -1,3 +1,4 @@
+import { SessionPermissionRpcRouter } from './sessionPermissionRpcRouter';
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +16,18 @@ class FakeRpcHandlerManager {
 class FakeSession {
     sessionId = 'test-session-id';
     rpcHandlerManager = new FakeRpcHandlerManager();
+    private permissionRpcRouter: SessionPermissionRpcRouter | null = null;
+    getOrCreatePermissionRpcRouter(): SessionPermissionRpcRouter {
+      return this.permissionRpcRouter ??= new SessionPermissionRpcRouter(this.rpcHandlerManager);
+    }
     agentState: any = { requests: {}, completedRequests: {} };
+
+    async updateAgentStateRequestSettlement(updater: Parameters<FakeSession['updateAgentState']>[0]): Promise<void> {
+
+      await this.updateAgentState(updater);
+
+    }
+
 
     updateAgentState(updater: any) {
         this.agentState = updater(this.agentState);
@@ -33,10 +45,7 @@ class TestPermissionHandler extends BasePermissionHandler {
     }
 
     request(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-        return new Promise<PermissionResult>((resolve, reject) => {
-            this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-            this.addPendingRequestToState(toolCallId, toolName, input);
-        });
+        return this.requestPermissionDecision(toolCallId, toolName, input);
     }
 }
 

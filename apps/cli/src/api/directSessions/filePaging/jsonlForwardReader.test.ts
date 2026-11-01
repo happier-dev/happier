@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { withTempDir } from '@/testkit/fs/tempDir';
+
 import { readJsonlFileForward } from './jsonlForwardReader';
 
 function buildJsonl(lines: unknown[], opts?: { trailingNewline?: boolean }): string {
@@ -13,6 +15,31 @@ function buildJsonl(lines: unknown[], opts?: { trailingNewline?: boolean }): str
 }
 
 describe('readJsonlFileForward', () => {
+  it('reads an intact record whose framing exactly fits the caller allowance', async () => withTempDir('happier-jsonl-boundary-', async (dir) => {
+    const filePath = join(dir, 't.jsonl');
+    const value = { text: 'é'.repeat(1024) };
+    const content = JSON.stringify(value) + '\n';
+    await writeFile(filePath, content);
+    const page = await readJsonlFileForward({ filePath, offsetBytes: 0, maxBytes: 1024,
+      maxOversizeLineBytes: Buffer.byteLength(content), maxItems: 1 });
+    expect(page.items.map(line => line.value)).toEqual([value]);
+  }));
+
+  it('reports an oversized record after returning any preceding complete rows, and permits a larger caller allowance', async () => withTempDir('happier-jsonl-forward-', async (dir) => {
+    const filePath = join(dir, 't.jsonl');
+    const first = buildJsonl([{ i: 1 }]);
+    const oversized = { i: 2, data: 'x'.repeat(4096) };
+    await writeFile(filePath, first + buildJsonl([oversized]));
+    const page = await readJsonlFileForward({ filePath, offsetBytes: 0, maxBytes: 1024, maxOversizeLineBytes: 1024, maxItems: 10 });
+    expect(page.items.map(line => line.value)).toEqual([{ i: 1 }]);
+    expect(page.nextOffsetBytes).toBe(Buffer.byteLength(first));
+    await expect(readJsonlFileForward({ filePath, offsetBytes: page.nextOffsetBytes, maxBytes: 1024, maxOversizeLineBytes: 1024, maxItems: 10 }))
+      .rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE', maxLineBytes: 1024 });
+    const recovered = await readJsonlFileForward({ filePath, offsetBytes: page.nextOffsetBytes, maxBytes: 1024, maxOversizeLineBytes: 8192, maxItems: 10 });
+    expect(recovered.items.map(line => line.value)).toEqual([oversized]);
+    expect(recovered.reachedEnd).toBe(true);
+  }));
+
   it('reads forward from an offset and advances the cursor', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-jsonl-forward-'));
     const filePath = join(dir, 't.jsonl');

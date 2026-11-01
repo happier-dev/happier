@@ -138,7 +138,7 @@ export default function DevScreen() {
                 />
                 <Item
                     title="Anonymous ID"
-                    detail={anonymousId}
+                    detail={anonymousId ?? undefined}
                 />
             </ItemGroup>
 

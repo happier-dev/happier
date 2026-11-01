@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
@@ -24,6 +24,13 @@ export function summarizeSessionRow(params: Readonly<{
   row: RawSessionListRow;
 }>): SessionSummary {
   const id = params.row.id.trim();
+  let encryption: SessionSummary['encryption'];
+  if (params.row.encryptionMode === 'plain') {
+    encryption = { type: 'plain' };
+  } else {
+    requireEncryptionCredentials(params.credentials);
+    encryption = { type: params.credentials.encryption.type };
+  }
   const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: params.row });
   const tag = typeof (metadata as any)?.tag === 'string' ? String((metadata as any).tag) : undefined;
   const title = typeof (metadata as any)?.summary?.text === 'string' ? String((metadata as any).summary.text).trim() : undefined;
@@ -54,7 +61,7 @@ export function summarizeSessionRow(params: Readonly<{
     ...(isSystem ? { isSystem, systemPurpose: systemMetadata?.key ?? null } : {}),
     ...(readShare(params.row.share) !== undefined ? { share: readShare(params.row.share) } : {}),
     ...((params.row as any)?.encryptionMode ? { encryptionMode: (params.row as any).encryptionMode } : {}),
-    encryption: { type: params.credentials.encryption.type },
+    encryption,
   };
 }
 

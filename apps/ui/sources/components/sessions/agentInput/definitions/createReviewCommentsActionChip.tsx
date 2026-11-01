@@ -88,6 +88,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
     onDeleteDraft: (draftId: string) => void;
     onClearDrafts: () => void;
+    disabled?: boolean;
 }>): AgentInputExtraActionChip | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
     if (reviewCommentDraftCount <= 0) return undefined;
@@ -107,6 +108,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
     return {
         key: 'review-comments',
         controlId: 'reviewComments',
+        ...(params.disabled ? { disabled: true } : {}),
         composerAttachmentBadge: includedReviewCommentDrafts.length > 0 ? {
             key: 'review-comments',
             label,
@@ -133,6 +135,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
             <Pressable
                 onPress={openDraftsAlert}
+                disabled={params.disabled}
                 style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

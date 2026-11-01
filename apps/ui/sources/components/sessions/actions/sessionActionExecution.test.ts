@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storage';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import * as runtimeFetch from '@/utils/system/runtimeFetch';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -16,6 +23,7 @@ import { createSessionActionTarget } from './sessionActionContext';
 import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -26,9 +34,12 @@ import {
     SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
 import { executeSessionAction } from './sessionActionExecution';
+import { executeSessionBulkAction, SESSION_BULK_ACTION_IDS } from './sessionBulkActionExecution';
+import { isSessionArchivePending, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
+import { createDeferred } from '@/dev/testkit';
 
-function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
-    const session: SessionListRenderableSession = {
+function createSession(overrides: Partial<SessionListRenderableSession> = {}): SessionListRenderableSession {
+    return {
         id: 'session_1',
         active: false,
         archivedAt: null,
@@ -48,6 +59,10 @@ function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
         presence: 1,
         ...overrides,
     };
+}
+
+function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
+    const session = createSession(overrides);
     return createSessionActionTarget({
         session,
         serverId: 'server_1',
@@ -56,6 +71,124 @@ function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
         isPinned: true,
     });
 }
+
+describe('delete eligibility at execution', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('stops a running session once and waits for inactivity before deleting it', async () => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete.example' }).id;
+        setActiveServerId(serverId);
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const session = createSessionFixture({ id: 'stop-then-delete', serverId, active: true, presence: 'online', metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        // Session RPC and HTTP are transport boundaries; the strategy, flow and store stay real.
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        const result = executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) });
+        const outcome = result.then(() => null, (error: unknown) => error);
+        await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        storage.setState({ sessions: { [session.id]: { ...session, active: false, presence: 0 } } });
+        expect(await outcome).toBeNull();
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
+        expect(storage.getState().sessions[session.id]).toBeUndefined();
+    });
+
+    it('cancels deletion before sending a stop request', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'cancel-stop-delete', serverId, active: true });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        const stop = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ status: 'requested' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) })).resolves.toBe(false);
+        expect(stop).not.toHaveBeenCalled();
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        expect(storage.getState().sessions[session.id]).toBe(session);
+    });
+
+    it('preserves the session when stopping fails', async () => {
+        const serverId = upsertServerProfile({ serverUrl: 'https://stop-delete-failure.example' }).id;
+        setActiveServerId(serverId);
+        const session = createSessionFixture({ id: 'failed-stop-delete', serverId, active: true, metadata: { path: '/tmp/project', host: 'local' } });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ success: false, message: 'Stop rejected' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID,
+            target: createSessionActionTarget({ session, serverId, isConnected: true }) })).rejects.toMatchObject({ message: 'Stop rejected' });
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+        expect(storage.getState().sessions[session.id]).toBe(session);
+    });
+
+    it.each(['active', 'preserved-terminal'] as const)('rejects a stale target after the session becomes %s', async (state) => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-after-confirmation', archivedAt: 123, presence: 0, serverId });
+        const target = createSessionActionTarget({ session, serverId });
+        expect(target.canDelete).toBe(true);
+        const latestSession = state === 'active'
+            ? { ...session, active: true, archivedAt: null }
+            : createSessionFixture({
+                ...session,
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'local',
+                    terminal: {
+                        mode: 'zellij',
+                        controlServiceabilityV1: { v: 1, state: 'unknown', observedAt: 124, reason: 'attachment_changed' },
+                    },
+                },
+            });
+        storage.setState({ sessions: { [session.id]: latestSession }, sessionListRenderables: {} });
+        // runtimeFetch is the HTTP transport boundary; eligibility and deletion remain real.
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+    });
+
+    it('uses the current list projection when terminal metadata hydration is deferred', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-cache-only-update', archivedAt: 123, presence: 0, serverId });
+        const target = createSessionActionTarget({ session, serverId });
+        const latest = createSessionFixture({
+            ...session,
+            metadata: {
+                path: '/tmp/project',
+                host: 'local',
+                terminal: {
+                    mode: 'zellij',
+                    controlServiceabilityV1: { v: 1, state: 'unknown', observedAt: 124, reason: 'attachment_changed' },
+                },
+            },
+        });
+        storage.setState({
+            sessions: { [session.id]: session },
+            sessionListRenderables: { [session.id]: buildSessionListRenderableFromSession(latest) },
+        });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+
+        await expect(executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target })).rejects.toBeInstanceOf(HappyError);
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+    });
+
+    it('still deletes an eligible inactive session that is not archived', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const session = createSessionFixture({ id: 'delete-inactive', archivedAt: null, presence: 0, serverId });
+        storage.setState({ sessions: { [session.id]: session }, sessionListRenderables: {} });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'header.eyJzdWIiOiJtZSJ9.signature' });
+        const request = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async () => Response.json({ success: true }));
+
+        await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target: createSessionActionTarget({ session, serverId }) });
+
+        expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true);
+    });
+});
 
 describe('executeSessionAction', () => {
     beforeEach(() => {
@@ -76,7 +209,7 @@ describe('executeSessionAction', () => {
         await executeSessionAction({
             actionId,
             target: createTarget({ archivedAt: actionId === SESSION_ACTION_UNARCHIVE_ID ? 1 : null }),
-            context: { operations: { [operation]: mutate, clearSessionVisibleWhenInactive: () => {} } },
+            context: { operations: { [operation]: mutate } },
         });
         expect(Modal.confirm).toHaveBeenCalled();
         expect(vi.mocked(Modal.confirm).mock.calls[0]?.[2]?.destructive).toBe(false);
@@ -88,7 +221,7 @@ describe('executeSessionAction', () => {
         await executeSessionAction({
             actionId,
             target: createTarget({ archivedAt: actionId === SESSION_ACTION_UNARCHIVE_ID ? 1 : null }),
-            context: { operations: { archiveSession: mutate, unarchiveSession: mutate, clearSessionVisibleWhenInactive: () => {} } },
+            context: { operations: { archiveSession: mutate, unarchiveSession: mutate } },
         });
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(mutate).toHaveBeenCalledWith('session_1', { serverId: 'server_1' });
@@ -137,7 +270,6 @@ describe('executeSessionAction', () => {
                     stopArchiveFlow,
                     stopSession: vi.fn(async () => ({ success: true as const })),
                     archiveSession,
-                    clearSessionVisibleWhenInactive: vi.fn(),
                 },
             },
         });
@@ -202,7 +334,6 @@ describe('executeSessionAction', () => {
                     stopArchiveFlow,
                     stopSession: vi.fn(async () => ({ success: true as const })),
                     archiveSession,
-                    clearSessionVisibleWhenInactive: vi.fn(),
                 },
             },
         });
@@ -360,8 +491,192 @@ describe('executeSessionAction', () => {
 
     it('does not silently ignore local action ids without an injected operation', async () => {
         await expect(executeSessionAction({
-            actionId: SESSION_ACTION_PIN_ID,
+            actionId: SESSION_ACTION_EDIT_TAGS_ID,
             target: createTarget(),
         })).rejects.toBeInstanceOf(HappyError);
+    });
+
+    describe('archive pending state', () => {
+        const sessionId = 'session_archive_pending';
+        const readArchiving = () => isSessionArchivePending(sessionId, 'server_1');
+
+        beforeEach(() => {
+            storage.setState({ sessionArchiveOperations: {} });
+            storage.getState().mergeSessionListRenderables([createSession({ id: sessionId })]);
+        });
+
+        it('does not duplicate a bulk archive that starts while stop confirmation is open', async () => {
+            const confirmation = createDeferred<boolean>();
+            const stopped = createDeferred<{ success: boolean }>();
+            vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
+            const stopSession = vi.fn(() => stopped.promise);
+            const archiveSession = vi.fn(async () => ({ success: true }));
+            const single = executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId, active: true }),
+                context: { operations: { stopSession, archiveSession } },
+            });
+            const bulk = executeSessionBulkAction({
+                action: { id: SESSION_BULK_ACTION_IDS.archive },
+                targets: [{
+                    key: `server_1:${sessionId}`, sessionId, serverId: 'server_1', active: true,
+                    archived: false, hasAdminAccess: true, canStop: true, canArchive: true,
+                    pinned: false, tags: [],
+                }],
+                context: { stopSession, archiveSession, stopSessionAndMaybeArchive: (params) => stopSessionAndMaybeArchive({ ...params, serverId: params.target.serverId }) },
+            });
+            await vi.waitFor(() => expect(stopSession).toHaveBeenCalledTimes(1));
+            confirmation.resolve(true);
+            try {
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(stopSession).toHaveBeenCalledTimes(1);
+                expect(readArchiving()).toBe(true);
+            } finally {
+                stopped.resolve({ success: true });
+                await Promise.all([single, bulk]);
+            }
+            expect(archiveSession).toHaveBeenCalledTimes(1);
+            expect(readArchiving()).toBe(false);
+        });
+
+        it('marks an inactive session archiving while the archive request is in flight and clears it on success', async () => {
+            const observed: boolean[] = [];
+            const archiveSession = vi.fn(async () => {
+                observed.push(readArchiving());
+                return { success: true };
+            });
+
+            await executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId }),
+                context: { operations: { archiveSession } },
+            });
+
+            expect(observed).toEqual([true]);
+            expect(readArchiving()).toBe(false);
+        });
+
+        it('allows the same session id on two servers to archive independently', async () => {
+            const request = createDeferred<{ success: boolean }>();
+            const archiveSession = vi.fn(() => request.promise);
+            const run = (serverId: string) => executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: { ...createTarget({ id: sessionId }), serverId },
+                context: { operations: { archiveSession } },
+            });
+            const first = run('server_1');
+            await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(1));
+            const second = run('server_2');
+            try {
+                await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(2));
+            } finally {
+                request.resolve({ success: true });
+                await Promise.all([first, second]);
+            }
+        });
+
+        it('prevents duplicate archives even when the remote session has no active-store renderable', async () => {
+            const remoteId = 'uncached_remote_session';
+            const request = createDeferred<{ success: boolean }>();
+            const archiveSession = vi.fn(() => request.promise);
+            const run = () => executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: { ...createTarget({ id: remoteId }), serverId: 'server_2' },
+                context: { operations: { archiveSession } },
+            });
+            const first = run();
+            await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(1));
+            const second = run();
+            try {
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(archiveSession).toHaveBeenCalledTimes(1);
+            } finally {
+                request.resolve({ success: true });
+                await Promise.all([first, second]);
+            }
+        });
+
+        it('retains admission when the active-server renderables are replaced during a request', async () => {
+            const request = createDeferred<{ success: boolean }>();
+            const archiveSession = vi.fn(() => request.promise);
+            const run = () => executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId }),
+                context: { operations: { archiveSession } },
+            });
+            const first = run();
+            await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(1));
+            storage.setState({ sessionListRenderables: { [sessionId]: createSession({ id: sessionId }) } });
+            const second = run();
+            try {
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(archiveSession).toHaveBeenCalledTimes(1);
+            } finally {
+                request.resolve({ success: true });
+                await Promise.all([first, second]);
+            }
+        });
+
+        it('does not start a second archive while one is already in flight for the session', async () => {
+            let release: () => void = () => {};
+            const gate = new Promise<{ success: boolean }>((resolve) => {
+                release = () => resolve({ success: true });
+            });
+            const archiveSession = vi.fn(() => gate);
+            const run = () => executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId }),
+                context: { operations: { archiveSession } },
+            });
+
+            const first = run();
+            await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(1));
+            const second = run();
+            release();
+
+            await expect(second).resolves.toBe(false);
+            await first;
+            expect(archiveSession).toHaveBeenCalledTimes(1);
+            expect(readArchiving()).toBe(false);
+        });
+
+        it('reverts the archiving state when the archive fails', async () => {
+            const observed: boolean[] = [];
+            const archiveSession = vi.fn(async () => {
+                observed.push(readArchiving());
+                return { success: false, message: 'archive boom' };
+            });
+
+            await expect(executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId }),
+                context: { operations: { archiveSession } },
+            })).rejects.toMatchObject({ message: 'archive boom' });
+
+            expect(observed).toEqual([true]);
+            expect(readArchiving()).toBe(false);
+        });
+
+        it('keeps a running session archiving from stop through archive and reverts when stop fails', async () => {
+            const observedDuringStop: boolean[] = [];
+            const stopSession = vi.fn(async () => {
+                observedDuringStop.push(readArchiving());
+                return { success: false, message: 'stop boom', code: 'session_stop_failed' };
+            });
+            const archiveSession = vi.fn(async () => ({ success: true }));
+
+            await expect(executeSessionAction({
+                actionId: SESSION_ACTION_ARCHIVE_ID,
+                target: createTarget({ id: sessionId, active: true }),
+                context: { operations: { stopSession, archiveSession } },
+            })).rejects.toMatchObject({ message: 'stop boom' });
+
+            expect(observedDuringStop).toEqual([true]);
+            expect(archiveSession).not.toHaveBeenCalled();
+            expect(readArchiving()).toBe(false);
+        });
     });
 });

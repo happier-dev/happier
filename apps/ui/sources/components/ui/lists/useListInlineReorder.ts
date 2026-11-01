@@ -4,6 +4,7 @@ import { useAnimatedStyle, useSharedValue, withSpring, type AnimatedStyle } from
 import { Gesture, type GestureType } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useUnistyles } from 'react-native-unistyles';
+import { createDragHapticsSession, type DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 
 import {
     TREE_DROP_OVERLAY_KIND_LINE,
@@ -82,7 +83,7 @@ export type UseListInlineReorderParams<T extends { id: string }> = Readonly<{
     /** Numeric overlay shared values for the single list-level drop indicator. */
     overlayShared: TreeDropOverlaySharedValues;
     /** Commit the new order. Called on drag-end only when the order changed. */
-    onCommitOrder: (orderedIds: string[]) => void | Promise<void>;
+    onCommitOrder: (orderedIds: string[]) => void | DragHapticsOutcome | Promise<void | DragHapticsOutcome>;
     fallbackRowHeight?: number;
 }>;
 
@@ -120,6 +121,7 @@ export function useListInlineReorder<T extends { id: string }>(
     const frozenItemsRef = useRef<ReadonlyArray<T> | null>(null);
     const frozenIdsRef = useRef<string[] | null>(null);
     const pendingTargetIndexRef = useRef(0);
+    const dragHapticsRef = useRef<ReturnType<typeof createDragHapticsSession> | null>(null);
     const rowLayoutsRef = useRef(new Map<string, { width: number; height: number }>());
 
     const translateY = useSharedValue(0);
@@ -151,6 +153,8 @@ export function useListInlineReorder<T extends { id: string }>(
         pendingTargetIndexRef.current = startIndex >= 0 && startIndex < frozenIds.length
             ? startIndex
             : frozenIds.indexOf(id);
+        dragHapticsRef.current?.cancel();
+        dragHapticsRef.current = createDragHapticsSession(String(pendingTargetIndexRef.current));
         setDraggingId(id);
     }, []);
 
@@ -170,6 +174,7 @@ export function useListInlineReorder<T extends { id: string }>(
             fallbackRowHeight: fallbackRowHeightRef.current,
         });
         pendingTargetIndexRef.current = targetIndex;
+        dragHapticsRef.current?.updateDestination(String(targetIndex));
 
         // Draw the drop line at the boundary above the insertion slot.
         const fallback = fallbackRowHeightRef.current ?? DEFAULT_REORDER_ROW_HEIGHT;
@@ -189,21 +194,33 @@ export function useListInlineReorder<T extends { id: string }>(
         target.overlayDepth.value = 0;
     }, []);
 
-    const completeDrag = useCallback((id: string) => {
+    const completeDrag = useCallback(async (id: string) => {
         hideOverlay();
         const frozenIds = frozenIdsRef.current;
         const targetIndex = pendingTargetIndexRef.current;
+        const haptics = dragHapticsRef.current;
+        dragHapticsRef.current = null;
         resetDragState();
-        if (!frozenIds) return;
+        if (!frozenIds) { haptics?.cancel(); return; }
         const nextOrder = reorderFlatIds(frozenIds, id, targetIndex);
         const changed = nextOrder.length !== frozenIds.length
             || nextOrder.some((rowId, index) => rowId !== frozenIds[index]);
         if (changed) {
-            void onCommitOrderRef.current(nextOrder);
+            try {
+                const outcome = await onCommitOrderRef.current(nextOrder);
+                haptics?.finish(outcome ?? 'unknown');
+            } catch (error) {
+                haptics?.finish('unknown');
+                console.warn('List reorder failed', error);
+            }
+        } else {
+            haptics?.finish('unchanged');
         }
     }, [hideOverlay, resetDragState]);
 
     const cancelDrag = useCallback(() => {
+        dragHapticsRef.current?.cancel();
+        dragHapticsRef.current = null;
         hideOverlay();
         resetDragState();
     }, [hideOverlay, resetDragState]);
@@ -231,13 +248,14 @@ export function useListInlineReorder<T extends { id: string }>(
                 translateY.value = event.translationY;
                 scheduleOnRN(updateDrag, id, event.translationY);
             })
-            .onEnd(() => {
+            .onEnd((_event, success) => {
                 'worklet';
                 translateY.value = 0;
                 scale.value = withSpring(1);
                 isDragging.value = false;
                 didEnd.value = true;
-                scheduleOnRN(completeDrag, id);
+                if (success === false) scheduleOnRN(cancelDrag);
+                else scheduleOnRN(completeDrag, id);
             })
             .onFinalize(() => {
                 'worklet';

@@ -1,17 +1,18 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const PromptDocBodyV1Schema = z
+export const PromptDocBodyV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     markdown: z.string(),
     createdAtMs: z.number().int().min(0),
     updatedAtMs: z.number().int().min(0),
   })
-  .strict();
+  .strict());
 
 export type PromptDocBodyV1 = z.infer<typeof PromptDocBodyV1Schema>;
 
-export const PromptDocArtifactHeaderV1Schema = z
+export const PromptDocArtifactHeaderV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     kind: z.literal('prompt_doc.v2'),
@@ -21,6 +22,6 @@ export const PromptDocArtifactHeaderV1Schema = z
     origin: z.enum(['built_in', 'user', 'imported']).optional(),
     locked: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type PromptDocArtifactHeaderV1 = z.infer<typeof PromptDocArtifactHeaderV1Schema>;

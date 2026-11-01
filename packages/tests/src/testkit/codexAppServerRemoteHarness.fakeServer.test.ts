@@ -362,7 +362,7 @@ describe('fake Codex app-server harness', () => {
           }),
         });
 
-        expect(notifications).toEqual(expect.arrayContaining([
+        await expect.poll(() => notifications, { timeout: 5_000 }).toEqual(expect.arrayContaining([
           expect.objectContaining({
             method: 'thread/goal/updated',
             params: expect.objectContaining({
@@ -469,7 +469,7 @@ describe('fake Codex app-server harness', () => {
             tokenBudget: 2000,
           }),
         });
-        expect(notifications).toEqual(expect.arrayContaining([
+        await expect.poll(() => notifications, { timeout: 5_000 }).toEqual(expect.arrayContaining([
           expect.objectContaining({
             method: 'thread/goal/updated',
             params: expect.objectContaining({
@@ -528,7 +528,7 @@ describe('fake Codex app-server harness', () => {
         await expect(request('thread/goal/clear', { threadId: 'thread-started' })).resolves.toMatchObject({
           result: { threadId: 'thread-started' },
         });
-        expect(notifications).toEqual(expect.arrayContaining([
+        await expect.poll(() => notifications, { timeout: 5_000 }).toEqual(expect.arrayContaining([
           expect.objectContaining({
             method: 'thread/goal/cleared',
             params: { threadId: 'thread-started' },

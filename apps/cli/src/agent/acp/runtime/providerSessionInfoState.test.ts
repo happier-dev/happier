@@ -62,6 +62,20 @@ describe('applyProviderSessionInfoUpdate', () => {
     expect(updated.providerSessionInfoV1?.title).toBe('Provider title');
   });
 
+  it('preserves a legacy named session when the new provider publishes its native title', () => {
+    const updated = applyProviderSessionInfoUpdate({
+      metadata: createMetadata({ name: 'Existing legacy title' }),
+      provider: 'cursor',
+      sessionId: 'cursor-session-1',
+      observedAt: 100,
+      update: { title: 'New provider title' },
+    });
+
+    expect(updated.name).toBe('Existing legacy title');
+    expect(updated.summary).toBeUndefined();
+    expect(updated.providerSessionInfoV1?.title).toBe('New provider title');
+  });
+
   it('retains omitted fields and records explicit provider clears without clearing the Happier title', () => {
     const current = applyProviderSessionInfoUpdate({
       metadata: createMetadata({

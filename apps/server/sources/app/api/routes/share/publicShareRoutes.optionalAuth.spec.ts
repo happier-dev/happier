@@ -9,13 +9,6 @@ vi.mock("@/app/auth/auth", () => ({
     auth: { verifyToken },
 }));
 
-const logPublicShareAccess = vi.fn(async () => {});
-vi.mock("@/app/share/accessLogger", () => ({
-    logPublicShareAccess,
-    getIpAddress: vi.fn(() => "1.2.3.4"),
-    getUserAgent: vi.fn(() => "ua"),
-}));
-
 vi.mock("@/app/share/types", () => ({
     PROFILE_SELECT: {},
     toShareUserProfile: vi.fn((a: any) => ({ id: a?.id ?? "owner" })),
@@ -43,11 +36,13 @@ const dbMocks = createDbMocks({
 } as const);
 const txDbMocks = createDbMocks({
     publicSessionShare: ["findUnique", "update", "updateMany"],
+    publicShareAccessLog: ["create"],
     session: ["findUnique"],
     sessionMessage: ["findMany"],
 } as const);
 const dbTransaction = createDbTransactionMock(() => ({
     publicSessionShare: txDbMocks.db.publicSessionShare,
+    publicShareAccessLog: txDbMocks.db.publicShareAccessLog,
     session: txDbMocks.db.session,
     sessionMessage: txDbMocks.db.sessionMessage,
 }));
@@ -172,7 +167,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         expect(reply.statusCode).toBe(404);
         expect(txDbMocks.db.publicSessionShare.update).not.toHaveBeenCalled();
         expect(txDbMocks.db.publicSessionShare.updateMany).not.toHaveBeenCalled();
-        expect(logPublicShareAccess).not.toHaveBeenCalled();
+        expect(txDbMocks.db.publicShareAccessLog.create).not.toHaveBeenCalled();
     });
 
     it("does not claim a capped use after the public token rotates concurrently", async () => {
@@ -223,7 +218,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         await route.handler(route.createRequest(), reply);
 
         expect(reply.statusCode).toBe(404);
-        expect(logPublicShareAccess).not.toHaveBeenCalled();
+        expect(txDbMocks.db.publicShareAccessLog.create).not.toHaveBeenCalled();
     });
 
     it("does not apply authenticated-user block policy to anonymous bearer access", async () => {
@@ -274,7 +269,9 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         expect(txDbMocks.db.publicSessionShare.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.not.objectContaining({ blockedUsers: expect.anything() }),
         }));
-        expect(logPublicShareAccess).toHaveBeenCalledWith("ps1", "viewer", undefined, undefined, expect.anything());
+        expect(txDbMocks.db.publicShareAccessLog.create).toHaveBeenCalledWith({
+            data: { publicShareId: "ps1", userId: "viewer", ipAddress: null, userAgent: null },
+        });
     });
 
     it("does not call app.authenticate() for /v1/public-share/:token/messages and succeeds even with invalid bearer", async () => {

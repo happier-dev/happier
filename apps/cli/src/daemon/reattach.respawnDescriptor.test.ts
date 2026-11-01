@@ -241,10 +241,10 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
   });
 
   it('rehydrates encrypted respawn environment variables when credentials are available', () => {
-    const credentials: Credentials = {
+    const credentials = {
       token: 't',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
-    };
+    } satisfies Credentials;
     const command = `${process.execPath} -e "setInterval(()=>{}, 1000)"`;
     const marker = {
       pid: 456,

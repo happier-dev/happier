@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
+import { sortTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
@@ -38,9 +38,8 @@ function buildDiscardedMessageLocalIdsSignature(metadata: Metadata | null | unde
 }
 
 function listMessagesByFallbackOrder(messagesById: Record<string, Message | undefined>): Message[] {
-    return Object.values(messagesById)
-        .filter((message): message is Message => message != null)
-        .sort(compareTranscriptMessagesOldestFirst);
+    return sortTranscriptMessagesOldestFirst(Object.values(messagesById)
+        .filter((message): message is Message => message != null));
 }
 
 function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean, debugInformationEnabled: boolean): Readonly<{

@@ -8,7 +8,7 @@ import {
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { decodeBase64, decryptWithDataKey } from '@/api/encryption';
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import { deriveKey } from '@/utils/deriveKey';
 
 export type PromptArtifactRecord = Readonly<{
@@ -23,6 +23,7 @@ async function openPromptArtifactDataEncryptionKey(params: Readonly<{
   credentials: Credentials;
   encryptedDataEncryptionKeyBase64: string;
 }>): Promise<Uint8Array | null> {
+  requireEncryptionCredentials(params.credentials);
   const recipientSecretKeyOrSeed = params.credentials.encryption.type === 'dataKey'
     ? params.credentials.encryption.machineKey
     : await deriveKey(params.credentials.encryption.secret, 'Happy EnCoder', ['content']);

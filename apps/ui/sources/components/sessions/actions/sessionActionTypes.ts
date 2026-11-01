@@ -2,6 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
+import type { SessionArchiveRequestOptions } from '@/sync/ops/sessionArchiveLifecycle';
 
 export type SessionActionSurface =
     | 'rowMenu'
@@ -24,7 +25,8 @@ export type SessionActionId =
     | 'ui.session.tags.edit'
     | 'ui.session.move-to-folder'
     | 'ui.session.set-attention-standing'
-    | 'ui.session.clear-attention-standing';
+    | 'ui.session.clear-attention-standing'
+    | 'ui.session.appearance-color';
 
 export type SessionAttentionStandingAction =
     | { kind: 'set-standing'; visible: true; targetStanding: true }
@@ -46,10 +48,10 @@ export type SessionActionTarget = Readonly<{
     hasAdminAccess: boolean;
     canStop: boolean;
     canArchive: boolean;
-    canMoveToFolder: boolean;
     canRename: boolean;
     canResume: boolean;
     canDelete: boolean;
+    canStopAndDelete: boolean;
     readStateAction: SessionReadStateAction;
     attentionStandingAction: SessionAttentionStandingAction;
 }>;
@@ -71,20 +73,21 @@ export type SessionActionExecutionInput = Readonly<{
 export type SessionActionExecutionOperations = Readonly<{
     stopArchiveFlow?: (params: {
         sessionId: string;
+        serverId?: string | null;
         hideInactiveSessions: boolean;
         isPinned: boolean;
         archiveAfterStop: 'always' | 'never';
         stopSession: () => Promise<SessionActionOperationResult>;
-        archiveSession: () => Promise<SessionActionOperationResult>;
+        archiveSession: (options?: SessionArchiveRequestOptions) => Promise<SessionActionOperationResult>;
         stopErrorMessage: string;
         archiveErrorMessage: string;
-    }) => Promise<void>;
+    }) => Promise<void | false>;
     stopSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
-    archiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    archiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }> & SessionArchiveRequestOptions) => Promise<SessionActionOperationResult>;
     unarchiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     renameSession?: (sessionId: string, title: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     resumeSession?: (sessionId: string) => void | Promise<void>;
-    deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }> & SessionArchiveRequestOptions) => Promise<SessionActionOperationResult>;
     setPinned?: (
         sessionId: string,
         pinned: boolean,
@@ -109,7 +112,6 @@ export type SessionActionExecutionOperations = Readonly<{
         readState: 'read' | 'unread',
         opts?: Readonly<{ serverId?: string | null }>,
     ) => Promise<SessionActionOperationResult>;
-    clearSessionVisibleWhenInactive?: (sessionId: string) => void;
 }>;
 
 export type SessionActionExecutionContext = Readonly<{

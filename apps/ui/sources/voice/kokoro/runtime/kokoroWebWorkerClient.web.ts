@@ -16,7 +16,7 @@ type WorkerRequest =
       type: 'generate';
       cfg: KokoroWorkerRuntimeConfig;
       text: string;
-      voiceId: string;
+      voiceId: string | null;
       speed: number;
     }
   | {
@@ -24,7 +24,7 @@ type WorkerRequest =
       type: 'stream';
       cfg: KokoroWorkerRuntimeConfig;
       text: string;
-      voiceId: string;
+      voiceId: string | null;
       speed: number;
     }
   | {
@@ -67,6 +67,7 @@ type PendingRequest = {
 };
 
 type PendingStream = {
+  stopTimeout?: () => void;
   queue: Array<{ wavBytes: ArrayBuffer; sentenceText: string }>;
   ended: boolean;
   error: Error | null;
@@ -118,6 +119,7 @@ function rejectAllPending(err: Error) {
   const streams = pendingStreamsById;
   if (streams) {
     for (const [, s] of streams.entries()) {
+      s.stopTimeout?.();
       s.error = err;
       s.wake?.();
     }
@@ -161,7 +163,19 @@ function ensureWorker(): Worker {
       const pending = pendingById?.get(data.id);
       pending?.touchTimeout?.();
       pending?.onProgress?.(data.progress);
+      // A first streamed request may also download the model; progress keeps it alive too.
+      pendingStreamsById?.get(data.id)?.touchTimeout?.();
       return;
+    }
+
+    if (data.type === 'error') {
+      const stream = pendingStreamsById?.get(data.id);
+      if (stream) {
+        stream.stopTimeout?.();
+        stream.error = new Error(data.message || 'worker_error');
+        stream.wake?.();
+        return;
+      }
     }
 
     if (data.type === 'stream_chunk') {
@@ -176,7 +190,7 @@ function ensureWorker(): Worker {
     if (data.type === 'stream_end') {
       const stream = pendingStreamsById?.get(data.id);
       if (!stream) return;
-      stream.touchTimeout?.();
+      stream.stopTimeout?.();
       stream.ended = true;
       stream.wake?.();
       return;
@@ -295,7 +309,7 @@ export async function prepareKokoroTtsInWorker(opts: {
 export async function synthesizeKokoroWavInWorker(opts: {
   cfg: KokoroWorkerRuntimeConfig;
   text: string;
-  voiceId: string;
+  voiceId: string | null;
   speed: number;
   timeoutMs: number;
   signal: AbortSignal;
@@ -310,7 +324,7 @@ export async function synthesizeKokoroWavInWorker(opts: {
 export function streamKokoroWavSentencesInWorker(opts: {
   cfg: KokoroWorkerRuntimeConfig;
   text: string;
-  voiceId: string;
+  voiceId: string | null;
   speed: number;
   timeoutMs: number;
   signal: AbortSignal;
@@ -321,6 +335,7 @@ export function streamKokoroWavSentencesInWorker(opts: {
   pendingStreamsById?.set(id, stream);
 
   const cancel = () => {
+    stream.stopTimeout?.();
     try {
       worker.postMessage({ id, type: 'cancel' } satisfies WorkerRequest);
     } catch {
@@ -343,21 +358,24 @@ export function streamKokoroWavSentencesInWorker(opts: {
   };
   opts.signal.addEventListener('abort', onAbort);
 
-  let timeout: any = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const stopTimeout = () => {
+    if (timeout !== null) clearTimeout(timeout);
+    timeout = null;
+  };
   const armTimeout = () => {
-    try {
-      if (timeout) clearTimeout(timeout);
-    } catch {
-      // ignore
-    }
+    stopTimeout();
     timeout = setTimeout(() => {
       cancel();
       stream.error = new Error('timeout');
       stream.wake?.();
     }, opts.timeoutMs);
-    (timeout as any)?.unref?.();
   };
   stream.touchTimeout = armTimeout;
+  stream.stopTimeout = () => {
+    stopTimeout();
+    stream.touchTimeout = undefined;
+  };
   armTimeout();
 
   try {
@@ -385,11 +403,8 @@ export function streamKokoroWavSentencesInWorker(opts: {
           stream.wake = undefined;
         }
       } finally {
-        try {
-          if (timeout) clearTimeout(timeout);
-        } catch {
-          // ignore
-        }
+        stream.stopTimeout?.();
+        stream.stopTimeout = undefined;
         try {
           opts.signal.removeEventListener('abort', onAbort);
         } catch {

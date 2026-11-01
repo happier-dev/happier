@@ -7,14 +7,15 @@ import Animated, {
     useDerivedValue,
     type SharedValue,
 } from 'react-native-reanimated';
-import { runOnJS, runOnUI, scheduleOnRN } from 'react-native-worklets';
+import { scheduleOnRN } from 'react-native-worklets';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { TODO_HEIGHT, TodoView } from '@/components/zen/views/TodoView';
+import { createDragHapticsSession, type DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 
 export type TodoListProps = {
     todos: { id: string, title: string, done: boolean }[];
     onToggleTodo?: (id: string) => void;
-    onReorderTodo?: (id: string, newIndex: number) => void;
+    onReorderTodo?: (id: string, newIndex: number) => DragHapticsOutcome | void | Promise<DragHapticsOutcome | void>;
 }
 
 type AnimatedTodoItemProps = {
@@ -23,7 +24,7 @@ type AnimatedTodoItemProps = {
     positions: SharedValue<Record<string, number>>;
     scrollY: SharedValue<number>;
     onToggle?: () => void;
-    onReorder?: (id: string, newIndex: number) => void;
+    onReorder?: TodoListProps['onReorderTodo'];
 }
 
 const ITEM_SPACING = 12;
@@ -53,6 +54,37 @@ const AnimatedTodoItem = React.memo<AnimatedTodoItemProps>(({
     const zIndex = useSharedValue(0);
     const startDragY = useSharedValue(0);
     const hasDragged = useSharedValue(false);
+    const startIndex = useSharedValue(index);
+    const destinationIndex = useSharedValue<number | null>(index);
+    const initialPositions = useSharedValue<Record<string, number>>({});
+    const hapticsRef = React.useRef<ReturnType<typeof createDragHapticsSession> | null>(null);
+    const beginDrag = React.useCallback((initialIndex: number) => {
+        hapticsRef.current?.cancel();
+        hapticsRef.current = createDragHapticsSession(String(initialIndex));
+    }, []);
+    const updateDragDestination = React.useCallback((nextIndex: number | null) => {
+        hapticsRef.current?.updateDestination(nextIndex === null ? null : String(nextIndex));
+    }, []);
+    const cancelDrag = React.useCallback(() => {
+        hapticsRef.current?.cancel();
+        hapticsRef.current = null;
+    }, []);
+    const finishDrag = React.useCallback(async (finalIndex: number, initialIndex: number) => {
+        const haptics = hapticsRef.current;
+        hapticsRef.current = null;
+        if (!haptics) return;
+        if (finalIndex === initialIndex) {
+            haptics.finish('unchanged');
+            return;
+        }
+        try {
+            haptics.finish(await onReorder?.(todo.id, finalIndex) ?? 'unknown');
+        } catch {
+            console.warn('Todo reorder result could not be confirmed.');
+            haptics.finish('unknown');
+        }
+    }, [onReorder, todo.id]);
+    React.useEffect(() => cancelDrag, [cancelDrag]);
 
     // Derive the current position from the shared positions object
     const position = useDerivedValue(() => {
@@ -68,11 +100,15 @@ const AnimatedTodoItem = React.memo<AnimatedTodoItemProps>(({
 
     const panGesture = Gesture.Pan()
         .activateAfterLongPress(500)
-        .onStart((e) => {
+        .onStart(() => {
             'worklet';
             isDragging.value = true;
             hasDragged.value = true;
+            initialPositions.value = { ...positions.value };
             const currentPos = getPosition(position.value);
+            startIndex.value = position.value;
+            destinationIndex.value = startIndex.value;
+            scheduleOnRN(beginDrag, startIndex.value);
             // Store where we started dragging from
             startDragY.value = currentPos;
             // Keep the item at its current position initially (no jump)
@@ -88,10 +124,15 @@ const AnimatedTodoItem = React.memo<AnimatedTodoItemProps>(({
 
             // Calculate which position we're over based on current drag position
             const newOrder = getOrder(dragY.value);
-            const currentOrder = position.value;
+            const currentOrder = positions.value[todo.id] ?? index;
 
             // Get the total number of items
             const totalItems = Object.keys(positions.value).length;
+            const nextDestination = newOrder >= 0 && newOrder < totalItems ? newOrder : null;
+            if (nextDestination !== destinationIndex.value) {
+                destinationIndex.value = nextDestination;
+                scheduleOnRN(updateDragDestination, nextDestination);
+            }
 
             // If we've moved to a new position, update all positions
             if (newOrder !== currentOrder && newOrder >= 0 && newOrder < totalItems) {
@@ -118,25 +159,26 @@ const AnimatedTodoItem = React.memo<AnimatedTodoItemProps>(({
                 positions.value = newPositions;
             }
         })
-        .onEnd(() => {
+        .onEnd((_event, success) => {
             'worklet';
-            const finalPosition = position.value;
+            const finalPosition = positions.value[todo.id] ?? index;
+            if (success === false) positions.value = initialPositions.value;
             isDragging.value = false;
             scale.value = withSpring(1);
             opacity.value = withSpring(1);
             zIndex.value = withSpring(0);
 
             // Call the reorder callback with the final position
-            if (onReorder && finalPosition !== index) {
-                scheduleOnRN(onReorder, todo.id, finalPosition);
-            }
+            if (success !== false) scheduleOnRN(finishDrag, finalPosition, startIndex.value);
         })
-        .onFinalize(() => {
+        .onFinalize((_event, success) => {
             'worklet';
+            if (success === false && isDragging.value) positions.value = initialPositions.value;
             isDragging.value = false;
             scale.value = withSpring(1);
             opacity.value = withSpring(1);
             zIndex.value = withSpring(0);
+            scheduleOnRN(cancelDrag);
             // Keep the hasDragged flag true for a moment to block the press
             // if (hasDragged.value) {
             //     scheduleOnRN(() => { setTimeout(() => { hasDragged.value = false; }, 200); });

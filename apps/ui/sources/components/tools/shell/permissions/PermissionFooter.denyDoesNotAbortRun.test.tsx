@@ -19,7 +19,6 @@ const runtime = vi.hoisted(() => ({
 
 const ops = vi.hoisted(() => ({
     sessionDeny: vi.fn(async (..._args: unknown[]) => {}),
-    sessionAbort: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
 const sessionStore = vi.hoisted(() => ({
@@ -48,7 +47,6 @@ vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
     sessionAllowWithPermissionUpdates: vi.fn(async () => {}),
     sessionDeny: ops.sessionDeny,
-    sessionAbort: ops.sessionAbort,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -96,10 +94,9 @@ describe('PermissionFooter deny action', () => {
             toolName: 'execute',
             toolInput: { command: 'pwd' },
         },
-    ])('denies permission without aborting the run ($name)', async ({ protocol, flavor, toolName, toolInput }) => {
+    ])('dispatches a plain denial ($name)', async ({ protocol, flavor, toolName, toolInput }) => {
         runtime.setProtocol(protocol, flavor);
         ops.sessionDeny.mockClear();
-        ops.sessionAbort.mockClear();
         sessionStore.updateSessionPermissionMode.mockClear();
 
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
@@ -128,14 +125,12 @@ describe('PermissionFooter deny action', () => {
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
         expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe('denied');
-        expect(ops.sessionAbort).not.toHaveBeenCalled();
         expect(sessionStore.updateSessionPermissionMode).not.toHaveBeenCalled();
     });
 
     it('dispatches one denial when the same control is activated twice before React commits', async () => {
         runtime.setProtocol('codexDecision', 'opencode');
         ops.sessionDeny.mockClear();
-        ops.sessionAbort.mockClear();
 
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
@@ -152,6 +147,5 @@ describe('PermissionFooter deny action', () => {
         });
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
-        expect(ops.sessionAbort).not.toHaveBeenCalled();
     });
 });

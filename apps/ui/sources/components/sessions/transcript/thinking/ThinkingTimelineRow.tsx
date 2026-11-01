@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { ThinkingPulseLabel } from '@/components/sessions/transcript/motion/ThinkingPulseLabel';
 import { Typography } from '@/constants/Typography';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props: {
     id: string;
@@ -15,6 +15,8 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
     expandedByDefault: boolean;
     pulseEnabled: boolean;
     chrome?: 'plain' | 'card';
+    icon?: IconName;
+    headerTestID?: string;
     expanded?: boolean;
     onExpandedChange?: (next: boolean) => void;
     children?: React.ReactNode;
@@ -35,14 +37,17 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
     return (
         <View style={[styles.container, chrome === 'plain' ? styles.containerPlain : styles.containerCard]}>
             <Pressable
-                testID="transcript-thinking-header"
+                testID={props.headerTestID ?? 'transcript-thinking-header'}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                aria-expanded={expanded}
                 onPress={() => setExpanded(!expanded)}
                 style={({ pressed }) => [styles.header, pressed && styles.headerPressed]}
             >
                 <View style={styles.labelContainer}>
                     <View style={styles.labelRow}>
                         <View style={styles.labelGutter}>
-                            <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />
+                            <Icon name={props.icon ?? 'sparkle'} size={16} color={theme.colors.text.secondary} />
                         </View>
                         <ThinkingPulseLabel
                             label={props.label}

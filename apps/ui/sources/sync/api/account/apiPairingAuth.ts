@@ -16,6 +16,7 @@ export type PairingStatus =
         pairId: string;
         expiresAt: string;
         requestedPublicKey: string;
+        supportsCredentialVariants?: boolean;
         requestedDeviceLabel: string | null;
         confirmCode: string;
     }>;
@@ -90,6 +91,7 @@ export async function pairingRequest(params: {
     secret: string;
     publicKey: string;
     deviceLabel?: string;
+    supportsCredentialVariants?: boolean;
 }): Promise<PairingRequestResult> {
     const res = await serverFetch(
         '/v1/auth/pairing/request',
@@ -100,6 +102,7 @@ export async function pairingRequest(params: {
                 pairId: params.pairId,
                 secret: params.secret,
                 publicKey: params.publicKey,
+                ...(params.supportsCredentialVariants === true ? { supportsCredentialVariants: true } : {}),
                 ...(params.deviceLabel ? { deviceLabel: params.deviceLabel } : null),
             }),
         },

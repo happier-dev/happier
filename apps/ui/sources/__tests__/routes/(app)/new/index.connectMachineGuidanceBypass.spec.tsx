@@ -83,8 +83,11 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
     peekTempData: () => null,
 }));
 
-vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
+vi.mock('@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance', () => ({
     useShouldBlockNewSessionWithGettingStartedGuidance: () => routeState.shouldBlockGuidance,
+}));
+
+vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     useSessionGettingStartedGuidanceBaseModel: () => ({ kind: 'connect_machine' }),
     SessionGettingStartedGuidance: (props: { variant: string }) => (
         <View testID={`guidance:${props.variant}`} />

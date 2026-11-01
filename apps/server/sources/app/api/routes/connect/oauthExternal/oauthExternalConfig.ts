@@ -26,10 +26,19 @@ function parseAllowedOAuthReturnSchemes(env: NodeJS.ProcessEnv): Set<string> {
     return schemes;
 }
 
+function isDesktopWebviewUrl(url: URL): boolean {
+    // Tauri serves the bundled UI at tauri://localhost on macOS/Linux and
+    // http(s)://tauri.localhost on Windows, independently of the relay UI path.
+    return url.protocol === "tauri:" ||
+        ((url.protocol === "http:" || url.protocol === "https:") && url.hostname === "tauri.localhost");
+}
+
 function isSafeWebRedirectUrl(env: NodeJS.ProcessEnv, url: URL): boolean {
     const scheme = url.protocol.replace(/:$/, "").toLowerCase();
     if (scheme === "https") return true;
     if (scheme === "http" && isLoopbackHostname(url.hostname)) return true;
+    // The bundled desktop callback is trusted without opting the entire Tauri scheme in.
+    if (scheme === "tauri" && url.host === "localhost" && !url.username && !url.password) return true;
     const allowedSchemes = parseAllowedOAuthReturnSchemes(env);
     return allowedSchemes.has(scheme);
 }
@@ -125,9 +134,12 @@ export function resolveWebAppOAuthReturnUrlFromRequestHeaders(params: {
         try {
             const url = new URL(raw);
             if (!isLoopbackHostname(url.hostname)) continue;
-            if (url.protocol !== "http:" && url.protocol !== "https:") continue;
-            const loopbackUiBasePath = resolveLoopbackUiBasePath(url.pathname, uiPrefix, configuredWebAppBasePath);
-            const returnUrl = `${url.origin}${loopbackUiBasePath.replace(/\/+$/, "")}/oauth/${encodeURIComponent(providerId)}`;
+            const desktopWebview = isDesktopWebviewUrl(url);
+            if (url.protocol !== "http:" && url.protocol !== "https:" && !desktopWebview) continue;
+            const loopbackUiBasePath = desktopWebview
+                ? ""
+                : resolveLoopbackUiBasePath(url.pathname, uiPrefix, configuredWebAppBasePath).replace(/\/+$/, "");
+            const returnUrl = `${url.protocol}//${url.host}${loopbackUiBasePath}/oauth/${encodeURIComponent(providerId)}`;
             const normalized = tryNormalizeSafeWebRedirectUrl(params.env, returnUrl);
             if (normalized) return normalized;
         } catch {

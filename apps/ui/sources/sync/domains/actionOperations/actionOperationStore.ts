@@ -1,4 +1,10 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '../scope/serverAccountScope';
+import {
+    loadActionOperationAcknowledgements,
+    saveActionOperationAcknowledgements,
+    type ActionOperationAcknowledgement,
+} from './actionOperationAcknowledgements';
 
 export type ActionOperationScope = Readonly<{
     accountId: string;
@@ -18,6 +24,7 @@ export type ActionOperationStoreState = Readonly<{
 export type ActionOperationStore = Readonly<{
     getState: () => ActionOperationStoreState;
     subscribe: (listener: () => void) => () => void;
+    activateScope: (scope: ServerAccountScope | null) => void;
     merge: (snapshot: ActionOperationSnapshotV1) => boolean;
     mergeFullSnapshot: (snapshot: ActionOperationSnapshotV1) => boolean;
     reconcileMachineList: (
@@ -31,6 +38,7 @@ export type ActionOperationStore = Readonly<{
         options?: Readonly<{ preserveOperationIds?: ReadonlySet<string> }>,
     ) => boolean;
     dismissUnavailable: (operationId: string) => boolean;
+    dismissTerminal: (operationId: string) => boolean;
     markUnavailable: (operationId: string) => boolean;
     setObservation: (scope: ActionOperationScope, observation: ActionOperationObservation) => void;
 }>;
@@ -49,6 +57,10 @@ function lifecycleRank(state: ActionOperationSnapshotV1['state']): number {
 }
 
 export function createActionOperationStore(): ActionOperationStore {
+    let activeScope: ServerAccountScope | null = null;
+    // Keep the machine address of restored acknowledgements until complete-list
+    // reconciliation can prune them, even before their snapshots are replayed.
+    const terminalMachineById = new Map<string, string>();
     let state: ActionOperationStoreState = {
         operationsById: new Map(),
         observationByScope: new Map(),
@@ -57,13 +69,36 @@ export function createActionOperationStore(): ActionOperationStore {
         dismissedOperationIds: new Set(),
     };
     const listeners = new Set<() => void>();
+    const acceptsScope = (scope: ActionOperationScope): boolean => !activeScope || activeScope.accountId === scope.accountId;
 
     const publish = (next: ActionOperationStoreState): void => {
+        if (activeScope && (
+            next.terminalSeenAtById !== state.terminalSeenAtById
+            || next.dismissedOperationIds !== state.dismissedOperationIds
+        )) {
+            for (const operation of next.operationsById.values()) {
+                if (terminalStates.has(operation.state)) {
+                    terminalMachineById.set(operation.operationId, operation.scope.machineId);
+                }
+            }
+            const entries: ActionOperationAcknowledgement[] = [];
+            for (const [operationId, machineId] of terminalMachineById) {
+                const seenAt = next.terminalSeenAtById.get(operationId);
+                const dismissed = next.dismissedOperationIds.has(operationId);
+                if (seenAt === undefined && !dismissed) {
+                    terminalMachineById.delete(operationId);
+                    continue;
+                }
+                entries.push({ operationId, machineId, seenAt, dismissed: dismissed ? true : undefined });
+            }
+            saveActionOperationAcknowledgements(activeScope, entries);
+        }
         state = next;
         for (const listener of listeners) listener();
     };
 
     const merge = (incoming: ActionOperationSnapshotV1): boolean => {
+        if (!acceptsScope(incoming.scope)) return false;
         const existing = state.operationsById.get(incoming.operationId);
         if (existing) {
             if (incoming.revision <= existing.revision) return false;
@@ -93,8 +128,26 @@ export function createActionOperationStore(): ActionOperationStore {
             listeners.add(listener);
             return () => listeners.delete(listener);
         },
+        activateScope: (scope) => {
+            if (scope === activeScope || areServerAccountScopesEqual(scope, activeScope)) return;
+            // Scope activation hydrates before account/profile subscribers can
+            // observe replayed daemon snapshots. Never save the previous scope here.
+            activeScope = null;
+            terminalMachineById.clear();
+            const entries = scope ? loadActionOperationAcknowledgements(scope) : [];
+            for (const entry of entries) terminalMachineById.set(entry.operationId, entry.machineId);
+            publish({
+                operationsById: new Map(),
+                observationByScope: new Map(),
+                unavailableOperationIds: new Set(),
+                terminalSeenAtById: new Map(entries.flatMap((entry) => entry.seenAt === undefined ? [] : [[entry.operationId, entry.seenAt] as const])),
+                dismissedOperationIds: new Set(entries.filter((entry) => entry.dismissed).map((entry) => entry.operationId)),
+            });
+            activeScope = scope;
+        },
         merge,
         mergeFullSnapshot: (incoming) => {
+            if (!acceptsScope(incoming.scope)) return false;
             const existing = state.operationsById.get(incoming.operationId);
             if (!existing || incoming.revision > existing.revision) return merge(incoming);
             if (incoming.revision !== existing.revision || incoming.state !== existing.state) {
@@ -117,11 +170,20 @@ export function createActionOperationStore(): ActionOperationStore {
             return true;
         },
         reconcileMachineList: (scope, listedOperationIds) => {
+            if (!acceptsScope(scope)) return { missingActive: false };
             let operationsById: Map<string, ActionOperationSnapshotV1> | null = null;
             let terminalSeenAtById: Map<string, number> | null = null;
             let dismissedOperationIds: Set<string> | null = null;
             let unavailableOperationIds: Set<string> | null = null;
             let missingActive = false;
+
+            for (const [operationId, machineId] of terminalMachineById) {
+                if (machineId !== scope.machineId || listedOperationIds.has(operationId)) continue;
+                terminalSeenAtById ??= new Map(state.terminalSeenAtById);
+                terminalSeenAtById.delete(operationId);
+                dismissedOperationIds ??= new Set(state.dismissedOperationIds);
+                dismissedOperationIds.delete(operationId);
+            }
 
             for (const operation of state.operationsById.values()) {
                 if (
@@ -232,6 +294,14 @@ export function createActionOperationStore(): ActionOperationStore {
                 dismissedOperationIds.add(operation.operationId);
             }
             if (!dismissedOperationIds) return false;
+            publish({ ...state, dismissedOperationIds });
+            return true;
+        },
+        dismissTerminal: (operationId) => {
+            const operation = state.operationsById.get(operationId);
+            if (!operation || !terminalStates.has(operation.state) || state.dismissedOperationIds.has(operationId)) return false;
+            const dismissedOperationIds = new Set(state.dismissedOperationIds);
+            dismissedOperationIds.add(operationId);
             publish({ ...state, dismissedOperationIds });
             return true;
         },

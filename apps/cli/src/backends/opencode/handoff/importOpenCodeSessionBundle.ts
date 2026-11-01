@@ -16,7 +16,7 @@ import { OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES } from './opencodeHandoffLimits'
 type ExecFileAsync = (
   command: string,
   args: readonly string[],
-  options?: Readonly<{ windowsVerbatimArguments?: boolean }>,
+  options?: Readonly<{ windowsHide?: boolean; windowsVerbatimArguments?: boolean }>,
 ) => Promise<Readonly<{ stdout: string; stderr: string }>>;
 
 const execFileAsync = promisify(execFileCallback) as unknown as ExecFileAsync;
@@ -89,7 +89,10 @@ export async function importOpenCodeSessionBundle(params: Readonly<{
     await execFile(
       invocation.command,
       invocation.args,
-      invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : undefined,
+      {
+        windowsHide: true,
+        ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+      },
     );
 
     // Direct sessions currently only support OpenCode's server transport (`DirectSessionsSource.kind=opencodeServer`).

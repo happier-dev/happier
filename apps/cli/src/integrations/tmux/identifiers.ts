@@ -21,7 +21,7 @@ export function parseTmuxSessionIdentifier(identifier: string): TmuxSessionIdent
   }
 
   const result: TmuxSessionIdentifier = {
-    session: parts[0].trim(),
+    session: parts[0].trim().replace(/^=/, ''),
   };
 
   // Validate session name for our identifier format.
@@ -57,12 +57,15 @@ export function parseTmuxSessionIdentifier(identifier: string): TmuxSessionIdent
 }
 
 // Helper to format tmux session identifier to string
-export function formatTmuxSessionIdentifier(identifier: TmuxSessionIdentifier): string {
+export function formatTmuxSessionIdentifier(
+  identifier: TmuxSessionIdentifier,
+  options?: Readonly<{ exactSession?: boolean }>,
+): string {
   if (!identifier.session) {
     throw new TmuxSessionIdentifierError('Session identifier must have a session name');
   }
 
-  let result = identifier.session;
+  let result = options?.exactSession ? `=${identifier.session}` : identifier.session;
   if (identifier.window) {
     result += `:${identifier.window}`;
     if (identifier.pane) {

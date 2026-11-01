@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
-import { sessionAbort, sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
+import { sessionRespondToPermission, sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -418,16 +418,13 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
         setLoadingButton('abort');
         try {
-            const dispatched = await dispatchPermissionAction(() => (
-                sessionDeny(sessionId, permission.id, undefined, undefined, 'abort')
-            ));
-            if (!dispatched) return;
-            // Denying a single tool call is not always enough to stop the agent from continuing.
-            // Also abort the current session run so the agent stops and waits for the user.
-            await sessionAbort(sessionId);
-            if (shouldForceReadOnlyAfterStop) {
-                storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
-            }
+            await dispatchPermissionAction(async () => {
+                await sessionRespondToPermission({
+                    sessionId,
+                    request: { id: permission.id, approved: false, decision: 'abort' },
+                    ...(shouldForceReadOnlyAfterStop ? { permissionModeAfterStop: 'read-only' } : {}),
+                });
+            });
         } catch (error) {
             console.error('Failed to deny permission:', error);
         } finally {

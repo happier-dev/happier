@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as Haptics from 'expo-haptics';
 
 import { renderHook } from '@/dev/testkit';
 import {
@@ -16,6 +17,15 @@ import type {
 } from './useSessionInlineDrag';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('expo-haptics', () => ({
+    impactAsync: vi.fn(),
+    selectionAsync: vi.fn(),
+    notificationAsync: vi.fn(),
+    AndroidHaptics: { Reject: 'reject', Context_Click: 'context', Segment_Tick: 'tick', Drag_Start: 'start' },
+    ImpactFeedbackStyle: { Light: 'light', Medium: 'medium' },
+    NotificationFeedbackType: { Error: 'error', Success: 'success' },
+}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -142,6 +152,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
     const idleResolved: UseSessionInlineDragResolvedDrop = {
         result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } },
         geometry: { kind: 'none' },
+        destinationKey: null,
     };
 
     function lineResolved(targetId: string, depth: number): UseSessionInlineDragResolvedDrop {
@@ -162,7 +173,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             targetId,
             geometry: { top: 64, left: 16, width: 320, height: 2 },
         };
-        return { result, geometry };
+        return { result, geometry, destinationKey: JSON.stringify(['before', targetId, depth]) };
     }
 
     function outlineResolved(targetId: string): UseSessionInlineDragResolvedDrop {
@@ -181,7 +192,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             targetId,
             geometry: { top: 100, left: 8, width: 336, height: 56 },
         };
-        return { result, geometry };
+        return { result, geometry, destinationKey: JSON.stringify(['into', targetId]) };
     }
 
     function blockedSamePositionResolved(): UseSessionInlineDragResolvedDrop {
@@ -191,6 +202,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
                 visual: { kind: 'none' },
             },
             geometry: { kind: 'none' },
+            destinationKey: null,
         };
     }
 
@@ -213,6 +225,52 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             allTouches: [{ absoluteX: x, absoluteY: y }],
         };
     }
+
+    it('starts feedback only after dragging, deduplicates destinations and waits for an applied commit', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+        const { Platform } = await import('react-native');
+        const originalPlatform = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        vi.mocked(Haptics.impactAsync).mockClear();
+        vi.mocked(Haptics.selectionAsync).mockClear();
+        let apply: ((outcome: 'applied') => void) | undefined;
+        const applied = new Promise<'applied'>((resolve) => { apply = resolve; });
+        let resolved = lineResolved('session:target', 1);
+        try {
+            const hook = await renderHook(() => useSessionInlineDrag(dragParams({
+                activateAfterLongPressMs: 350,
+                resolveDropResult: () => resolved,
+                onDropResult: () => applied,
+            })));
+            const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+            const pan = gesture.gestures?.[1];
+            gesture.gestures?.[0]?.handlers.onStart?.();
+            pan?.handlers.onStart?.();
+            pan?.handlers.onUpdate?.({ translationY: 2, absoluteX: 20, absoluteY: 100 });
+            expect(Haptics.impactAsync).not.toHaveBeenCalled();
+            pan?.handlers.onUpdate?.({ translationY: 80, absoluteX: 20, absoluteY: 100 });
+            expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+            expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
+            pan?.handlers.onUpdate?.({ translationY: 82, absoluteX: 20, absoluteY: 102 });
+            expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
+            resolved = idleResolved;
+            pan?.handlers.onUpdate?.({ translationY: 100, absoluteX: 20, absoluteY: 120 });
+            expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
+            resolved = lineResolved('session:target', 1);
+            pan?.handlers.onUpdate?.({ translationY: 82, absoluteX: 20, absoluteY: 102 });
+            expect(Haptics.selectionAsync).toHaveBeenCalledTimes(2);
+            pan?.handlers.onEnd?.({ absoluteX: 20, absoluteY: 102 });
+            pan?.handlers.onFinalize?.({});
+            expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+            apply?.('applied');
+            await applied;
+            await Promise.resolve();
+            expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
 
     it('resolves one canonical drop result on update and writes numeric overlay geometry', async () => {
         const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
@@ -438,7 +496,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         await hook.unmount();
     });
 
-    it('cancels instead of committing when finalize reports an active drag without end', async () => {
+    it.each(['finalize', 'unsuccessful-end'] as const)('cancels instead of committing for %s', async (ending) => {
         const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 
         const overlay = overlayShared();
@@ -463,6 +521,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             absoluteY: 120,
         });
 
+        if (ending === 'unsuccessful-end') gesture.handlers.onEnd?.({ absoluteX: 24, absoluteY: 120 }, false);
         gesture.handlers.onFinalize?.({
             translationY: 80,
             absoluteX: 24,

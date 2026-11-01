@@ -360,6 +360,7 @@ const acpCatalogTranslationExtension = {
     acpCatalogAuthParser: 'Status parser',
     acpCatalogCapabilities: 'Capabilities',
     acpCatalogTransportProfile: 'Transport profile',
+    acpCatalogSupportsLoadSession: 'Supports session resume',
     acpCatalogSupportsModes: 'Supports modes',
     acpCatalogSupportsModels: 'Supports models',
     acpCatalogSupportsConfigOptions: 'Supports config options',
@@ -440,7 +441,8 @@ export const en = {
         commands: {
             composerAbortConfirm: 'Confirm abort',
             composerFocus: 'Focus composer',
-            composerSendImmediate: 'Send immediately',
+            composerSendImmediate: 'Alternate send (queue / steer)',
+            composerSendInterrupt: 'Interrupt and send',
             composerSendPending: 'Send to pending queue',
             commandPaletteOpen: 'Open command palette',
             modeCycle: 'Cycle mode',
@@ -476,6 +478,10 @@ export const en = {
     },
 
     transcript: {
+        quote: {
+            action: 'Quote',
+            actionA11y: 'Quote the selected text in your message',
+        },
         selection: {
             enterA11y: 'Enter selection mode',
             exitA11y: 'Exit selection mode',
@@ -1007,6 +1013,15 @@ export const en = {
     },
 
     appCrash: {
+        saveDiagnostics: "Save diagnostics",
+        diagnosticsSaveFailed: "Diagnostics could not be saved. Your crash details are still available. Try again or copy them.",
+        copyFailed: "The crash details could not be copied. Try again.",
+        discardFailed: "The saved crash could not be discarded. Try again.",
+        restartWithoutReport: "Restart without saving",
+        reportSaveFailed: "Crash details could not be saved. Copy the error details before restarting, or try reporting again.",
+        savedReportNotice: "The saved crash is shown below. Review and edit it before submitting. It stays on this device until submission or dismissal.",
+        discardSavedReport: "Discard saved crash",
+        stackTruncated: "Stack shortened for this field. The full crash remains saved on this device.",
         title: 'Something went wrong',
         subtitle: 'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
         detailsTitle: 'Error details',
@@ -1159,6 +1174,7 @@ export const en = {
         working: 'working...',
         workingRetained: 'working, awaiting updates…',
         keptInAttention: 'Kept in attention',
+        archiving: 'archiving…',
         backgroundActive: ({ count }: { count: number }) => `${count} running in background`,
         activityUnknown: 'activity status unavailable',
         readyForReview: 'ready for review',
@@ -1269,6 +1285,8 @@ export const en = {
         secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
         linkNewDeviceTitle: 'Link New Device',
         linkNewDeviceSubtitle: 'Scan the QR code shown on your new device to link it to this account',
+        pairingConnectionWarningTitle: "Server disconnected",
+        pairingConnectionWarningBody: "Pairing needs a reachable server. Check your connection, or scan a code for another server.",
         linkNewDeviceQrInstructions: 'Open Happier on your new device and display the QR code',
         scanQrCodeOnDevice: 'Scan QR Code',
         unsupported: {
@@ -1281,7 +1299,39 @@ export const en = {
     },
 
     bugReports: {
+        reportSession: "Report an issue with this session",
+        sessionPickerTitle: "Related session",
+        sessionPickerSubtitle: "Choose the session this report is about.",
+        sessionPickerSearchPlaceholder: "Search sessions",
+        sessionPickerNoResults: "No matching sessions",
+        noRelatedSession: "No related session",
         composer: {
+            scopeChanged: "The selected account changed. Choose the session again before attaching diagnostics.",
+            addMoreDetails: "Add more details (optional)",
+            technicalInformation: "Technical information",
+            relatedSession: "Related session (optional)",
+            chooseSession: "Choose a session",
+            changeSession: "Change session",
+            removeSession: "Remove session",
+            selectedSession: "Session selected",
+            logOptions: {
+                daemonTitle: "App and daemon logs",
+                daemonDetail: "App activity and connection logs from the selected computer and server.",
+                sessionTitle: "Happier session logs",
+                sessionDetail: "Session activity that helps us investigate this issue.",
+                providerTitle: "Provider transcript",
+                providerDetail: "Provider session transcript, when needed.",
+                technicalOnly: "Technical information only",
+                technicalOnlyDetail: "Leave all raw logs out of this report.",
+            },
+            collection: {
+                collected: "Attached",
+                unavailable: "Unavailable",
+                disabled: "Not included",
+                unsupported: "Update the CLI to attach these logs",
+                skipped: "Skipped",
+                error: "Could not collect",
+            },
             alerts: {
                 previewUnavailableTitle: 'Preview unavailable',
                 previewUnavailableBody: 'Could not build diagnostics preview.',
@@ -1337,13 +1387,13 @@ export const en = {
             },
             issueDetails: {
                 title: 'Describe the issue',
-                subtitle: 'Provide enough detail so we can reproduce and diagnose quickly.',
+                subtitle: "A title and a short description are enough to get started.",
                 titleLabel: 'Title (required)',
                 titlePlaceholder: 'Short issue title',
                 githubUsernameLabel: 'GitHub username (optional)',
                 githubUsernamePlaceholder: 'Used as contact info in the issue body',
-                summaryLabel: 'Concise summary (required)',
-                summaryPlaceholder: 'One-paragraph summary',
+                summaryLabel: "What happened? (required)",
+                summaryPlaceholder: "Tell us what went wrong.",
                 currentBehaviorLabel: 'Current behavior (optional)',
                 currentBehaviorPlaceholder: 'What actually happens?',
                 expectedBehaviorLabel: 'Expected behavior (optional)',
@@ -1398,9 +1448,9 @@ export const en = {
                 },
             },
             consent: {
-                title: 'Consent',
-                understandTitle: 'I understand diagnostics may include technical metadata',
-                understandSubtitle: 'Do not include passwords, access tokens, or private keys.',
+                title: "Before sending",
+                understandTitle: "Share this report and the selected diagnostics",
+                understandSubtitle: "Report text is public. Diagnostic attachments are sent privately to Happier maintainers. Session logs can include conversation excerpts.",
             },
             submit: {
                 requiredFieldsHint: 'Complete the required fields to enable submission.',
@@ -2340,6 +2390,7 @@ export const en = {
                 profileMissing: 'The selected connected account is no longer available. Refresh the account list and choose another account.',
                 groupMissing: 'The selected account pool is no longer available. Refresh the account list and choose another pool.',
                 metadataUpdateFailed: 'The session could not save the new authentication selection. Try again after the session finishes syncing.',
+                restartDisallowedByExecutionPolicy: 'This authentication change requires a restart that is not allowed while the session is running. Stop the session before changing its authentication.',
                 restartFailed: 'The session could not be restarted with the new authentication selection. Stop the session and try again.',
                 hotApplyFailed: 'The running session rejected the new authentication selection. Restart the session and try again.',
                 agentMismatch: 'This authentication selection does not match the session backend.',
@@ -3251,6 +3302,10 @@ export const en = {
     },
 
     settingsDesktop: {
+        nativeTitleBarTitle: 'Use Windows title bar',
+        nativeTitleBarSubtitle: 'Show the standard Windows frame and window controls.',
+        nativeTitleBarChangeFailed: 'The title bar could not be changed. Try again.',
+        nativeTitleBarPersistenceFailed: 'The title bar preference could not be loaded or saved. Change it again to retry.',
         title: 'Desktop',
         footer: 'Controls how Happier behaves on this computer.',
         backgroundServiceTitle: 'Stay reachable in the background',
@@ -3453,6 +3508,17 @@ export const en = {
             openSettingsFailed: 'Could not open system settings.',
         },
         pushTroubleshooting: {
+            remoteTest: {
+                title: "Send a remote test",
+                subtitle: "Send a real push to this phone through a connected machine on this Home.",
+                notRegistered: "Register this phone’s token, then try again.",
+                noMachine: "Connect a machine on this Home to send a remote test.",
+                accepted: "The push service accepted the test. This does not confirm that your phone received or displayed it. Check your notifications.",
+                rejected: "The push service did not confirm acceptance. Check your notifications and registration before trying again.",
+                invalidCredentials: "The push provider rejected this app’s credentials. Check APNs or FCM configuration.",
+                unsupported: "Update the connected machine’s Happier CLI to send remote tests.",
+                unconfirmed: "The result could not be confirmed. The request may still complete; check your notifications before trying again.",
+            },
             status: {
                 title: 'Status',
                 footer: 'Checks the account setting, OS permission, and server registration state.',
@@ -3588,7 +3654,12 @@ export const en = {
     },
 
     notifications: {
+        permissionActionNeedsReview: "The response sent from the notification could not be confirmed. Review pending requests before responding again.",
+        permissionActionReviewUnavailable: "We couldn’t open the Home and Account for this response. Check your connection and sign-in in Settings, then review pending requests.",
         actions: {
+            reviewPendingRequests: "Review pending requests",
+            questionReply: "Reply",
+            questionPlaceholder: "Your answer",
             allow: 'Allow',
             deny: 'Deny',
             answer: 'Answer',
@@ -3780,6 +3851,11 @@ export const en = {
 	        plugins: {
             claude: {
                 title: "Claude Code",
+                responseLocationOptions: {
+                    app_and_terminal: { title: "App and terminal", subtitle: "Respond in the Happier app or Claude Code terminal." },
+                    app_only: { title: "App prompts", subtitle: "Use the existing app request flow. Claude may still accept responses in its terminal." },
+                    terminal_only: { title: "Terminal only", subtitle: "Respond in the Claude Code terminal." },
+                },
                 sections: {
                     claudeModelDiscovery: {
                         title: "Model discovery",
@@ -3792,6 +3868,10 @@ export const en = {
                     claudeCodeExperiments: {
                         title: "Claude Code experiments",
                         footer: "These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier."
+                    },
+                    claudeIdleReclaim: {
+                        title: "Idle sessions",
+                        footer: "Your next prompt resumes the same Claude session and may take a little longer. In-memory state is released. Background tasks, scheduled work and file checkpointing keep it running. Unified terminal sessions stay running."
                     },
                     claudeRemoteSdk: {
                         title: "Classic runtime (Agent SDK fallback)",
@@ -3824,6 +3904,14 @@ export const en = {
                                 subtitle: "Use Happier's bundled zellij host."
                             }
                         }
+                    },
+                    claudeUnifiedTerminalQuestionResponseLocation: {
+                        title: "Answer questions",
+                        subtitle: "Choose where to answer questions during unified terminal sessions."
+                    },
+                    claudeUnifiedTerminalPermissionResponseLocation: {
+                        title: "Approve permission requests",
+                        subtitle: "Choose where to approve permission requests during unified terminal sessions."
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "Large-session resume",
@@ -3868,6 +3956,14 @@ export const en = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Force-enable Agent Teams",
                         subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Release idle Claude processes",
+                        subtitle: "Free memory after a quiet period. Off by default."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Idle after (minutes)",
+                        subtitle: "Choose how long an opted-in remote Claude session stays warm."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Use Agent SDK fallback",
@@ -3927,7 +4023,7 @@ export const en = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: local permission bridge",
-                        subtitle: "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI."
+                        subtitle: "Forward permission prompts from classic local Claude sessions to Happier. Unified terminal sessions use the response choices above."
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "Keep requests open until answered",
@@ -4095,6 +4191,16 @@ export const en = {
 	                    },
 	                },
 	                fields: {
+	                    codexReasoningSummaries: {
+	                        title: "Reasoning summaries",
+	                        footer: "Controls whether Codex generates summaries, independently of transcript display. Applies when starting or resuming a session. Availability depends on the model.",
+	                        generation: "Generation",
+	                        options: {
+	                            default: "Use your Codex configuration or model default.",
+	                            enabled: "Request summaries when the model supports them.",
+	                            disabled: "Do not generate reasoning summaries.",
+	                        },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Codex routing mode',
 	                        subtitle: 'Select App Server, ACP, or MCP.',
@@ -4130,6 +4236,8 @@ export const en = {
 
     settingsAppearance: {
       tabBarAppearance: {
+        sideRailTitle: "Tabs in side rail",
+        sideRailSubtitle: "Turn off to use Happier's tab bar and its swipe gestures.",
         title: 'Tab bar',
         footer: 'Customize the bottom tab bar.',
         showLabels: 'Show tab labels',
@@ -4183,6 +4291,9 @@ export const en = {
             full: 'Full width',
             fullDescription: 'Use the available window width',
         },
+        feedback: "Feedback",
+        haptics: "Haptic feedback",
+        hapticsDescription: "Use touch feedback for actions and reordering on this device.",
         backdropBlur: 'Backdrop blur',
         backdropBlurDescription: 'Use frosted background blur behind modals and menus. Disable to improve browser performance.',
         multiPanePanels: 'Right panels',
@@ -4203,6 +4314,13 @@ export const en = {
         showLineNumbersInDiffsDescription: 'Display line numbers in code diffs',
         showLineNumbersInToolViews: 'Show Line Numbers in Tool Views',
         showLineNumbersInToolViewsDescription: 'Display line numbers in tool view diffs',
+        chatCodeBlocks: {
+            title: 'Chat code blocks',
+            showWrapControls: 'Show wrap controls',
+            showWrapControlsDescription: 'Show a wrap toggle on each chat code block',
+            wrapByDefault: 'Wrap code blocks by default',
+            wrapByDefaultDescription: 'Wrap long lines in chat code blocks unless you choose otherwise for a block',
+        },
         wrapLinesInDiffs: 'Wrap Lines in Code Views',
         wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in code previews and editors',
         alwaysShowContextSize: 'Always Show Context Size',
@@ -4465,6 +4583,8 @@ export const en = {
     },
 
     errors: {
+        machineRpcDecryptionFailed: "Unable to decrypt data from this machine. Sign in with the matching account key and try again.",
+        machineRpcContextUnavailable: "This machine’s connection is unavailable. Refresh your machines and try again.",
         networkError: 'Network error occurred',
         serverError: 'Server error occurred',
         unknownError: 'An unknown error occurred',
@@ -5235,6 +5355,11 @@ export const en = {
             showBannerAction: 'Show banner',
             hideBannerAction: 'Hide banner',
         },
+        runnerRestartBackgroundWork: {
+            title: 'Background work is running',
+            body: ({ count }: { count: number }) => `${count} background ${count === 1 ? 'activity is' : 'activities are'} running. Restarting will stop ${count === 1 ? 'it' : 'them'}.`,
+            confirmAction: 'Stop and restart',
+        },
         staleRunner: {
             title: 'Session is still running on an older CLI',
             body: 'Restart this session runner to continue on the updated daemon CLI. The Happier session stays the same.',
@@ -5634,7 +5759,7 @@ export const en = {
             discarded: {
                 title: 'Discarded messages',
                 subtitle:
-                    'These messages were not sent to the agent (for example, when switching from remote to local).',
+                    'These messages are no longer queued. Delivery may be uncertain; check the transcript before sending again.',
                 label: 'Discarded',
                 removeConfirm: {
                     title: 'Remove discarded message?',
@@ -5826,6 +5951,28 @@ export const en = {
         targetSession: 'Target session',
         noTarget: 'No session selected',
         clearTarget: 'Clear target',
+        errors: {
+            sendFailed: "Couldn't send your message to the session.",
+            sttFailed: "Couldn't transcribe what you said. Try again.",
+            sttTimeout: "Speech-to-text timed out. Check your connection and try again.",
+            sttAuthFailed: "Speech-to-text rejected the API key. Check the key and its restrictions in Settings → Voice.",
+            sttRateLimited: "Speech-to-text is rate limited. Wait a moment and try again.",
+            missingSttBaseUrl: "Set a speech-to-text server URL in Settings → Voice.",
+            missingSttApiKey: "Add a speech-to-text API key in Settings → Voice.",
+            recordingStartFailed: "Couldn't start the microphone. Check that no other app is using it.",
+            recordingStopFailed: "Couldn't finish the recording. Try again.",
+            deviceSttUnavailable: "Speech recognition isn't available on this device. Pick another speech-to-text provider in Settings → Voice.",
+            speechPermissionDenied: "Microphone or speech recognition access was denied. Allow it in your device settings.",
+            deviceSttStartFailed: "Couldn't start speech recognition. Try again.",
+            localNeuralSttUnavailable: "On-device speech recognition isn't available in this build. Pick another speech-to-text provider in Settings → Voice.",
+            localNeuralPackNotInstalled: "Download the speech model in Settings → Voice.",
+            localNeuralSttStartFailed: "Couldn't start on-device speech recognition. Try again.",
+            localNeuralAudioCaptureFailed: "The microphone stopped unexpectedly. Try again.",
+            ttsFailed: "Couldn't play the spoken reply. Check text-to-speech in Settings → Voice.",
+            voiceAgentRequiresFeature: ({ feature }: { feature: string }) => `Agent mode needs “${feature}” turned on in Settings → Features.`,
+            voiceAgentUnavailable: "The voice agent isn't available on this server.",
+            generic: "Voice ran into a problem.",
+        },
         a11y: {
             teleport: 'Teleport voice agent',
             toggleActivity: 'Toggle voice activity',
@@ -6164,6 +6311,17 @@ export const en = {
             presetName: 'Preset name', movePresetUp: 'Move preset up', movePresetDown: 'Move preset down',
             noPresets: 'No saved presets', noPresetsMessage: 'Save one the next time you choose a custom reminder.',
         },
+        appearance: {
+            setColor: 'Set color',
+            customColor: 'Custom color…',
+            customColorTitle: 'Custom color',
+            customColorMessage: 'Pick a shade or enter a hex value.',
+            invalidColor: 'Use a hex value like #3A7BD5.',
+            removeColor: 'Remove color',
+            inheritedFromProject: 'From the project',
+            customColorLabel: ({ hex }: { hex: string }) => `Custom color ${hex}`,
+            colors: { blue: 'Blue', green: 'Green', orange: 'Orange', yellow: 'Yellow', red: 'Red', indigo: 'Indigo', purple: 'Purple' },
+        },
         workingSectionTitle: 'Working',
         hideInactiveSessions: 'Hide inactive sessions',
         showInactiveSessions: 'Show inactive sessions',
@@ -6319,6 +6477,9 @@ export const en = {
         tmuxFallback: 'Tmux fallback',
         copyMetadata: 'Copy Metadata',
         copyDebugInformation: 'Copy information',
+        sessionInformation: "Session information",
+        happierSessionId: "Happier Session ID",
+        providerSessionId: ({ provider }: { provider: string }) => `${provider} Session ID`,
         debugInformationCopyLabel: 'Information',
         providerSessionLogs: ({ provider }: { provider: string }) => `${provider} session logs`,
         agentState: 'Agent State',
@@ -6331,6 +6492,9 @@ export const en = {
         thinking: 'Thinking',
         thinkingSince: 'Thinking Since',
         thinkingLevel: 'Thinking level',
+        peerReportFrom: ({ name }: { name: string }) => `Report from ${name}`,
+        peerMessageFrom: ({ name }: { name: string }) => `Message from ${name}`,
+        peerUnnamedSender: 'another agent',
         cliVersion: 'CLI Version',
         cliVersionOutdated: 'CLI Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
@@ -6340,6 +6504,8 @@ export const en = {
         deleteSessionSubtitle: 'Permanently remove this session',
         deleteSessionConfirm: 'Delete Session Permanently?',
         deleteSessionWarning: 'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
+        stopAndDeleteSession: "Stop and delete",
+        stopAndDeleteSessionWarning: "This will stop the session and permanently delete all its messages and data. This action cannot be undone.",
         failedToDeleteSession: 'Failed to delete session',
         sessionDeleted: 'Session deleted successfully',
         renameSession: 'Rename Session',
@@ -6411,6 +6577,11 @@ export const en = {
     },
 
     agentInput: {
+        sendOptions: {
+            title: "Send options",
+            queue: "Queue",
+            hint: "Hold to choose how to send",
+        },
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selected.`,
         },
@@ -7738,6 +7909,14 @@ settingsSession: {
 	              workingStatusAnimatedTextTitle: 'Animated working text',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Rotate working verbs while a session is running',
 	              workingStatusAnimatedTextDisabledSubtitle: 'Show a steady working... label while a session is running',
+	              backgroundWorkAttentionModeTitle: "Unread replies during background work",
+	              backgroundWorkAttentionModeSubtitle: "Choose where unread replies appear while background work continues. Requests for you still need attention.",
+	              backgroundWorkAttentionKeepWorkingTitle: "Keep working status",
+	              backgroundWorkAttentionKeepWorkingSubtitle: "Keep the working status and show a blue center dot for unread replies",
+	              backgroundWorkAttentionKeepWorkingUnreadTitle: "Show unread status in Working",
+	              backgroundWorkAttentionKeepWorkingUnreadSubtitle: "Keep sessions in Working and show unread status until you read the reply",
+	              backgroundWorkAttentionShowUnreadTitle: "Move unread sessions to Needs attention",
+	              backgroundWorkAttentionShowUnreadSubtitle: "Move sessions with unread replies to Needs attention while background work continues",
 	              attentionPromotionModeTitle: 'Sessions needing attention',
 	              attentionPromotionModeSubtitle: 'Choose where sessions waiting for you or ready to review appear',
 	              attentionPromotionModeOffTitle: 'Leave in normal position',
@@ -8871,6 +9050,26 @@ settingsSession: {
                     },
                 },
             },
+            modelPackDownload: {
+                progress: ({ loaded, total }: { loaded: string; total: string }) => `${loaded} of ${total}`,
+                progressWithFiles: ({ loaded, total, filesDone, filesTotal }: { loaded: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `${loaded} of ${total} · ${filesDone} of ${filesTotal} ${filesTotal === 1 ? 'file' : 'files'}`,
+                progressAccessibilityLabel: "Download progress",
+                verifyingDetail: "Verifying",
+                verifyingProgress: ({ verified, total, filesDone, filesTotal }: { verified: string; total: string; filesDone: number; filesTotal: number }) =>
+                    `Verified ${verified} of ${total} · ${filesDone} of ${filesTotal} ${filesTotal === 1 ? 'file' : 'files'}`,
+                verifyingAccessibilityLabel: "Verification progress",
+                failedDetail: "Failed",
+                failedSubtitle: "Couldn't get the model ready. Tap to try again.",
+                failedResumableSubtitle: ({ size }: { size: string }) => `Download didn't finish. ${size} is saved, so tap to resume.`,
+                incompleteDetail: "Incomplete",
+                incompleteSubtitle: ({ size }: { size: string }) => `${size} downloaded so far. Tap to continue.`,
+                discardSubtitle: "Delete the unfinished download to free up space.",
+                discardConfirmTitle: "Discard unfinished download?",
+                discardConfirmBody: ({ size }: { size: string }) => `This deletes the ${size} downloaded so far. You can download the model again later.`,
+                insufficientStorage: ({ required, available }: { required: string; available: string }) =>
+                    `Not enough free space. This download needs ${required}, but only ${available} is free.`,
+            },
             localNeuralStt: {
                 modelPack: {
                     title: 'Model pack',
@@ -8890,12 +9089,6 @@ settingsSession: {
                     installed: 'Installed',
                     installedWithBuild: ({ build }: { build: string }) => `Installed • ${build}`,
                     notInstalled: 'Not installed',
-                },
-                language: {
-                    title: 'Language',
-                    subtitle: 'Optional BCP-47 language tag.',
-                    promptTitle: 'Language',
-                    promptBody: 'Enter a BCP-47 language tag (e.g. en, en-US).',
                 },
                 alerts: {
                     downloadFailedTitle: 'Download failed',
@@ -8926,6 +9119,8 @@ settingsSession: {
                     enableTitle: 'Enable hands-free',
                     silenceTitle: 'Silence timeout (ms)',
                     minSpeechTitle: 'Minimum speech (ms)',
+                    pushToTalkTitle: 'Push-to-talk',
+                    pushToTalkSubtitle: 'This provider transcribes a finished recording, so tap the mic again to send. Choose Device or Local neural speech recognition for hands-free.',
                 },
                 customBackendIdSubtitle: 'Enter a custom backend id.',
                 searchBackendsPlaceholder: 'Search backends',
@@ -9124,7 +9319,7 @@ settingsSession: {
             sttProvider: 'STT Provider',
             neuralStt: {
                 title: 'On-device STT',
-                webNotAvailableSubtitle: 'Not available on web. Use Device, OpenAI-compatible, or Gemini STT.',
+                webFallbackSubtitle: 'Runs in the mobile app only. In the browser, voice uses the browser’s speech recognition instead.',
             },
             sttBaseUrl: 'STT Base URL',
             sttBaseUrlTitle: 'Speech to text',
@@ -9327,7 +9522,7 @@ settingsSession: {
             offline: 'Some machines are offline',
             checkedAt: ({ time }: { time: string }) => `Checked ${time}`,
             upToDateDescription: 'Happier, its command line and your agents are current.',
-            unknownDescription: 'Everything that could be checked is current. The rest is checked again when it can be reached.',
+            unknownDescription: "Some update information is unavailable or cached. See the affected rows for details.",
             offlineDescription: 'Everything reachable is current. Offline machines are checked when they’re back.',
         },
         settingsSubtitle: {
@@ -9373,6 +9568,9 @@ settingsSession: {
             appCheckFailed: 'Couldn’t check for a newer version.',
             appDownloadFailed: 'The download didn’t finish.',
             appInstallFailed: 'The update couldn’t be installed.',
+            cachedRelease: 'Cached release information; not refreshed here',
+            cachedReleaseChannel: ({ channel }: { channel: string }) => `Cached ${channel} release information; not refreshed here`,
+            manualUpdateInterruptsSessions: 'Update on this machine. Services may stop and running sessions may end.',
             latestUnknown: 'Couldn’t check for a newer version',
             rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} didn’t start on this machine, so it’s still on ${kept}.`,
             installedByYou: 'Installed by you',
@@ -9382,6 +9580,7 @@ settingsSession: {
             checking: 'Checking…',
             failedGeneric: 'The update didn’t finish. Try again.',
             remoteUnsupported: 'This machine can’t update its command line remotely. Update it on the machine.',
+            archiveExpandedByteLimit: "The downloaded runtime exceeds the extraction size limit. Update Happier before retrying.",
             updateNotVerified: 'The update ran, but the version didn’t change.',
             rolledBackLocal: 'The update didn’t start, so this computer went back to the previous version.',
             smokeFailed: 'The new version didn’t run on this computer, so nothing changed.',
@@ -9623,6 +9822,7 @@ settingsSession: {
         failedToConnectTerminal: 'Failed to connect terminal',
         cameraPermissionsRequiredToConnectTerminal: 'Camera permissions are required to connect terminal',
         failedToLinkDevice: 'Failed to link device',
+        deviceLinkRequestNotFound: "No pending linking request was found on this relay. Check that both devices use the same relay, then generate a new QR code.",
         cameraPermissionsRequiredToScanQr: 'Camera permissions are required to scan QR codes',
         qrScannerUnavailable: 'Unable to open the QR scanner. Please try again or enter the URL manually.'
     },
@@ -10509,8 +10709,8 @@ settingsSession: {
             anthropic: 'Anthropic (Default)',
             deepseek: 'DeepSeek (Reasoner)',
             zai: 'Z.AI (GLM-4.6)',
-            minimax: 'MiniMax (M3)',
-            minimaxCn: 'MiniMax (M3, CN)',
+            minimax: 'MiniMax (M3.1 Flash)',
+            minimaxCn: 'MiniMax (M3.1 Flash, CN)',
             codex: 'Codex (Default)',
             openai: 'OpenAI (GPT-5)',
             azureOpenai: 'Azure OpenAI',
@@ -10633,6 +10833,13 @@ settingsSession: {
                 plan: 'Plan before executing',
                 bypassPermissions: 'Skip all permissions',
             },
+        },
+        defaultBackend: {
+            title: 'Default AI backend',
+            footer: 'Starts new sessions on this backend when the profile is selected and no other backend is chosen.',
+            noneTitle: 'No default',
+            noneSubtitle: 'Happier picks the backend as usual.',
+            selectedSubtitle: 'Used when starting a session with this profile.',
         },
         defaultPermissions: {
             title: 'Default permissions',

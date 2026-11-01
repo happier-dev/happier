@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
+import {
+    buildProviderAccountUsageRecordId,
+    openSealedProviderAccountUsageSnapshot,
+    ProviderAccountUsageSnapshotV1Schema,
+    sealProviderAccountUsageSnapshot,
+} from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
@@ -134,6 +139,38 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         await createConnectedServiceProfileBinding(user.id, { providerAccountId: "acct_quota_v2_projection" });
         const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_projection" });
         const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const material = { type: "legacy", secret: new Uint8Array(32).fill(7) } as const;
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+            v: 1,
+            recordId,
+            recordKey,
+            providerId: recordKey.providerId,
+            accountSubject: { kind: "providerSubject", id: recordKey.accountSubjectId },
+            observedAtMs: 1_234,
+            fetchedAtMs: 1_234,
+            staleAfterMs: 300_000,
+            source: "connectedServiceProbe",
+            confidence: "confirmed",
+            state: "loaded_data",
+            meters: [],
+            recoveryCredits: {
+                kind: "usage_limit_resets",
+                availableCount: 0,
+                credits: [{ providerCreditId: "saved-reset", kind: "rate_limit_reset", status: "unknown" }],
+            },
+            recoveryCreditDetails: {
+                "saved-reset": {
+                    remainingCount: 2,
+                    appliesToProviderLimitIds: ["seven_day", "provider_future_window"],
+                    unavailableReason: "ineligible",
+                },
+            },
+        });
+        const sealed = sealProviderAccountUsageSnapshot({
+            material,
+            snapshot,
+            randomBytes: (length) => new Uint8Array(length).fill(3),
+        });
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -150,7 +187,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
                     profileId: "work",
                     bindingKind: "profile",
                 },
-                sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
+                sealed,
                 metadata: { fetchedAt: 1_234, staleAfterMs: 300_000, status: "ok", materialFingerprint: "v2:quota" },
             },
         });
@@ -163,13 +200,14 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         });
         expect(getQuota.statusCode).toBe(200);
         expect(getQuota.json()).toEqual({
-            sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
+            sealed,
             metadata: {
                 fetchedAt: 1_234,
                 staleAfterMs: 300_000,
                 status: "ok",
             },
         });
+        expect(openSealedProviderAccountUsageSnapshot({ material, sealed: getQuota.json().sealed })).toEqual(snapshot);
 
         const getProviderUsage = await app.inject({
             method: "GET",
@@ -178,7 +216,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         });
         expect(getProviderUsage.statusCode).toBe(200);
         expect(getProviderUsage.json()).toEqual({
-            sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
+            sealed,
             metadata: {
                 fetchedAt: 1_234,
                 staleAfterMs: 300_000,

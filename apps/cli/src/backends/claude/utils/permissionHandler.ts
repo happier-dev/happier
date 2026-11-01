@@ -5,6 +5,7 @@
  * Handles tool permission requests, responses, and state management.
  */
 
+import { isExecutionRunPermissionRequestId } from '@/agent/executionRuns/runtime/runScopedExecutionPermissionHandler';
 import { isDeepStrictEqual } from 'node:util';
 import { logger } from "@/lib";
 import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from "../sdk";
@@ -18,13 +19,11 @@ import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidec
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { syncClaudePermissionModeFromMetadata } from '@/backends/claude/utils/syncPermissionModeFromMetadata';
 import type { PermissionRpcPayload } from './permissionRpc';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { configuration } from '@/configuration';
 import { waitForSessionMetadataRetryBackoff } from '@/agent/runtime/sessionMetadataWaitRetryBackoff';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { readPendingLocalId } from '@happier-dev/protocol';
-import { cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
-import type { Metadata } from '@/api/types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import {
@@ -33,7 +32,6 @@ import {
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import {
     AgentStateRequestStore,
-    hasPermissionResponseClaimV1,
     type AgentStateOutstandingRequest,
 } from '@/agent/permissions/agentStateRequestStore';
 import {
@@ -44,10 +42,8 @@ import {
     type PermissionRequestCoordinatorStore,
 } from '@/agent/permissions/permissionRequestCoordinator';
 import {
-    computeNextMetadataStringOverrideV1,
     isClaudeLocalPermissionBridgeAgentStateRequest,
     isClaudeUnifiedTerminalDialogChoiceAgentStateRequest,
-    SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isAskUserQuestionToolName, type StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
@@ -58,14 +54,14 @@ import {
 } from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
 import { buildAskUserQuestionAnswersForClaude } from './askUserQuestionAnswersForClaude';
 import { normalizeClaudeAskUserQuestionInputForPublication } from './normalizeClaudeAskUserQuestionInput';
+import { clearClaudePlanModeMetadataBestEffort } from './clearPlanModeMetadataBestEffort';
 
 type PermissionResponse = PermissionRpcPayload;
 
 function isInteractiveTool(toolName: string): boolean {
     return (
         isAskUserQuestionToolName(toolName) ||
-        toolName === 'ExitPlanMode' ||
-        toolName === 'exit_plan_mode'
+        getToolDescriptor(toolName).exitPlan
     );
 }
 
@@ -229,23 +225,6 @@ export class PermissionHandler {
         return nowMs <= this.exitedPlanModeFallbackUntilMs;
     }
 
-    private clearAcpSessionModeOverrideBestEffort(): void {
-        const updatedAt = Date.now();
-        updateMetadataBestEffort(
-            this.session.client,
-            (metadata): Metadata =>
-                computeNextMetadataStringOverrideV1({
-                    metadata: cloneStringKeyedRecordToNullProto(metadata),
-                    overrideKey: SESSION_MODE_OVERRIDE_KEY,
-                    valueKey: 'modeId',
-                    value: '',
-                    updatedAt,
-                }) as unknown as Metadata,
-            '[Claude]',
-            'exit_plan_mode_clear_session_mode_override',
-        );
-    }
-
     private isToolTraceEnabled(): boolean {
         const isTruthy = (value: string | undefined): boolean =>
             typeof value === 'string' && ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
@@ -325,8 +304,8 @@ export class PermissionHandler {
         }
         const hasStructuredAnswers = message.answers !== undefined || message.structuredAnswersV1 !== undefined;
         const context = hasStructuredAnswers
-            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(id)
-            : this.permissionCoordinator.getResponseContext(id);
+            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(id, message.occurrenceId)
+            : this.permissionCoordinator.getResponseContext(id, message.occurrenceId);
         if (!context) {
             return false;
         }
@@ -349,10 +328,11 @@ export class PermissionHandler {
         const response = { ...message, ...(structuredAnswersV1 ? { structuredAnswersV1 } : {}) };
         const completed = await this.permissionCoordinator.completeRpcResponse({
             context,
+            expectedOccurrenceId: message.occurrenceId,
             completion: this.buildPermissionCompletion(response, context),
+            onAdmitted: () => this.recordPermissionResponse(response, context),
         });
         if (!completed) return false;
-        this.recordPermissionResponse(response, context);
         return true;
     }
 
@@ -379,7 +359,6 @@ export class PermissionHandler {
                 }),
             }),
             completeRequest: (params) => this.agentStateRequestStore.completeRequest(params),
-            cancelAllRequests: (params) => this.cancelRemoteOutstandingRequests(params.reason),
             hasOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId) !== null,
             isOutstandingRequestClaimed: (requestId) => {
                 const rawRequest = (this.session.client as any).getAgentStateSnapshot?.()?.requests?.[requestId] ?? null;
@@ -392,6 +371,7 @@ export class PermissionHandler {
 
     private readOutstandingRemoteRequest(id: string): AgentStateOutstandingRequest | null {
         try {
+            if (isExecutionRunPermissionRequestId(id)) return null;
             const outstanding = this.agentStateRequestStore.readOutstandingRequest(id);
             if (!outstanding) return null;
             const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
@@ -401,38 +381,6 @@ export class PermissionHandler {
         } catch {
             return null;
         }
-    }
-
-    private cancelRemoteOutstandingRequests(reason: string): void {
-        updateAgentStateBestEffort(
-            this.session.client,
-            (currentState) => {
-                const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const now = Date.now();
-
-                for (const [id, request] of Object.entries(requests)) {
-                    if (isRequestOwnedOutsideRemotePermissionHandler(request)) continue;
-                    if (hasPermissionResponseClaimV1(request)) continue;
-                    delete requests[id];
-                    const completedEntry = { ...(request && typeof request === 'object' ? request : {}) } as Record<string, unknown>;
-                    completedEntry.completedAt = now;
-                    completedEntry.status = 'canceled';
-                    completedEntry.reason = reason;
-                    completedEntry.decision = 'abort';
-                    completedRequests[id] = completedEntry as never;
-                    this.agentStateRequestStore.markPermissionRequestCompletedBestEffort(id);
-                }
-
-                return {
-                    ...currentState,
-                    requests,
-                    completedRequests,
-                };
-            },
-            '[Claude]',
-            'cancel_remote_permission_requests',
-        );
     }
 
     private applyPermissionResponseSideEffects(params: {
@@ -455,12 +403,12 @@ export class PermissionHandler {
 
         if (
             response.approved
-            && (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode')
+            && toolName !== null && getToolDescriptor(toolName).exitPlan
         ) {
             if (sourceLocalId) {
                 this.noteExitPlanModeApproved(sourceLocalId);
             }
-            this.clearAcpSessionModeOverrideBestEffort();
+            clearClaudePlanModeMetadataBestEffort(this.session.client, '[Claude]');
         }
     }
 
@@ -485,13 +433,13 @@ export class PermissionHandler {
 
         const completion = this.buildPermissionCompletion(message, context);
 
-        if (!this.permissionCoordinator.completeResponse({ context, completion })) {
-            logger.debug('[Claude] Permission response did not complete an outstanding request');
-            return;
-        }
-
-        this.recordPermissionResponse(message, context);
+        this.permissionCoordinator.completeResponse({
+            context,
+            completion,
+            onAdmitted: () => this.recordPermissionResponse(message, context),
+        });
     }
+
 
     private recordPermissionResponse(message: PermissionResponse, context: PermissionRequestCoordinatorContext): void {
         const id = message.id;
@@ -978,8 +926,28 @@ export class PermissionHandler {
             decision?: 'abort';
         },
     ): void {
-        this.pendingRequestMetadata.clear();
-        this.permissionCoordinator.cancelAll(reason);
+        const pendingSnapshot = [...this.pendingRequestMetadata.entries()];
+        // Resumed Agent-state requests have no coordinator waiter. Retire that
+        // source-owned subset through the same exact, durable settlement owner.
+        const requests = this.session.client.getAgentStateSnapshot?.()?.requests ?? {};
+        const stateOnlyRequestIds = Object.keys(requests).filter((requestId) => (
+            this.permissionCoordinator.getResponseContext(requestId)?.correlation === 'agent_state'
+        ));
+        if (stateOnlyRequestIds.length > 0) {
+            void this.agentStateRequestStore.cancelAllRequests({
+                reason: _opts?.completedReason ?? reason,
+                decision: _opts?.decision ?? 'abort',
+                requestIds: stateOnlyRequestIds,
+                shouldCancel: (request) => !isRequestOwnedOutsideRemotePermissionHandler(request),
+            }).catch(() => undefined); // The store reports admission failures on the default file log.
+        }
+        void this.permissionCoordinator.cancelAll(reason).then(() => {
+            for (const [requestId, pending] of pendingSnapshot) {
+                if (this.pendingRequestMetadata.get(requestId) === pending) {
+                    this.pendingRequestMetadata.delete(requestId);
+                }
+            }
+        }).catch(() => logger.infoFile('[Claude] Cancellation request settlement admission failed'));
     }
 
     async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {

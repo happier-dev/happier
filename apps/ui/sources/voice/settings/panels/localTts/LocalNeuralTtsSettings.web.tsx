@@ -18,6 +18,7 @@ import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { KOKORO_WEB_DEFAULT_VOICE_ID, resolveKokoroWebVoiceId } from '@/voice/kokoro/voices/resolveKokoroVoice';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -102,7 +103,9 @@ export function LocalNeuralTtsSettings(props: {
     stopPreview();
   }, [openMenu, previewingVoiceId, stopPreview]);
 
-  const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
+  // Show the voice kokoro-js will actually use: the synced id may come from a native model pack.
+  const effectiveVoiceId =
+    voices.length > 0 ? resolveKokoroWebVoiceId(props.cfgKokoro.voiceId, voices.map((v) => v.id)) : (props.cfgKokoro.voiceId ?? KOKORO_WEB_DEFAULT_VOICE_ID);
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
   const effectiveAssetSetId = props.cfgKokoro.assetId ?? null;
   const assetSets = React.useMemo(() => getKokoroAssetSetOptions(), []);

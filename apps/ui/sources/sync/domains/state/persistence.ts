@@ -12,6 +12,9 @@ import {
     parseThemeProfilesLocalState,
 } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import { resolveAccountThemeProfiles } from '../settings/themeProfiles';
+import { loadAccountSettings, loadActiveAccountSettingsScope, loadPendingAccountSettingsState } from './accountSettingsPersistence';
+import { settingsParse } from '../settings/settings';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
@@ -502,12 +505,19 @@ export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
             : undefined,
     );
     const migratedProfiles = migrateThemeProfileLocalStateTokenIds(parsedProfiles.state);
-    const themeProfiles = migratedProfiles.state;
+    const scope = loadActiveAccountSettingsScope();
+    const accountSettings = settingsParse((scope ? loadAccountSettings(scope) : loadSettings()).settings);
+    const pending = scope ? loadPendingAccountSettingsState(scope) : null;
+    const themeProfiles = resolveAccountThemeProfiles({
+        profiles: accountSettings.themeProfiles, legacy: migratedProfiles.state,
+        selection: settings.themeProfileSelection, legacyScope: settings.themeProfileLegacyAccountScope, scope,
+        pendingProfiles: pending?.settings.themeProfiles, pendingIntent: pending?.themeProfileMigration,
+    });
 
     if (parsedProfiles.changed || migratedProfiles.changed) {
         const healedSettings = localSettingsParse({
             ...(typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}),
-            themeProfiles,
+            themeProfiles: migratedProfiles.state,
         });
         mmkv.set('local-settings', JSON.stringify(healedSettings));
     }

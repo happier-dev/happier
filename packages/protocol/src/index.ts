@@ -1,4 +1,11 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export { lazySchema } from './lazySchema.js';
+export {
+  SessionPermissionResponseSchema,
+  SessionPermissionResponseToOccurrenceV1Schema,
+  type SessionPermissionResponse,
+  type SessionPermissionResponseToOccurrenceV1,
+} from './sessionControl/sessionPermissionResponse.js';
 export { buildRecoveryCreditConsumeIdempotencyKey } from './connect/recoveryCreditConsumeIdempotencyKey.js';
 
 export { PROVIDER_ACCOUNT_SUBSCRIPTION_ACCEPT, ProviderAccountSubscriptionV1Schema, mergeProviderAccountSubscription, type ProviderAccountSubscriptionV1 } from './connect/accountSubscription.js';
@@ -571,6 +578,7 @@ export {
   openProviderAccountUsageSnapshotCiphertext,
   projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   projectProviderAccountUsageToConnectedServiceQuotaSnapshot,
+  isProviderAccountUsageOrganizationContextMatch,
   sealProviderAccountUsageSnapshotCiphertext,
   splitProviderAccountUsageSubscription,
   splitProviderAccountUsageSupplementalFacets,
@@ -582,6 +590,7 @@ export {
   type ProviderAccountUsageQuotaScopeV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageRecordKeyV1,
+  type ProviderAccountUsageOrganizationContext,
   type ProviderAccountUsageSnapshotV1,
   type ProviderAccountUsageSourceV1,
   type ProviderAccountUsageStateV1,
@@ -750,6 +759,10 @@ export {
 
 export {
   buildConnectedServiceCredentialRecord,
+  buildConnectedServiceCredentialMetadata,
+  connectedServiceUsageRequiresOrganizationId,
+  readConnectedServiceCredentialOrganizationId,
+  type ConnectedServiceCredentialMetadata,
   normalizeConnectedServiceOauthCredentialRawMetadata,
   type ConnectedServiceOauthCredentialRawMetadata,
 } from './connect/buildConnectedServiceCredentialRecord.js';
@@ -826,6 +839,13 @@ export {
 } from './providers/codex/backendMode.js';
 
 export {
+  CODEX_REASONING_SUMMARIES_DEFAULT,
+  CodexReasoningSummariesSchema,
+  resolveCodexReasoningSummaryOverride,
+  type CodexReasoningSummaries,
+} from './providers/codex/reasoningSummary.js';
+
+export {
   CodexAppServerCapabilitiesSchema,
   CodexAppServerGoalSchema,
   CodexAppServerGoalStatusSchema,
@@ -877,10 +897,18 @@ export {
   normalizeClaudeTaskToolRecordsToWorkStateItems,
   normalizeClaudeTaskToolUseToWorkStateItem,
   normalizeClaudeSdkInitSkills,
+  normalizeClaudeOauthProfileEntitlement,
+  readClaudeOauthCredentialMetadata,
+  readClaudeOauthCredentialOrganizationId,
+  type ClaudeOauthCredentialMetadata,
+  type ClaudeOauthEntitlementMetadata,
   normalizeClaudeTaskEventToWorkStateItem,
   normalizeClaudeTodoWriteTodosToWorkStateItems,
   readClaudeAgentSdkProviderTaskStatus,
   readClaudeSlashCommandNames,
+  formatClaudePeerMessageText,
+  readClaudePeerMessage,
+  type ClaudePeerMessage,
   type ClaudeActivityStatusSignal,
   type ClaudeSdkSkillsOption,
   type ClaudeTaskEvent,
@@ -1115,6 +1143,7 @@ export {
   SESSION_ORGANIZATION_LABEL_KINDS,
   SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION,
   SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
+  SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES,
   SESSION_ORGANIZATION_MAX_DISPLAY_ENVELOPE_BYTES,
   SESSION_ORGANIZATION_MAX_FOLDERS,
   SESSION_ORGANIZATION_MAX_ID_LENGTH,
@@ -1152,6 +1181,7 @@ export {
   SessionOrganizationOrderItemKindSchema,
   SessionOrganizationOrderScopeKindSchema,
   SessionAttentionStandingSchema,
+  SessionOrganizationSessionAppearanceSchema,
   SessionOrganizationPinSchema,
   SessionOrganizationSnapshotRequestSchema,
   SessionOrganizationSnapshotResponseSchema,
@@ -1160,6 +1190,8 @@ export {
   SessionTagAssignmentSchema,
   SetSessionAttentionStandingRequestSchema,
   SetSessionAttentionStandingResponseSchema,
+  SetSessionAppearanceRequestSchema,
+  SetSessionAppearanceResponseSchema,
   SetSessionPinRequestSchema,
   SetSessionPinResponseSchema,
   SetSessionTagAssignmentsRequestSchema,
@@ -1188,6 +1220,7 @@ export {
   type SessionOrganizationOrderItemKind,
   type SessionOrganizationOrderScopeKind,
   type SessionAttentionStanding,
+  type SessionOrganizationSessionAppearance,
   type SessionOrganizationPin,
   type SessionOrganizationSnapshot,
   type SessionOrganizationSnapshotRequest,
@@ -1196,6 +1229,8 @@ export {
   type SessionTagAssignment,
   type SetSessionAttentionStandingRequest,
   type SetSessionAttentionStandingResponse,
+  type SetSessionAppearanceRequest,
+  type SetSessionAppearanceResponse,
   type SetSessionPinRequest,
   type SetSessionPinResponse,
   type SetSessionTagAssignmentsRequest,
@@ -1257,11 +1292,18 @@ export {
   TERMINAL_PROVISIONING_V2_CONTENT_PRIVATE_KEY_BYTES,
   TERMINAL_PROVISIONING_V2_PLAINTEXT_BYTES,
   TERMINAL_PROVISIONING_V2_VERSION_BYTE,
+  TERMINAL_PROVISIONING_V2_TOKEN_ONLY_TAG,
+  type TerminalProvisioningV2Response,
   isTerminalProvisioningV3Payload,
   openTerminalProvisioningV3Payload,
+  openTerminalProvisioningV3Response,
   openTerminalProvisioningV2Payload,
+  openTerminalProvisioningV2Response,
+  parseTerminalProvisioningV2Plaintext,
   sealTerminalProvisioningV3Payload,
+  sealTerminalProvisioningV3TokenOnlyPayload,
   sealTerminalProvisioningV2Payload,
+  sealTerminalProvisioningV2TokenOnlyPayload,
 } from './crypto/terminalProvisioningV2.js';
 
 export {
@@ -1295,11 +1337,13 @@ export {
 } from './mcpServers/resolveEffectiveServersV1.js';
 export {
   areSessionMcpSelectionsEquivalent,
+  isSessionHappierToolsEnabled,
   parseSessionMcpSelectionV1Json,
   readSessionMcpSelectionRestartRequiredV1FromMetadata,
   readSessionMcpSelectionV1FromMetadata,
   SessionMcpSelectionRestartRequiredV1Schema,
   SessionMcpSelectionV1Schema,
+  SessionMcpSelectionV1InputSchema,
   type SessionMcpSelectionRestartRequiredV1,
   type SessionMcpSelectionV1,
 } from './mcpServers/sessionSelectionV1.js';
@@ -1777,6 +1821,9 @@ export {
   type SessionUsageLimitRecoveryOperationResultOkStatusV1,
   type SessionUsageLimitRecoveryOperationResultV1,
   type SessionUsageLimitRecoveryV1,
+  buildUsageLimitIssueFingerprint,
+  isSessionUsageLimitRecoveryForIssue,
+  readSessionUsageLimitRecoveryForIssue,
   type TurnTerminalStatusV1,
   type V2SessionByIdNotFound,
   type V2SessionByIdResponse,
@@ -1954,6 +2001,8 @@ export {
   type ProviderSessionInfoV1,
   createProviderSessionInfoV1Schema,
 } from './sessionMetadata/providerSessionInfoV1.js';
+
+export { hasSessionTitleInMetadata } from './sessionMetadata/sessionTitle.js';
 
 export {
   WINDOWS_REMOTE_SESSION_LAUNCH_MODES,
@@ -2640,6 +2689,7 @@ export {
 export {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCapabilityV2Schema,
+  readSessionHandoffError,
   type SessionHandoffCapabilityV2,
   SessionHandoffAbortRequestV2Schema,
   SessionHandoffAbortResponseSchema,
@@ -3233,6 +3283,7 @@ export {
   isCodingPromptSessionTitleUpdatesEnabled,
   resolveCodingPromptBehaviorV1,
   resolveCodingPromptSessionTitleUpdatesModeV1,
+  resolveCodingPromptSessionTitleInstructionModeV1,
   type CodingPromptBehaviorModeV1,
   type CodingPromptSessionTitleUpdatesModeV1,
   type CodingPromptBehaviorV1,
@@ -3428,6 +3479,7 @@ export {
   AccountEncryptionMigrateKeyProofSchema,
   AccountEncryptionMigrateConnectedServicesDirectiveSchema,
   AccountEncryptionMigrateAutomationsDirectiveSchema,
+  AccountEncryptionMigrateMachinesDirectiveSchema,
   AccountEncryptionMigrateSessionDraftItemSchema,
   AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   AccountEncryptionMigrateRequestSchema,
@@ -3443,6 +3495,7 @@ export {
   type AccountEncryptionMigrateKeyProof,
   type AccountEncryptionMigrateConnectedServicesDirective,
   type AccountEncryptionMigrateAutomationsDirective,
+  type AccountEncryptionMigrateMachinesDirective,
   type AccountEncryptionMigrateSessionDraftItem,
   type AccountEncryptionMigrateSessionDraftsDirective,
   type AccountEncryptionMigrateRequest,
@@ -3548,6 +3601,12 @@ export {
   BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH,
   buildBugReportFallbackIssueUrl,
   buildBugReportExportBundle,
+  BugReportLogSelectionSchema,
+  BugReportSessionDiagnosticsSchema,
+  resolveBugReportLogSelection,
+  BUG_REPORT_LOG_SOURCE_KINDS,
+  type BugReportLogSelection,
+  type BugReportSessionDiagnostics,
   formatBugReportFallbackIssueBody,
   appendBugReportReporterToSummary,
   hasAcceptedBugReportArtifactKind,
@@ -3603,6 +3662,7 @@ export {
   EnvironmentVariableSchema,
   SavedSecretSchema,
   getBuiltInBackendProfile,
+  getProfileDefaultBackendTarget,
   getRequiredConfigEnvVarNames,
   getMissingRequiredConfigEnvVarNames,
   getProfileEnvironmentVariables,
@@ -3649,3 +3709,25 @@ export {
   supportsConnectedServiceOperation,
   withConnectedServiceReaderSupport,
 } from './connect/connectedServiceReaderSupport.js';
+export {
+  MACHINE_PLAIN_DATA_KEY_MARKER,
+  encodePlainMachineStoredContent,
+  decodePlainMachineStoredContent,
+  isPlainMachineDataKeyMarker,
+  machineStoredContentMatchesAccountMode,
+  machineUpdateMatchesStoredMode,
+} from './machines/machineStoredContent.js';
+export {
+  MachineKeyBasisV1Schema,
+  MachineContentKeyTransitionInputV1Schema,
+  MachineContentKeyTransitionRefusalV1Schema,
+  createMachineContentKeyTransitionResultV1Schema,
+  type MachineKeyBasisV1,
+  type MachineContentKeyTransitionInputV1,
+  type MachineContentKeyTransitionResultV1,
+} from './machines/machineContentKeyTransitionV1.js';
+
+export { assertAccountKeyProvisioningAllowed, AccountKeyProvisioningUnavailableError, verifyAccountContentPublicKeyBinding, createAccountContentPublicKeyBindingMessage } from './auth/accountKeyProvisioning.js';
+export { PushNotificationTestRequestSchema, PushNotificationTestResultSchema, type PushNotificationTestResult } from './push/pushNotificationTest.js';
+
+export { projectNotificationQuestion, readNotificationQuestionAnswer, isNotificationQuestionAnswerAction, NotificationQuestionAnswerV1Schema, NOTIFICATION_QUESTION_MAX_CHOICES, type NotificationQuestionAnswerV1 } from './push/notificationQuestionActions.js';

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { AcpBackend } from '@/agent/acp/AcpBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { isDefinitiveSessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -86,6 +87,10 @@ describe('Grok ACP session model controls', () => {
         args: [scriptPath],
         sessionModelAdapter: grokSessionModelAdapter,
       });
+      const events: AgentMessage[] = [];
+      backend.onMessage((event) => {
+        if (event.type === 'event' && (event.name === 'session_models_state' || event.name === 'current_model_update')) events.push(event);
+      });
 
       try {
         const started = await backend.startSession();
@@ -111,12 +116,20 @@ describe('Grok ACP session model controls', () => {
           ],
         });
 
+        const initialModels = backend.getSessionModelState();
+        events.length = 0;
+        for (let i = 0; i < 10; i++) await backend.setSessionConfigOption(started.sessionId, 'reasoning_effort', 'medium');
+        expect(events).toHaveLength(0);
+        expect(backend.getSessionModelState()).toBe(initialModels);
         await backend.setSessionConfigOption(started.sessionId, 'reasoning_effort', 'high');
-        expect(await readRequests(requestsPath)).toEqual([{
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ type: 'event', name: 'session_models_state' });
+        expect(await readRequests(requestsPath)).toHaveLength(11);
+        expect((await readRequests(requestsPath)).at(-1)).toEqual({
           sessionId: 'grok-session',
           modelId: 'grok-4.5',
           _meta: { reasoningEffort: 'high' },
-        }]);
+        });
         expect(backend.getSessionModelState()?.availableModels[0]?.modelOptions?.[0]?.currentValue).toBe('high');
       } finally {
         await backend.dispose().catch(() => {});

@@ -14,7 +14,6 @@ export type SessionListTreeRowKind = 'workspace-root' | 'folder' | 'session';
 
 export type SessionListInstructionBlockReason =
     | 'feature-disabled'
-    | 'direct-session'
     | 'unsupported-item'
     | 'date-ordering-mode';
 

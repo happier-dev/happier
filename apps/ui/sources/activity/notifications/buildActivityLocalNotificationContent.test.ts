@@ -200,4 +200,28 @@ describe('buildActivityLocalNotificationContent', () => {
         expect(notification.body).toContain('Develop');
     });
 
+    it.each([
+        [{ question: 'Which branch?', options: [{ label: 'Main\n\tbranch', description: 'Stable\n\tcode', value: 'main-value' }, { label: 'Develop', choice: 'develop-value' }] },
+            { kind: 'choices', questionKey: 'Which branch?', values: ['main-value', 'develop-value'] }, 'happier.questionChoices2.v1', 'Which branch?\n1. Main branch — Stable code\n2. Develop'],
+        [{ question: 'Branch name?', freeform: { placeholder: 'Name', multiline: false } },
+            { kind: 'text', questionKey: 'Branch name?', allowEmpty: false }, 'happier.questionText.v1', 'Branch name?'],
+    ])('offers a simple exact question through its existing notification producer', async (question, descriptor, category, body) => {
+        const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
+        const notification = buildActivityLocalNotificationContent({
+            event: { kind: 'agent-request', sessionId: 'question-session', requestId: 'request', occurrenceId: 'occurrence',
+                requestKind: 'user_action', toolName: 'AskUserQuestion', toolArgs: { questions: [question] } },
+            session: null, serverUrl: 'https://stack.example.test', accountId: 'account',
+        });
+        expect(notification).toMatchObject({ body, data: { accountId: 'account', requestId: 'request', occurrenceId: 'occurrence',
+            questionAnswerV1: descriptor }, expo: { categoryIdentifier: category } });
+        const privateNotice = buildActivityLocalNotificationContent({
+            event: { kind: 'agent-request', sessionId: 'question-session', requestId: 'request', occurrenceId: 'occurrence',
+                requestKind: 'user_action', toolName: 'AskUserQuestion', toolArgs: { questions: [question] } },
+            session: null, serverUrl: 'https://stack.example.test', accountId: 'account', includeRequestMessageText: false,
+        });
+        expect(privateNotice.data.questionAnswerV1).toBeUndefined();
+        expect(privateNotice.expo.categoryIdentifier).toBe(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1);
+        expect(privateNotice.body).toBe('This session needs your input.');
+    });
+
 });

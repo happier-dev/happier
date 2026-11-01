@@ -9,6 +9,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { parseToken } from '@/utils/auth/parseToken';
 
 import type { ScopedRpcSessionEncryptionContext } from './serverScopedRpcTypes';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -54,7 +55,7 @@ export async function resolveServerScopedSessionContext(params: Readonly<{
   preferScoped?: boolean;
 }>): Promise<ResolvedServerSessionRpcContext> {
   const targetServerId = normalizeId(params.serverId);
-  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
+  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
   const activeSnapshot = getActiveServerSnapshot();
 
   const activeServerId = normalizeId(activeSnapshot.serverId);

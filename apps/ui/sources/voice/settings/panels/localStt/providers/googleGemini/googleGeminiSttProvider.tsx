@@ -12,6 +12,8 @@ import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSt
 import { LANGUAGES, getLanguageDisplayName } from '@/constants/Languages';
 import { fetchGoogleGeminiModelCatalog, type GoogleGeminiModelSummary } from '@/voice/input/googleGeminiModelsApi';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { storage } from '@/sync/domains/state/storage';
+import { resolveGoogleAndroidCertSha1 } from '@/voice/local/localVoiceSettings';
 
 import type { LocalSttProviderSpec } from '../_types';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -37,6 +39,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
     return cfg.googleGemini.apiKey ? (sync.decryptSecretValue(cfg.googleGemini.apiKey) ?? null) : null;
   }, [cfg.googleGemini.apiKey]);
 
+  const androidCertSha1 = storage((state) => resolveGoogleAndroidCertSha1(state.settings));
   const [models, setModels] = React.useState<GoogleGeminiModelSummary[]>([]);
   React.useEffect(() => {
     let canceled = false;
@@ -45,7 +48,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
       return;
     }
 
-    void fetchGoogleGeminiModelCatalog({ apiKey, timeoutMs: 10_000 })
+    void fetchGoogleGeminiModelCatalog({ apiKey, androidCertSha1, timeoutMs: 10_000 })
       .then((next) => {
         if (canceled) return;
         setModels(next);
@@ -58,7 +61,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
     return () => {
       canceled = true;
     };
-  }, [apiKey]);
+  }, [apiKey, androidCertSha1]);
 
   return (
     <>

@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     resetScopedMachineDataKeyCacheForTests,
-    resolveScopedMachineDataKey,
+    resolveScopedMachineEncryptionContext,
 } from './serverScopedRpcPool';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 
 function readAuthorizationHeader(headers: RequestInit['headers']): string {
     if (!headers) return '';
@@ -18,7 +19,36 @@ function readAuthorizationHeader(headers: RequestInit['headers']): string {
     return String(record.Authorization ?? record.authorization ?? '');
 }
 
-describe('resolveScopedMachineDataKey', () => {
+describe('resolveScopedMachineEncryptionContext', () => {
+    it('revalidates a cached encrypted key when a machine changes to plain content and back', async () => {
+        let dataEncryptionKey = 'encrypted-key';
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+            ok: true, status: 200,
+            json: async () => url.includes('/v1/machines')
+                ? [{ id: 'machine-1', dataEncryptionKey }]
+                : url.includes('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 } : {},
+        })));
+        const decrypt = vi.fn(async () => new Uint8Array([1]));
+        const resolve = () => resolveScopedMachineEncryptionContext({ serverId: 'server-b', serverUrl: 'https://server-b.example.test',
+            token: 'token-b', machineId: 'machine-1', decryptEncryptionKey: decrypt });
+        await expect(resolve()).resolves.toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1]) });
+        dataEncryptionKey = MACHINE_PLAIN_DATA_KEY_MARKER;
+        await expect(resolve()).resolves.toEqual({ mode: 'plain' });
+        dataEncryptionKey = 'rotated-encrypted-key';
+        await expect(resolve()).resolves.toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1]) });
+        expect(decrypt).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects a present empty machine key rather than selecting legacy encryption', async () => {
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+            ok: true, status: 200,
+            json: async () => url.includes('/v1/machines') ? [{ id: 'machine-1', dataEncryptionKey: '' }] : {},
+        })));
+        await expect(resolveScopedMachineEncryptionContext({ serverId: 'server-b', serverUrl: 'https://server-b.example.test',
+            token: 'token-b', machineId: 'machine-1', decryptEncryptionKey: async () => new Uint8Array([1]),
+        })).rejects.toMatchObject({ rpcErrorCode: 'machine_rpc_context_unavailable' });
+    });
+
     afterEach(async () => {
         vi.unstubAllGlobals();
         delete process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX;
@@ -31,7 +61,7 @@ describe('resolveScopedMachineDataKey', () => {
         }
     });
 
-    it('fetches and decrypts machine key on first request then uses cache', async () => {
+    it('revalidates the machine envelope while reusing its unchanged decrypted key', async () => {
         const fetchSpy = vi.fn(async (url: string) => {
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 return { ok: true, status: 200, json: async () => ({}) };
@@ -48,14 +78,14 @@ describe('resolveScopedMachineDataKey', () => {
 
         const decryptSpy = vi.fn(async () => new Uint8Array([1, 2, 3]));
 
-        const first = await resolveScopedMachineDataKey({
+        const first = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
             machineId: 'machine-1',
             decryptEncryptionKey: decryptSpy,
         });
-        const second = await resolveScopedMachineDataKey({
+        const second = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -63,9 +93,9 @@ describe('resolveScopedMachineDataKey', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toEqual(new Uint8Array([1, 2, 3]));
-        expect(second).toEqual(new Uint8Array([1, 2, 3]));
-        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(1);
+        expect(first).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1, 2, 3]) });
+        expect(second).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1, 2, 3]) });
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -98,14 +128,14 @@ describe('resolveScopedMachineDataKey', () => {
 
         // NOTE: these tokens intentionally collide under the legacy 31-based 32-bit hash:
         // "Aa" and "BB" yield the same hash, which would cause incorrect cache reuse.
-        const first = await resolveScopedMachineDataKey({
+        const first = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'Aa',
             machineId: 'machine-1',
             decryptEncryptionKey: decryptSpy,
         });
-        const second = await resolveScopedMachineDataKey({
+        const second = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'BB',
@@ -113,8 +143,8 @@ describe('resolveScopedMachineDataKey', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toEqual(new Uint8Array([4, 5, 6]));
-        expect(second).toEqual(new Uint8Array([7, 8, 9]));
+        expect(first).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([4, 5, 6]) });
+        expect(second).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([7, 8, 9]) });
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(2);
     });
@@ -122,22 +152,18 @@ describe('resolveScopedMachineDataKey', () => {
     it('passes an abort signal to fetch for timeout enforcement', async () => {
         const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
             if (String(_url).endsWith('/health') || String(_url).endsWith('/v1/auth/ping')) {
-                return { ok: true, status: 200, json: async () => ({}) };
+                return new Response('{}', { status: 200 });
             }
             if (String(_url).includes('/v1/machines')) {
                 expect(init && 'signal' in init).toBe(true);
             }
-            return {
-                ok: false,
-                status: 503,
-                json: async () => [],
-            };
+            return new Response('[]', { status: 503 });
         });
         vi.stubGlobal('fetch', fetchSpy);
 
         const decryptSpy = vi.fn(async () => new Uint8Array([1]));
 
-        const result = await resolveScopedMachineDataKey({
+        const result = resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -146,7 +172,7 @@ describe('resolveScopedMachineDataKey', () => {
             timeoutMs: 1_000,
         });
 
-        expect(result).toBeNull();
+        await expect(result).rejects.toMatchObject({ rpcErrorCode: 'machine_rpc_context_unavailable' });
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(1);
     });
 
@@ -181,14 +207,14 @@ describe('resolveScopedMachineDataKey', () => {
 
         const decryptSpy = vi.fn(async () => new Uint8Array([9, 9, 9]));
 
-        const first = await resolveScopedMachineDataKey({
+        const first = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
             machineId: 'machine-1',
             decryptEncryptionKey: decryptSpy,
         });
-        const second = await resolveScopedMachineDataKey({
+        const second = await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -196,8 +222,8 @@ describe('resolveScopedMachineDataKey', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toBeNull();
-        expect(second).toEqual(new Uint8Array([9, 9, 9]));
+        expect(first).toEqual({ mode: 'encrypted', dataKey: null });
+        expect(second).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([9, 9, 9]) });
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });
@@ -226,7 +252,7 @@ describe('resolveScopedMachineDataKey', () => {
             return new Uint8Array([0]);
         });
 
-        await resolveScopedMachineDataKey({
+        await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -234,7 +260,7 @@ describe('resolveScopedMachineDataKey', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        await resolveScopedMachineDataKey({
+        await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -243,7 +269,7 @@ describe('resolveScopedMachineDataKey', () => {
         });
 
         // machine-1 entry should have been evicted (max=1), causing a refetch.
-        await resolveScopedMachineDataKey({
+        await resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -269,14 +295,14 @@ describe('resolveScopedMachineDataKey', () => {
 
         const decryptSpy = vi.fn(async () => new Uint8Array([1]));
 
-        await expect(resolveScopedMachineDataKey({
+        await expect(resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
             machineId: 'machine-1',
             decryptEncryptionKey: decryptSpy,
             timeoutMs: 50,
-        })).resolves.toBeNull();
+        })).rejects.toBeInstanceOf(Error);
 
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(0);
         expect(decryptSpy).not.toHaveBeenCalled();
@@ -297,7 +323,7 @@ describe('resolveScopedMachineDataKey', () => {
 
         const decryptSpy = vi.fn(async () => new Uint8Array([1]));
 
-        await expect(resolveScopedMachineDataKey({
+        await expect(resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',

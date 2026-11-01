@@ -16,6 +16,7 @@ target_link_options(happier_sherpa_jni PRIVATE
 
 target_include_directories(happier_sherpa_jni PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../../common/cpp
 )
 
 if(NOT DEFINED SHERPA_EXTRACT_DIR)

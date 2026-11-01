@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as tar from 'tar';
+import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 import { ensureManagedPnpmCommand, managedPnpmBinPath, managedPnpmInstallDir } from './managedPnpm.js';
 
 function crc32(value: Buffer): number {
@@ -191,6 +194,74 @@ describe('managedPnpm bootstrap race protection', () => {
     expect(results.every(r => r === binPath)).toBe(true);
   });
 
+  it('preserves genuine bootstrap failures instead of silently choosing pnpm on PATH', async () => {
+    const failure = new Error('release service unavailable');
+    await expect(ensureManagedPnpmCommand(testEnv, {
+      fetchGitHubLatestRelease: async () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect(existsSync(join(managedPnpmInstallDir(testEnv), '.lock', 'bootstrap.lock'))).toBe(false);
+  });
+
+  it('does not start bootstrap when the caller already cancelled', async () => {
+    const controller = new AbortController();
+    const reason = new Error('caller cancelled bootstrap');
+    controller.abort(reason);
+    await expect(ensureManagedPnpmCommand(testEnv, createManagedPnpmBoundaryDeps(), {
+      signal: controller.signal,
+    })).rejects.toBe(reason);
+    expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
+    expect(existsSync(join(managedPnpmInstallDir(testEnv), '.lock', 'bootstrap.lock'))).toBe(false);
+  });
+
+  it('cancels a stalled bootstrap body, cleans owned state, and allows the next install', async () => {
+    const controller = new AbortController();
+    const reason = new Error('user stopped download');
+    const fixturePath = join(testHomeDir, currentPnpmReleaseAssetName());
+    await writeCurrentPnpmReleaseAsset(fixturePath);
+    const archive = await readFile(fixturePath);
+    let serveCompleteArchive = false;
+    const server = createServer((req, res) => {
+      if (req.url === '/latest') {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+        res.end(JSON.stringify({ tag_name: 'v11.0.0', assets: [{
+          name: currentPnpmReleaseAssetName(), browser_download_url: `http://127.0.0.1:${address.port}/asset`,
+          digest: `sha256:${createHash('sha256').update(archive).digest('hex')}`,
+        }] }));
+        return;
+      }
+      res.writeHead(200, { 'content-length': archive.length });
+      if (serveCompleteArchive) res.end(archive);
+      else res.write(archive.subarray(0, 10));
+    });
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+      const deps = {
+        fetchGitHubLatestRelease: (params: Parameters<typeof fetchGitHubLatestRelease>[0]) => fetchGitHubLatestRelease({
+          ...params,
+          fetchImpl: (_url, init) => fetch(`http://127.0.0.1:${address.port}/latest`, init),
+        }),
+      };
+      await expect(ensureManagedPnpmCommand(testEnv, deps, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          if (event.phase === 'downloading' && (event.bytesDone ?? 0) > 0) controller.abort(reason);
+        },
+      })).rejects.toBe(reason);
+      const installDir = managedPnpmInstallDir(testEnv);
+      expect(existsSync(join(installDir, '.lock', 'bootstrap.lock'))).toBe(false);
+      expect(existsSync(join(installDir, 'next'))).toBe(false);
+      expect(await readdir(join(installDir, '.tmp'))).toEqual([]);
+      serveCompleteArchive = true;
+      await expect(ensureManagedPnpmCommand(testEnv, deps)).resolves.toBe(managedPnpmBinPath(testEnv));
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('should recover from a stale bootstrap lock left by a crashed bootstrap', async () => {
     const lockPath = join(managedPnpmInstallDir(testEnv), '.lock', 'bootstrap.lock');
     await mkdir(join(managedPnpmInstallDir(testEnv), '.lock'), { recursive: true });
@@ -227,15 +298,13 @@ describe('managedPnpm bootstrap race protection', () => {
 
   it('fails closed and removes staging state when the downloaded archive is corrupt', async () => {
     const deps = createManagedPnpmBoundaryDeps();
-    const command = await ensureManagedPnpmCommand(testEnv, {
+    await expect(ensureManagedPnpmCommand(testEnv, {
       ...deps,
       downloadGitHubReleaseAsset: async ({ destinationPath }) => {
         await mkdir(dirname(destinationPath), { recursive: true });
         await writeFile(destinationPath, 'not a valid archive', 'utf8');
       },
-    });
-
-    expect(command).toBeNull();
+    })).rejects.toThrow();
     expect(existsSync(join(managedPnpmInstallDir(testEnv), 'next'))).toBe(false);
     expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
     expect(existsSync(join(managedPnpmInstallDir(testEnv), '.lock', 'bootstrap.lock'))).toBe(false);
@@ -243,14 +312,12 @@ describe('managedPnpm bootstrap race protection', () => {
 
   it('does not promote an archive with a renamed binary root and removes staging state', async () => {
     const deps = createManagedPnpmBoundaryDeps();
-    const command = await ensureManagedPnpmCommand(testEnv, {
+    await expect(ensureManagedPnpmCommand(testEnv, {
       ...deps,
       downloadGitHubReleaseAsset: async ({ destinationPath }) => {
         await writeCurrentPnpmReleaseAsset(destinationPath, 'renamed-pnpm');
       },
-    });
-
-    expect(command).toBeNull();
+    })).rejects.toThrow();
     expect(existsSync(join(managedPnpmInstallDir(testEnv), 'next'))).toBe(false);
     expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
     expect(existsSync(join(managedPnpmInstallDir(testEnv), '.lock', 'bootstrap.lock'))).toBe(false);
@@ -262,7 +329,7 @@ describe('managedPnpm bootstrap race protection', () => {
     await chmod(outsideBinaryPath, 0o644);
 
     const deps = createManagedPnpmBoundaryDeps();
-    const command = await ensureManagedPnpmCommand(testEnv, {
+    await expect(ensureManagedPnpmCommand(testEnv, {
       ...deps,
       downloadGitHubReleaseAsset: async ({ destinationPath }) => {
         const payloadDir = `${destinationPath}.payload`;
@@ -278,16 +345,14 @@ describe('managedPnpm bootstrap race protection', () => {
           await rm(payloadDir, { recursive: true, force: true });
         }
       },
-    });
-
-    expect(command).toBeNull();
+    })).rejects.toThrow();
     expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
     expect((await stat(outsideBinaryPath)).mode & 0o777).toBe(0o644);
   });
 
   it.skipIf(process.platform === 'win32')('does not promote a contained symlink as the managed pnpm executable', async () => {
     const deps = createManagedPnpmBoundaryDeps();
-    const command = await ensureManagedPnpmCommand(testEnv, {
+    await expect(ensureManagedPnpmCommand(testEnv, {
       ...deps,
       downloadGitHubReleaseAsset: async ({ destinationPath }) => {
         const payloadDir = `${destinationPath}.payload`;
@@ -303,9 +368,7 @@ describe('managedPnpm bootstrap race protection', () => {
           await rm(payloadDir, { recursive: true, force: true });
         }
       },
-    });
-
-    expect(command).toBeNull();
+    })).rejects.toThrow();
     expect(existsSync(managedPnpmBinPath(testEnv))).toBe(false);
   });
 

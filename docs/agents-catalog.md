@@ -59,11 +59,64 @@ mode-bearing transport must not be contradicted by a `none` mode descriptor.
 Antigravity uses the shared model/mode probes and startup overrides, with no
 provider-owned picker or static mode catalog.
 
+ACP model selection has one resolver in
+`apps/cli/src/agent/acp/configOptionChoiceNormalization.ts`, shared by runtime
+metadata publication and preflight probing. It prefers the catalog's exact
+`acpModelConfigOptionId`, then an unambiguous Model id/name, then a single
+selector with category `model`. Several model-category fields are not a model
+catalog: agents may use that category for provider or fast controls too. Other
+configuration fields remain available through generic configuration controls;
+observed model-scoped choices apply to the observed model. Full successful
+`set_config_option` response snapshots refresh dependent choices even without
+notifications; rejected setters preserve the previous observed state.
+
+Generic ACP permission mappings may declare ordered native mode candidates.
+The catalog backend uses `resolveAcpPermissionModeId` from `packages/agents` to
+resolve those candidates against the session's advertised modes on both new and
+load, failing closed when none matches. UI permission explanations use the same
+resolver with the matching session's advertised modes. Agent-specific
+candidate ids stay in `packages/agents/src/acp.ts`; string mappings and null
+delegation retain their existing semantics.
+
 The session-control compatibility reader derives an implicit Plan request from
 legacy permission metadata only when the advertised or static options actually
 contain that mode. Explicit requested modes retain their pending state even when
 discovery is unavailable. ACP usage notifications remain the authority for live
 context counts; a mode descriptor or model name cannot supply usage telemetry.
+
+### ACP startup failures (development source)
+
+The generic CLI `AcpBackend` owns MCP startup recovery for both new and loaded
+sessions. It serializes stdio servers in the ACP v1 shape without a transport
+discriminator; the SDK types check that boundary. A provider rejection naming
+exactly one passed MCP server permits one
+new start request without that server. A successful retry publishes an ordinary
+session notice with the server name and sanitized provider reason. An unnamed,
+ambiguous, or persistent rejection fails with the same bounded issue preview;
+deterministic JSON-RPC request rejections are not resent unchanged. Transport and
+other transient failures retain the existing retry policy. No MCP pre-probe is
+performed.
+
+The session runtime records startup failures even before a prompt has opened a
+turn. Issue-bearing `turn_failed` records project through the UI's existing
+transcript notice row; the session lifecycle still owns failure and recovery
+state. New-session model selection is scoped to the backend target, so changing
+Agents adopts the new Agent's default or remembered selection. An explicit
+model choice made with that target change remains authoritative.
+
+### Session identity in UI (development source)
+
+Session presentation reads `resolveAgentIdFromSessionMetadata` from
+`@happier-dev/agents`: a declared runtime identity wins over `flavor`, followed
+by an unambiguous vendor resume key. Resolve this identity before projecting
+compact list metadata or writing its warm cache; the compact `flavor` field
+carries that resolved identity, not a competing interpretation of raw metadata.
+Unknown Session identity uses the neutral `AgentIcon` mark in lists, cockpit
+navigation, and composer controls, and has no avatar provider badge. Composer
+engine marks describe the selected or armed continuation Agent, while runtime
+policy reads the running Session's canonical identity. A policy default for an
+unidentified existing Session is not presentation evidence; an explicit new-Session
+selection or armed continuation still supplies its own identity.
 
 ### 2) Cross-boundary contracts: `@happier-dev/protocol`
 
@@ -183,6 +236,8 @@ Instead:
 - when a declared-capable backend is actually resumed, its ACP `initialize` response must also negotiate `agentCapabilities.loadSession`; a mismatch fails before `session/load`
 - explicit “resume inactive session” is **fail-closed**: if `loadSession` fails, we surface the error instead of silently starting a fresh vendor session
 - any ACP capability probing (e.g. `includeAcpCapabilities`) is reserved for opt-in diagnostics / e2e probes, not day-to-day UX
+
+In development source, the custom ACP backend editor exposes **Supports session resume**, which writes the existing boolean `capabilities.supportsLoadSession` declaration. It defaults to disabled. Enable it before starting a session with an agent that supports `session/load`; the runtime publishes `customAcpSessionId` only when both the declaration and the negotiated capability allow it. Changing the declaration does not recover a missing provider session id from an older session. The setting does not bypass backend identity, enablement, or handshake checks.
 
 Kimi Code discovery is a development exception for executable identity: current Kimi Code and legacy Python `kimi-cli` share the command name and cannot be distinguished by version ordering. Its provider-owned discovery uses a no-auth `initialize` fingerprint (including close/delete/fork and SSE), honors explicit executable overrides, and refuses unknown or legacy launches. This does not create a second resume policy. Probe cache identity includes the effective process environment, hashed in memory to avoid retaining credentials in cache keys.
 
@@ -546,6 +601,63 @@ If you’re running this repo via happy-stacks, prefer:
 ---
 
 ## Connected-account quota recovery (development)
+
+Codex app-server reports accepted failures from its terminal turn boundary,
+including provider-started native goal turns. See
+[usage-limit reset continuation](cli-architecture.md#usage-limit-reset-continuation-development)
+for daemon binding authorization, native-login ownership and goal reactivation.
+
+Claude pool sessions can proactively switch accounts during a turn through the
+shared `CLAUDE_CONFIG_DIR` home. The catalog's provider-owned auth descriptor
+declares in-turn application; the shared generation writer and verifier prove
+the selected profile, generation and native auth using that account's current
+credential. Credential revisions fence token writes; a missing committed revision
+or a refresh after commit does not reject application to the same account. The current
+request finishes on the old account and the next request reads the new credentials
+(maintainer live proof, 2026-07-08). External token injection, such as Codex, still
+requires exact runtime identity and refresh-selection resync. The shared predictive
+policy retains suppression or turn-boundary deferral for descriptors that do not
+support in-turn application, and predictive switching cannot fall back to a restart.
+Quota suppression and request-failure reasons use the existing default-on daemon
+quota diagnostic file log.
+
+Claude OAuth profile normalization belongs to
+`packages/protocol/src/providers/claude/oauthProfile.ts`; the agents package
+re-exports that owner. Credentials retain the provider-attested organization UUID
+alongside subscription metadata. Protocol owns the credential organization reader
+and required-organization policy, so shared quota machinery uses one decision
+rather than competing provider lists.
+
+Claude usage records combine the provider user with the organization through the
+existing `quotaScope: organization` and `quotaScopeId` key fields. Different
+profile labels for that same context share evidence; the same user in another
+organization has a separate record. Unknown organization identity remains
+provisional and cannot establish shared profile ownership. The existing credential
+refresh coordinator can qualify older credentials using the same token's matching
+profile response, without rotating an unexpired token. It publishes the context
+through the existing credential revision, lease and distribution lifecycle;
+metadata enrichment does not clear quota cooldowns or credential-health failures.
+Exact current-token and user proof can still authorize profile-local recovery
+when the organization is unknown. The existing runtime quota entry retains the
+actual verified token fingerprint; a different current token invalidates that
+unscoped evidence. Local entries use the existing freshness and polling budget
+without establishing global usage aliases.
+Runtime failure attribution and direct-account recovery compare that same
+context; an ambiguous live identity cannot authorize mutation of the runner's
+old launch profile. The public Session runtime-issue shape is unchanged.
+
+Credential metadata projects the attested organization through the protocol
+credential builder. The server invalidates usage-source aliases when that account
+context changes, while ordinary same-context token rotations retain their usage.
+Reset redemption rechecks the token's profile and refuses a different known
+organization before sending a debit request.
+
+The canonical UI quota store lives in the connected-services sync domain. It
+checks current credential context, invalidates the exact binding after a changed
+credential write and rejects late results from retired requests. Transient
+credential-read failures retain accepted cached evidence; a successful credential
+replacement with missing or changed context cannot keep the previous context's
+quota.
 
 Provider-owned quota fetchers discover recovery credits and implement the existing
 consume hook. The daemon quota coordinator owns selection, operation joining,

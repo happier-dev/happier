@@ -39,6 +39,30 @@ async function readDeadLetterEntries(sessionId: string): Promise<unknown[]> {
 }
 
 describe('session mutation persistence', () => {
+    it.each(['encrypted', 'installation_encrypted_v1'] as const)('readmits a %s settlement quarantined by the released CLI v0.2.15 reader', async (format) => {
+        const { loadSessionMutationOutbox, recoverAuthoritativeSessionMutationDeadLetters } = await import('./sessionMutationPersistence');
+        const context = await createRuntimePersistenceContext('rollback-settlement');
+        const queued = {
+            kind: 'agent_state_request_settlement', mutationId: 'settlement-1',
+            payload: {
+                v: 1, source: 'agent_state_request_settlement', sessionId: 'rollback-settlement',
+                mutationId: 'settlement-1', content: { t: format, c: 'ciphertext' },
+            },
+            createdAt: 10, attempts: 0, nextAttemptAt: 0,
+        };
+        await mkdir(join(context.paths.queuePath, '..'), { recursive: true });
+        // Exact released parser's unknown-kind quarantine shape (cli-v0.2.15).
+        await writeFile(context.paths.deadLetterPath, JSON.stringify({ v: 1, entries: [{
+            v: 1, kind: 'unknown', sessionId: 'rollback-settlement', mutationId: 'settlement-1',
+            reason: 'unknown_queued_mutation_kind', createdAt: 10, attempts: 0,
+            deadLetteredAt: 20, recoveryPayload: queued,
+        }] }));
+        const { saveSessionMutationOutbox } = await import('./sessionMutationPersistence');
+        await expect(recoverAuthoritativeSessionMutationDeadLetters(context,
+            async (mutations) => await saveSessionMutationOutbox(context, mutations),
+        )).resolves.toEqual([queued]);
+        await expect(loadSessionMutationOutbox(context)).resolves.toEqual([queued]);
+    });
     beforeEach(async () => {
         vi.resetModules();
         await useTempHappyHome();

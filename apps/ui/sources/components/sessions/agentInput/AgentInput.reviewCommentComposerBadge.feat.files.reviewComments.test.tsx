@@ -262,4 +262,56 @@ describe('AgentInput review comment composer badge', () => {
         discardButton.onPress();
         expect(clearDraftsSpy).toHaveBeenCalledWith('s1');
     });
+
+    it('keeps the review comment badge inert while the composer is disabled', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { createReviewCommentsActionChip } = await import('./definitions/createReviewCommentsActionChip');
+
+        const draft = {
+            id: 'draft-1',
+            filePath: 'src/demo.ts',
+            source: 'file',
+            anchor: { kind: 'fileLine', startLine: 12 },
+            snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+            body: 'Consider extracting this.',
+            createdAt: 1,
+        } satisfies ReviewCommentDraft;
+        const reviewCommentsChip = createReviewCommentsActionChip({
+            sessionId: 's1',
+            reviewCommentDrafts: [draft],
+            onSetDraftIncluded: (draftId, included) => setDraftIncludedSpy('s1', draftId, included),
+            onUpdateDraft: (nextDraft) => updateDraftSpy('s1', nextDraft),
+            onDeleteDraft: (draftId) => deleteDraftSpy('s1', draftId),
+            onClearDrafts: () => clearDraftsSpy('s1'),
+        });
+        if (!reviewCommentsChip) {
+            throw new Error('Expected review comments chip');
+        }
+
+        modalAlertSpy.mockClear();
+        modalShowSpy.mockClear();
+
+        const screen = await renderScreen(
+            <AgentInput
+                value="locked prompt"
+                placeholder="placeholder"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                extraActionChips={[reviewCommentsChip]}
+                disabled
+            />,
+        );
+
+        for (const testID of [
+            'agent-input-review-comments-attachment-badge',
+            'agent-input-review-comments-attachment-badge-remove',
+        ]) {
+            expect(screen.findByTestId(testID)?.props.disabled).toBe(true);
+            await screen.pressByTestIdAsync(testID);
+        }
+        expect(modalShowSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
 });

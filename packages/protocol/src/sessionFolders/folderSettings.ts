@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_FOLDER_MAX_COUNT = 500;
 export const SESSION_FOLDER_MAX_DEPTH = 8;
@@ -7,34 +8,34 @@ export const SESSION_FOLDER_VISUAL_DEPTH_CAP = 3;
 export const SESSION_FOLDER_MAX_ID_LENGTH = 2_000;
 export const SESSION_FOLDER_MAX_PATH_LENGTH = 10_000;
 
-const FolderIdSchema = z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH);
-const OptionalRenderWorkspaceKeySchema = z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).optional();
-const ServerIdSchema = z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).nullable();
+const FolderIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH));
+const OptionalRenderWorkspaceKeySchema = lazySchema(() => z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).optional());
+const ServerIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).nullable());
 
-const SessionFolderWorkspaceRefWorkspaceRefV1Schema = z
+const SessionFolderWorkspaceRefWorkspaceRefV1Schema = lazySchema(() => z
   .object({
     t: z.literal('workspaceRef'),
     serverId: ServerIdSchema,
     workspaceRefId: z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH),
   })
-  .strict();
+  .strict());
 
-const SessionFolderWorkspaceRefWorkspaceScopeV1Schema = z
+const SessionFolderWorkspaceRefWorkspaceScopeV1Schema = lazySchema(() => z
   .object({
     t: z.literal('workspaceScope'),
     serverId: ServerIdSchema,
     machineId: z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).nullable(),
     rootPath: z.string().trim().min(1).max(SESSION_FOLDER_MAX_PATH_LENGTH),
   })
-  .strict();
+  .strict());
 
-export const SessionFolderWorkspaceRefV1Schema = z.discriminatedUnion('t', [
+export const SessionFolderWorkspaceRefV1Schema = lazySchema(() => z.discriminatedUnion('t', [
   SessionFolderWorkspaceRefWorkspaceRefV1Schema,
   SessionFolderWorkspaceRefWorkspaceScopeV1Schema,
-]);
+]));
 export type SessionFolderWorkspaceRefV1 = z.infer<typeof SessionFolderWorkspaceRefV1Schema>;
 
-export const SessionFolderV1Schema = z
+export const SessionFolderV1Schema = lazySchema(() => z
   .object({
     id: FolderIdSchema,
     workspace: SessionFolderWorkspaceRefV1Schema,
@@ -45,15 +46,15 @@ export const SessionFolderV1Schema = z
     updatedAt: z.number().int().nonnegative(),
     sortKey: z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH).optional(),
   })
-  .strict();
+  .strict());
 export type SessionFolderV1 = z.infer<typeof SessionFolderV1Schema>;
 
-export const SessionFoldersV1Schema = z
+export const SessionFoldersV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     folders: z.array(SessionFolderV1Schema).max(SESSION_FOLDER_MAX_COUNT).default([]),
   })
-  .strict();
+  .strict());
 export type SessionFoldersV1 = z.infer<typeof SessionFoldersV1Schema>;
 
 export const DefaultSessionFoldersV1: SessionFoldersV1 = {

@@ -1,6 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier (dev)",
+  "mainBinaryName": "happier-desktop-dev",
   "identifier": "dev.happier.app.publicdev",
   "plugins": {
     "deep-link": {

@@ -3,11 +3,13 @@ import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { GestureDetector } from 'react-native-gesture-handler';
 
+import { type UseSessionInlineDragResult } from './useSessionInlineDrag';
+
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import {
     useSessionInlineDrag,
     type UseSessionInlineDragCancelEvent,
-    type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragParams,
     type UseSessionInlineDragResolveDropResultEvent,
     type UseSessionInlineDragResolvedDrop,
 } from './useSessionInlineDrag';
@@ -26,7 +28,7 @@ import {
  * the live geometry registry.
  */
 export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSessionFolderHeaderFrame(props: Readonly<{
-    children: React.ReactNode;
+    children: (dragHandleGesture: UseSessionInlineDragResult['gesture']) => React.ReactNode;
     folderId?: string;
     dragKey?: string;
     groupKey: string;
@@ -36,7 +38,7 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
     overlayShared: TreeDropOverlaySharedValues;
     onDragStart: (sessionKey: string) => void;
     resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
-    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
+    onDropResult: UseSessionInlineDragParams['onDropResult'];
     onDragCancel: (event: UseSessionInlineDragCancelEvent) => void;
     onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
     onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
@@ -57,6 +59,8 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
         resolveDropResult: props.resolveDropResult,
         dataIndex: props.dataIndex,
         overlayShared: props.overlayShared,
+        // Native retains whole-header hold-to-drag. Web attaches only to the
+        // grip so pointer capture cannot swallow clicks on header buttons.
         activateAfterLongPressMs: Platform.OS === 'web' ? undefined : 350,
     });
 
@@ -68,11 +72,11 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
             style={animatedStyle}
             onLayout={() => props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current)}
         >
-            {props.children}
+            {props.children(Platform.OS === 'web' ? gesture : undefined)}
         </Animated.View>
     );
 
-    return gesture ? (
-        <GestureDetector gesture={gesture}>{content}</GestureDetector>
-    ) : content;
+    return Platform.OS !== 'web' && gesture
+        ? <GestureDetector gesture={gesture}>{content}</GestureDetector>
+        : content;
 });

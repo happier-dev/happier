@@ -15,8 +15,21 @@ const record = buildConnectedServiceCredentialRecord({
 });
 
 describe('isCurrentUsageLimitRecoveryCredential', () => {
-  it('accepts the same quota account after its credential refresh without claiming provider recovery', () => {
-    expect(isCurrentUsageLimitRecoveryCredential({ classification, record, credentialRevision: 'csr_refreshed' })).toBe(true);
+  it('does not carry an unknown organization across a credential rotation', () => {
+    expect(isCurrentUsageLimitRecoveryCredential({ classification, record, credentialRevision: 'csr_refreshed' })).toBe(false);
+    expect(isCurrentUsageLimitRecoveryCredential({ classification, record, credentialRevision: 'csr_original' })).toBe(true);
+  });
+
+  it('keeps account-only provider recovery valid across token rotation', () => {
+    if (record.kind !== 'oauth') throw new Error('expected OAuth fixture');
+    const accountOnlyRecord = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: 10000,
+      oauth: { ...record.oauth, raw: null },
+    });
+    expect(isCurrentUsageLimitRecoveryCredential({
+      classification: { ...classification, serviceId: 'openai-codex' },
+      record: accountOnlyRecord, credentialRevision: 'csr_refreshed',
+    })).toBe(true);
   });
 
   it('rejects a changed account even when a supplied revision claims to match', () => {
@@ -24,6 +37,35 @@ describe('isCurrentUsageLimitRecoveryCredential', () => {
       classification: { ...classification, sourceProviderAccountId: 'account-other' }, record,
       credentialRevision: 'csr_original',
     })).toBe(false);
+  });
+
+  it('rejects a different or unattested organization despite the same provider user and revision', () => {
+    expect(isCurrentUsageLimitRecoveryCredential({
+      classification: { ...classification, sourceProviderOrganizationId: 'org-original' }, record,
+      credentialRevision: 'csr_original',
+    })).toBe(false);
+  });
+
+  it('preserves attested quota context across token rotation and rejects organization substitution', () => {
+    if (record.kind !== 'oauth') throw new Error('expected OAuth fixture');
+    const organizationRecord = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: 10000,
+      oauth: { ...record.oauth, raw: { claudeAiOauth: { organizationUuid: 'org-original' } } },
+    });
+    expect(isCurrentUsageLimitRecoveryCredential({
+      classification: { ...classification, sourceProviderOrganizationId: 'org-original' },
+      record: organizationRecord, credentialRevision: 'csr_refreshed',
+    })).toBe(true);
+    expect(isCurrentUsageLimitRecoveryCredential({
+      classification: { ...classification, sourceProviderOrganizationId: 'org-other' },
+      record: organizationRecord, credentialRevision: 'csr_original',
+    })).toBe(false);
+    expect(isCurrentUsageLimitRecoveryCredential({ classification,
+      record: organizationRecord, credentialRevision: 'csr_refreshed',
+    })).toBe(false);
+    expect(isCurrentUsageLimitRecoveryCredential({ classification,
+      record: organizationRecord, credentialRevision: 'csr_original',
+    })).toBe(true);
   });
 
   it('requires the exact original revision when no provider account identity was recorded', () => {
@@ -42,7 +84,7 @@ describe('isCurrentUsageLimitRecoveryCredential', () => {
       isCurrentRecovery: () => current,
       resolveCredential: async () => {
         if (phase === 'credential') current = false;
-        return { record, credentialRevision: 'csr_refreshed' };
+        return { record, credentialRevision: 'csr_original' };
       },
       authorizeLiveSource: async () => { current = false; return true; },
     })).toBe(false);

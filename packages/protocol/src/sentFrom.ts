@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
 export const SENT_FROM_VALUES = [
     'unknown',
@@ -25,4 +26,4 @@ export function createSentFromSchema(zod: typeof z) {
     return zod.enum(SENT_FROM_VALUES).catch('unknown');
 }
 
-export const SentFromSchema = createSentFromSchema(z);
+export const SentFromSchema = lazySchema(() => createSentFromSchema(z));

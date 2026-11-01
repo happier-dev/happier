@@ -13,7 +13,7 @@ type RedisMemoryServerModule = Readonly<{
 function buildMissingRedisMemoryServerError(error: unknown): Error {
     const message = error instanceof Error ? error.message : String(error);
     return new Error(
-        `REDIS_URL is required when redis-memory-server is unavailable. Install the optional redis-memory-server dependency or set REDIS_URL explicitly. Original error: ${message}`,
+        `REDIS_URL is required when redis-memory-server is unavailable. Install the development redis-memory-server dependency or set REDIS_URL explicitly. Original error: ${message}`,
     );
 }
 

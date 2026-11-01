@@ -1,4 +1,5 @@
 import type { Router } from 'expo-router';
+import { Platform } from 'react-native';
 
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 
@@ -12,10 +13,9 @@ import { buildScopedSessionRouteHref } from './sessionRouteServerScope';
  * Opening an existing session is ONE decision, spelled here.
  *
  * It resolves the owning server (explicit, else the local cache), builds the server-scoped href,
- * marks the open for telemetry, and navigates SINGULARLY so `/session/<id>` never accumulates in the
- * back stack — inbox → session → session is one session entry, and back returns to the list. Callers
- * that pushed a raw `/session/<id>` got none of that: a growing stack, no server scope for hydration
- * to recover from, and an invisible open in the telemetry.
+ * marks the open for telemetry, and applies the platform history policy. Web and desktop retain
+ * each visit for Back/Forward; native retains its single session screen. Raw
+ * `/session/<id>` navigation bypasses server scoping, telemetry, and this shared history policy.
  *
  * Two entry shapes, one owner: `useNavigateToSession` for React surfaces, this function for the
  * imperative callers (notification response routing, voice tools) that have no hook to call from.
@@ -30,8 +30,7 @@ export type NavigateToSessionOptions = Readonly<{
     query?: SessionRouteQuery;
 }>;
 
-/** Only the one method this needs, so an imperative caller can pass the module `router`. */
-export type SessionRouteNavigator = Pick<Router, 'navigate'>;
+export type SessionRouteNavigator = Pick<Router, 'navigate' | 'push'>;
 
 export function navigateToSessionRoute(params: Readonly<{
     router: SessionRouteNavigator;
@@ -49,17 +48,19 @@ export function navigateToSessionRoute(params: Readonly<{
         sessionId: params.sessionId,
         source: 'navigate-hook',
     });
-    params.router.navigate(href, {
-        dangerouslySingular() {
-            return 'session';
-        },
-    });
+    if (Platform.OS === 'web') {
+        params.router.push(href);
+    } else {
+        params.router.navigate(href, {
+            dangerouslySingular() {
+                return 'session';
+            },
+        });
+    }
 
     if (targetServerId) {
         // Keep route navigation independent; the explicit server scope lets hydration recover if
         // switching fails.
-        //
-        // Keep route navigation independent; the explicit server scope lets hydration recover if switching fails.
         fireAndForget(setActiveServerAndSwitch({
             serverId: targetServerId,
             scope: 'device',

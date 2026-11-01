@@ -63,6 +63,29 @@ afterEach(async () => {
 });
 
 describe('CodexRolloutMirror', () => {
+  it('replays reasoning summaries as separate thinking messages before the assistant answer', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-reasoning-')));
+    const filePath = join(root, 'rollout.jsonl');
+    await writeFile(filePath, [
+      { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'First check' }], encrypted_content: 'opaque-private-reasoning' } },
+      { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Second check' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'answer' }] } },
+    ].map(value => JSON.stringify(value)).join('\n') + '\n');
+    const rows = new Map<string, AgentBody>();
+    await runMirrorProcess({ filePath, session: {
+      sendAgentMessageCommitted: async (_provider: string, body: AgentBody, opts: { localId: string }) => {
+        rows.set(opts.localId, body);
+      },
+      sendCodexMessage: () => {}, sendSessionEvent: () => {},
+    } });
+    const bodies = [...rows.values()];
+    const thinking = bodies.filter(body => body.type === 'thinking');
+    expect(thinking.map(body => body.text)).toEqual(['First check', 'Second check']);
+    expect(bodies.filter(body => body.type === 'message').map(body => body.message)).toEqual(['answer']);
+    expect(bodies.indexOf(thinking[1]!)).toBeLessThan(bodies.findIndex(body => body.type === 'message'));
+    expect(JSON.stringify(bodies)).not.toContain('opaque-private-reasoning');
+  });
+
   it('replays a rollout user message through the fast-start deferred session boundary', async () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-deferred-')));
     const filePath = join(root, 'rollout.jsonl');
@@ -497,6 +520,10 @@ describe('CodexRolloutMirror', () => {
         [
           JSON.stringify({
             type: 'response_item',
+            payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'child reasoning' }] },
+          }),
+          JSON.stringify({
+            type: 'response_item',
             payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'child summary' }] },
           }),
           JSON.stringify({
@@ -535,6 +562,7 @@ describe('CodexRolloutMirror', () => {
       await waitFor(() => {
         expect(codexSessionIds).toEqual(['sid']);
         expect(agentBodies.some((body) => body.type === 'tool-call' && body.name === 'SubAgent' && body.callId === childThreadId)).toBe(true);
+        expect(agentBodies.some((body) => body.type === 'thinking' && body.text === 'child reasoning' && body.sidechainId === childThreadId)).toBe(true);
         expect(agentBodies.some((body) => body.type === 'tool-call' && body.name === 'Bash' && body.callId === 'child_call_1' && body.sidechainId === childThreadId)).toBe(true);
         expect(agentBodies.some((body) => body.type === 'tool-result' && body.callId === 'child_call_1' && body.sidechainId === childThreadId)).toBe(true);
         expect(agentBodies.some((body) => body.type === 'tool-result' && body.callId === childThreadId)).toBe(true);

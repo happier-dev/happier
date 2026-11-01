@@ -138,7 +138,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy');
-      expect(result.credentials.encryption.type).toBe('legacy');
+      expect(result.credentials.encryption?.type).toBe('legacy');
     } finally {
       output.restore();
       restoreAxios();
@@ -167,7 +167,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy-2');
-      expect(result.credentials.encryption.type).toBe('legacy');
+      expect(result.credentials.encryption?.type).toBe('legacy');
     } finally {
       output.restore();
       restoreAxios();
@@ -197,7 +197,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     try {
       const result = await authAndSetupMachineIfNeeded();
       expect(result.credentials.token).toBe('token-legacy-strict');
-      expect(result.credentials.encryption.type).toBe('legacy');
+      expect(result.credentials.encryption?.type).toBe('legacy');
     } finally {
       output.restore();
       restoreAxios();

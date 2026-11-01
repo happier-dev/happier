@@ -10,6 +10,7 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
   approvalPolicy?: NonNullable<CodexSessionConfig['approval-policy']> | null;
   mcpServers: unknown;
   mode: { model?: string | null | undefined };
+  reasoningSummary?: 'auto' | 'none';
   systemPromptText?: string | null | undefined;
   cwd?: string | null | undefined;
 }>): CodexSessionConfig {
@@ -26,6 +27,7 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
     approvalPolicy: opts.approvalPolicy,
     mcpServers: opts.mcpServers,
     model: opts.mode.model,
+    reasoningSummary: opts.reasoningSummary,
     cwd: opts.cwd ?? null,
   });
 }

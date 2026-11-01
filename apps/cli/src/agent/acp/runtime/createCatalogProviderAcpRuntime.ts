@@ -8,14 +8,9 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
-import {
-  sendPermissionRequestPushNotificationForActiveAccount,
-  type PermissionRequestPushSender,
-} from '@/settings/notifications/permissionRequestPush';
 import { createAgentSessionMediaPersister } from '@/session/sessionMedia/createAgentSessionMediaPersister';
 import { createSessionMediaAccessPolicy } from '@/session/sessionMedia/createSessionMediaAccessPolicy';
-import { AGENTS_CORE, getProviderCliRuntimeSpec, isAgentMediaCapabilitySupported, supportsAgentInFlightSteer } from '@happier-dev/agents';
-import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { AGENTS_CORE, isAgentMediaCapabilitySupported, supportsAgentInFlightSteer } from '@happier-dev/agents';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import { createVendorResumeIdMetadataPublisher } from '@/session/metadata/createVendorResumeIdMetadataPublisher';
 
@@ -34,7 +29,6 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   loggerLabel: string;
   directory: string;
   session: ApiSessionClient;
-  pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -76,39 +70,6 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
 export function createCatalogProviderAcpRuntime<TBackendOptions extends object = Record<string, never>>(
   params: CatalogAcpProviderRuntimeParams<TBackendOptions>,
 ) {
-  const sendPermissionPush = (evt: { permissionId: string; toolName: string }): void => {
-    if (!params.pushSender) return;
-    try {
-      sendPermissionRequestPushNotificationForActiveAccount({
-        pushSender: params.pushSender,
-        sessionId: params.session.sessionId,
-        sessionTitle: getSessionNotificationTitle(params.session.getMetadataSnapshot?.bind(params.session)) ?? params.session.sessionId,
-        agentDisplayName: getProviderCliRuntimeSpec(params.provider).title,
-        permissionId: evt.permissionId,
-        toolName: evt.toolName,
-        permissionMode: params.getPermissionMode?.(),
-      });
-    } catch {
-      // best-effort
-    }
-  };
-  const hooks = params.hooks
-    ? {
-        ...params.hooks,
-        onPermissionRequest: (evt: { permissionId: string; toolName: string; payload: unknown; reason: string }) => {
-          try {
-            params.hooks?.onPermissionRequest?.(evt);
-          } catch {
-            // ignore
-          }
-          sendPermissionPush(evt);
-        },
-      }
-    : {
-        onPermissionRequest: (evt: { permissionId: string; toolName: string; payload: unknown; reason: string }) => {
-          sendPermissionPush(evt);
-        },
-      };
   const shouldPersistSessionMedia =
     process.env.HAPPIER_TRANSCRIPT_STORAGE !== 'direct' &&
     isAgentMediaCapabilitySupported(params.provider, 'emitsSessionMedia');
@@ -151,7 +112,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     sessionIdentity,
     resolveExpectedVendorSessionIdForResume: params.resolveExpectedVendorSessionIdForResume,
-    hooks,
+    hooks: params.hooks,
     inFlightSteer: params.inFlightSteer ?? { enabled: supportsAgentInFlightSteer(params.provider) },
     memoryRecallGuidance: params.memoryRecallGuidance,
     resolveSessionModelConfigUpdate: params.resolveSessionModelConfigUpdate,

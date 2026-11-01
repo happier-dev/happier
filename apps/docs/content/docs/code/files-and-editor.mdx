@@ -273,6 +273,8 @@ Happier now treats image previews as a first-class workflow:
 - SVG files can also be previewed instead of being treated as opaque binaries
 - true binary files stay safe and do not try to render through the text diff pipeline
 
+In development source, tapping an image preview in Files or Review opens the shared image preview modal. This does not yet add pinch-to-zoom or PDF rendering; PDFs still use the binary-file placeholder and download action.
+
 If a file has no textual diff (for example an image or binary blob), Happier avoids crashing the diff renderer and falls back to the correct preview/placeholder path instead.
 
 ### Editing behavior

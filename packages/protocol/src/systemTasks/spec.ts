@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Wire-level `systemTasks` contract shared between protocol consumers.
@@ -68,19 +69,19 @@ function isSystemTaskJsonValue(
   }
 }
 
-export const SystemTaskJsonValueSchema = z.custom<SystemTaskJsonValue>(
+export const SystemTaskJsonValueSchema = lazySchema(() => z.custom<SystemTaskJsonValue>(
   (value): value is SystemTaskJsonValue => isSystemTaskJsonValue(value),
   'Expected a JSON-safe value',
-);
+));
 
-export const SystemTaskSpecSchema = z.object({
+export const SystemTaskSpecSchema = lazySchema(() => z.object({
   protocolVersion: z.literal(SYSTEM_TASK_PROTOCOL_VERSION),
   kind: z.string().min(1),
   params: SystemTaskJsonValueSchema,
-}).strict();
+}).strict());
 export type SystemTaskSpec = z.infer<typeof SystemTaskSpecSchema>;
 
-export const SystemTaskEventSchema = z.object({
+export const SystemTaskEventSchema = lazySchema(() => z.object({
   protocolVersion: z.literal(SYSTEM_TASK_PROTOCOL_VERSION),
   taskId: z.string().min(1),
   tsMs: z.number().int().nonnegative(),
@@ -88,31 +89,31 @@ export const SystemTaskEventSchema = z.object({
   stepId: z.string().min(1).optional(),
   message: z.string().min(1).optional(),
   data: SystemTaskJsonValueSchema.optional(),
-}).strict();
+}).strict());
 export type SystemTaskEvent = z.infer<typeof SystemTaskEventSchema>;
 
-export const SystemTaskResultErrorSchema = z.object({
+export const SystemTaskResultErrorSchema = lazySchema(() => z.object({
   code: z.string().min(1),
   message: z.string().min(1),
-}).strict();
+}).strict());
 export type SystemTaskResultError = z.infer<typeof SystemTaskResultErrorSchema>;
 
-const SystemTaskSuccessResultSchema = z.object({
+const SystemTaskSuccessResultSchema = lazySchema(() => z.object({
   protocolVersion: z.literal(SYSTEM_TASK_PROTOCOL_VERSION),
   taskId: z.string().min(1),
   ok: z.literal(true),
   data: SystemTaskJsonValueSchema.optional(),
-}).strict();
+}).strict());
 
-const SystemTaskFailureResultSchema = z.object({
+const SystemTaskFailureResultSchema = lazySchema(() => z.object({
   protocolVersion: z.literal(SYSTEM_TASK_PROTOCOL_VERSION),
   taskId: z.string().min(1),
   ok: z.literal(false),
   error: SystemTaskResultErrorSchema,
-}).strict();
+}).strict());
 
-export const SystemTaskResultSchema = z.discriminatedUnion('ok', [
+export const SystemTaskResultSchema = lazySchema(() => z.discriminatedUnion('ok', [
   SystemTaskSuccessResultSchema,
   SystemTaskFailureResultSchema,
-]);
+]));
 export type SystemTaskResult = z.infer<typeof SystemTaskResultSchema>;

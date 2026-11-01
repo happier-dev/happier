@@ -17,12 +17,12 @@ import { sessionSetManualReadStateWithServerScope } from '@/sync/ops';
 import { useArtifacts, useFriendsLoaded, useMachineDisplayById } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionOrganizationProjection } from '@/sync/domains/session/organization';
-import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { isOpenApprovalInboxArtifact, readApprovalServerId } from '@/sync/domains/artifacts/approvalArtifacts';
 import { t } from '@/text';
 import { trackFriendsProfileView } from '@/track';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 
 import { openActionOperationDetail } from './actionOperations/openActionOperationDetail';
 import { useActionOperationActivityModel } from './actionOperations/useActionOperationActivityModel';
@@ -40,6 +40,8 @@ function readOrganizationSnapshot(state: ReturnType<typeof storage.getState>) {
         tagsByTagKey: state.sessionOrganizationTagsByTagKey ?? EMPTY_RECORD,
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey ?? EMPTY_RECORD,
         attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey ?? EMPTY_RECORD,
+        appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey ?? EMPTY_RECORD,
+        sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId ?? EMPTY_RECORD,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey ?? EMPTY_RECORD,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey ?? EMPTY_RECORD,
     };
@@ -63,31 +65,29 @@ export function useInboxContentModel() {
         () => artifacts.filter(isOpenApprovalInboxArtifact),
         [artifacts],
     );
-    const workspaceLabelsByServerId = React.useMemo(() => {
+    const appearanceContext = React.useMemo(() => {
         const serverIds = new Set<string>();
         for (const entry of sessionState.sessionByKey.values()) {
             if (entry.serverId) serverIds.add(entry.serverId);
         }
-        const labelsByServerId = new Map<string, Readonly<Record<string, string>>>();
+        const sessionColorsByKey = new Map<string, SessionAppearanceColor>();
         for (const serverId of serverIds) {
             const projection = buildSessionOrganizationProjection(organizationSnapshot, serverId);
-            labelsByServerId.set(serverId, buildSessionOrganizationListViewState({
-                serverId,
-                projection,
-            }).workspaceLabelsV1);
+            for (const [sessionId, color] of Object.entries(projection.appearancesBySessionId ?? {})) sessionColorsByKey.set(`${serverId}:${sessionId}`, color);
         }
-        return labelsByServerId;
+        return { workspaceLabelsByLabelKey: organizationSnapshot.labelsByLabelKey, sessionColorsByKey };
     }, [organizationSnapshot, sessionState.sessionByKey]);
     const sessionContextByKey = React.useMemo(() => buildInboxSessionContextByKey({
         sessionByKey: sessionState.sessionByKey,
         machines,
-        workspaceLabelsByServerId,
-    }), [machines, sessionState.sessionByKey, workspaceLabelsByServerId]);
+        ...appearanceContext,
+    }), [machines, sessionState.sessionByKey, appearanceContext]);
     const approvalContextByArtifactId = React.useMemo(() => {
         const result = new Map<string, Readonly<{
             sessionTitle: string;
             machineLabel: string | null;
             workspaceName: string | null;
+            appearanceColor: SessionAppearanceColor | null;
         }>>();
         for (const artifact of openApprovals) {
             const sessionId = typeof artifact.header?.sessionId === 'string' ? artifact.header.sessionId.trim() : '';
@@ -100,6 +100,7 @@ export function useInboxContentModel() {
                 sessionTitle: getSessionName(entry.session),
                 machineLabel: context?.machineLabel ?? null,
                 workspaceName: context?.workspaceName ?? null,
+                appearanceColor: context?.appearanceColor ?? null,
             });
         }
         return result;

@@ -1,4 +1,5 @@
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import type { ServerReadRequestInit } from '@/sync/http/client';
 import {
     areServerAccountScopesEqual,
     createServerAccountScope,
@@ -11,8 +12,8 @@ import type { ResolvedServerSessionRpcContext } from './resolveServerScopedSessi
 export function createSessionRequestForResolvedServerScope(params: Readonly<{
     context: ResolvedServerSessionRpcContext;
     activeRequest: (path: string, init?: RequestInit) => Promise<Response>;
-}>): (path: string, init?: RequestInit) => Promise<Response> {
-    return async (path: string, init?: RequestInit) => {
+}>): (path: string, init?: ServerReadRequestInit) => Promise<Response> {
+    return async (path: string, init?: ServerReadRequestInit) => {
         if (params.context.scope === 'active') {
             return await params.activeRequest(path, init);
         }
@@ -35,8 +36,8 @@ export function createSessionRequestForResolvedServerScope(params: Readonly<{
 export function createSessionRequestWithServerScope(params: Readonly<{
     serverId?: string | null;
     activeRequest: (path: string, init?: RequestInit) => Promise<Response>;
-}>): (path: string, init?: RequestInit) => Promise<Response> {
-    return async (path: string, init?: RequestInit) => {
+}>): (path: string, init?: ServerReadRequestInit) => Promise<Response> {
+    return async (path: string, init?: ServerReadRequestInit) => {
         const context = await resolveServerScopedSessionContext({ serverId: params.serverId ?? null });
         return await createSessionRequestForResolvedServerScope({
             context,

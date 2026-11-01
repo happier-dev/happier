@@ -4,6 +4,7 @@ import { CapabilitiesSchema, type Capabilities } from './capabilities/capabiliti
 import { FeatureGatesSchema, type FeatureGates } from './featureGatesSchema.js';
 import { isRecord } from './isRecord.js';
 import { coerceBugReportsCapabilitiesFromFeaturesPayload } from './capabilities/bugReportsCapabilities.js';
+import { lazySchema } from '../../lazySchema.js';
 
 function coerceFeaturesResponsePayload(raw: unknown): unknown {
   if (!isRecord(raw)) return raw;
@@ -24,13 +25,13 @@ function coerceFeaturesResponsePayload(raw: unknown): unknown {
   };
 }
 
-export const FeaturesResponseSchema = z.preprocess(
+export const FeaturesResponseSchema = lazySchema(() => z.preprocess(
   coerceFeaturesResponsePayload,
   z.object({
     features: FeatureGatesSchema,
     capabilities: CapabilitiesSchema,
   }),
-);
+));
 
 export type FeaturesResponse = Readonly<{
   features: FeatureGates;

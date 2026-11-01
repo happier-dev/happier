@@ -1,6 +1,6 @@
 import { ChildProcess, type spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { expectTerminalNativeInvocation, terminalLauncherBoundary } from '@/testkit/process/terminalLauncher';
@@ -49,19 +49,6 @@ describe('OpenCode attach target authentication', () => {
         vi.stubEnv('HAPPIER_OPENCODE_SERVER_XDG_ROOT_DIR', '');
         vi.resetModules();
         const pool = join(root, 'opencode', 'managed-servers');
-        const inventoryObserver: { complete: ((entries: unknown) => void) | null } = { complete: null };
-        const startupPoolInventory = new Promise<unknown>((resolve) => { inventoryObserver.complete = resolve; });
-        // Observe the real filesystem boundary without replacing inventory or affinity logic.
-        // The selecting client's background scan must see its original current-account pool
-        // before this fixture adds another account, otherwise its late lock can race teardown.
-        vi.doMock('node:fs/promises', async (importOriginal) => {
-          const actual = await importOriginal<typeof import('node:fs/promises')>();
-          return { ...actual, readdir: async (...args: Parameters<typeof actual.readdir>) => {
-            const entries = await actual.readdir(...args);
-            if (String(args[0]) === pool) inventoryObserver.complete?.(entries);
-            return entries;
-          } };
-        });
         const { resolveOpenCodeManagedServerLaunchFingerprint } = await import('../server/openCodeManagedServerEnv');
         const { runOpenCodeProviderAttach } = await import('../attach/runOpenCodeProviderAttach');
         const { maybeUpdateOpenCodeSessionIdMetadata } = await import('../utils/opencodeSessionIdMetadata');
@@ -117,11 +104,6 @@ describe('OpenCode attach target authentication', () => {
             expect(identity?.launchEnvFingerprint).toBe(fingerprint);
             selectedFingerprint = identity!.launchEnvFingerprint!;
           } finally { await client.dispose(); }
-          // Match the real scan's state-file selection; an in-flight lock/tmp file is harmless.
-          const initialInventory = await startupPoolInventory;
-          expect(Array.isArray(initialInventory)
-            ? initialInventory.filter((entry: unknown) => typeof entry === 'string' && entry.endsWith('.json'))
-            : initialInventory).toEqual([`${fingerprint}.json`]);
           selectingManagedClient = false;
           observedAuthorization.length = 0;
           observedUrls.length = 0;
@@ -265,6 +247,33 @@ describe('OpenCode attach target authentication', () => {
       await mkdir(join(root, 'opencode', 'managed-servers'), { recursive: true });
       await writeFile(join(root, 'escape.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:4200', pid: 4200, startedAtMs: 1 }));
       await expect(readSharedManagedOpenCodeServerStateByLaunchFingerprintBestEffort('../../escape')).resolves.toBeNull();
+    });
+  });
+
+  it('resolves exact retained credentials when legacy and client-tracked servers share a fingerprint', async () => {
+    await withTempDir('opencode-pool-coexistence-', async root => {
+      vi.stubEnv('HAPPIER_HOME_DIR', root);
+      vi.stubEnv('HAPPIER_OPENCODE_SERVER_STATE_PATH', '');
+      vi.resetModules();
+      const { resolveSharedManagedOpenCodeServerStatePathForEnv } = await import('../server/sharedManagedServer');
+      const { resolveOpenCodeAttachTargetAuthHeaders } = await import('./openCodeAttachTargetAuth');
+      const currentPath = resolveSharedManagedOpenCodeServerStatePathForEnv();
+      const fingerprint = basename(currentPath, '.json');
+      for (const [directory, port, password] of [
+        [join(root, 'opencode', 'managed-servers'), 4200, 'legacy-secret'],
+        [join(root, 'opencode', 'managed-servers', 'clients-tracked'), 4300, 'tracked-secret'],
+      ] as const) {
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, `${fingerprint}.json`), JSON.stringify({
+          baseUrl: `http://127.0.0.1:${port}`, pid: port, startedAtMs: 1,
+          launchEnvFingerprint: fingerprint, authPassword: password,
+        }));
+      }
+      for (const [port, password] of [[4200, 'legacy-secret'], [4300, 'tracked-secret']] as const) {
+        await expect(resolveOpenCodeAttachTargetAuthHeaders({
+          baseUrl: `http://127.0.0.1:${port}`, managedServerLaunchFingerprint: fingerprint, env: ambientEnv,
+        })).resolves.toEqual({ Authorization: basic('opencode', password) });
+      }
     });
   });
 

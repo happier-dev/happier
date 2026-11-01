@@ -1,7 +1,9 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
-export type SocketRpcResult =
-    | { ok: true; result: string }
+export const DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS = 30_000;
+
+export type SocketRpcResult<T = string> =
+    | { ok: true; result: T }
     | { ok: false; error?: string; errorCode?: string };
 
 export type ServerScopedMachineRpcParams<A> = Readonly<{
@@ -38,7 +40,7 @@ export type ResolvedServerRpcContext = ActiveServerRpcContext | ScopedServerRpcC
 
 export type ScopedRpcEncryptionContext = Readonly<{
     decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
-    initializeMachines: (keys: Map<string, Uint8Array | null>) => Promise<void>;
+    initializeMachines: (keys: Map<string, Uint8Array | null>, options?: Readonly<{ plainMachineIds?: ReadonlySet<string> }>) => Promise<void>;
     getMachineEncryption: (machineId: string) => ScopedMachineEncryption | null | undefined;
 }>;
 
@@ -49,8 +51,8 @@ export type ScopedRpcSessionEncryptionContext = Readonly<{
 }>;
 
 export type ScopedMachineEncryption = Readonly<{
-    encryptRaw: (payload: unknown) => Promise<string>;
-    decryptRaw: (payload: string) => Promise<unknown>;
+    encodeRpcPayload: (payload: unknown) => Promise<unknown>;
+    decodeRpcResult: (payload: unknown) => Promise<unknown>;
 }>;
 
 export type ScopedSessionEncryption = Readonly<{
@@ -62,6 +64,10 @@ export type ScopedSocketConnectParams = Readonly<{
     serverUrl: string;
     token: string;
     timeoutMs: number;
+    /** One-shot OS task connection, independent of foreground pooling/pause. */
+    networkMode?: 'background-task';
+    /** Owns a one-shot background socket through connection and RPC preparation. */
+    signal?: AbortSignal;
 }>;
 
 export type ScopedSocketClient = Readonly<{

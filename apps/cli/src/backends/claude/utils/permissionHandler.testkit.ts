@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import type { Session } from '../session';
 import { ClaudePermissionRpcRouter } from './permissionRpcRouter';
 import type { PermissionRpcPayload } from './permissionRpc';
+import { ClaudeToolHookCorrelation } from './claudeToolHookCorrelation';
 
 type AgentState = {
   requests: Record<string, unknown>;
@@ -34,6 +35,7 @@ export class FakePermissionClient {
   rpcHandlerManager: FakeRpcHandlerManager;
   agentState: AgentState;
   metadata: Metadata;
+  keepAlive = vi.fn();
   flush = vi.fn(async () => {});
   private metadataWaiters: Array<(updated: boolean) => void> = [];
   private metadataVersion: number = 0;
@@ -45,9 +47,15 @@ export class FakePermissionClient {
     this.metadata = opts?.metadata ?? {};
   }
 
-  updateAgentState(updater: (current: AgentState) => AgentState): AgentState {
+  async updateAgentStateRequestSettlement(
+    updater: Parameters<FakePermissionClient['updateAgentState']>[0],
+  ): Promise<void> {
     this.agentState = updater(this.agentState);
-    return this.agentState;
+  }
+
+
+  updateAgentState(updater: (current: AgentState) => AgentState): void | Promise<void> {
+    this.agentState = updater(this.agentState);
   }
 
   updateMetadata(updater: (current: Metadata) => Metadata): Metadata {
@@ -98,6 +106,7 @@ export function createPermissionHandlerSessionStub(sessionId = 'test-session-id'
 
   const session = {
     client,
+    claudeToolHookCorrelation: new ClaudeToolHookCorrelation(),
     api: {
       push() {
         return { sendToAllDevices: vi.fn() };
@@ -127,6 +136,7 @@ export function createPermissionHandlerSessionStubWithMetadata(params: {
 
   const session = {
     client,
+    claudeToolHookCorrelation: new ClaudeToolHookCorrelation(),
     api: {
       push() {
         return { sendToAllDevices: vi.fn() };

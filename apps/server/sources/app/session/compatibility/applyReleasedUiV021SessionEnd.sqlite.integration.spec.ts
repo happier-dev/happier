@@ -7,6 +7,7 @@ import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
 
+
 import { applyReleasedUiV021SessionEnd } from "./applyReleasedUiV021SessionEnd";
 import { registerReleasedUiV021SessionEndSocketEvent } from "./registerReleasedUiV021SessionEndSocketEvent";
 
@@ -71,6 +72,9 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
                 tag: `tag-${randomUUID()}`,
                 metadata: "{}",
                 active: true,
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 1,
+                pendingRequestObservedAt: new Date(1_000),
                 lastActiveAt: new Date(1_000),
                 runtimeActivityState: "active",
                 runtimeActivityActiveCount: 1,
@@ -95,6 +99,7 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
             sessionId: session.id,
             observedAt: 2_000,
         })).resolves.toEqual({ status: "rejected", reason: "unauthorized" });
+        const emittedUpdates = vi.spyOn(eventRouter, "emitUpdate");
         await expect(applyReleasedUiV021SessionEnd({
             accountId: owner.id,
             sessionId: session.id,
@@ -106,6 +111,14 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
             observedAt: 2_000,
         })).resolves.toEqual({ status: "unchanged" });
 
+        expect(emittedUpdates).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                body: expect.objectContaining({
+                    latestTurnStatus: "cancelled",
+                }),
+            }),
+        }));
+        emittedUpdates.mockRestore();
         await expect(db.session.findUniqueOrThrow({
             where: { id: session.id },
             select: {
@@ -115,6 +128,9 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
                 runtimeActivityState: true,
                 runtimeActivityActiveCount: true,
                 runtimeActivityRevision: true,
+                pendingPermissionRequestCount: true,
+                pendingUserActionRequestCount: true,
+                pendingRequestObservedAt: true,
             },
         })).resolves.toEqual({
             active: false,
@@ -123,6 +139,9 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
             runtimeActivityState: "unknown",
             runtimeActivityActiveCount: 0,
             runtimeActivityRevision: BigInt(2),
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: new Date(1_000),
         });
     });
 });

@@ -60,6 +60,7 @@ const GROUPS = [
     commands: {
       'composer.focus': 'Jump to the composer',
       'composer.sendImmediate': 'Send now',
+      'composer.sendInterrupt': 'Interrupt the turn and send',
       'composer.sendPending': 'Queue without opening the composer',
       'composer.abortConfirm': 'Stop the current turn',
       'mode.cycle': 'Cycle session mode',

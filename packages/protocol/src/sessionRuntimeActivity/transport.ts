@@ -4,6 +4,7 @@ import {
   SessionRuntimeActivityProjectionSchema,
   SessionRuntimeActivitySnapshotSchema,
 } from './projection.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT = 'session-runtime-activity-snapshot';
 export const SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT = 'session-runtime-activity-close';
@@ -11,44 +12,44 @@ export const SESSION_PUBLISHER_LEGACY_ALIVE_EVENT = 'session-alive';
 export const SESSION_PUBLISHER_LEGACY_END_EVENT = 'session-end';
 
 /** Released stable/preview CLI reachability vector, retained only at the machine-bound socket seam. */
-export const SessionPublisherLegacyAliveSchema = z.object({
+export const SessionPublisherLegacyAliveSchema = lazySchema(() => z.object({
   sid: z.string().trim().min(1),
   time: z.number().finite(),
   thinking: z.boolean(),
   mode: z.enum(['local', 'remote']).optional(),
-}).passthrough();
+}).passthrough());
 
 /** Released stable/preview CLI clean-end vector, retained only at the machine-bound socket seam. */
-export const SessionPublisherLegacyEndSchema = z.object({
+export const SessionPublisherLegacyEndSchema = lazySchema(() => z.object({
   sid: z.string().trim().min(1),
   time: z.number().finite(),
-}).passthrough();
+}).passthrough());
 
 export type SessionPublisherLegacyAlive = z.infer<typeof SessionPublisherLegacyAliveSchema>;
 export type SessionPublisherLegacyEnd = z.infer<typeof SessionPublisherLegacyEndSchema>;
 
-const SessionRuntimeActivityTransportIdentitySchema = z.object({
+const SessionRuntimeActivityTransportIdentitySchema = lazySchema(() => z.object({
   sessionId: z.string().trim().min(1),
   mutationId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-export const SessionRuntimeActivitySnapshotRequestSchema = z.object({
+export const SessionRuntimeActivitySnapshotRequestSchema = lazySchema(() => z.object({
   sessionId: z.string().trim().min(1),
   mutationId: z.string().trim().min(1),
   snapshot: SessionRuntimeActivitySnapshotSchema,
-}).strict();
+}).strict());
 
-const SessionRuntimeActivitySnapshotAppliedAckSchema = SessionRuntimeActivityTransportIdentitySchema.extend({
+const SessionRuntimeActivitySnapshotAppliedAckSchema = lazySchema(() => SessionRuntimeActivityTransportIdentitySchema.extend({
   status: z.literal('applied'),
   projection: SessionRuntimeActivityProjectionSchema,
-}).strict();
+}).strict());
 
-const SessionRuntimeActivitySnapshotUnchangedAckSchema = SessionRuntimeActivityTransportIdentitySchema.extend({
+const SessionRuntimeActivitySnapshotUnchangedAckSchema = lazySchema(() => SessionRuntimeActivityTransportIdentitySchema.extend({
   status: z.literal('unchanged'),
   projection: SessionRuntimeActivityProjectionSchema,
-}).strict();
+}).strict());
 
-const SessionRuntimeActivitySnapshotRejectedAckSchema = SessionRuntimeActivityTransportIdentitySchema.extend({
+const SessionRuntimeActivitySnapshotRejectedAckSchema = lazySchema(() => SessionRuntimeActivityTransportIdentitySchema.extend({
   status: z.literal('rejected'),
   reason: z.enum([
     'not_found',
@@ -57,34 +58,34 @@ const SessionRuntimeActivitySnapshotRejectedAckSchema = SessionRuntimeActivityTr
     'superseded',
     'revision_overflow',
   ]),
-}).strict();
+}).strict());
 
-const SessionRuntimeActivitySnapshotInvalidRequestAckSchema = z.object({
+const SessionRuntimeActivitySnapshotInvalidRequestAckSchema = lazySchema(() => z.object({
   status: z.literal('rejected'),
   reason: z.literal('invalid_request'),
-}).strict();
+}).strict());
 
-const SessionRuntimeActivitySnapshotRetryableAckSchema = SessionRuntimeActivityTransportIdentitySchema.extend({
+const SessionRuntimeActivitySnapshotRetryableAckSchema = lazySchema(() => SessionRuntimeActivityTransportIdentitySchema.extend({
   status: z.literal('retryable'),
   reason: z.literal('internal'),
-}).strict();
+}).strict());
 
-export const SessionRuntimeActivitySnapshotAckSchema = z.union([
+export const SessionRuntimeActivitySnapshotAckSchema = lazySchema(() => z.union([
   SessionRuntimeActivitySnapshotAppliedAckSchema,
   SessionRuntimeActivitySnapshotUnchangedAckSchema,
   SessionRuntimeActivitySnapshotRejectedAckSchema,
   SessionRuntimeActivitySnapshotInvalidRequestAckSchema,
   SessionRuntimeActivitySnapshotRetryableAckSchema,
-]);
+]));
 
 export type SessionRuntimeActivitySnapshotRequest = z.infer<typeof SessionRuntimeActivitySnapshotRequestSchema>;
 export type SessionRuntimeActivitySnapshotAck = z.infer<typeof SessionRuntimeActivitySnapshotAckSchema>;
 
-export const SessionRuntimeActivityCloseRequestSchema = z.object({
+export const SessionRuntimeActivityCloseRequestSchema = lazySchema(() => z.object({
   sessionId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-export const SessionRuntimeActivityCloseAckSchema = z.union([
+export const SessionRuntimeActivityCloseAckSchema = lazySchema(() => z.union([
   z.object({ status: z.literal('closed'), sessionId: z.string().trim().min(1) }).strict(),
   z.object({ status: z.literal('already_inactive'), sessionId: z.string().trim().min(1) }).strict(),
   z.object({
@@ -98,7 +99,7 @@ export const SessionRuntimeActivityCloseAckSchema = z.union([
     reason: z.literal('internal'),
   }).strict(),
   z.object({ status: z.literal('rejected'), reason: z.literal('invalid_request') }).strict(),
-]);
+]));
 
 export type SessionRuntimeActivityCloseRequest = z.infer<typeof SessionRuntimeActivityCloseRequestSchema>;
 export type SessionRuntimeActivityCloseAck = z.infer<typeof SessionRuntimeActivityCloseAckSchema>;

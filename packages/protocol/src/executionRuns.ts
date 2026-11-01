@@ -40,6 +40,7 @@ export {
   type ExecutionRunRequestedConfiguration,
 } from './executionRunRequestedConfiguration.js';
 import { ExecutionRunRequestedConfigurationSchema } from './executionRunRequestedConfiguration.js';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * Public contract for execution runs (sub-agents / reviews / planning / delegation / voice agent).
@@ -81,7 +82,7 @@ export type {
 
 // Canonical, stable error code vocabulary for RPC `errorCode` and MCP `error.code`.
 // Keep this pinned and deterministic; clients should branch on these strings.
-export const ExecutionRunTransportErrorCodeSchema = z.enum([
+export const ExecutionRunTransportErrorCodeSchema = lazySchema(() => z.enum([
   'execution_run_not_allowed',
   'execution_run_not_found',
   'execution_run_action_not_supported',
@@ -97,26 +98,26 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'execution_run_start_conflict',
   'run_depth_exceeded',
   'permission_denied',
-]);
+]));
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
 export const ExecutionRunStatusSchema = ExecutionRunStatusSchemaBase;
 export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
 export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
 export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
-export const ExecutionRunErrorSchema = z.object({
+export const ExecutionRunErrorSchema = lazySchema(() => z.object({
   code: z.string().min(1),
   message: z.string().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunError = z.infer<typeof ExecutionRunErrorSchema>;
 
-export const ExecutionRunTranscriptSchema = z.object({
+export const ExecutionRunTranscriptSchema = lazySchema(() => z.object({
   persistenceMode: z.enum(['ephemeral', 'persistent']),
   epoch: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
 
-export const ExecutionRunPublicStateSchema = z.object({
+export const ExecutionRunPublicStateSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
@@ -138,7 +139,7 @@ export const ExecutionRunPublicStateSchema = z.object({
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
 
 /** Retained lifetime and current work are separate: an idle interactive run remains sendable. */
@@ -152,55 +153,55 @@ export function isExecutionRunActive(run: Readonly<{
   return run.status === 'running' && (run.runClass !== 'long_lived' || run.turnInFlight !== false);
 }
 
-export const ExecutionRunListResponseSchema = z.object({
+export const ExecutionRunListResponseSchema = lazySchema(() => z.object({
   runs: z.array(ExecutionRunPublicStateSchema),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunListResponse = z.infer<typeof ExecutionRunListResponseSchema>;
 
-export const ExecutionRunGetRequestSchema = z.object({
+export const ExecutionRunGetRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   includeStructured: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunGetRequest = z.infer<typeof ExecutionRunGetRequestSchema>;
 
-export const ExecutionRunGetResponseSchema = z.object({
+export const ExecutionRunGetResponseSchema = lazySchema(() => z.object({
   run: ExecutionRunPublicStateSchema,
   latestToolResult: z.unknown().optional(),
   structuredMeta: z.object({ kind: z.string(), payload: z.unknown() }).passthrough().optional(),
   structuredMetaArtifactRef: z.object({ artifactId: z.string().min(1) }).passthrough().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunGetResponse = z.infer<typeof ExecutionRunGetResponseSchema>;
 
-export const ExecutionRunSendRequestSchema = z.object({
+export const ExecutionRunSendRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
   resume: z.boolean().optional(),
   delivery: z.enum(['prompt', 'steer_if_supported', 'interrupt']).optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunSendRequest = z.infer<typeof ExecutionRunSendRequestSchema>;
 
-export const ExecutionRunSendResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
+export const ExecutionRunSendResponseSchema = lazySchema(() => z.object({ ok: z.literal(true) }).passthrough());
 export type ExecutionRunSendResponse = z.infer<typeof ExecutionRunSendResponseSchema>;
 
-export const ExecutionRunStopRequestSchema = z.object({ runId: z.string().min(1) }).passthrough();
+export const ExecutionRunStopRequestSchema = lazySchema(() => z.object({ runId: z.string().min(1) }).passthrough());
 export type ExecutionRunStopRequest = z.infer<typeof ExecutionRunStopRequestSchema>;
 
-export const ExecutionRunStopResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
+export const ExecutionRunStopResponseSchema = lazySchema(() => z.object({ ok: z.literal(true) }).passthrough());
 export type ExecutionRunStopResponse = z.infer<typeof ExecutionRunStopResponseSchema>;
 
-export const ExecutionRunEnsureRequestSchema = z.object({
+export const ExecutionRunEnsureRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunEnsureRequest = z.infer<typeof ExecutionRunEnsureRequestSchema>;
 
-export const ExecutionRunEnsureResponseSchema = z.union([
+export const ExecutionRunEnsureResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   z.object({ ok: z.literal(false), error: z.string().min(1), errorCode: z.string().min(1).optional() }).passthrough(),
-]);
+]));
 export type ExecutionRunEnsureResponse = z.infer<typeof ExecutionRunEnsureResponseSchema>;
 
-export const ExecutionRunEnsureOrStartRequestSchema = z.object({
+export const ExecutionRunEnsureOrStartRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1).nullable().optional(),
   start: ExecutionRunStartRequestSchema.optional(),
   resume: z.boolean().optional(),
@@ -211,38 +212,38 @@ export const ExecutionRunEnsureOrStartRequestSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'start is required when runId is missing' });
     }
   }
-});
+}));
 export type ExecutionRunEnsureOrStartRequest = z.infer<typeof ExecutionRunEnsureOrStartRequestSchema>;
 
-export const ExecutionRunEnsureOrStartResponseSchema = z.union([
+export const ExecutionRunEnsureOrStartResponseSchema = lazySchema(() => z.union([
   z.object({ ok: z.literal(true), runId: z.string().min(1), created: z.boolean() }).passthrough(),
   z.object({ ok: z.literal(false), error: z.string().min(1), errorCode: z.string().min(1).optional() }).passthrough(),
-]);
+]));
 export type ExecutionRunEnsureOrStartResponse = z.infer<typeof ExecutionRunEnsureOrStartResponseSchema>;
 
-export const ExecutionRunActionRequestSchema = z.object({
+export const ExecutionRunActionRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   actionId: z.string().min(1),
   input: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunActionRequest = z.infer<typeof ExecutionRunActionRequestSchema>;
 
-export const ExecutionRunActionResponseSchema = z.object({
+export const ExecutionRunActionResponseSchema = lazySchema(() => z.object({
   ok: z.boolean(),
   updatedToolResult: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunActionResponse = z.infer<typeof ExecutionRunActionResponseSchema>;
 
 // Streaming turn IO (V1: used for intent='voice_agent').
-export const ExecutionRunTurnStreamStartRequestSchema = z.object({
+export const ExecutionRunTurnStreamStartRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
   displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;
 
-export const ExecutionRunUserTranscriptDirectiveSchema = z.discriminatedUnion('mode', [
+export const ExecutionRunUserTranscriptDirectiveSchema = lazySchema(() => z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('persist'),
     localId: PendingLocalIdSchema,
@@ -250,82 +251,82 @@ export const ExecutionRunUserTranscriptDirectiveSchema = z.discriminatedUnion('m
   z.object({
     mode: z.literal('suppress'),
   }).passthrough(),
-]);
+]));
 export type ExecutionRunUserTranscriptDirective = z.infer<typeof ExecutionRunUserTranscriptDirectiveSchema>;
 
-export const ExecutionRunTurnStreamStartV2RequestSchema = ExecutionRunTurnStreamStartRequestSchema.extend({
+export const ExecutionRunTurnStreamStartV2RequestSchema = lazySchema(() => ExecutionRunTurnStreamStartRequestSchema.extend({
   userTranscript: ExecutionRunUserTranscriptDirectiveSchema,
-});
+}));
 export type ExecutionRunTurnStreamStartV2Request = z.infer<typeof ExecutionRunTurnStreamStartV2RequestSchema>;
 
-export const ExecutionRunUserTranscriptCommitRequestSchema = z.object({
+export const ExecutionRunUserTranscriptCommitRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
   displayMessage: z.string().min(1).optional(),
   localId: PendingLocalIdSchema,
-}).passthrough();
+}).passthrough());
 export type ExecutionRunUserTranscriptCommitRequest = z.infer<typeof ExecutionRunUserTranscriptCommitRequestSchema>;
 
-export const ExecutionRunUserTranscriptCommitResponseSchema = z.object({
+export const ExecutionRunUserTranscriptCommitResponseSchema = lazySchema(() => z.object({
   ok: z.literal(true),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunUserTranscriptCommitResponse = z.infer<typeof ExecutionRunUserTranscriptCommitResponseSchema>;
 
-export const ExecutionRunTurnStreamStartResponseSchema = z.object({
+export const ExecutionRunTurnStreamStartResponseSchema = lazySchema(() => z.object({
   streamId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamStartResponse = z.infer<typeof ExecutionRunTurnStreamStartResponseSchema>;
 
-export const ExecutionRunTurnStreamReadRequestSchema = z.object({
+export const ExecutionRunTurnStreamReadRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   streamId: z.string().min(1),
   cursor: z.number().int().min(0),
   maxEvents: z.number().int().min(1).max(256).optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamReadRequest = z.infer<typeof ExecutionRunTurnStreamReadRequestSchema>;
 
-export const ExecutionRunTurnStreamEventDeltaSchema = z.object({
+export const ExecutionRunTurnStreamEventDeltaSchema = lazySchema(() => z.object({
   t: z.literal('delta'),
   textDelta: z.string(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamEventDelta = z.infer<typeof ExecutionRunTurnStreamEventDeltaSchema>;
 
-export const ExecutionRunTurnStreamEventDoneSchema = z.object({
+export const ExecutionRunTurnStreamEventDoneSchema = lazySchema(() => z.object({
   t: z.literal('done'),
   assistantText: z.string(),
   actions: z.array(VoiceAssistantActionSchema).optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamEventDone = z.infer<typeof ExecutionRunTurnStreamEventDoneSchema>;
 
-export const ExecutionRunTurnStreamEventErrorSchema = z.object({
+export const ExecutionRunTurnStreamEventErrorSchema = lazySchema(() => z.object({
   t: z.literal('error'),
   error: z.string(),
   errorCode: z.string().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamEventError = z.infer<typeof ExecutionRunTurnStreamEventErrorSchema>;
 
-export const ExecutionRunTurnStreamEventSchema = z.discriminatedUnion('t', [
+export const ExecutionRunTurnStreamEventSchema = lazySchema(() => z.discriminatedUnion('t', [
   ExecutionRunTurnStreamEventDeltaSchema,
   ExecutionRunTurnStreamEventDoneSchema,
   ExecutionRunTurnStreamEventErrorSchema,
-]);
+]));
 export type ExecutionRunTurnStreamEvent = z.infer<typeof ExecutionRunTurnStreamEventSchema>;
 
-export const ExecutionRunTurnStreamReadResponseSchema = z.object({
+export const ExecutionRunTurnStreamReadResponseSchema = lazySchema(() => z.object({
   streamId: z.string().min(1),
   events: z.array(ExecutionRunTurnStreamEventSchema),
   nextCursor: z.number().int().min(0),
   done: z.boolean(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamReadResponse = z.infer<typeof ExecutionRunTurnStreamReadResponseSchema>;
 
-export const ExecutionRunTurnStreamCancelRequestSchema = z.object({
+export const ExecutionRunTurnStreamCancelRequestSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   streamId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamCancelRequest = z.infer<typeof ExecutionRunTurnStreamCancelRequestSchema>;
 
-export const ExecutionRunTurnStreamCancelResponseSchema = z.object({
+export const ExecutionRunTurnStreamCancelResponseSchema = lazySchema(() => z.object({
   ok: z.literal(true),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTurnStreamCancelResponse = z.infer<typeof ExecutionRunTurnStreamCancelResponseSchema>;

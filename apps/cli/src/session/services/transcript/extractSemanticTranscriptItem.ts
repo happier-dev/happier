@@ -1,3 +1,4 @@
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   isMemoryArtifactDecryptedRow,
   tryResolveDecryptedTranscriptPayload,
@@ -272,7 +273,7 @@ function shapeRawPayload(value: unknown, maxPayloadChars: number | undefined): R
 export function extractSemanticTranscriptItem(params: Readonly<{
   row: TranscriptRawRow;
   index: number;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
   options: ExtractionOptions;
 }>): SemanticTranscriptExtraction {
   const decrypted = tryResolveDecryptedTranscriptPayload({

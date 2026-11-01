@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
+import { updateAccountEncryptionMode } from "./updateAccountEncryptionMode";
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
@@ -14,6 +15,7 @@ import {
 import { mutateConnectedServiceCredential } from "../connect/credentials/mutation";
 import { registerAutomationCrudRoutes } from "../automations/registerAutomationCrudRoutes";
 import tweetnacl from "tweetnacl";
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -110,6 +112,92 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it("requires complete Machine conversion before enabling e2ee and commits content with the Account mode", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1" });
+        const kp = tweetnacl.sign.keyPair();
+        const challenge = new Uint8Array([1, 2, 3]);
+        const account = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)), encryptionMode: "plain", settingsVersion: 0 } });
+        const marker = MACHINE_PLAIN_DATA_KEY_MARKER;
+        const machine = await db.machine.create({ data: {
+            id: "account-mode-machine", accountId: account.id,
+            metadata: encodePlainMachineStoredContent({ displayName: "Retained", extension: { v: 7 } }),
+            daemonState: encodePlainMachineStoredContent({ status: "running", extension: [1, 2] }),
+            dataEncryptionKey: privacyKit.decodeBase64(marker),
+        } });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app);
+        await app.ready();
+        const payload = {
+            toMode: "e2ee", expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: "assert_empty" }, automations: { action: "assert_empty" },
+            keyProof: { publicKey: privacyKit.encodeBase64(new Uint8Array(kp.publicKey)), challenge: privacyKit.encodeBase64(challenge), signature: privacyKit.encodeBase64(new Uint8Array(tweetnacl.sign.detached(challenge, kp.secretKey))) },
+        };
+        const inject = (body: unknown) => app.inject({ method: "POST", url: "/v1/account/encryption/migrate", headers: { "x-test-user-id": account.id }, payload: body });
+        expect(await updateAccountEncryptionMode({ accountId: account.id, mode: "e2ee" })).toEqual({ status: "migration_required" });
+        const omitted = await inject(payload);
+        expect(omitted.statusCode).toBe(400);
+        expect(omitted.json()).toEqual({ error: "machines_require_upgrade" });
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).encryptionMode).toBe("plain");
+        const item = { machineId: machine.id, expected: { dataEncryptionKey: marker, metadataVersion: machine.metadataVersion, daemonStateVersion: machine.daemonStateVersion }, next: { metadata: "encrypted-metadata", daemonState: "encrypted-state", dataEncryptionKey: null } };
+        const incomplete = await inject({ ...payload, machines: { action: "migrate", items: [] } });
+        expect(incomplete.statusCode).toBe(400);
+        expect(incomplete.json()).toEqual({ error: "machines_migration_incomplete" });
+        const stale = await inject({ ...payload, machines: { action: "migrate", items: [{ ...item, expected: { ...item.expected, dataEncryptionKey: null } }] } });
+        expect(stale.statusCode).toBe(400);
+        expect(stale.json()).toEqual({ error: "machines_migration_incomplete" });
+        const wrongEnvelope = await inject({ ...payload, machines: { action: "migrate", items: [{ ...item, next: { ...item.next, metadata: machine.metadata } }] } });
+        expect(wrongEnvelope.statusCode).toBe(400);
+        expect(wrongEnvelope.json()).toEqual({ error: "invalid-params" });
+        expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).metadataVersion).toBe(machine.metadataVersion);
+        const migrated = await inject({ ...payload, machines: { action: "migrate", items: [item] } });
+        expect(migrated.statusCode).toBe(200);
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).encryptionMode).toBe("e2ee");
+        expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).toMatchObject({ metadata: "encrypted-metadata", daemonState: "encrypted-state", dataEncryptionKey: null, metadataVersion: machine.metadataVersion + 1, daemonStateVersion: machine.daemonStateVersion + 1 });
+        expect(await db.accountChange.findFirst({ where: { accountId: account.id, kind: "machine", entityId: machine.id } })).not.toBeNull();
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: account.id,
+            payload: expect.objectContaining({ body: expect.objectContaining({ t: "update-machine", machineId: machine.id, dataEncryptionKey: null }) }),
+        }));
+        await app.close();
+    });
+
+    it("does not create plain Machines through migration when plaintextMachine is denied", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1", HAPPIER_BUILD_FEATURES_DENY: "encryption.plaintextMachine" });
+        const account = await db.account.create({ data: { publicKey: "machine-disabled-account", encryptionMode: "e2ee" } });
+        const machine = await db.machine.create({ data: { id: "machine-disabled", accountId: account.id, metadata: "opaque", daemonState: null } });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app);
+        await app.ready();
+        const res = await app.inject({ method: "POST", url: "/v1/account/encryption/migrate", headers: { "x-test-user-id": account.id }, payload: {
+            toMode: "plain", expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: "assert_empty" }, automations: { action: "assert_empty" },
+            machines: { action: "migrate", items: [{ machineId: machine.id, expected: { dataEncryptionKey: null, metadataVersion: machine.metadataVersion, daemonStateVersion: machine.daemonStateVersion }, next: { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: encodePlainMachineStoredContent({ displayName: "blocked" }), daemonState: null } }] },
+        } });
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
+        expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).metadata).toBe("opaque");
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).encryptionMode).toBe("e2ee");
+        await app.close();
+    });
+
+    it("converts encrypted Machines to plain while retaining released omitted-directive behavior", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1" });
+        const account = await db.account.create({ data: { publicKey: "machine-legacy-account", encryptionMode: "e2ee" } });
+        const machine = await db.machine.create({ data: { id: "machine-legacy-history", accountId: account.id, metadata: "opaque", daemonState: null, revokedAt: new Date() } });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app);
+        await app.ready();
+        const payload = { toMode: "plain", expectedSettingsVersion: 0, settingsContent: null, connectedServices: { action: "assert_empty" }, automations: { action: "assert_empty" } };
+        const inject = (body: unknown) => app.inject({ method: "POST", url: "/v1/account/encryption/migrate", headers: { "x-test-user-id": account.id }, payload: body });
+        expect((await inject(payload)).statusCode).toBe(200);
+        expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).metadata).toBe("opaque");
+        const next = { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: encodePlainMachineStoredContent({ displayName: "retained" }), daemonState: null };
+        const migrated = await inject({ ...payload, expectedSettingsVersion: 1, machines: { action: "migrate", items: [{ machineId: machine.id, expected: { dataEncryptionKey: null, metadataVersion: machine.metadataVersion, daemonStateVersion: machine.daemonStateVersion }, next }] } });
+        expect(migrated.statusCode).toBe(200);
+        expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).toMatchObject({ metadata: next.metadata, metadataVersion: machine.metadataVersion + 1, revokedAt: machine.revokedAt });
+        await app.close();
     });
 
     it("migrates e2ee -> plain atomically and stores v2 settings in plaintext", async () => {

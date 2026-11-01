@@ -188,3 +188,20 @@ describe('MessageView (thinking pulse gating)', () => {
         expect(nextScreen.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-plain')).toHaveLength(0);
     });
 });
+
+describe('MessageView (peer deliveries)', () => {
+    it('renders a delivered subagent report as a collapsed sender-labelled row, not assistant prose', async () => {
+        const { MessageView } = await import('./MessageView');
+        captured.thinkingRowProps.length = 0;
+        captured.markdownProps.length = 0;
+        const message: any = {
+            kind: 'agent-text', id: 'peer-1', localId: null, createdAt: 1,
+            text: '**Verdict:** fixed.\n\n- detail', peer: { name: 'general-purpose', handback: true },
+        };
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" activeThinkingMessageId={null} />);
+        expect(captured.thinkingRowProps.at(-1)).toMatchObject({
+            headerTestID: 'transcript-peer-message-header', label: 'sessionInfo.peerReportFrom', expandedByDefault: false,
+            summary: '**Verdict:** fixed.',
+        });
+    });
+});

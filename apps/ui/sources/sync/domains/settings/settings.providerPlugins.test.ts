@@ -1,8 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { buildClaudeRemoteOutgoingMessageMetaExtras } from '@happier-dev/agents';
 
 describe('settingsParse provider plugin defaults', () => {
+    it('preserves a legacy Claude bridge opt-out through parsing and outgoing metadata', () => {
+        const settings = settingsParse({ claudeLocalPermissionBridgeEnabled: false });
+        expect(buildClaudeRemoteOutgoingMessageMetaExtras(settings)).toMatchObject({
+            claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+            claudeUnifiedTerminalPermissionResponseLocation: 'terminal_only',
+            claudeLocalPermissionBridgeEnabled: false,
+        });
+    });
+
+    it('retains explicit independent Claude response locations while defaulting missing preferences', () => {
+        expect(settingsParse({})).toMatchObject({
+            claudeUnifiedTerminalQuestionResponseLocation: 'app_and_terminal',
+            claudeUnifiedTerminalPermissionResponseLocation: 'app_and_terminal',
+        });
+        const settings = settingsParse({
+            claudeLocalPermissionBridgeEnabled: false,
+            claudeUnifiedTerminalQuestionResponseLocation: 'app_only',
+            claudeUnifiedTerminalPermissionResponseLocation: 'app_and_terminal',
+        });
+        expect(buildClaudeRemoteOutgoingMessageMetaExtras(settings)).toMatchObject({
+            claudeUnifiedTerminalQuestionResponseLocation: 'app_only',
+            claudeUnifiedTerminalPermissionResponseLocation: 'app_and_terminal',
+        });
+        expect(settingsParse(settings)).toEqual(settings);
+    });
+
     it('includes Claude provider defaults when no settings are persisted', () => {
         const settings = settingsParse({});
 

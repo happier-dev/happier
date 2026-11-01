@@ -1,5 +1,43 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListViewItem } from './sessionListViewData';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+
+/** Prefer current identity data, falling back to a snapshot produced before identity discovery. */
+export function resolveSessionListCacheServerId(
+    dataByServerId: Readonly<Record<string, SessionListViewItem[] | null | undefined>>,
+    requestedServerId: string,
+): string | null {
+    const canonicalServerId = resolveServerProfileScopeIdForIdentifier(requestedServerId);
+    if (Object.prototype.hasOwnProperty.call(dataByServerId, canonicalServerId)) return canonicalServerId;
+    if (Object.prototype.hasOwnProperty.call(dataByServerId, requestedServerId)) return requestedServerId;
+    for (const cachedServerId of Object.keys(dataByServerId)) {
+        if (areServerProfileIdentifiersEquivalent(cachedServerId, canonicalServerId)) return cachedServerId;
+    }
+    return null;
+}
+
+// Immutable snapshots may outlive Home identity discovery. Preserve each unchanged row's
+// projected identity when another Home publishes or archive progress recomputes the list.
+const scopedSessionListItems = new WeakMap<SessionListViewItem, Map<string, SessionListViewItem>>();
+
+export function bindSessionListItemToServerScope(item: SessionListViewItem, serverId: string): SessionListViewItem {
+    if ((!item.serverId || item.serverId === serverId)
+        && (item.type !== 'header' || !item.workspaceScopeHint || item.workspaceScopeHint.serverId === serverId)) {
+        return item;
+    }
+    let byServer = scopedSessionListItems.get(item);
+    if (!byServer) {
+        byServer = new Map();
+        scopedSessionListItems.set(item, byServer);
+    }
+    const existing = byServer.get(serverId);
+    if (existing) return existing;
+    const scoped = item.type === 'header' && item.workspaceScopeHint
+        ? { ...item, serverId, workspaceScopeHint: { ...item.workspaceScopeHint, serverId } }
+        : { ...item, serverId };
+    byServer.set(serverId, scoped);
+    return scoped;
+}
 
 type ApplySessionListPresentationParams = Readonly<{
     enabled: boolean;
@@ -57,12 +95,16 @@ export function resolveSessionListSourceData(
     let hasResolvedSelectedSource = false;
 
     for (const serverId of selectedServerIds) {
-        const fromCache = scoped[serverId];
+        const cacheServerId = resolveSessionListCacheServerId(scoped, serverId);
+        const fromCache = cacheServerId ? scoped[cacheServerId] : null;
         const source = fromCache ?? (serverId === activeServerId ? params.activeData : null);
         if (!source) continue;
         hasResolvedSelectedSource = true;
         if (source.length === 0) continue;
-        merged.push(...source);
+        // Cached rows can predate identity discovery; presentation consumes current selected scopes.
+        for (const item of source) {
+            merged.push(bindSessionListItemToServerScope(item, serverId));
+        }
     }
 
     if (merged.length > 0) {

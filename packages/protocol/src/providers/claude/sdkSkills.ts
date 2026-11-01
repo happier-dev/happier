@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import type { SessionSkillCatalogItemV1 } from '../../sessionWorkState/sessionWorkStateRpc.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const ClaudeSdkSkillsOptionSchema = z.union([z.literal('all'), z.array(z.string().trim().min(1))]);
+export const ClaudeSdkSkillsOptionSchema = lazySchema(() => z.union([z.literal('all'), z.array(z.string().trim().min(1))]));
 export type ClaudeSdkSkillsOption = z.infer<typeof ClaudeSdkSkillsOptionSchema>;
 
 export function normalizeClaudeSdkInitSkills(value: unknown): SessionSkillCatalogItemV1[] {

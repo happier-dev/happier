@@ -95,7 +95,10 @@ describe('PublicShareViewerScreen (e2ee)', () => {
             });
         const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
         await renderScreen(<PublicShareViewerScreen />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(transcriptListSpy).toHaveBeenCalled();
+        });
         const messages = transcriptListSpy.mock.calls.at(-1)?.[0]?.messages;
         expect(messages).toHaveLength(1);
         expect(messages[0]).toMatchObject({ kind: 'tool-call', tool: {
@@ -169,8 +172,11 @@ describe('PublicShareViewerScreen (e2ee)', () => {
 
         const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
-        await renderScreen(<PublicShareViewerScreen />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(screen.findAllByProps({ subtitle: 'session.sharing.failedToDecrypt' })).not.toHaveLength(0);
+        });
 
         expect(decryptDataKeyFromPublicShareSpy).toHaveBeenCalled();
         expect(transcriptListSpy).not.toHaveBeenCalled();
@@ -246,7 +252,10 @@ describe('PublicShareViewerScreen (e2ee)', () => {
         const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
         await renderScreen(<PublicShareViewerScreen />);
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(transcriptListSpy).toHaveBeenCalled();
+        });
 
         const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
         expect(last?.messages ?? []).toEqual([]);

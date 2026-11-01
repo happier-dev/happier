@@ -90,10 +90,21 @@ const deriveFeedCardBackground = (theme: Theme, baseTheme: Theme): string => {
     return theme.colors.surface.elevated;
 };
 
+const deriveGlassComposerSurface = (theme: Theme, baseTheme: Theme): string => {
+    const surface = theme.dark ? 'elevated' : 'base';
+    return theme.colors.surface[surface] === baseTheme.colors.surface[surface]
+        ? theme.colors.glass.composerSurface
+        : theme.colors.surface[surface];
+};
+
 export const deriveThemeColors = (theme: Theme, baseTheme: Theme): Theme => ({
     ...theme,
     colors: {
         ...theme.colors,
+        glass: {
+            ...theme.colors.glass,
+            composerSurface: deriveGlassComposerSurface(theme, baseTheme),
+        },
         button: {
             ...theme.colors.button,
             primary: {

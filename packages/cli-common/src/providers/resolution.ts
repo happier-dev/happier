@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants as fsConstants, existsSync, openSync, readSync, readdirSync } from 'node:fs';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import {
   getProviderCliBinaryNames,
@@ -13,7 +13,7 @@ import {
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '../path/expandHomeDirPath.js';
-import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
+import { resolveExecutableCommand, resolveExecutableCommandsOnPath, resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
 import { resolveJavaScriptRuntimeCommand } from './managedJavaScriptRuntime.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 
@@ -136,49 +136,6 @@ export function resolveProviderCliManagedCommandPath(
   // Existing runner snapshots still resolve current. New POSIX promotions retain it and switch active atomically.
   if (process.platform !== 'win32' && existsSync(activeCommandPath)) return activeCommandPath;
   return join(installRoot, 'current', commandRelativePath);
-}
-
-function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath(command, processEnv) ?? null;
-  }
-
-  const pathDirs = String(processEnv.PATH ?? '')
-    .split(delimiter)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  for (const dir of pathDirs) {
-    const candidate = join(dir, command);
-    if (!existsSync(candidate)) continue;
-    // On Unix, verify the file is executable
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // File exists but is not executable; continue searching
-      continue;
-    }
-  }
-  return null;
-}
-
-function resolveCommandsOnPath(command: string, processEnv: NodeJS.ProcessEnv): string[] {
-  if (process.platform === 'win32') {
-    const resolved = resolveWindowsCommandOnPath(command, processEnv);
-    return resolved ? [resolved] : [];
-  }
-
-  const commands: string[] = [];
-  for (const dir of String(processEnv.PATH ?? '').split(delimiter).map((value) => value.trim()).filter(Boolean)) {
-    const candidate = join(dir, command);
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      commands.push(candidate);
-    } catch {
-      // Keep looking: another PATH entry may contain a runnable candidate.
-    }
-  }
-  return commands;
 }
 
 function readFileHeader(candidatePath: string): string | null {
@@ -364,7 +321,7 @@ function commandMatchesAlternativeIdentityProbe(
 
 function resolveProviderCliSystemCommand(agentId: AgentId, processEnv: NodeJS.ProcessEnv): string | null {
   for (const binaryName of getProviderCliBinaryNames(agentId, processEnv)) {
-    const command = resolveCommandOnPath(binaryName, processEnv);
+    const command = resolveExecutableCommand(binaryName, { env: processEnv });
     if (command) {
       const resolved = { command, binaryName };
       if (commandMatchesAlternativeIdentityProbe(agentId, resolved, processEnv)) return command;
@@ -386,7 +343,7 @@ function resolveProviderCliSystemCommands(agentId: AgentId, processEnv: NodeJS.P
   };
 
   for (const binaryName of getProviderCliBinaryNames(agentId, processEnv)) {
-    for (const command of resolveCommandsOnPath(binaryName, processEnv)) {
+    for (const command of resolveExecutableCommandsOnPath(binaryName, { env: processEnv })) {
       add({ command, binaryName });
     }
   }

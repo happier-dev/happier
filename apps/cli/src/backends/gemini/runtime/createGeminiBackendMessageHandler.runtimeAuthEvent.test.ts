@@ -1,3 +1,5 @@
+import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
@@ -139,7 +141,14 @@ describe('createGeminiBackendMessageHandler (provider runtime error events)', ()
         profileId: 'leeroy',
       },
     });
-    const { handler, messageBuffer, session } = createHarness();
+    const { handler, messageBuffer, session, state } = createHarness();
+    const acceptedIssues: SessionRuntimeIssueV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: session.sessionId, enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail' && mutation.issue) acceptedIssues.push(mutation.issue);
+    } });
+    session.sessionTurnLifecycle = lifecycle;
+    state.taskStartedSent = true;
+    await lifecycle.beginTurn({ provider: 'gemini' });
 
     handler({
       type: 'status',
@@ -156,7 +165,10 @@ describe('createGeminiBackendMessageHandler (provider runtime error events)', ()
         message: 'Connected-service account already updated; the old turn was interrupted.',
       },
     ]]);
-    expect(session.sendAgentMessage).not.toHaveBeenCalled();
+    expect(acceptedIssues).toHaveLength(1);
+    expect(notifyDaemonConnectedServiceRuntimeAuthFailureMock.mock.calls[0]?.[0].classification.runtimeIssueFingerprint)
+      .toBe(buildUsageLimitIssueFingerprint(acceptedIssues[0]!));
+    expect(session.sendAgentMessage).not.toHaveBeenCalledWith('gemini', expect.objectContaining({ type: 'message' }));
     expect(messageBuffer.addMessage).not.toHaveBeenCalled();
   });
 

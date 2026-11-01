@@ -114,6 +114,12 @@ those yourself when you are ready.
 Restarting the daemon keeps your sessions running, and each session runner stays on the CLI version it started with.
 To move them onto the new version yourself, run `happier daemon restart-session-runners` (add `--dry-run` to preview).
 
+Restarting a runner stops the agent's process, including any background agents or shells it is running. The command
+skips runners that are mid-turn or that the server reports as running background work, and reports them as busy; run
+it again once that work has finished. Restarting a runner from the app asks you first when background work is
+running, including while a foreground turn is also shown, and only restarts it once you confirm.
+The app also asks when its last activity report is old but still says work is running.
+
 In development builds, you can opt in to automatic runner restarts:
 
 ```bash
@@ -122,11 +128,12 @@ hdev daemon restart-session-runners --on-update on
 
 With this on, every time the daemon starts (after `self update`, an update started from the app, or a service
 restart after a manual install) it restarts the daemon-started session runners that are still on an older CLI. The
-sessions retain their identity and history. Runners already on the current version are not touched, and runners the
-daemon knows are in the middle of a turn are skipped; restart them later with `hdev daemon restart-session-runners`. The setting is off
-by default, is read when the daemon starts, and is turned off again with `--on-update off`.
+sessions retain their identity and history. Runners already on the current version are not touched, and runners that
+are mid-turn or running background work are skipped, as are runners whose background activity the daemon cannot read
+from the server; restart them later with `hdev daemon restart-session-runners`. The setting is off by default, is read
+when the daemon starts, and is turned off again with `--on-update off`.
 
-Activity checks use the daemon's observed turn state. A turn that starts while the daemon is down, or whose turn
+Turn checks use the daemon's observed turn state. A turn that starts while the daemon is down, or whose turn
 notification fails, can be missed and interrupted by the automatic restart. Leave the setting off and restart runners
 manually when you are ready if you want to avoid this unattended interruption risk.
 

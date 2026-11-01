@@ -12,6 +12,7 @@ import {
     buildThisComputerCliUpdateItem,
 } from './buildMachineUpdateItems';
 import { isUpdateItemActionable } from './updateItem';
+import { buildUpdatesSummary } from './buildUpdatesSummary';
 
 const IDLE_TASK = { running: false, step: null, errorMessage: null } as const;
 
@@ -45,7 +46,7 @@ describe('this computer — Happier CLI row', () => {
             machineId: 'm1', title: 'Happier CLI', task: IDLE_TASK,
             facts: { currentVersion: '0.2.11', latestVersion: '0.2.11', managed: true, updateCommand: null },
         });
-        expect(current?.state).toBe('upToDate');
+        expect(current?.state).toBe('unknown');
 
         const noAnswer = buildThisComputerCliUpdateItem({
             machineId: 'm1', title: 'Happier CLI', task: IDLE_TASK,
@@ -65,6 +66,31 @@ describe('another machine — Happier CLI row (K5)', () => {
         canUpdateRemotely: true,
         lastUpdate: null,
     };
+
+    it('does not certify a cached current version as freshly up to date, and keeps the manual path', () => {
+        const item = buildRemoteCliUpdateItem({
+            machineId: 'windows', title: 'Happier CLI', online: true, platform: 'win32',
+            happyCliVersion: '0.2.16-dev.9', remoteUpdateAdvertised: false, task: IDLE_TASK,
+            facts: { ...k5, currentVersion: '0.2.16-dev.9', latestVersion: '0.2.16-dev.9',
+                channel: 'dev', canUpdateRemotely: false, updateCommand: 'hdev self update' },
+        });
+        expect(item).toMatchObject({
+            state: 'unknown', cachedRelease: { channel: 'dev' },
+            action: { kind: 'manual', command: 'hdev self update' },
+        });
+        expect(isUpdateItemActionable(item)).toBe(false);
+        expect(buildUpdatesSummary([item]).status).toBe('unknown');
+    });
+
+    it.each(['failed', 'rolledBack'] as const)('never offers a remote retry after %s when the CLI cannot update remotely', (outcome) => {
+        const item = buildRemoteCliUpdateItem({
+            machineId: 'windows', title: 'Happier CLI', online: true, platform: 'win32',
+            happyCliVersion: k5.currentVersion, remoteUpdateAdvertised: null, task: IDLE_TASK,
+            facts: { ...k5, canUpdateRemotely: false,
+                lastUpdate: { targetVersion: '0.2.11', outcome, at: 1, message: null } },
+        });
+        expect(item).toMatchObject({ state: 'failed', action: { kind: 'manual', command: k5.updateCommand } });
+    });
 
     it('offers Update only when the daemon advertises the remote kind; otherwise the command', () => {
         const advertised = buildRemoteCliUpdateItem({
@@ -137,7 +163,8 @@ describe('another machine — Happier CLI row (K5)', () => {
             facts: { ...k5, currentVersion: '0.2.11', lastUpdate: { targetVersion: '0.2.11', outcome: 'pendingReconnect', at: 1, message: null } },
             remoteUpdateAdvertised: true, task: IDLE_TASK,
         });
-        expect(landed.state).toBe('upToDate');
+        expect(landed.state).toBe('unknown');
+        expect(buildUpdatesSummary([landed], new Map([[landed.id, 'pendingRemote']])).phase).toBe('completed');
     });
 
     it('keeps an explicit failed outcome authoritative when the target binary is answering', () => {

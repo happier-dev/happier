@@ -1,4 +1,4 @@
-import type { RuntimeConfigOutcomeChangeKeyV1, RuntimeConfigOutcomeTimingV1 } from '@happier-dev/protocol';
+import type { RuntimeConfigOutcomeChangeKeyV1 } from '@happier-dev/protocol';
 
 import { resolveClaudeDefaultEffortForModel } from '@/backends/claude/utils/claudeEffort';
 
@@ -6,8 +6,9 @@ import type { ControlRuntime } from './controlRuntime';
 import {
   aggregateApplyOutcome,
   controlResultToChangeOutcome,
+  isDeferredTiming,
+  readVerifiedRuntimeConfigEffort,
   type ControlAttemptResult,
-  type ControlScheduleTiming,
 } from './outcome';
 import {
   applyPermissionModeControl,
@@ -87,13 +88,6 @@ function describeChangeKeys(desired: ClaudeDesiredRuntimeConfig): string {
   return keys.join(',') || 'none';
 }
 
-// Timings that mean "not yet effective" (mirror of the outcome aggregation set).
-const DEFERRED_CHANGE_TIMINGS: ReadonlySet<RuntimeConfigOutcomeTimingV1> = new Set([
-  'scheduled_for_next_prompt',
-  'queued_until_safe_window',
-  'next_idle',
-]);
-
 function modeChangeKey(desired: ClaudeDesiredRuntimeConfig): RuntimeConfigOutcomeChangeKeyV1 {
   const target = resolveTargetModeMarker({ permissionMode: desired.permissionMode, agentModeId: desired.agentModeId });
   return target.kind === 'cyclable' && target.markers[0] === 'plan' ? 'sessionMode' : 'permissionMode';
@@ -156,16 +150,32 @@ export function createClaudeUnifiedTuiControlController(
     ))?.dialogId ?? null;
   }
 
+  function recordVerifiedConfig(update: Readonly<{
+    model?: string | null | undefined;
+    reasoningEffort?: string | null | undefined;
+    modeMarker?: ClaudeTuiModeMarker | null | undefined;
+  }>): void {
+    const model = update.model !== undefined ? update.model : lastVerified.model;
+    lastVerified = {
+      model,
+      reasoningEffort: update.reasoningEffort !== undefined ? update.reasoningEffort
+        : (model === lastVerified.model ? lastVerified.reasoningEffort : null),
+      modeMarker: update.modeMarker ?? lastVerified.modeMarker,
+      verifiedAtMs: nowMs(),
+    };
+  }
+
   function recordVerified(key: RuntimeConfigOutcomeChangeKeyV1, change: RuntimeConfigChangeOutcome): void {
     if (change.status !== 'applied') return;
-    const effective = typeof change.effective === 'string' ? change.effective : null;
+    const effective = typeof change.effective === 'string' ? change.effective : undefined;
     if (key === 'model') {
-      lastVerified = { ...lastVerified, model: effective ?? lastVerified.model, verifiedAtMs: nowMs() };
-    } else if (key === 'reasoningEffort') {
-      lastVerified = { ...lastVerified, reasoningEffort: effective ?? lastVerified.reasoningEffort, verifiedAtMs: nowMs() };
-    } else if (key === 'permissionMode' || key === 'sessionMode') {
+      recordVerifiedConfig({ model: effective });
+    }
+    const effort = readVerifiedRuntimeConfigEffort({ status: change.status, timing: change.timing, changes: [change] });
+    if (effort !== null) recordVerifiedConfig({ reasoningEffort: effort });
+    if (key === 'permissionMode' || key === 'sessionMode') {
       const marker = effective as ClaudeTuiModeMarker | null;
-      lastVerified = { ...lastVerified, modeMarker: marker ?? lastVerified.modeMarker, verifiedAtMs: nowMs() };
+      recordVerifiedConfig({ modeMarker: marker });
     }
   }
 
@@ -243,10 +253,10 @@ export function createClaudeUnifiedTuiControlController(
           if (effortChange) {
             // The effort control in this same batch already (or will) replace ultracode.
             if (effortChange.status === 'applied') {
-              if (effortChange.timing !== undefined && DEFERRED_CHANGE_TIMINGS.has(effortChange.timing)) {
+              if (isDeferredTiming(effortChange.timing)) {
                 return {
                   kind: 'scheduled',
-                  timing: effortChange.timing as ControlScheduleTiming,
+                  timing: effortChange.timing,
                   reason: 'effort_control_deferred',
                 };
               }
@@ -410,6 +420,11 @@ export function createClaudeUnifiedTuiControlController(
       changes.push(change);
       emitChange(change);
       recordVerified(plan.key, change);
+      if (change.reason === 'delivered_unverified') {
+        // A submitted command may have changed Claude; the earlier command witness cannot skip restoration.
+        if (plan.key === 'model') recordVerifiedConfig({ model: null, reasoningEffort: null });
+        if (plan.key === 'reasoningEffort' || plan.key === 'launchOption') recordVerifiedConfig({ reasoningEffort: null });
+      }
       if (result.kind === 'scheduled') scheduled = plan.stash(scheduled);
     }
     return { changes, scheduled };
@@ -506,15 +521,10 @@ export function createClaudeUnifiedTuiControlController(
 
     reconcileFromStatusline(metadata: ClaudeStatuslineRuntimeMetadata): void {
       // Effective-truth feed only (lane Y): updates lastVerified, never desired/pending state and
-      // never the TUI. Absent fields are ignored (haiku statuslines omit effort); a fully-empty
-      // update must not even bump verifiedAtMs.
+      // never the TUI. A model change invalidates effort observed for the previous model;
+      // a fully-empty update must not even bump verifiedAtMs.
       if (metadata.model === undefined && metadata.reasoningEffort === undefined) return;
-      lastVerified = {
-        ...lastVerified,
-        model: metadata.model ?? lastVerified.model,
-        reasoningEffort: metadata.reasoningEffort ?? lastVerified.reasoningEffort,
-        verifiedAtMs: nowMs(),
-      };
+      recordVerifiedConfig(metadata);
     },
 
     reconcileAfterProviderPromptSubmit(metadata: ClaudePromptSubmitMetadata): void {
@@ -522,16 +532,19 @@ export function createClaudeUnifiedTuiControlController(
       const modeMarker = typeof metadata.permissionMode === 'string'
         ? permissionModeToMarker(metadata.permissionMode)
         : lastVerified.modeMarker;
-      lastVerified = {
+      recordVerifiedConfig({
         model: metadata.model ?? lastVerified.model,
-        reasoningEffort: effort ?? lastVerified.reasoningEffort,
+        reasoningEffort: effort,
         modeMarker: modeMarker ?? lastVerified.modeMarker,
-        verifiedAtMs: nowMs(),
-      };
+      });
     },
 
     getLastVerifiedRuntimeConfig(): ClaudeUnifiedVerifiedRuntimeConfig {
       return lastVerified;
+    },
+
+    getPendingRuntimeConfig(): ClaudeDesiredRuntimeConfig {
+      return pending;
     },
 
     isControlInFlight(): boolean {

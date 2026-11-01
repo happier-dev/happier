@@ -5,6 +5,7 @@ import {
     ensureSessionOwnerAccessInTx,
 } from "@/app/session/sessionWriteService";
 import { inTx, type Tx } from "@/storage/inTx";
+import { buildPrimaryTurnProjectionWriteData, materializePrimaryTurnProjection, type PrimaryTurnMaterializedProjection } from "@/app/session/turns/materializePrimaryTurnProjection";
 
 /**
  * The Agent-transition current-view commit — one narrow transaction.
@@ -27,7 +28,9 @@ import { inTx, type Tx } from "@/storage/inTx";
  * - `agentState: null` at `expectedAgentStateVersion + 1`, because the source
  *   Agent's published state describes a runtime that no longer exists;
  * - `thinking: false` and cleared pending-request counters, which are the
- *   source runtime's current projections rather than Session history.
+ *   source runtime's current projections rather than Session history;
+ * - a cleared current turn/issue projection, retaining historical turn rows
+ *   and advancing the previous observation frontier in the runner's clock domain.
  *
  * Runtime-activity is cleared through its own canonical owner in the same
  * transaction. This service deliberately writes NO divider: that is the next
@@ -77,6 +80,7 @@ export type CommitSessionAgentCurrentViewResult =
         participantCursors: SessionParticipantCursor[];
         metadataCiphertext: string;
         agentStateCiphertext: null;
+        primaryTurnProjection: PrimaryTurnMaterializedProjection | null;
       }
     | { ok: false; error: CommitSessionAgentCurrentViewErrorV1 };
 
@@ -146,6 +150,7 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
             metadataVersion: true,
             agentState: true,
             agentStateVersion: true,
+            latestTurnStatusObservedAt: true,
         },
     });
     if (!session) {
@@ -170,6 +175,7 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
             participantCursors: [],
             metadataCiphertext: currentView.metadataCiphertext,
             agentStateCiphertext: null,
+            primaryTurnProjection: null,
         };
     }
 
@@ -185,6 +191,15 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
         return { ok: false, error: "version-mismatch" };
     }
 
+    // The departed Agent's turn remains history, but its failure is no longer
+    // the current runtime's state. Retire the projection atomically with identity.
+    const primaryTurnProjection = {
+        ...materializePrimaryTurnProjection({ latestTurnId: null, turns: [] }),
+        // Stay in the runner's clock domain: server time can be ahead of the
+        // target's next turn. Advance only the departed observation frontier.
+        latestTurnStatusObservedAt: session.latestTurnStatusObservedAt === null
+            ? null : Number(session.latestTurnStatusObservedAt) + 1,
+    };
     const cas = await applySessionMetadataVersionCasInTx({
         tx,
         sessionId,
@@ -198,6 +213,7 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
             agentStateVersion: currentView.expectedAgentStateVersion,
         },
         additionalData: {
+            ...buildPrimaryTurnProjectionWriteData(primaryTurnProjection),
             agentState: currentView.agentStateCiphertext,
             agentStateVersion: currentView.expectedAgentStateVersion + 1,
             thinking: false,
@@ -247,6 +263,7 @@ export async function commitSessionAgentCurrentViewInTx(params: Readonly<{
         participantCursors,
         metadataCiphertext: currentView.metadataCiphertext,
         agentStateCiphertext: null,
+        primaryTurnProjection,
     };
 }
 

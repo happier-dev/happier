@@ -11,6 +11,7 @@ interface SimpleSyntaxHighlighterProps {
   code: string;
   language: string | null;
   selectable: boolean;
+  wrap?: boolean;
 }
 
 function resolveTokenColor(theme: any, tokenType: string, fallback: string): string {
@@ -25,17 +26,18 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   code,
   language,
   selectable,
+  wrap = false,
 }) => {
   const { theme } = useUnistyles();
   const fallback = theme.colors.text.primary ?? '#111';
   const webTextWrapStyle: TextStyle | null = Platform.OS === 'web'
-    ? ({ whiteSpace: 'pre', display: 'inline-block' } as unknown as TextStyle)
+    ? ({ whiteSpace: wrap ? 'pre-wrap' : 'pre', display: wrap ? 'block' : 'inline-block', overflowWrap: wrap ? 'anywhere' : undefined } as unknown as TextStyle)
     : null;
 
   const tokens = React.useMemo(() => tokenizeSimpleSyntaxText({ text: code, language }), [code, language]);
 
   return (
-    <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
+    <View style={{ flexShrink: 0, alignSelf: wrap ? 'stretch' : 'flex-start' }}>
       <Text
         selectable={selectable}
         style={[

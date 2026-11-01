@@ -76,7 +76,7 @@ describe('buildSessionListReachabilityModels', () => {
                     metadata: { host: 'same-host.local', displayName: 'Live Machine' },
                 } as any,
             },
-            workspaceLabelsV1: {},
+            workspaceLabelsByLabelKey: {},
         });
 
         expect(models.reachableSessionDisplayByKey.get('server-a:session-1')).toMatchObject({
@@ -127,7 +127,7 @@ describe('buildSessionListReachabilityModels', () => {
                 metadata: { host: 'a.local', displayName: 'Machine A' },
             } as any,
         };
-        const workspaceLabelsV1 = {};
+        const workspaceLabelsByLabelKey = {};
         const cache = createSessionListReachabilityModelsCache();
         const first = buildSessionListReachabilityModels({
             cache,
@@ -136,7 +136,7 @@ describe('buildSessionListReachabilityModels', () => {
                 { type: 'session', serverId: 'server-a', session: refreshed } as any,
             ],
             machinesById,
-            workspaceLabelsV1,
+            workspaceLabelsByLabelKey,
         });
         const unchangedDisplay = first.reachableSessionDisplayByKey.get('server-a:unchanged-session');
         const second = buildSessionListReachabilityModels({
@@ -150,7 +150,7 @@ describe('buildSessionListReachabilityModels', () => {
                 } as any,
             ],
             machinesById,
-            workspaceLabelsV1,
+            workspaceLabelsByLabelKey,
         });
 
         expect(second).not.toBe(first);
@@ -197,13 +197,13 @@ describe('buildSessionListReachabilityModels', () => {
             cache: createSessionListReachabilityModelsCache(),
             items,
             machinesById,
-            workspaceLabelsV1: { 'server-a:machine-a:/Users/test/workspace': 'Workspace' },
+            workspaceLabelsByLabelKey: {},
         });
         const second = buildSessionListReachabilityModels({
             cache: createSessionListReachabilityModelsCache(),
             items,
             machinesById,
-            workspaceLabelsV1: { 'server-a:machine-a:/Users/test/workspace': 'Workspace' },
+            workspaceLabelsByLabelKey: {},
         });
 
         expect(second).toBe(first);
@@ -259,7 +259,7 @@ describe('buildSessionListReachabilityModels', () => {
                     metadata: { host: 'b.local', displayName: 'Machine B' },
                 } as any,
             },
-            workspaceLabelsV1: {},
+            workspaceLabelsByLabelKey: {},
         });
 
         expect(models.reachableSessionDisplayByKey.get('server-a:shared-session')).toMatchObject({

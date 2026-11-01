@@ -3,12 +3,13 @@ import type { StyleProp, TextStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 
 import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
-import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
+import type { MarkdownSelectionAction, MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import { usePreparedStreamingMarkdown, type MarkdownStreamingMode } from '../streaming/usePreparedStreamingMarkdown';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
 import { MarkdownSegmentView } from './MarkdownSegmentView';
+import { MarkdownCodeBlockWrapKeyProvider } from '../MarkdownCodeBlockWrapState';
 import {
     readMarkdownRenderSegmentsCache,
     writeMarkdownRenderSegmentsCache,
@@ -29,12 +30,14 @@ type MarkdownViewRendererProps = Readonly<{
     streamingMode: MarkdownStreamingMode;
     streamingAnimated: boolean;
     streamingParseCacheKey?: string | null;
+    codeBlockStateKey?: string;
     streamingRevealPreset?: StreamingTextRevealPreset;
     staticRenderPlaceholderEnabled?: boolean;
     sourceRangeLayoutObserver?: MarkdownSourceRangeLayoutObserver;
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath: boolean;
 }>;
 
@@ -156,24 +159,29 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                 style={styles.content}
             >
                 {segments.map((segment, index) => (
-                    <MarkdownSegmentView
+                    <MarkdownCodeBlockWrapKeyProvider
                         key={segmentKeys[index]}
-                        segment={segment}
-                        selectable={props.selectable}
-                        onOptionPress={props.onOptionPress}
-                        onOptionLongPress={props.onOptionLongPress}
-                        onLinkPress={props.onLinkPress}
-                        textStyle={props.textStyle}
-                        profile={props.profile}
-                        streamingReveal={streamingReveal}
-                        streamingRevealPreset={props.streamingRevealPreset}
-                        sourceRangeInteractionsActive={sourceRangeInteractionsActive}
-                        sourceRangeLayoutObserver={props.sourceRangeLayoutObserver}
-                        onPressSourceRange={props.onPressSourceRange}
-                        renderAfterSourceRange={props.renderAfterSourceRange}
-                        highlightSourceRange={props.highlightSourceRange}
-                        agentTexMath={props.agentTexMath}
-                    />
+                        value={props.codeBlockStateKey ? JSON.stringify([props.codeBlockStateKey, segment.sourceStart]) : null}
+                    >
+                        <MarkdownSegmentView
+                            segment={segment}
+                            selectable={props.selectable}
+                            onOptionPress={props.onOptionPress}
+                            onOptionLongPress={props.onOptionLongPress}
+                            onLinkPress={props.onLinkPress}
+                            textStyle={props.textStyle}
+                            profile={props.profile}
+                            streamingReveal={streamingReveal}
+                            streamingRevealPreset={props.streamingRevealPreset}
+                            sourceRangeInteractionsActive={sourceRangeInteractionsActive}
+                            sourceRangeLayoutObserver={props.sourceRangeLayoutObserver}
+                            onPressSourceRange={props.onPressSourceRange}
+                            renderAfterSourceRange={props.renderAfterSourceRange}
+                            highlightSourceRange={props.highlightSourceRange}
+                            selectionActions={props.selectionActions}
+                            agentTexMath={props.agentTexMath}
+                        />
+                    </MarkdownCodeBlockWrapKeyProvider>
                 ))}
             </View>
             {staticRenderPlaceholder.visible ? <StaticMarkdownRenderPlaceholder /> : null}

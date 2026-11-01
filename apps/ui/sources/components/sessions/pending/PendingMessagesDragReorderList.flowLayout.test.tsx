@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TestGestureChain } from '@/dev/testkit';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -32,8 +32,17 @@ import { PendingMessagesDragReorderList } from './PendingMessagesDragReorderList
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
 });
+const hapticEvents = vi.hoisted(() => [] as string[]);
+vi.mock('expo-haptics', () => ({
+    ImpactFeedbackStyle: { Medium: 'medium', Light: 'light' },
+    NotificationFeedbackType: { Error: 'error' },
+    AndroidHaptics: { Reject: 'reject', Context_Click: 'context', Segment_Tick: 'tick', Drag_Start: 'start' },
+    impactAsync: async (style: string) => { hapticEvents.push(style); },
+    selectionAsync: async () => { hapticEvents.push('selection'); },
+    notificationAsync: async (kind: string) => { hapticEvents.push(kind); },
+}));
 /**
  * FILE-LOCAL spring fake, deliberately not the shared testkit's `withSpring`.
  *
@@ -103,7 +112,7 @@ function rowTranslateY(instance: ReactTestInstance): Readonly<{ px: number; spru
     return { px: typeof value === 'number' ? value : Number.NaN, sprung: false };
 }
 
-function mountQueue(onReorderIds: (ids: string[]) => void) {
+function mountQueue(onReorderIds: NonNullable<React.ComponentProps<typeof PendingMessagesDragReorderList>['onReorderIds']>) {
     // A fresh `renderItem` identity per element so `React.memo` cannot skip a repaint: the derived
     // transforms we assert on are recomputed on render, exactly as a real frame recomputes them.
     const element = (messages: ReadonlyArray<PendingMessage>) => (
@@ -140,6 +149,73 @@ function mountQueue(onReorderIds: (ids: string[]) => void) {
 }
 
 describe('PendingMessagesDragReorderList · flow layout', () => {
+    beforeEach(() => { hapticEvents.length = 0; });
+
+    it('feeds back activation and distinct slots, then settles only after an applied reorder', async () => {
+        let resolveReorder!: (value: 'applied') => void;
+        const queue = mountQueue(() => new Promise<'applied'>((resolve) => { resolveReorder = resolve; }));
+        const gesture = queue.dragHandleGesture(0);
+        act(() => { gesture.__handlers.onBegin?.(); });
+        expect(hapticEvents).toEqual([]);
+        act(() => { gesture.__handlers.onStart?.(); });
+        expect(hapticEvents).toEqual(['light']);
+        act(() => { gesture.__handlers.onUpdate?.({ translationY: 150 }); });
+        act(() => { gesture.__handlers.onUpdate?.({ translationY: 151 }); });
+        expect(hapticEvents).toEqual(['light', 'selection']);
+        act(() => { gesture.__handlers.onEnd?.(); gesture.__handlers.onFinalize?.({}, true); });
+        expect(hapticEvents).toEqual(['light', 'selection']);
+        await act(async () => { resolveReorder('applied'); });
+        expect(hapticEvents).toEqual(['light', 'selection', 'light']);
+    });
+
+    it.each(['refused', 'unknown', 'unchanged', undefined] as const)('reports %s without a success pulse', async (outcome) => {
+        const queue = mountQueue(async () => outcome);
+        const gesture = queue.dragHandleGesture(0);
+        await act(async () => {
+            gesture.__handlers.onStart?.();
+            gesture.__handlers.onUpdate?.({ translationY: 150 });
+            gesture.__handlers.onEnd?.();
+            gesture.__handlers.onFinalize?.({}, true);
+        });
+        expect(hapticEvents).toEqual(['light', 'selection', ...(outcome === 'refused' ? ['error'] : [])]);
+    });
+
+    it('keeps cancellation and a drop back at the original slot silent after pickup', async () => {
+        const persist = vi.fn();
+        const queue = mountQueue(persist);
+        const gesture = queue.dragHandleGesture(0);
+        await act(async () => {
+            gesture.__handlers.onStart?.();
+            gesture.__handlers.onFinalize?.({}, false);
+        });
+        expect(hapticEvents).toEqual(['light']);
+        expect(persist).not.toHaveBeenCalled();
+        await act(async () => {
+            gesture.__handlers.onStart?.();
+            gesture.__handlers.onEnd?.();
+            gesture.__handlers.onFinalize?.({}, true);
+        });
+        expect(hapticEvents).toEqual(['light', 'light']);
+        expect(persist).not.toHaveBeenCalled();
+    });
+
+    it('restores the original order after cancelling a moved row', async () => {
+        const persist = vi.fn();
+        const queue = mountQueue(persist);
+        const gesture = queue.dragHandleGesture(0);
+        await act(async () => {
+            gesture.__handlers.onStart?.();
+            gesture.__handlers.onUpdate?.({ translationY: 150 });
+            gesture.__handlers.onEnd?.({}, false);
+            gesture.__handlers.onFinalize?.({}, false);
+        });
+        queue.repaint();
+        expect(queue.rows().map(rowTranslateY)).toEqual([
+            { px: 0, sprung: false }, { px: 0, sprung: false }, { px: 0, sprung: false },
+        ]);
+        expect(persist).not.toHaveBeenCalled();
+        expect(hapticEvents).toEqual(['light', 'selection']);
+    });
     it('declares no height and no position: the rows in flow are the block’s only height owner', () => {
         const queue = mountQueue(() => {});
         const declared = queue.tree.root.findAll(() => true)

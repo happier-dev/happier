@@ -1,6 +1,6 @@
 import { InvalidateSync } from "@/utils/sync";
 import { RawJSONLines } from "../types";
-import { createClaudeTaskNotificationToolResultProjector, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
+import { createClaudeTaskNotificationToolResultProjector, isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 import { dirname, join } from "node:path";
 import { watch, type FSWatcher } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -396,9 +396,8 @@ export async function createSessionScanner(opts: {
 
     function rewriteTaskNotificationToToolResult(message: RawJSONLines): TaskNotificationAction | null {
         if (message.isSidechain === true) return null;
-        const fact = readClaudeTaskLifecycleEnvelope(message);
-        const projected = taskNotificationProjector.project(message);
-        return projected ? { type: 'rewrite', message: projected } : fact?.subtype === 'task_notification' ? { type: 'drop' } : null;
+        const projection = taskNotificationProjector.project(message);
+        return projection ? projection.message ? { type: 'rewrite', message: projection.message } : { type: 'drop' } : null;
     }
 
     // If the caller already knows the transcript path for the initial session,
@@ -465,7 +464,7 @@ export async function createSessionScanner(opts: {
         const parsed = parseRawJsonLinesObject(value);
         const type = parsed?.type ?? (typeof (value as any)?.type === 'string' ? String((value as any).type) : '');
         if (providers.claude.isClaudeInternalEventType(type)
-            && readClaudeTaskLifecycleEnvelope(value)?.subtype !== 'task_notification') return null;
+            && !isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(value))) return null;
         return parsed ? normalizeClaudeToolUseNamesInRawJsonLines(parsed) : null;
     }
 
@@ -500,7 +499,7 @@ export async function createSessionScanner(opts: {
             logger.debug('[SESSION_SCANNER] Failed observing message:', err);
         }
         if (isClaudeInternalTranscriptMessage(file)
-            && (file.isSidechain === true || readClaudeTaskLifecycleEnvelope(file)?.subtype !== 'task_notification')) {
+            && (file.isSidechain === true || !isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(file)))) {
             return false;
         }
         const key = messageKey(file);

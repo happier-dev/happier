@@ -137,7 +137,7 @@ describe('StructuredReferencesRow session availability', () => {
         expect(screen.getTextContent()).not.toContain('message.sessionReferenceUnavailable');
 
         await pressTestInstanceAsync(chip!, 'transcript-session-reference:archived-target');
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/archived-target', expect.any(Object));
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/archived-target');
     });
 
     /**

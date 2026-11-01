@@ -35,6 +35,7 @@ import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -185,7 +186,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             }
         };
 
-        void run();
+        fireAndForget(run(), { tag: 'SessionHandoffPickerModal.refreshMachines' });
 
         return () => {
             cancelled = true;
@@ -230,12 +231,14 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const [transferSessionData, setTransferSessionData] = React.useState(true);
     const agentId = resolveAgentIdFromSessionMetadata(currentSession?.metadata);
     const existingStateAvailability = useSessionHandoffExistingStateAvailability({ serverId, sourceMachineId: resolvedSourceMachineId, targetMachineId: selectedMachineId, agentId });
-    const transferChoiceDisabled = awaitingAdmission || existingStateAvailability !== 'available';
-    const transferHintKey = existingStateAvailability === 'unsupported_agent'
-        ? 'sessionHandoff.transferSessionData.agentRequiresTransfer'
-        : existingStateAvailability === 'checking'
-        ? 'sessionHandoff.transferSessionData.checking'
-        : 'sessionHandoff.transferSessionData.updateRequired';
+    const transferChoiceDisabled = awaitingAdmission || existingStateAvailability.status !== 'available';
+    const transferHint = existingStateAvailability.status === 'error'
+        ? existingStateAvailability.errorMessage
+        : t(existingStateAvailability.status === 'unsupported_agent'
+            ? 'sessionHandoff.transferSessionData.agentRequiresTransfer'
+            : existingStateAvailability.status === 'checking'
+            ? 'sessionHandoff.transferSessionData.checking'
+            : 'sessionHandoff.transferSessionData.updateRequired');
     const normalizedSourcePath = normalizeLocalPathForComparison(sourcePath);
     const normalizedTargetPath = targetPath
         ? normalizeLocalPathForComparison(resolveAbsolutePath(targetPath, targetMachineHomeDir))
@@ -263,7 +266,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [onClose, onResolve]);
 
     const handleStart = React.useCallback(() => {
-        if (awaitingAdmission || (!isSameMachine && !transferSessionData && existingStateAvailability !== 'available')) return;
+        if (awaitingAdmission || (!isSameMachine && !transferSessionData && existingStateAvailability.status !== 'available')) return;
         const targetMachineId = normalizeId(selectedMachineId);
         if (!targetMachineId) return;
         if (!canStart) return;
@@ -292,7 +295,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 testID="session-handoff-start"
                 title={actionSpec.title}
                 onPress={handleStart}
-                disabled={!canStart || awaitingAdmission || (!isSameMachine && !transferSessionData && existingStateAvailability !== 'available')}
+                disabled={!canStart || awaitingAdmission || (!isSameMachine && !transferSessionData && existingStateAvailability.status !== 'available')}
             />
         </View>
     ), [actionSpec.title, awaitingAdmission, canStart, existingStateAvailability, handleCancel, handleStart, isSameMachine, styles.footer, transferSessionData]);
@@ -357,11 +360,11 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                     {!isSameMachine ? <ItemGroup>
                         <Item
                             title={t('sessionHandoff.transferSessionData.title')}
-                            subtitle={t(existingStateAvailability === 'available' ? 'sessionHandoff.transferSessionData.subtitle' : transferHintKey)}
+                            subtitle={existingStateAvailability.status === 'available' ? t('sessionHandoff.transferSessionData.subtitle') : transferHint}
                             rightElement={<Switch testID="session-handoff-transfer-session-data" value={transferSessionData}
                                 disabled={transferChoiceDisabled}
                                 accessibilityLabel={t('sessionHandoff.transferSessionData.title')}
-                                accessibilityHint={transferChoiceDisabled ? t(transferHintKey) : t('sessionHandoff.transferSessionData.subtitle')}
+                                accessibilityHint={transferChoiceDisabled ? transferHint : t('sessionHandoff.transferSessionData.subtitle')}
                                 onValueChange={(value) => { if (!transferChoiceDisabled) setTransferSessionData(value); }} />}
                             showChevron={false}
                             onPress={() => { if (!transferChoiceDisabled) setTransferSessionData(!transferSessionData); }}

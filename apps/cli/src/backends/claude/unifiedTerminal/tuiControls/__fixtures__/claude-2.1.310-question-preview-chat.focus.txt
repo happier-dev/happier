@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Preview probe
+
+│ Which harmless synthetic layout should this isolated scratch preview probe
+│ select?
+
+  1. Compact fixture              ┌────────────────────────────────────────────┐
+    (Recommended)                 │ No preview available                       │
+  2. Keep fixture rows            └────────────────────────────────────────────┘
+❯ 3. Record only
+                                  Notes: press n to add notes
+
+────────────────────────────────────────────────────────────────────────────────
+❯ Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel

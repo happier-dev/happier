@@ -12,6 +12,8 @@ function buildNormalizedState(
     return {
         schemaVersionByServerId: { [SERVER_ID]: 1 },
         snapshotVersionByServerId: { [SERVER_ID]: 7 },
+        appearancesBySessionKey: {},
+        sessionAppearancesSupportedByServerId: {},
         pinsBySessionKey: {
             [`${SERVER_ID}:s1`]: { sessionId: 's1', sortKey: '00000001', pinnedAt: 10 },
         },
@@ -70,6 +72,14 @@ function buildNormalizedState(
 }
 
 describe('buildSessionOrganizationSnapshotFromProjection', () => {
+    it('round trips appearance envelopes only when support was observed, preserving the capability distinction', () => {
+        const appearance = { sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'custom', hex: '#123456' } } }, updatedAt: 5 } as const;
+        const state = buildNormalizedState({ appearancesBySessionKey: { 'server-a:s1': appearance }, sessionAppearancesSupportedByServerId: { 'server-a': true } });
+        const projection = buildSessionOrganizationProjection(state, SERVER_ID);
+        expect(projection.appearancesBySessionId).toEqual({ s1: { kind: 'custom', hex: '#123456' } });
+        expect(buildSessionOrganizationSnapshotFromProjection(projection)?.sessionAppearances).toEqual([appearance]);
+        expect(buildSessionOrganizationSnapshotFromProjection(buildSessionOrganizationProjection({ ...state, sessionAppearancesSupportedByServerId: {} }, SERVER_ID))).not.toHaveProperty('sessionAppearances');
+    });
     it('rebuilds the complete organization snapshot a warm boot has to repaint from', () => {
         const projection = buildSessionOrganizationProjection(buildNormalizedState(), SERVER_ID);
 

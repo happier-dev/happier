@@ -138,7 +138,7 @@ describe('Claude shared-group switch continuity', () => {
     expect(mockFetchSessionByIdCompat).not.toHaveBeenCalled();
   });
 
-  it('hot-applies an exact same-group shared-home rewrite when spawn request env predates materialization', async () => {
+  it.each(['leeroy', 'lb_bat'])('hot-applies an exact same-group shared-home rewrite from %s when spawn request env predates materialization', async (previousProfileId) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-claude-shared-continuity-server-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-shared-continuity-home-'));
     const projectDir = await mkdtemp(join(tmpdir(), 'happier-claude-shared-continuity-project-'));
@@ -177,7 +177,7 @@ describe('Claude shared-group switch continuity', () => {
     });
     if (!groupClaudeConfigDir) throw new Error('expected deterministic Claude shared group home');
 
-    const previousBindings = groupBindings('leeroy');
+    const previousBindings = groupBindings(previousProfileId);
     const nextBindings = groupBindings('lb_bat');
     const tracked: TrackedSession = {
       startedBy: 'daemon',

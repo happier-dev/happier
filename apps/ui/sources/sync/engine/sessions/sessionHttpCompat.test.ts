@@ -1,4 +1,4 @@
-import { V2SessionRecordSchema } from '@happier-dev/protocol';
+import { V2SessionRecordSchema, withConnectedServiceReaderSupport } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchSessionListPageCompat, parseCompatSessionByIdResponse } from './sessionHttpCompat';
@@ -41,6 +41,115 @@ function v2ListRequest(rows: readonly Record<string, unknown>[]) {
 }
 
 describe('fetchSessionListPageCompat', () => {
+    it('keeps a near-boundary ID in a required-only overflow request when it cannot fit the account query', async () => {
+        const url = new URL('/v2/sessions?limit=50&requiredOnly=true', 'https://example.test');
+        url.searchParams.set('requiredSessionIds', JSON.stringify(['']));
+        const overhead = `GET ${withConnectedServiceReaderSupport(url.pathname + url.search)} HTTP/1.1\r\n`.length;
+        const id = 'x'.repeat(8 * 1024 - overhead);
+        const paths: string[] = [];
+        const page = await fetchSessionListPageCompat({
+            request: async (path) => {
+                paths.push(path);
+                const ids: string[] = JSON.parse(new URL(path, 'https://example.test').searchParams.get('requiredSessionIds') ?? '[]');
+                return jsonResponse({ sessions: ids.map((id) => rawSessionRow({ id })), hasNext: false, nextCursor: null });
+            },
+            token: 'token',
+            sessionListPath: '/v2/sessions?includeActive=true&includeAttention=true',
+            limit: 50,
+            requiredSessionIds: [id],
+        });
+        expect(page.sessions.map((row) => row.id)).toEqual([id]);
+        expect(paths).toHaveLength(2);
+        for (const path of paths) {
+            expect(`GET ${withConnectedServiceReaderSupport(path)} HTTP/1.1\r\n`.length).toBeLessThanOrEqual(8 * 1024);
+        }
+    });
+
+    it('reports an ID that cannot fit any request instead of silently truncating it', async () => {
+        const request = vi.fn();
+        await expect(fetchSessionListPageCompat({
+            request,
+            token: 'token',
+            limit: 50,
+            requiredOnly: true,
+            requiredSessionIds: ['x'.repeat(8 * 1024)],
+        })).rejects.toThrow(/request-line limit/);
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it.each(['some', 'all'] as const)('splits required rows by the request-line budget without re-requesting %s IDs already supplied by account families', async (initialCoverage) => {
+        const serverUrl = `https://example.test/self-hosted/${'prefix'.repeat(40)}`;
+        const requiredSessionIds = Array.from({ length: 315 }, (_, index) => `session_${String(index).padStart(4, '0')}_${'x'.repeat(12)}`);
+        const initiallyIncludedIds = initialCoverage === 'all' ? requiredSessionIds : requiredSessionIds.slice(250, 270);
+        const requestedPaths: string[] = [];
+        const request = async (path: string) => {
+            requestedPaths.push(path);
+            const query = new URL(path, 'https://example.test').searchParams;
+            const requiredIds: string[] = JSON.parse(query.get('requiredSessionIds') ?? '[]');
+            return jsonResponse({
+                sessions: [
+                    ...(query.get('requiredOnly') === 'true' ? [] : [
+                        rawSessionRow({ id: 'page-row' }),
+                        ...initiallyIncludedIds.map((id) => rawSessionRow({ id })),
+                    ]),
+                    ...requiredIds.map((id) => rawSessionRow({ id })),
+                ],
+                nextCursor: query.get('requiredOnly') === 'true' ? null : 'page-2',
+                hasNext: query.get('requiredOnly') !== 'true',
+                includedActive: query.get('includeActive') === 'true',
+            });
+        };
+
+        const page = await fetchSessionListPageCompat({
+            request,
+            token: 'token',
+            sessionListPath: '/v2/sessions?includeActive=true&includeAttention=true',
+            serverUrl,
+            limit: 50,
+            requiredSessionIds,
+        });
+
+        expect(new Set(page.sessions.map((row) => row.id))).toEqual(new Set(['page-row', ...requiredSessionIds]));
+        expect(page.sessions).toHaveLength(requiredSessionIds.length + 1);
+        expect(page).toMatchObject({ nextCursor: 'page-2', hasNext: true, includedActiveRows: true });
+        if (initialCoverage === 'all') expect(requestedPaths).toHaveLength(1);
+        else expect(requestedPaths.length).toBeGreaterThan(1);
+        for (const [index, path] of requestedPaths.entries()) {
+            const requestUrl = new URL(withConnectedServiceReaderSupport(serverUrl + path));
+            expect(`GET ${requestUrl.pathname}${requestUrl.search} HTTP/1.1\r\n`.length).toBeLessThanOrEqual(8 * 1024);
+            const query = new URL(path, 'https://example.test').searchParams;
+            if (index === 0) expect(query.get('includeActive')).toBe('true');
+            else {
+                expect(query.get('requiredOnly')).toBe('true');
+                expect(query.has('includeActive')).toBe(false);
+                expect(query.has('includeAttention')).toBe(false);
+                expect(query.has('cursor')).toBe(false);
+                const requestedIds: string[] = JSON.parse(query.get('requiredSessionIds') ?? '[]');
+                expect(requestedIds.filter((id) => initiallyIncludedIds.includes(id))).toEqual([]);
+            }
+        }
+    });
+
+    it('filters required-only rows from a server that ignores the new query and does not borrow account pagination', async () => {
+        const requiredSessionIds = Array.from({ length: 315 }, (_, index) => `session_${String(index).padStart(4, '0')}_${'x'.repeat(12)}`);
+        const request = vi.fn(async () => jsonResponse({
+            sessions: [rawSessionRow({ id: 'unrelated' }), ...requiredSessionIds.map((id) => rawSessionRow({ id }))],
+            nextCursor: 'ordinary-page-2',
+            hasNext: true,
+        }));
+        const page = await fetchSessionListPageCompat({
+            request,
+            token: 'token',
+            limit: 50,
+            requiredSessionIds: ['omitted', ...requiredSessionIds],
+            requiredOnly: true,
+        });
+
+        expect(page.sessions.map((row) => row.id)).toEqual(requiredSessionIds);
+        expect(page).toMatchObject({ nextCursor: null, hasNext: false });
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
     it('does not reinterpret incomplete session-row projections as current activity', async () => {
         const request = vi.fn(async (path: string) => {
             if (path === '/v2/sessions?limit=50') {

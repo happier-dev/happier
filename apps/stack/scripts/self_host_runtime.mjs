@@ -35,6 +35,7 @@ import {
   buildServiceDefinition,
   buildWindowsScheduledTaskPowerShellAction,
   planServiceAction,
+  preflightServiceInstallAssets,
   renderSystemdServiceUnit,
   renderWindowsScheduledTaskWrapperPs1,
   resolveServiceBackend,
@@ -234,6 +235,7 @@ function assertRoot() {
 
 function runCommand(cmd, args, { cwd, env, allowFail = false, stdio = 'pipe' } = {}) {
   const result = spawnSync(cmd, args, {
+    windowsHide: stdio !== 'inherit',
     cwd,
     env: env ?? process.env,
     encoding: 'utf-8',
@@ -1141,7 +1143,7 @@ async function uninstallAutoUpdateJob({ config }) {
 }
 
 async function restartAndCheckHealth({ config, serviceSpec, port }) {
-  await restartManagedService({ platform: config.platform, mode: config.mode, spec: serviceSpec }).catch(() => {});
+  await restartManagedService({ platform: config.platform, mode: config.mode, homeDir: homedir(), spec: serviceSpec }).catch(() => {});
   const timeoutMs = resolveSelfHostHealthTimeoutMs();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1759,6 +1761,8 @@ export async function runSelfHostRuntimeMutationWithServiceRecovery({
   const previousDefinitionContents = existsSync(previousDefinition.path)
     ? await readFile(previousDefinition.path, 'utf-8').catch(() => previousDefinition.contents)
     : previousDefinition.contents;
+  // Install and recovery both need these assets; reject before stopping the current service.
+  await preflightServiceInstallAssets({ backend });
 
   try {
     return await mutateRuntime({
@@ -2364,7 +2368,7 @@ async function cmdUninstall({ channel, mode, argv, json }) {
     homeDir: homedir(),
     spec: serviceSpec,
     persistent: true,
-  }).catch(() => {});
+  });
 
   await rm(config.serverBinaryPath, { force: true });
   await rm(config.serverPreviousBinaryPath, { force: true });
@@ -2634,6 +2638,7 @@ function resolveRelayHostForwardSupport(env = process.env) {
 
   try {
     const probe = spawnSync('happier', ['relay', 'host', '--help'], {
+      windowsHide: true,
       env,
       stdio: 'ignore',
       encoding: 'utf-8',

@@ -5,9 +5,11 @@ import type {
     SessionOrganizationOrderEntry,
     SessionOrganizationPin,
     SessionOrganizationSnapshot,
+    SessionOrganizationSessionAppearance,
     SessionOrganizationSnapshotRequest,
     SessionOrganizationTag,
 } from '@happier-dev/protocol';
+import type { SessionAppearanceColor } from './appearanceColor';
 
 export type SessionOrganizationFolderAssignmentValue = string | null;
 
@@ -20,6 +22,8 @@ export type NormalizedSessionOrganizationState = Readonly<{
     tagsByTagKey: Readonly<Record<string, SessionOrganizationTag>>;
     tagAssignmentsBySessionKey: Readonly<Record<string, readonly string[]>>;
     attentionStandingsBySessionKey: Readonly<Record<string, SessionAttentionStanding>>;
+    appearancesBySessionKey: Readonly<Record<string, SessionOrganizationSessionAppearance>>;
+    sessionAppearancesSupportedByServerId: Readonly<Record<string, boolean>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;
@@ -27,6 +31,7 @@ export type NormalizedSessionOrganizationState = Readonly<{
 export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
     SessionOrganizationSnapshotRequest,
     | 'includeFolders'
+    | 'includeSessionAppearances'
     | 'includeTags'
     | 'includeLabels'
     | 'includeAllFolderAssignments'
@@ -47,6 +52,9 @@ export type SessionOrganizationProjection = Readonly<{
     tagsById: Readonly<Record<string, SessionOrganizationTag>>;
     tagAssignmentsBySessionId: Readonly<Record<string, readonly string[]>>;
     attentionStandingsBySessionId: Readonly<Record<string, SessionAttentionStanding>>;
+    appearancesBySessionId: Readonly<Record<string, SessionAppearanceColor>>;
+    sessionAppearancesBySessionId: Readonly<Record<string, SessionOrganizationSessionAppearance>>;
+    sessionAppearancesSupported: boolean;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
     labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
 }>;

@@ -5,6 +5,12 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The virtualized native layout boundary needs rendered items in the host harness.
+vi.mock('@/components/ui/lists/flashListCompat/SessionListVirtualizedList', async () => {
+    const { createCapturingFlashListMock } = await import('@/dev/testkit/mocks/flashList');
+    return { SessionListVirtualizedList: createCapturingFlashListMock({ renderItems: true }).module.FlashList };
+});
+
 vi.mock('react-native-gesture-handler', async () => {
     const { createGestureHandlerMock } = await import('@/dev/testkit/mocks/gestureHandler');
     return createGestureHandlerMock();

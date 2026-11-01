@@ -15,6 +15,7 @@ describe('resolveDaemonServiceListEntries', () => {
     'HAPPIER_HOME_DIR',
     'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+    'PATH',
   ]);
 
   afterEach(() => {
@@ -26,7 +27,7 @@ describe('resolveDaemonServiceListEntries', () => {
     vi.resetModules();
   });
 
-  it('matches a default-following systemd unit installed through the managed default shim', async () => {
+  it('matches a managed default-following systemd unit after the invoking shell PATH changes', async () => {
     await withTempDir('happier-daemon-service-list-managed-default-shim-', async (userHomeDir) => {
       const happierHomeDir = join(userHomeDir, '.happier');
       const managedBinDir = join(happierHomeDir, 'bin');
@@ -41,6 +42,7 @@ describe('resolveDaemonServiceListEntries', () => {
         HAPPIER_HOME_DIR: happierHomeDir,
         HAPPIER_ACTIVE_SERVER_ID: 'cloud',
         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+        PATH: '/opt/install-shell/bin:/usr/bin:/bin',
       });
       vi.resetModules();
 
@@ -84,6 +86,8 @@ describe('resolveDaemonServiceListEntries', () => {
       const expectedServicePath = expectedPlan.files[0]?.path ?? '';
       mkdirSync(dirname(expectedServicePath), { recursive: true });
       writeFileSync(expectedServicePath, expectedPlan.files[0]?.content ?? '', 'utf8');
+
+      envScope.patch({ PATH: '/opt/login shell/bin:/usr/bin:/bin' });
 
       const entries = await resolveDaemonServiceListEntries(runtime, { mode: 'user' });
       const defaultEntry = entries.find((entry) => entry.path === expectedServicePath) ?? null;

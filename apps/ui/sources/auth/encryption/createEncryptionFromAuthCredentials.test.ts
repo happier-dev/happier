@@ -9,6 +9,23 @@ import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { createEncryptionFromAuthCredentials } from './createEncryptionFromAuthCredentials';
 
 describe('createEncryptionFromAuthCredentials', () => {
+    it('supports a keyless account and explicit plain machines without manufacturing encryption material', async () => {
+        const encryption = await createEncryptionFromAuthCredentials({ token: 'plain-token' });
+        expect(encryption.hasEncryptionMaterial()).toBe(false);
+        expect(encryption.anonID).toBeNull();
+        await expect(encryption.decryptEncryptionKeys(['unavailable-history-key'])).resolves.toEqual([null]);
+        expect(() => encryption.getContentPrivateKey()).toThrowError(expect.objectContaining({ code: 'encryption_material_unavailable' }));
+        await expect(encryption.encryptRaw({ secret: true })).rejects.toMatchObject({ code: 'encryption_material_unavailable' });
+        await encryption.initializeMachines(new Map([['plain-machine', null]]), { plainMachineIds: new Set(['plain-machine']) });
+        const machine = encryption.getMachineEncryption('plain-machine')!;
+        const payload = { type: 'success', sessionId: 'session-plain' };
+        const encoded = await machine.encryptRaw(payload);
+        expect(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))).toEqual({ t: 'plain', v: payload });
+        expect(await machine.decryptRaw(encoded)).toEqual(payload);
+        await encryption.initializeMachines(new Map([['plain-machine', null]]));
+        expect(encryption.getMachineEncryption('plain-machine')).toBeNull();
+    });
+
     it('creates Encryption from dataKey credentials (publicKey + machineKey) that can decrypt encryption keys', async () => {
         const seed = new Uint8Array(32).fill(7);
         const keyPair = sodium.crypto_box_seed_keypair(seed);
@@ -55,7 +72,7 @@ describe('createEncryptionFromAuthCredentials', () => {
         expect(Array.from(decrypted!)).toEqual(Array.from(dataKey));
     });
 
-    it('uses machineKey data-key encryption as machine fallback when machine data key cannot be decrypted', async () => {
+    it('keeps released machineKey encryption for legacy machine rows without a published data key', async () => {
         const machineKey = new Uint8Array(32).fill(13);
         const keyPair = sodium.crypto_box_keypair();
 

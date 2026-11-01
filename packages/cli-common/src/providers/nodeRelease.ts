@@ -80,48 +80,58 @@ function parseNodeShaSums(text: string): ReadonlyMap<string, string> {
 export async function fetchNodeRuntimeReleaseAsset(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }> = {}): Promise<NodeRuntimeReleaseAsset> {
+  params.signal?.throwIfAborted();
   const processEnv = params.processEnv ?? process.env;
   const fetchImpl = params.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new Error('Managed Node bootstrap requires fetch support');
   }
 
-  const indexResponse = await fetchImpl(NODE_RELEASE_INDEX_URL, {
-    headers: {
-      'user-agent': 'happier-cli',
-      accept: 'application/json',
-    },
-  });
-  if (!indexResponse.ok) {
-    throw new Error(`Failed to fetch Node release index (${indexResponse.status})`);
-  }
-  const index = (await indexResponse.json()) as ReadonlyArray<NodeReleaseIndexEntry>;
-  const tag = selectNodeReleaseTag(Array.isArray(index) ? index : [], resolveRequestedNodeTag(processEnv));
-  const assetNames = resolvePreferredNodeAssetNames({ tag });
+  try {
+    const indexResponse = await fetchImpl(NODE_RELEASE_INDEX_URL, {
+      signal: params.signal,
+      headers: {
+        'user-agent': 'happier-cli',
+        accept: 'application/json',
+      },
+    });
+    if (!indexResponse.ok) {
+      throw new Error(`Failed to fetch Node release index (${indexResponse.status})`);
+    }
+    const index = (await indexResponse.json()) as ReadonlyArray<NodeReleaseIndexEntry>;
+    const tag = selectNodeReleaseTag(Array.isArray(index) ? index : [], resolveRequestedNodeTag(processEnv));
+    const assetNames = resolvePreferredNodeAssetNames({ tag });
 
-  const shasumsResponse = await fetchImpl(`${NODE_RELEASE_BASE_URL}/${tag}/SHASUMS256.txt`, {
-    headers: {
-      'user-agent': 'happier-cli',
-      accept: 'text/plain',
-    },
-  });
-  if (!shasumsResponse.ok) {
-    throw new Error(`Failed to fetch Node release checksums (${shasumsResponse.status})`);
-  }
-  const shasums = parseNodeShaSums(await shasumsResponse.text());
-  const selectedAssetName = assetNames.find((assetName) => shasums.has(assetName)) ?? null;
-  if (!selectedAssetName) {
-    throw new Error(`Failed to resolve checksum for Node assets ${assetNames.join(', ')}`);
-  }
-  const digest = shasums.get(selectedAssetName) ?? null;
+    params.signal?.throwIfAborted();
+    const shasumsResponse = await fetchImpl(`${NODE_RELEASE_BASE_URL}/${tag}/SHASUMS256.txt`, {
+      signal: params.signal,
+      headers: {
+        'user-agent': 'happier-cli',
+        accept: 'text/plain',
+      },
+    });
+    if (!shasumsResponse.ok) {
+      throw new Error(`Failed to fetch Node release checksums (${shasumsResponse.status})`);
+    }
+    const shasums = parseNodeShaSums(await shasumsResponse.text());
+    const selectedAssetName = assetNames.find((assetName) => shasums.has(assetName)) ?? null;
+    if (!selectedAssetName) {
+      throw new Error(`Failed to resolve checksum for Node assets ${assetNames.join(', ')}`);
+    }
+    const digest = shasums.get(selectedAssetName) ?? null;
 
-  return {
-    name: selectedAssetName,
-    url: `${NODE_RELEASE_BASE_URL}/${tag}/${selectedAssetName}`,
-    digest,
-    tag,
-    version: parseNodeVersion(tag),
-    binaryRelativePath: resolveNodeBinaryRelativePath(),
-  };
+    return {
+      name: selectedAssetName,
+      url: `${NODE_RELEASE_BASE_URL}/${tag}/${selectedAssetName}`,
+      digest,
+      tag,
+      version: parseNodeVersion(tag),
+      binaryRelativePath: resolveNodeBinaryRelativePath(),
+    };
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw error;
+  }
 }

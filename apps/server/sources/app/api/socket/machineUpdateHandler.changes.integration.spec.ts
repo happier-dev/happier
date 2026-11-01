@@ -76,6 +76,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
                     replacedByMachineId: machineReplacedByMachineId,
                 };
             }
+            if (args?.select?.dataEncryptionKey) {
+                return machineRevokedAt || machineReplacedByMachineId ? null : { dataEncryptionKey: null };
+            }
             return null;
         });
         txDbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });

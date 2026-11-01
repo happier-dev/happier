@@ -41,6 +41,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         });
 
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn(async () => {
                 throw new Error('decryptRaw should not be used for canonical ciphertext');
@@ -74,6 +75,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         const machineKey = new Uint8Array(32).fill(7);
 
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn(async () => {
                 throw new Error('decryptRaw should not be used for plaintext settings');
@@ -113,6 +115,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         });
 
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn(async () => {
                 throw new Error('decryptRaw should not be used for canonical ciphertext');

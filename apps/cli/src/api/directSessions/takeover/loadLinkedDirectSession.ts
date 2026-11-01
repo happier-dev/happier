@@ -15,8 +15,9 @@ import * as z from 'zod';
 import type { Credentials } from '@/persistence';
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { lazySchema } from '@happier-dev/protocol';
 
-const DirectSessionMetadataSchema = z
+const DirectSessionMetadataSchema = lazySchema(() => z
   .object({
     path: z.string().optional(),
     directSessionV1: z
@@ -33,7 +34,7 @@ const DirectSessionMetadataSchema = z
       .passthrough(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type LoadedLinkedDirectSession = Readonly<{
   rawSession: RawSessionRecord;

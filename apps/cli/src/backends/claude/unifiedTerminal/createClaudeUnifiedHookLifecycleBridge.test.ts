@@ -9,8 +9,56 @@ import type { ClaudeWorkflowTaskReference } from '../workflows/claudeWorkflowTas
 import type { SessionHookData } from '../utils/startHookServer';
 import { createClaudeUnifiedHookLifecycleBridge } from './createClaudeUnifiedHookLifecycleBridge';
 import { TERMINAL_INPUT_QUIET_PERIOD_MS } from '@/agent/runtime/terminal/injection/arbiter';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { TurnStallNotice } from '@/agent/runtime/session/turn/stallWatch';
+import { createClaudeUnifiedInputArbiter } from './createClaudeUnifiedInputArbiter';
+import type { ClaudeUnifiedSessionHookSubscription } from './createClaudeUnifiedHookLifecycleBridge';
 
 describe('createClaudeUnifiedHookLifecycleBridge', () => {
+  it('counts fresh main hooks for turn silence while startup replay and sidechain hooks stay inert', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const notices: TurnStallNotice[] = [];
+    const turn = createSessionTurnLifecycle({
+      sessionId: 'happier-session', enqueueSessionTurn: async () => {},
+      turnStallWarnMs: 100, onTurnStallNotice: notice => notices.push(notice),
+    });
+    // Hook delivery and terminal injection are external boundaries; both lifecycle owners stay real.
+    let hook: Parameters<ClaudeUnifiedSessionHookSubscription>[0] | undefined;
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: async batch => ({ status: 'injected', at: Date.now(), bytesWritten: batch.message.length }),
+    });
+    const bridge = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: callback => { hook = callback; return () => { hook = undefined; }; },
+      arbiter, completionQuiescenceMs: 0,
+      onProviderEvent: () => turn.observeProviderTurnEvent(),
+      readProviderSessionId: () => 'native-main',
+    });
+    try {
+      await turn.beginTurn({ provider: 'claude' });
+      bridge.start({ abortSignal: new AbortController().signal });
+      await vi.advanceTimersByTimeAsync(75);
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main' });
+      await vi.advanceTimersByTimeAsync(75);
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main' }, { startupReplay: true, observedAt: 0 });
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main', agent_id: 'child' });
+      hook?.({ hook_event_name: 'PermissionRequestCompleted', session_id: 'native-main' });
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'stale-native-session' });
+      await vi.advanceTimersByTimeAsync(24);
+      expect(notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(notices).toMatchObject([{ lastEventAgeMs: 100 }]);
+      hook?.({ hook_event_name: 'SessionStart', source: 'compact', session_id: 'native-next' });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(notices).toHaveLength(2);
+    } finally {
+      bridge.dispose();
+      await arbiter.dispose();
+      await turn.completeTurn({ provider: 'claude' });
+      vi.useRealTimers();
+    }
+  });
+
   it('emits no target Activity truth when the unified bridge is disposed', async () => {
     const handle = {
       report: vi.fn(async () => {}),
@@ -1429,5 +1477,91 @@ describe('createClaudeUnifiedHookLifecycleBridge', () => {
     }
   });
 
+  function startBridgeWithTurnStallProbe(params: Readonly<{
+    onStalled: () => 'resolved' | 'pending';
+    onStarvation: () => void;
+  }>) {
+    let subscribedHook: ((data: SessionHookData) => void) | undefined;
+    const bridge = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: (callback) => {
+        subscribedHook = callback;
+        return () => {
+          subscribedHook = undefined;
+        };
+      },
+      arbiter: {
+        observeLifecycle: vi.fn(),
+        confirmPromptAcceptedByProvider: vi.fn().mockResolvedValue(false),
+        drainWhenSafe: vi.fn().mockResolvedValue(undefined),
+      },
+      completionQuiescenceMs: 0,
+      turnStallScreenProbe: {
+        quietMs: 5,
+        maxAttempts: 2,
+        onStalled: params.onStalled,
+        onStarvation: params.onStarvation,
+      },
+    });
+    bridge.start({ abortSignal: new AbortController().signal });
+    const hook = subscribedHook;
+    if (typeof hook !== 'function') throw new Error('Claude session hook subscription was not registered');
+    hook({ hook_event_name: 'UserPromptSubmit', session_id: 'claude-session-id' });
+    return bridge;
+  }
 
+  it('stops mid-turn stall probing without escalating when the budget exhausts on a clear screen', async () => {
+    const onStalled = vi.fn(() => 'resolved' as const);
+    const onStarvation = vi.fn();
+    const bridge = startBridgeWithTurnStallProbe({ onStalled, onStarvation });
+
+    try {
+      await vi.waitFor(() => {
+        expect(onStalled).toHaveBeenCalledTimes(2);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onStalled).toHaveBeenCalledTimes(2);
+      expect(onStarvation).not.toHaveBeenCalled();
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it.each([
+    { first: 'resolved', last: 'pending', escalations: 1 },
+    { first: 'pending', last: 'resolved', escalations: 0 },
+  ] as const)('uses the last mid-turn stall probe outcome ($first then $last)', async ({ first, last, escalations }) => {
+    const onStalled = vi.fn<() => 'resolved' | 'pending'>()
+      .mockReturnValueOnce(first)
+      .mockReturnValue(last);
+    const onStarvation = vi.fn();
+    const bridge = startBridgeWithTurnStallProbe({ onStalled, onStarvation });
+
+    try {
+      await vi.waitFor(() => {
+        expect(onStalled).toHaveBeenCalledTimes(2);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onStalled).toHaveBeenCalledTimes(2);
+      expect(onStarvation).toHaveBeenCalledTimes(escalations);
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it('escalates once when the mid-turn stall budget exhausts with the screen still unresolved', async () => {
+    const onStalled = vi.fn(() => 'pending' as const);
+    const onStarvation = vi.fn();
+    const bridge = startBridgeWithTurnStallProbe({ onStalled, onStarvation });
+
+    try {
+      await vi.waitFor(() => {
+        expect(onStarvation).toHaveBeenCalledTimes(1);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onStalled).toHaveBeenCalledTimes(2);
+      expect(onStarvation).toHaveBeenCalledTimes(1);
+    } finally {
+      bridge.dispose();
+    }
+  });
 });

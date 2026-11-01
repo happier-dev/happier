@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { applySessionListRenderablePatch } from '@/sync/domains/session/listing/sessionListRenderable';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type { SessionListRenderablePatch } from '@/sync/store/domains/sessionListRenderableStoreUpdate';
 import { createSessionListRenderableProjectionPatchCoalescer } from './sessionListRenderableProjectionPatchCoalescer';
@@ -74,19 +75,44 @@ describe('createSessionListRenderableProjectionPatchCoalescer', () => {
                 renderables.set(sessionId, { ...previous, ...patch, id: previous.id });
             }
         });
-        const coalescer = createSessionListRenderableProjectionPatchCoalescer<number>({
+        const coalescer = createSessionListRenderableProjectionPatchCoalescer<boolean>({
             getConfig: () => ({ enabled: true, windowMs: 100, maxBatchSize: 10 }),
             readRenderable: (sessionId) => renderables.get(sessionId),
-            buildPatch: ({ payload }) => ({ updatedAt: payload }),
+            buildPatch: ({ payload }) => ({ thinking: payload }),
             applyPatches,
         });
 
-        coalescer.enqueue('s1', 2, { deferLeadingPatch: true });
-        coalescer.enqueue('s1', 1);
+        // Reversible state can cancel out; lifecycle timestamps cannot regress.
+        coalescer.enqueue('s1', true, { deferLeadingPatch: true });
+        coalescer.enqueue('s1', false);
         vi.advanceTimersByTime(100);
 
         expect(applyPatches).not.toHaveBeenCalled();
         expect(renderables.get('s1')).toEqual(buildRenderable('s1'));
+    });
+
+    it('preserves the newest lifecycle timestamp when a queued patch arrives out of order', () => {
+        const renderables = new Map<string, SessionListRenderableSession>([
+            ['s1', buildRenderable('s1')],
+        ]);
+        const coalescer = createSessionListRenderableProjectionPatchCoalescer<number>({
+            getConfig: () => ({ enabled: true, windowMs: 100, maxBatchSize: 10 }),
+            readRenderable: (sessionId) => renderables.get(sessionId),
+            buildPatch: ({ payload }) => ({ updatedAt: payload }),
+            applyPatches: (patches) => {
+                for (const { sessionId, patch } of patches) {
+                    const previous = renderables.get(sessionId);
+                    if (!previous) continue;
+                    renderables.set(sessionId, applySessionListRenderablePatch(previous, patch));
+                }
+            },
+        });
+
+        coalescer.enqueue('s1', 3, { deferLeadingPatch: true });
+        coalescer.enqueue('s1', 2);
+        vi.advanceTimersByTime(100);
+
+        expect(renderables.get('s1')?.updatedAt).toBe(3);
     });
 
     it('resets queued patches and leading windows without applying stale work', () => {
@@ -128,15 +154,15 @@ describe('createSessionListRenderableProjectionPatchCoalescer', () => {
             flushIntervalMs: 60_000,
         });
         syncPerformanceTelemetry.reset();
-        const coalescer = createSessionListRenderableProjectionPatchCoalescer<number>({
+        const coalescer = createSessionListRenderableProjectionPatchCoalescer<boolean>({
             getConfig: () => ({ enabled: true, windowMs: 100, maxBatchSize: 10 }),
             readRenderable: (sessionId) => renderables.get(sessionId),
-            buildPatch: ({ payload }) => ({ updatedAt: payload }),
+            buildPatch: ({ payload }) => ({ thinking: payload }),
             applyPatches,
         });
 
-        coalescer.enqueue('s1', 2, { deferLeadingPatch: true });
-        coalescer.enqueue('s1', 1);
+        coalescer.enqueue('s1', true, { deferLeadingPatch: true });
+        coalescer.enqueue('s1', false);
         vi.advanceTimersByTime(100);
 
         const suppressedEvent = syncPerformanceTelemetry.snapshot().events.find(

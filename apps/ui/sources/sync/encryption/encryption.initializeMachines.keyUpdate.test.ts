@@ -3,6 +3,14 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from './encryption';
 
 describe('Encryption.initializeMachines (key updates)', () => {
+  it('preserves an encrypted false result instead of interpreting it as failed decryption', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    await encryption.initializeMachines(new Map([['machine-false', null]]));
+    const cipher = encryption.getMachineEncryption('machine-false');
+    if (!cipher) throw new Error('Expected initialized machine encryption');
+    expect(await cipher.decryptRaw(await cipher.encryptRaw(false))).toBe(false);
+  });
+
   it('updates machine encryption when a data key becomes available later', async () => {
     const masterSecret = new Uint8Array(32).fill(1);
     const machineDataKey = new Uint8Array(32).fill(2);

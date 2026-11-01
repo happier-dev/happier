@@ -1,4 +1,5 @@
 import psList from 'ps-list';
+import { listDarwinProcessSnapshot } from './posixPs';
 
 export type ProcessSnapshotEntry = Awaited<ReturnType<typeof psList>>[number];
 
@@ -13,10 +14,14 @@ const DEFAULT_PROCESS_SNAPSHOT_TTL_MS = 1_000;
 let cachedSnapshot: Readonly<{ capturedAtMs: number; processes: readonly ProcessSnapshotEntry[] }> | null = null;
 let inFlightSnapshot: Promise<readonly ProcessSnapshotEntry[]> | null = null;
 
+async function captureProcessSnapshot(): Promise<readonly ProcessSnapshotEntry[]> {
+  return process.platform === 'darwin' ? listDarwinProcessSnapshot() : psList();
+}
+
 export async function listProcessSnapshot({
   ttlMs = DEFAULT_PROCESS_SNAPSHOT_TTL_MS,
   nowMs = Date.now,
-  psListImpl = psList,
+  psListImpl = captureProcessSnapshot,
 }: ListProcessSnapshotOptions = {}): Promise<readonly ProcessSnapshotEntry[]> {
   const ttl = Math.max(0, Math.floor(ttlMs));
   const now = nowMs();

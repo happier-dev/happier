@@ -1,14 +1,11 @@
-import type { AgentState, Metadata, PermissionMode } from '@/api/types';
+import type { AgentState, PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { randomUUID } from 'node:crypto';
-import { open as openFile } from 'node:fs/promises';
-import { basename } from 'node:path';
-import { clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
-import { AgentStateRequestStore, hasPermissionResponseClaimV1 } from '@/agent/permissions/agentStateRequestStore';
+import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
-import type { PermissionRequestCoordinatorStore } from '@/agent/permissions/permissionRequestCoordinator';
+import type { PermissionRequestCoordinatorContext, PermissionRequestCoordinatorStore } from '@/agent/permissions/permissionRequestCoordinator';
 
 import type { Session } from '../session';
 import type { PermissionHookData, PermissionHookResponse, SessionHookData } from '../utils/startHookServer';
@@ -17,7 +14,6 @@ import { buildClaudePermissionHookResponse } from '../utils/buildClaudePermissio
 import { mapToClaudeMode } from '../utils/permissionMode';
 import { deepEqual } from '@/utils/deterministicJson';
 import type { PermissionRpcPayload } from '../utils/permissionRpc';
-import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
@@ -44,6 +40,10 @@ import {
 import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
 import { resolveClaudePermissionHookTimeoutMs } from '../utils/permissionHookTimeout';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
+import { clearClaudePlanModeMetadataBestEffort } from '../utils/clearPlanModeMetadataBestEffort';
+import { getToolDescriptor } from '../utils/getToolDescriptor';
+import { readClaudeToolResultPermissionApproval } from '../utils/claudeToolResultPermission';
+import { isClaudeSidechainRuntimeEvidence, readSessionHookSidechainAgentId } from '../utils/sessionHookAttribution';
 
 export { DEFAULT_PROVIDER_HOOK_CEILING_MS } from '../utils/permissionHookTimeout';
 
@@ -52,6 +52,7 @@ type PendingPermissionRequest = {
     toolName: string;
     toolInput: unknown;
     hookEventName: ClaudePermissionHookEventName;
+    sidechainAgentId: string | null;
     createdAt: number;
     /**
      * Wall-clock time after which the provider hook forwarder is assumed dead (Claude killed it once its
@@ -69,6 +70,8 @@ type ResolvedPendingPermissionRequest = {
 type CompletionStatus = 'approved' | 'denied' | 'canceled';
 type ClaudePermissionHookEventName = 'PermissionRequest' | 'PreToolUse';
 type ClaudeToolHookData = Readonly<{
+    agent_id?: unknown;
+    agentId?: unknown;
     hook_event_name?: unknown;
     hookEventName?: unknown;
     tool_use_id?: unknown;
@@ -85,7 +88,6 @@ type ClaudeToolHookData = Readonly<{
 const DEFAULT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 const PERMISSION_TIMED_OUT_REASON = 'Timed out waiting for permission response';
 const PERMISSION_EXPIRED_REASON = 'Provider hook timeout elapsed before a response was delivered';
-const TRANSCRIPT_TAIL_BYTES = 512 * 1024;
 const GENERATED_PERMISSION_REQUEST_ID_PREFIX = 'perm_';
 
 export const DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE = {
@@ -115,6 +117,7 @@ export class ClaudeLocalPermissionBridge {
     private permissionModeUpdatedAt: number = 0;
     private metadataWatcherAbort: AbortController | null = null;
     private localWaiterSequence = 0;
+    private disposed = false;
 
     constructor(session: Session, opts?: { responseTimeoutMs?: number | null; providerHookCeilingMs?: number }) {
         this.session = session;
@@ -163,18 +166,14 @@ export class ClaudeLocalPermissionBridge {
     }
 
     private retireStaleSourceOwnedRequests(): void {
-        const requests = this.session.client.getAgentStateSnapshot?.()?.requests ?? {};
-        for (const [requestId, request] of Object.entries(requests)) {
-            if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) continue;
-            void this.requestStore.completeRequest({
-                requestId,
-                status: 'canceled',
-                reason: CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
-            });
-        }
+        void this.requestStore.cancelAllRequests({
+            reason: CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+            shouldCancel: isClaudeLocalPermissionBridgeAgentStateRequest,
+        }).catch(() => undefined); // The store reports admission failures on the default file log.
     }
 
     dispose(): void {
+        this.disposed = true;
         if (this.metadataWatcherAbort) {
             try {
                 this.metadataWatcherAbort.abort('claude-local-permission-bridge:dispose');
@@ -189,33 +188,52 @@ export class ClaudeLocalPermissionBridge {
         }
         this.localWaiterTimeouts.clear();
 
-        for (const pending of [...this.pendingRequests.values()]) {
-            this.completeRequest({
-                requestId: pending.id,
-                toolName: pending.toolName,
-                toolInput: pending.toolInput,
-                createdAt: pending.createdAt,
-                status: 'canceled',
+        const requests = this.session.client.getAgentStateSnapshot?.()?.requests ?? {};
+        const stateOnlyRequestIds = Object.keys(requests).filter((requestId) => (
+            this.permissionCoordinator.getResponseContext(requestId)?.correlation === 'agent_state'
+        ));
+        if (stateOnlyRequestIds.length > 0) {
+            void this.requestStore.cancelAllRequests({
                 reason: CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
-                hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
-            });
-            this.permissionCoordinator.cancelRequest(pending.id, CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON);
+                requestIds: stateOnlyRequestIds,
+                shouldCancel: isClaudeLocalPermissionBridgeAgentStateRequest,
+            }).catch(() => undefined); // The store reports admission failures on the default file log.
         }
-        this.pendingRequests.clear();
-        this.localWaitersByRequestId.clear();
-        this.permissionCoordinator.dispose();
-        this.requestStore.dispose();
+        const settlements = [...this.pendingRequests.values()].map(async (pending) => {
+            const context = this.permissionCoordinator.getResponseContext(pending.id);
+            if (!context) return;
+            await this.permissionCoordinator.completeCancellationResponse({
+                context, result: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
+                reason: CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+            });
+        });
+        void Promise.allSettled(settlements).then((results) => {
+            this.localWaitersByRequestId.clear();
+            this.requestStore.dispose();
+            if (results.some((result) => result.status === 'rejected')) {
+                // Failed cancellation retains the coordinator's detached occurrence for
+                // another retirement attempt; its local hook has already been rejected.
+                logger.infoFile('[claude-local-permissions] Disposal request settlement admission failed');
+                return;
+            }
+            this.pendingRequests.clear();
+            this.permissionCoordinator.dispose();
+        });
     }
 
-    async handlePermissionHook(data: PermissionHookData): Promise<PermissionHookResponse> {
+    async handlePermissionHook(data: PermissionHookData, options?: Readonly<{ signal?: AbortSignal }>): Promise<PermissionHookResponse> {
+        if (this.disposed || options?.signal?.aborted) return DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE;
         this.syncPermissionModeFromMetadataSnapshot();
         const hookRequestId = this.resolveRequestId(data);
-        const transcriptRequestId = !hookRequestId ? await this.resolveRequestIdFromTranscript(data) : null;
-        const requestId = hookRequestId ?? transcriptRequestId ?? this.generateRequestId();
+        const inferredRequestId = !hookRequestId ? await this.session.claudeToolHookCorrelation.resolvePermissionRequestId(data, {
+            sessionId: this.session.sessionId, transcriptPath: this.session.transcriptPath,
+        }) : null;
+        if (this.disposed || options?.signal?.aborted) return DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE;
+        const requestId = hookRequestId ?? inferredRequestId ?? this.generateRequestId();
 
-        if (!hookRequestId && transcriptRequestId) {
-            logger.debug(`[claude-local-permissions] Permission hook missing tool_use_id; recovered ${transcriptRequestId} from transcript`);
-        } else if (!hookRequestId && !transcriptRequestId) {
+        if (!hookRequestId && inferredRequestId) {
+            logger.debug(`[claude-local-permissions] Permission hook missing tool_use_id; correlated ${inferredRequestId}`);
+        } else if (!hookRequestId) {
             logger.debug(`[claude-local-permissions] Permission hook missing tool_use_id; generated request id ${requestId}`);
         }
 
@@ -290,6 +308,7 @@ export class ClaudeLocalPermissionBridge {
                 toolName,
                 toolInput,
                 hookEventName,
+                sidechainAgentId: readSessionHookSidechainAgentId(data),
                 createdAt,
                 expiresAt: this.computeProviderHookExpiry(createdAt),
             });
@@ -301,6 +320,7 @@ export class ClaudeLocalPermissionBridge {
             toolName,
             toolInput: coordinatorToolInput,
             createdAt,
+            transportSignal: options?.signal,
         });
 
         const coordinatorDecision = this.permissionCoordinator.requestDecision({
@@ -323,20 +343,14 @@ export class ClaudeLocalPermissionBridge {
                 }
                 return response;
             },
-            (error) => {
+            async (error) => {
                 const remaining = this.finishLocalWaiter(requestId, waiter.id);
-                if (waiter.wasTimedOut()) {
+                if (waiter.wasTimedOut() || options?.signal?.aborted) {
                     if (remaining === 0) {
-                        this.completeRequest({
-                            requestId,
-                            toolName,
-                            toolInput,
-                            createdAt,
-                            status: 'canceled',
-                            reason: PERMISSION_TIMED_OUT_REASON,
-                            hookResponse: this.buildDefaultHookResponse(hookEventName),
-                        });
-                        this.permissionCoordinator.cancelRequest(requestId, PERMISSION_TIMED_OUT_REASON);
+                        const context = this.permissionCoordinator.getResponseContext(requestId);
+                        if (context) await this.expireRequestByContext(context, waiter.wasTimedOut()
+                            ? PERMISSION_TIMED_OUT_REASON
+                            : 'Provider hook transport closed before a response was delivered');
                     }
                     return this.buildDefaultHookResponse(hookEventName);
                 }
@@ -360,11 +374,44 @@ export class ClaudeLocalPermissionBridge {
             createdAt: pending.createdAt,
             status: 'approved',
             reason: 'Approved in Claude terminal',
+            observedCompletion: true,
             hookResponse: this.buildAllowHookResponse({
                 hookEventName: pending.hookEventName,
                 toolInput: pending.toolInput,
             }),
         });
+    }
+
+    observeTranscript(value: unknown): void {
+        if (this.disposed || !value || typeof value !== 'object' || Array.isArray(value)) return;
+        const row = value as Record<string, unknown>;
+        if (row.type !== 'user' || isClaudeSidechainRuntimeEvidence(row) || typeof this.session.sessionId !== 'string'
+            || (row.sessionId ?? row.session_id) !== this.session.sessionId) return;
+        const approved = readClaudeToolResultPermissionApproval(row);
+        if (approved === null) return;
+        const message = row.message;
+        if (!message || typeof message !== 'object' || Array.isArray(message)) return;
+        const content = (message as Record<string, unknown>).content;
+        if (!Array.isArray(content)) return;
+        for (const value of content) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+            const block = value as Record<string, unknown>;
+            if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+            const pending = this.pendingRequests.get(block.tool_use_id);
+            if (!pending) continue;
+            this.completeRequest({
+                requestId: pending.id,
+                toolName: pending.toolName,
+                toolInput: pending.toolInput,
+                createdAt: pending.createdAt,
+                status: approved ? 'approved' : 'denied',
+                reason: approved ? 'Approved in Claude terminal' : 'Denied in Claude terminal',
+                observedCompletion: true,
+                hookResponse: approved
+                    ? this.buildAllowHookResponse({ hookEventName: pending.hookEventName, toolInput: pending.toolInput })
+                    : this.buildDefaultHookResponse(pending.hookEventName),
+            });
+        }
     }
 
     private buildDefaultHookResponse(hookEventName: ClaudePermissionHookEventName): PermissionHookResponse {
@@ -443,9 +490,8 @@ export class ClaudeLocalPermissionBridge {
                     }),
                 });
             },
-            completeRequest: (params) => this.requestStore.completeRequest(params),
-            cancelAllRequests: (params) => {
-                this.cancelLocalOutstandingRequests(params.reason);
+            completeRequest: (params) => {
+                return this.requestStore.completeRequest(params);
             },
             hasOutstandingRequest: (requestId) => this.readLocalOutstandingRequest(requestId) !== null,
             isOutstandingRequestClaimed: (requestId) => {
@@ -462,6 +508,7 @@ export class ClaudeLocalPermissionBridge {
         toolName: string;
         toolInput: unknown;
         createdAt: number;
+        transportSignal?: AbortSignal;
     }): { id: string; signal: AbortSignal; wasTimedOut: () => boolean } {
         const waiterId = `local-waiter-${++this.localWaiterSequence}`;
         const controller = new AbortController();
@@ -486,7 +533,9 @@ export class ClaudeLocalPermissionBridge {
 
         return {
             id: waiterId,
-            signal: controller.signal,
+            signal: params.transportSignal
+                ? AbortSignal.any([controller.signal, params.transportSignal])
+                : controller.signal,
             wasTimedOut: () => timedOut,
         };
     }
@@ -621,9 +670,11 @@ export class ClaudeLocalPermissionBridge {
         if (toolName === 'unknown_tool' || !this.hasToolInput(data)) return null;
 
         const toolInput = this.resolveToolInput(data);
+        const sidechainAgentId = readSessionHookSidechainAgentId({ agent_id: data.agent_id, agentId: data.agentId });
         let match: ResolvedPendingPermissionRequest | null = null;
         for (const [requestId, pending] of this.pendingRequests.entries()) {
             if (!requestId.startsWith(GENERATED_PERMISSION_REQUEST_ID_PREFIX)) continue;
+            if (pending.sidechainAgentId !== sidechainAgentId) continue;
             if (pending.toolName !== toolName) continue;
             if (!deepEqual(pending.toolInput, toolInput)) continue;
             if (match) return null;
@@ -640,87 +691,17 @@ export class ClaudeLocalPermissionBridge {
         return true;
     }
 
-    private async resolveRequestIdFromTranscript(data: PermissionHookData): Promise<string | null> {
-        // Prefer the session-owned transcriptPath; only fall back to hook payload paths when the session
-        // has not yet observed a transcript path.
-        const transcriptPath =
-            typeof this.session.transcriptPath === 'string' && this.session.transcriptPath.trim().length > 0
-                ? this.session.transcriptPath
-                : (typeof data.transcript_path === 'string'
-                    ? data.transcript_path
-                    : (typeof data.transcriptPath === 'string' ? data.transcriptPath : ''));
-        const normalizedTranscriptPath = String(transcriptPath ?? '').trim();
-        if (!normalizedTranscriptPath) {
-            return null;
-        }
-        // Defensive checks: the hook payload is untrusted input (even if usually local-only).
-        // Avoid reading obviously-wrong or surprising files.
-        if (normalizedTranscriptPath.length > 4096) return null;
-        const fileName = basename(normalizedTranscriptPath).toLowerCase();
-        if (!(fileName.endsWith('.jsonl') || fileName.endsWith('.json'))) return null;
-
-        const toolName = this.resolveToolName(data);
-        const toolInput = this.resolveToolInput(data);
-
-        try {
-            const fileHandle = await openFile(normalizedTranscriptPath, 'r');
-            try {
-                const stat = await fileHandle.stat();
-                const size = typeof stat.size === 'number' ? stat.size : 0;
-                if (size <= 0) {
-                    return null;
-                }
-
-                const bytesToRead = Math.min(size, TRANSCRIPT_TAIL_BYTES);
-                const start = Math.max(0, size - bytesToRead);
-                const buffer = Buffer.alloc(bytesToRead);
-                const { bytesRead } = await fileHandle.read(buffer, 0, bytesToRead, start);
-                const text = buffer.subarray(0, bytesRead).toString('utf8');
-
-                const lines = text.split('\n');
-                for (let i = lines.length - 1; i >= 0; i -= 1) {
-                    const line = lines[i]?.trim();
-                    if (!line) continue;
-                    let parsed: any;
-                    try {
-                        parsed = JSON.parse(line);
-                    } catch {
-                        continue;
-                    }
-
-                    const content = parsed?.message?.content;
-                    if (!Array.isArray(content)) {
-                        continue;
-                    }
-
-                    for (const item of content) {
-                        if (item?.type !== 'tool_use') continue;
-                        if (item?.name !== toolName) continue;
-                        if (typeof item?.id !== 'string' || item.id.trim().length === 0) continue;
-                        if (!deepEqual(item?.input, toolInput)) continue;
-                        return item.id.trim();
-                    }
-                }
-            } finally {
-                await fileHandle.close();
-            }
-        } catch (error) {
-            logger.debug('[claude-local-permissions] Failed to recover tool_use_id from transcript', error);
-            return null;
-        }
-
-        return null;
-    }
-
     private async tryHandlePermissionRpc(payload: PermissionRpcPayload): Promise<PermissionRpcConsumerOutcome> {
         const requestId = typeof payload?.id === 'string' ? payload.id : '';
         if (!requestId) {
             return false;
         }
+        if (payload.occurrenceId !== undefined
+            && !this.permissionCoordinator.getResponseContext(requestId, payload.occurrenceId)) return false;
 
         const pending = this.pendingRequests.get(requestId);
         if (pending && this.isProviderHookExpired(pending)) {
-            this.expirePendingRequest(pending);
+            await this.expirePendingRequest(pending);
             return { status: 'expired' };
         }
 
@@ -732,14 +713,14 @@ export class ClaudeLocalPermissionBridge {
         if (!pending) {
             const context = this.permissionCoordinator.getResponseContext(requestId);
             if (context && this.isProviderHookCeilingExceeded(context.createdAt)) {
-                this.expireRequestByContext(context);
+                await this.expireRequestByContext(context);
                 return { status: 'expired' };
             }
         }
 
         const hasStructuredAnswers = payload.answers !== undefined || payload.structuredAnswersV1 !== undefined;
         const structuredContext = hasStructuredAnswers
-            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId)
+            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId, payload.occurrenceId)
             : null;
         const isAskUserQuestion = isAskUserQuestionToolName(pending?.toolName);
         if (hasStructuredAnswers && (!pending || !structuredContext || !isAskUserQuestion)) return false;
@@ -779,6 +760,7 @@ export class ClaudeLocalPermissionBridge {
         });
         const handled = await this.permissionCoordinator.completeRpcResponse({
             context,
+            expectedOccurrenceId: payload.occurrenceId,
             completion: {
                 result: hookResponse,
                 completedRequest: {
@@ -792,17 +774,18 @@ export class ClaudeLocalPermissionBridge {
                         : {}),
                 },
             },
+            onAdmitted: () => {
+                this.pendingRequests.delete(requestId);
+                this.applyPermissionRpcState(normalizedPayload, {
+                    allowedTools,
+                    resolvedMode,
+                    excludeRequestId: requestId,
+                    toolName: context.toolName,
+                });
+            },
         });
 
         if (!handled) return false;
-
-        this.pendingRequests.delete(requestId);
-        this.applyPermissionRpcState(normalizedPayload, {
-            allowedTools,
-            resolvedMode,
-            excludeRequestId: requestId,
-            toolName: context.toolName,
-        });
         return true;
     }
 
@@ -827,7 +810,7 @@ export class ClaudeLocalPermissionBridge {
         if (typeof params.payload.updatedPermissions !== 'undefined') {
             return params.payload.updatedPermissions;
         }
-        if (params.payload.approved && this.isExitPlanModeTool(params.toolName)) {
+        if (params.payload.approved && getToolDescriptor(params.toolName).exitPlan) {
             const followupMode = mapToClaudeMode(this.resolveFollowupPermissionMode(params.resolvedMode));
             return [{ type: 'setMode', mode: followupMode }];
         }
@@ -839,10 +822,6 @@ export class ClaudeLocalPermissionBridge {
             ? normalizePermissionModeToIntent(resolvedMode)
             : null;
         return canonical ?? 'default';
-    }
-
-    private isExitPlanModeTool(toolName: string): boolean {
-        return toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode';
     }
 
     private computeProviderHookExpiry(createdAt: number): number {
@@ -859,17 +838,9 @@ export class ClaudeLocalPermissionBridge {
         return Date.now() > this.computeProviderHookExpiry(createdAt);
     }
 
-    private expirePendingRequest(pending: PendingPermissionRequest): void {
-        this.completeRequest({
-            requestId: pending.id,
-            toolName: pending.toolName,
-            toolInput: pending.toolInput,
-            createdAt: pending.createdAt,
-            status: 'canceled',
-            reason: PERMISSION_EXPIRED_REASON,
-            hookResponse: this.buildDefaultHookResponse(pending.hookEventName),
-        });
-        this.permissionCoordinator.cancelRequest(pending.id, PERMISSION_EXPIRED_REASON);
+    private async expirePendingRequest(pending: PendingPermissionRequest): Promise<void> {
+        const context = this.permissionCoordinator.getResponseContext(pending.id);
+        if (context) await this.expireRequestByContext(context);
     }
 
     /**
@@ -878,34 +849,17 @@ export class ClaudeLocalPermissionBridge {
      * late answer is never approved into a dead socket. Mirrors `expirePendingRequest` but resolves the
      * tool facts and hook-event shape from the coordinator response context.
      */
-    private expireRequestByContext(context: { requestId: string; toolName: string; toolInput: unknown; createdAt: number }): void {
+    private async expireRequestByContext(
+        context: PermissionRequestCoordinatorContext,
+        reason = PERMISSION_EXPIRED_REASON,
+    ): Promise<void> {
         const hookEventName = this.pendingRequests.get(context.requestId)?.hookEventName ?? 'PermissionRequest';
-        this.completeRequest({
-            requestId: context.requestId,
-            toolName: context.toolName,
-            toolInput: context.toolInput,
-            createdAt: context.createdAt,
-            status: 'canceled',
-            reason: PERMISSION_EXPIRED_REASON,
-            hookResponse: this.buildDefaultHookResponse(hookEventName),
+        const handled = await this.permissionCoordinator.completeCancellationResponse({
+            context,
+            result: this.buildDefaultHookResponse(hookEventName),
+            reason,
         });
-        this.permissionCoordinator.cancelRequest(context.requestId, PERMISSION_EXPIRED_REASON);
-    }
-
-    private clearPlanModeMetadataBestEffort(): void {
-        updateMetadataBestEffort(
-            this.session.client,
-            (metadata): Metadata =>
-                computeNextMetadataStringOverrideV1({
-                    metadata: cloneStringKeyedRecordToNullProto(metadata),
-                    overrideKey: SESSION_MODE_OVERRIDE_KEY,
-                    valueKey: 'modeId',
-                    value: '',
-                    updatedAt: Date.now(),
-                }) as unknown as Metadata,
-            '[claude-local-permissions]',
-            'exit_plan_mode_clear_session_mode_override',
-        );
+        if (handled) this.pendingRequests.delete(context.requestId);
     }
 
     private buildHookResponse(params: {
@@ -944,8 +898,7 @@ export class ClaudeLocalPermissionBridge {
     private isInteractiveTool(toolName: string): boolean {
         return (
             isAskUserQuestionToolName(toolName) ||
-            toolName === 'ExitPlanMode' ||
-            toolName === 'exit_plan_mode'
+            getToolDescriptor(toolName).exitPlan
         );
     }
 
@@ -991,10 +944,10 @@ export class ClaudeLocalPermissionBridge {
             this.applyPermissionModeFromRpc(params.resolvedMode, params.excludeRequestId);
         }
 
-        if (payload.approved && typeof params.toolName === 'string' && this.isExitPlanModeTool(params.toolName)) {
+        if (payload.approved && typeof params.toolName === 'string' && getToolDescriptor(params.toolName).exitPlan) {
             // Exiting plan mode clears Happier's plan-mode metadata; the follow-up permission mode is applied
             // through the hook response's `updatedPermissions` setMode, not TUI keystrokes.
-            this.clearPlanModeMetadataBestEffort();
+            clearClaudePlanModeMetadataBestEffort(this.session.client, '[claude-local-permissions]');
         }
 
         if (payload.approved) {
@@ -1032,10 +985,15 @@ export class ClaudeLocalPermissionBridge {
         allowedTools?: string[];
         updatedPermissions?: unknown;
         hookResponse: PermissionHookResponse;
+        observedCompletion?: true;
     }): void {
         if (this.requestStore.isOutstandingRequestClaimed(params.requestId)) return;
+        if (params.observedCompletion && params.status === 'approved' && getToolDescriptor(params.toolName).exitPlan) {
+            clearClaudePlanModeMetadataBestEffort(this.session.client, '[claude-local-permissions]');
+        }
         const handledByCoordinator = this.permissionCoordinator.handleResponse({
             requestId: params.requestId,
+            observedCompletion: params.observedCompletion,
             buildCompletion: () => ({
                 result: params.hookResponse,
                 completedRequest: {
@@ -1048,57 +1006,23 @@ export class ClaudeLocalPermissionBridge {
             }),
         });
 
-        this.pendingRequests.delete(params.requestId);
-
         if (!handledByCoordinator) {
-            this.requestStore.completeRequest({
+            void this.requestStore.recordCompletedRequest({
                 requestId: params.requestId,
+                toolName: params.toolName,
+                toolInput: params.toolInput,
+                createdAt: params.createdAt,
+                kind: resolveAgentRequestKind(params.toolName),
+                source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
                 status: params.status,
                 reason: params.reason,
-                mode: params.mode,
                 allowedTools: params.allowedTools,
                 updatedPermissions: params.updatedPermissions,
-                fallback: {
-                    toolName: params.toolName,
-                    toolInput: params.toolInput,
-                    createdAt: params.createdAt,
-                    kind: resolveAgentRequestKind(params.toolName),
-                    source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
-                },
+                extraCompletedFields: typeof params.mode === 'string' ? { mode: params.mode } : null,
             });
         }
     }
 
-    private cancelLocalOutstandingRequests(reason: string): void {
-        updateAgentStateBestEffort(
-            this.session.client,
-            (currentState) => {
-                const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const now = Date.now();
-
-                for (const [id, request] of Object.entries(requests)) {
-                    if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) continue;
-                    if (hasPermissionResponseClaimV1(request)) continue;
-                    delete requests[id];
-                    const completedEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                    completedEntry.completedAt = now;
-                    completedEntry.status = 'canceled';
-                    completedEntry.reason = reason;
-                    completedRequests[id] = completedEntry;
-                    this.requestStore.markPermissionRequestCompletedBestEffort(id);
-                }
-
-                return {
-                    ...currentState,
-                    requests,
-                    completedRequests,
-                };
-            },
-            '[claude-local-permissions]',
-            'cancel_local_requests',
-        );
-    }
 
     private resolvePermissionSuggestions(data: ClaudeToolHookData): unknown[] | null {
         const raw = data.permission_suggestions ?? data.permissionSuggestions ?? data.permissionSuggestionsV1;

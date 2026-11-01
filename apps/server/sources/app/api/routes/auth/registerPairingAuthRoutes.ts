@@ -91,6 +91,7 @@ export function registerPairingAuthRoutes(app: Fastify): void {
         secret: z.string().min(1).max(256),
         publicKey: z.string().min(1).max(256),
         deviceLabel: z.string().max(256).optional(),
+        supportsCredentialVariants: z.boolean().optional(),
     });
     const requestOk = z.object({
         state: z.literal("requested"),
@@ -151,6 +152,9 @@ export function registerPairingAuthRoutes(app: Fastify): void {
                 where: { id: session.id },
                 data: {
                     requestedPublicKey: publicKeyRaw,
+                    ...(typeof request.body.supportsCredentialVariants === "boolean"
+                        ? { supportsCredentialVariants: request.body.supportsCredentialVariants }
+                        : {}),
                     requestedDeviceLabel: deviceLabel,
                     requestedAt: session.requestedAt ?? now,
                 },
@@ -174,6 +178,7 @@ export function registerPairingAuthRoutes(app: Fastify): void {
         pairId: z.string(),
         expiresAt: z.string(),
         requestedPublicKey: z.string(),
+        supportsCredentialVariants: z.boolean(),
         requestedDeviceLabel: z.string().nullable(),
         confirmCode: z.string(),
     });
@@ -212,6 +217,7 @@ export function registerPairingAuthRoutes(app: Fastify): void {
                 pairId: session.id,
                 expiresAt: session.expiresAt.toISOString(),
                 requestedPublicKey: session.requestedPublicKey,
+                supportsCredentialVariants: session.supportsCredentialVariants,
                 requestedDeviceLabel: session.requestedDeviceLabel ?? null,
                 confirmCode: computeConfirmCode(session.secretHash, session.requestedPublicKey),
             });

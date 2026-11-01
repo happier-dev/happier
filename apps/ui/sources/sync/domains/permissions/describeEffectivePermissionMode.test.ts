@@ -17,6 +17,34 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectivePermissionMode', () => {
+    it.each([
+        { modeIds: ['auto', 'ask', 'full-access'], expected: 'auto' },
+        { modeIds: ['code', 'ask'], expected: 'code' },
+        { modeIds: ['code', 'auto', 'ask', 'full-access'], expected: 'auto' },
+        { modeIds: ['ask', 'full-access'], expected: undefined },
+    ])('describes only an advertised FX automatic-review mode ($modeIds)', ({ modeIds, expected }) => {
+        const result = describeEffectivePermissionMode({
+            agentType: 'fx', selectedMode: 'safe-yolo', applyTiming: 'immediate',
+            metadata: buildMetadata({ sessionModesV1: {
+                v: 1, provider: 'fx', updatedAt: 1, currentModeId: modeIds[0],
+                availableModes: modeIds.map((id) => ({ id, name: id })),
+            } }),
+        });
+        expect(result.effectiveMode).toBe('safe-yolo');
+        expect(result.reasons.find((reason) => reason.code === 'mode_mapped_for_provider')?.params?.providerMode).toBe(expected);
+    });
+
+    it('does not borrow automatic-review modes from another agent', () => {
+        const result = describeEffectivePermissionMode({
+            agentType: 'fx', selectedMode: 'safe-yolo', applyTiming: 'immediate',
+            metadata: buildMetadata({ sessionModesV1: {
+                v: 1, provider: 'opencode', updatedAt: 1, currentModeId: 'auto',
+                availableModes: [{ id: 'auto', name: 'Auto' }],
+            } }),
+        });
+        expect(reasonCodes(result)).not.toContain('mode_mapped_for_provider');
+    });
+
     it('does not describe generic Plan as an explicit native approval override', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'codebuddy', selectedMode: 'plan', applyTiming: 'next_prompt',

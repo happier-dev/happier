@@ -11,6 +11,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { selectRepositoryAllFiles } from '../../src/testkit/uiE2e/repositoryTreeVisibility';
+import { installFakeTauriDesktopBridge } from '../../src/testkit/uiE2e/fakeTauriDesktop';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -76,6 +77,7 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await installFakeTauriDesktopBridge(page);
     const testDir = resolve(join(suiteDir, 't1-url-sync'));
     await mkdir(testDir, { recursive: true });
     await writeFile(resolve(join(testDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
@@ -105,6 +107,28 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
 
     const sessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
     const sessionUrl = `${uiBaseUrl}/session/${sessionId}`;
+
+    const otherSessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
+    await page.getByTestId('nav-settings').click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/settings');
+    const expectSession = async (id: string) => {
+      await expect.poll(() => new URL(page.url()).pathname).toBe(`/session/${id}`);
+    };
+    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await expectSession(sessionId);
+    await page.getByTestId(`session-list-item-${otherSessionId}`).click();
+    await expectSession(otherSessionId);
+    await page.getByTestId('sidebar-back-button').click();
+    await expectSession(sessionId);
+    await page.getByTestId('sidebar-forward-button').click();
+    await expectSession(otherSessionId);
+    // A revisit is a new chronological visit, rather than an unwind to the first A.
+    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await expectSession(sessionId);
+    await page.goBack();
+    await expectSession(otherSessionId);
+    await page.goForward();
+    await expectSession(sessionId);
 
     await page.goto(sessionUrl, { waitUntil: 'domcontentloaded' });
     await expect(rightPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });

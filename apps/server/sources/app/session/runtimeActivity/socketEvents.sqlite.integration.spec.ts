@@ -135,6 +135,10 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
 
     it('writes through the exact registered socket and emits every participant cursor once', async () => {
         const seeded = await seed();
+        await db.session.update({
+            where: { id: seeded.sessionId },
+            data: { pendingUserActionRequestCount: 1 },
+        });
         const handlers = new Map<string, Handler>();
         const socket = {
             on: vi.fn((event: string, handler: Handler) => { handlers.set(event, handler); }),
@@ -191,6 +195,7 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
         expect(publishedValues).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 active: false,
+                badgeAttentionChanged: true,
                 activeAt: expect.any(Number),
                 projection: expect.objectContaining({ state: 'unknown', activeCount: 0, revision: 2 }),
             }),
@@ -227,6 +232,10 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
             },
         })).resolves.toMatchObject({ ok: true, didApply: true });
 
+        await db.session.update({
+            where: { id: seeded.sessionId },
+            data: { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 1, pendingRequestObservedAt: new Date() },
+        });
         const handlers = new Map<string, Handler>();
         const socket = {
             on: vi.fn((event: string, handler: Handler) => { handlers.set(event, handler); }),
@@ -264,17 +273,24 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
                 latestTurnId: true,
                 latestTurnStatus: true,
                 thinking: true,
+                pendingPermissionRequestCount: true,
+                pendingUserActionRequestCount: true,
+                pendingRequestObservedAt: true,
             },
         })).resolves.toEqual({
             latestTurnId: turnId,
             latestTurnStatus: 'cancelled',
             thinking: false,
+            pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: expect.any(Date),
         });
         expect(publishedValues).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 latestTurnId: turnId,
                 latestTurnStatus: 'cancelled',
                 latestTurnStatusObservedAt: expect.any(Number),
+                badgeAttentionChanged: true,
             }),
         ]));
     });
@@ -1004,6 +1020,75 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
                 active: true,
             },
         })).resolves.toBe(sockets.length);
+    });
+
+    it.each([false, true])('persists the latest received released alive observation at shared admission (new heartbeat: %s)', async (receiveNewerHeartbeat) => {
+        const blocker = await seed();
+        const target = await seed();
+        const presence = createSessionPublisherPresence();
+        const blockerHandlers = new Map<string, Handler>();
+        const targetHandlers = new Map<string, Handler>();
+        const blockerSocket = { on: (event: string, handler: Handler) => { blockerHandlers.set(event, handler); } };
+        const targetSocket = { on: (event: string, handler: Handler) => { targetHandlers.set(event, handler); } };
+        const blockerBinding = { accountId: blocker.ownerId, machineId: blocker.machineId, sessionId: blocker.sessionId };
+        let heartbeatClockMs = Date.parse('2026-07-22T08:00:00.000Z');
+        const firstObservationMs = heartbeatClockMs;
+        const published: Parameters<Parameters<typeof registerSessionRuntimeActivitySnapshotSocketEvent>[0]['publish']>[0][] = [];
+        registerSessionRuntimeActivitySnapshotSocketEvent({
+            socket: blockerSocket,
+            presence,
+            binding: blockerBinding,
+            publish: async () => {},
+        });
+        registerSessionRuntimeActivitySnapshotSocketEvent({
+            socket: targetSocket,
+            presence,
+            binding: { accountId: target.ownerId, machineId: target.machineId, sessionId: target.sessionId },
+            publish: async (value) => { published.push(value); },
+            nowMs: () => heartbeatClockMs,
+        });
+        await blockerHandlers.get('session-runtime-activity-snapshot')?.({
+            sessionId: blocker.sessionId,
+            mutationId: `runtime-activity-snapshot:${blocker.sessionId}`,
+            snapshot: { state: 'active', activeCount: 1 },
+        }, vi.fn());
+        let resolveBlockerEntered!: () => void;
+        const blockerEntered = new Promise<void>((resolve) => { resolveBlockerEntered = resolve; });
+        let releaseBlocker!: () => void;
+        const blockerRelease = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const heldBlockerOperation = presence.runAsCurrentPublisher({
+            socket: blockerSocket,
+            binding: blockerBinding,
+            action: async () => {
+                resolveBlockerEntered();
+                await blockerRelease;
+            },
+        });
+        await blockerEntered;
+        const blockerAlive = blockerHandlers.get('session-alive')?.({ sid: blocker.sessionId, time: 1, thinking: false, mode: 'remote' });
+        await Promise.resolve();
+        const targetAlive = targetHandlers.get('session-alive')?.({ sid: target.sessionId, time: 1, thinking: false, mode: 'remote' });
+        try {
+            heartbeatClockMs += 10_000;
+            if (receiveNewerHeartbeat) {
+                await targetHandlers.get('session-alive')?.({ sid: target.sessionId, time: 2, thinking: false, mode: 'remote' });
+            }
+            // Admission time itself is not evidence of a newly received heartbeat.
+            heartbeatClockMs += 10_000;
+            releaseBlocker();
+            await Promise.all([heldBlockerOperation, blockerAlive, targetAlive]);
+            const expectedObservationMs = firstObservationMs + (receiveNewerHeartbeat ? 10_000 : 0);
+            await expect(db.session.findUniqueOrThrow({
+                where: { id: target.sessionId },
+                select: { active: true, lastActiveAt: true },
+            })).resolves.toEqual({ active: true, lastActiveAt: new Date(expectedObservationMs) });
+            expect(published).toHaveLength(2);
+            expect(published.map((value) => value.activeAt)).toEqual([expectedObservationMs, expectedObservationMs]);
+        } finally {
+            releaseBlocker();
+            await Promise.all([heldBlockerOperation, blockerAlive, targetAlive]);
+            await targetHandlers.get('disconnect')?.(undefined);
+        }
     });
 
     it.each(['session-runtime-activity-close', 'disconnect'])('does not revive a publisher after %s during an accepted released alive backlog', async (terminalEvent) => {

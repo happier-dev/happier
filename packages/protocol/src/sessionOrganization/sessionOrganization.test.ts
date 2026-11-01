@@ -15,6 +15,9 @@ import {
   SESSION_ORGANIZATION_ORDER_SCOPE_KINDS,
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
   SessionOrganizationContentEnvelopeSchema,
+  SessionOrganizationSessionAppearanceSchema,
+  SetSessionAppearanceRequestSchema,
+  SetSessionAppearanceResponseSchema,
   SessionOrganizationFolderSchema,
   SessionOrganizationLabelSchema,
   SessionAttentionStandingSchema,
@@ -30,6 +33,38 @@ import {
 } from './index.js';
 
 describe('session organization protocol contracts', () => {
+  it('validates strict appearance mutations without interpreting display contents', () => {
+    const display = { t: 'plain', v: { color: '#123456', extension: [true, 7] } };
+    const appearance = { sessionId: 'session_1', display, updatedAt: 10 };
+    expect(SessionOrganizationSessionAppearanceSchema.parse(appearance)).toEqual(appearance);
+    expect(SetSessionAppearanceRequestSchema.parse({ display })).toEqual({ display });
+    expect(SetSessionAppearanceRequestSchema.parse({ display: null })).toEqual({ display: null });
+    expect(SetSessionAppearanceResponseSchema.parse({ appearance })).toEqual({ appearance });
+    expect(SetSessionAppearanceResponseSchema.parse({ appearance: null })).toEqual({ appearance: null });
+    expect(SetSessionAppearanceRequestSchema.safeParse({}).success).toBe(false);
+    expect(SetSessionAppearanceRequestSchema.safeParse({ display, extra: true }).success).toBe(false);
+    expect(SessionOrganizationSessionAppearanceSchema.safeParse({ ...appearance, display: null }).success).toBe(false);
+    expect(SessionOrganizationSessionAppearanceSchema.safeParse({ ...appearance, updatedAt: -1 }).success).toBe(false);
+    expect(SessionOrganizationSessionAppearanceSchema.safeParse({ ...appearance, sessionId: 'x'.repeat(192) }).success).toBe(false);
+  });
+
+  it('opts in to session appearances without changing legacy snapshot requests', () => {
+    expect(SessionOrganizationSnapshotRequestSchema.parse({}).includeSessionAppearances).toBe(false);
+    expect(SessionOrganizationSnapshotRequestSchema.parse({ includeSessionAppearances: true }).includeSessionAppearances).toBe(true);
+    const snapshot = {
+      schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+      version: 1,
+      pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+    };
+    expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot }).snapshot).not.toHaveProperty('sessionAppearances');
+    const appearance = { sessionId: 'session_1', display: { t: 'encrypted', c: 'opaque' }, updatedAt: 10 };
+    expect(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: { ...snapshot, sessionAppearances: [appearance] } })
+      .snapshot.sessionAppearances).toEqual([appearance]);
+    expect(SessionOrganizationSnapshotResponseSchema.safeParse({ snapshot: {
+      ...snapshot, sessionAppearances: Array.from({ length: 1_001 }, () => appearance),
+    } }).success).toBe(false);
+  });
+
   it('uses the canonical stored JSON content envelope for private display content', () => {
     expect(SessionOrganizationContentEnvelopeSchema.parse({ t: 'plain', v: { name: 'Work' } }))
       .toEqual(StoredJsonContentEnvelopeSchema.parse({ t: 'plain', v: { name: 'Work' } }));

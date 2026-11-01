@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { lazySchema } from '../../../lazySchema.js';
 
-export const SharingPendingQueueV2CapabilitiesSchema = z.object({
+export const SharingPendingQueueV2CapabilitiesSchema = lazySchema(() => z.object({
   deliveryState: z.boolean().optional().default(false),
   deliveryBlockedReason: z.boolean().optional().default(false),
-});
+}));
 
 export type SharingPendingQueueV2Capabilities = z.infer<typeof SharingPendingQueueV2CapabilitiesSchema>;
 
@@ -12,9 +13,9 @@ export const DEFAULT_SHARING_PENDING_QUEUE_V2_CAPABILITIES: SharingPendingQueueV
   deliveryBlockedReason: false,
 });
 
-export const SharingCapabilitiesSchema = z.object({
+export const SharingCapabilitiesSchema = lazySchema(() => z.object({
   pendingQueueV2: SharingPendingQueueV2CapabilitiesSchema.optional().default(DEFAULT_SHARING_PENDING_QUEUE_V2_CAPABILITIES),
-});
+}));
 
 export type SharingCapabilities = z.infer<typeof SharingCapabilitiesSchema>;
 

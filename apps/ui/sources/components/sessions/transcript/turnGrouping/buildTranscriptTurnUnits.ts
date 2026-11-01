@@ -53,6 +53,7 @@ export type TranscriptToolGroupUnitItem =
     }
     | {
         kind: 'tool-group-footer';
+        hasVisibleTools: boolean;
         id: string; // `${groupId}#footer`
         groupId: string;
         toolMessageIds: string[];
@@ -153,7 +154,7 @@ function appendToolGroupUnits(params: Readonly<{
         ...capMetadataFields,
     });
 
-    if (!expanded && hiddenCount > 0) {
+    if (!expanded && params.collapsedPreviewCount > 0 && hiddenCount > 0) {
         params.output.push({
             kind: 'tool-group-expand',
             id: `${params.groupId}#expand`,
@@ -185,6 +186,7 @@ function appendToolGroupUnits(params: Readonly<{
 
     params.output.push({
         kind: 'tool-group-footer',
+        hasVisibleTools: visibleToolMessageIds.length > 0,
         id: `${params.groupId}#footer`,
         groupId: params.groupId,
         toolMessageIds,

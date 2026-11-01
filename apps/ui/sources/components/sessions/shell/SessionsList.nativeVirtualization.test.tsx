@@ -3081,7 +3081,8 @@ describe('SessionsList (native virtualization)', () => {
         expect(opened.props.nativeContextMenuOpen).toBe(true);
     });
 
-    it('closes an open iOS native context menu when native list scrolling starts', async () => {
+    it.each(['ios', 'android'] as const)('closes an open %s native context menu when native list scrolling starts', async (platform) => {
+        platformOs = platform;
         const screen = await renderSessionsList();
         const list = expectPresent(
             screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
@@ -3102,9 +3103,21 @@ describe('SessionsList (native virtualization)', () => {
 
         const closed = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row after scroll start');
         expect(closed.props.nativeContextMenuOpen).toBe(false);
+
+        await act(async () => {
+            first.props.onNativeContextMenuOpenChange(true);
+        });
+        expect(findSessionItem(screen, 'sess_a')?.props.nativeContextMenuOpen).toBe(false);
+
+        await act(async () => {
+            list.props.onScrollEndDrag?.();
+            first.props.onNativeContextMenuOpenChange(true);
+        });
+        expect(findSessionItem(screen, 'sess_a')?.props.nativeContextMenuOpen).toBe(true);
     });
 
-    it('ignores stale iOS native context menu close requests from another row', async () => {
+    it.each(['ios', 'android'] as const)('ignores stale %s native context menu close requests from another row', async (platform) => {
+        platformOs = platform;
         const screen = await renderSessionsList();
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
 
@@ -3124,7 +3137,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(stillOpen.props.nativeContextMenuOpen).toBe(true);
     });
 
-    it('does not wrap Android rows in drag or context-menu long-press gestures', async () => {
+    it('shares Android context-menu state without enabling inline drag gestures', async () => {
         platformOs = 'android';
 
         const screen = await renderSessionsList();
@@ -3132,8 +3145,8 @@ describe('SessionsList (native virtualization)', () => {
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
         expect(first.props.reorderHandleGesture).toBeUndefined();
         expect(first.props.nativeInlineDragEnabled).toBeUndefined();
-        expect(first.props.nativeContextMenuOpen).toBeUndefined();
-        expect(first.props.onNativeContextMenuOpenChange).toBeUndefined();
+        expect(first.props.nativeContextMenuOpen).toBe(false);
+        expect(first.props.onNativeContextMenuOpenChange).toEqual(expect.any(Function));
         expect(findRecordedGestureDetectors(screen)).toHaveLength(0);
     });
 
@@ -3461,6 +3474,29 @@ describe('SessionsList (native virtualization)', () => {
         expect(readMachineTargetForSessionMock).toHaveBeenCalledWith('sess_b');
     });
 
+    it.each([true, false])('offers project folder creation only when its handler is available (%s)', async (enabled) => {
+        platformOs = 'ios';
+        const { ProjectGroupHeader } = await import('./ProjectGroupHeader');
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header', title: '/repo', headerKind: 'project', workspaceKey: 'wl_repo',
+                    workspaceScopeHint: { serverId: 'server_a', machineId: 'machine-target', rootPath: '/repo' },
+                }}
+                hasMultipleMachines={false}
+                onRenameWorkspace={vi.fn()}
+                onResetWorkspaceName={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={enabled ? vi.fn() : undefined}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+                headerTestId="project-header"
+            />,
+        );
+        const menu = screen.root.findByType('DropdownMenu');
+        expect(menu.props.items.find((item: { id: string }) => item.id === 'add-folder')?.disabled).toBe(!enabled);
+    });
+
     it('shows project chevrons only on hover unless the group is collapsed, while keeping the add action visible', async () => {
         platformOs = 'web';
         const { ProjectGroupHeader } = await import('./SessionsList');
@@ -3482,7 +3518,6 @@ describe('SessionsList (native virtualization)', () => {
                     serverName: 'Server A',
                 } as any}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}
@@ -3541,7 +3576,6 @@ describe('SessionsList (native virtualization)', () => {
                     serverName: 'Server A',
                 } as any}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}
@@ -3576,7 +3610,6 @@ describe('SessionsList (native virtualization)', () => {
                     serverName: 'Server A',
                 } as any}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}
@@ -3616,7 +3649,6 @@ describe('SessionsList (native virtualization)', () => {
                     },
                 } as any}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 workspaceFaviconsEnabled={true}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
@@ -3685,7 +3717,6 @@ describe('SessionsList (native virtualization)', () => {
                     },
                 } as any}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}
@@ -3927,7 +3958,6 @@ describe('SessionsList (native virtualization)', () => {
             <ProjectGroupHeader
                 item={projectHeaderItem}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}
@@ -3982,7 +4012,6 @@ describe('SessionsList (native virtualization)', () => {
             <ProjectGroupHeader
                 item={projectHeaderItem}
                 hasMultipleMachines={false}
-                workspaceLabelsV1={{}}
                 onRenameWorkspace={vi.fn()}
                 onResetWorkspaceName={vi.fn()}
                 onCreateSession={vi.fn()}

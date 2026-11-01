@@ -61,6 +61,23 @@ describe('desktopWindowBridge', () => {
         ]);
     });
 
+    it('recognizes the native Windows frame without disabling window actions', async () => {
+        tauriState.isDesktop = true;
+        tauriState.invoke.mockImplementation(async (command: string) => {
+            if (command === 'desktop_get_window_chrome_policy') {
+                return { strategy: 'native-windows-frame', canSetNativeTitleBar: true };
+            }
+            return true;
+        });
+        const bridge = await import('./desktopWindowBridge');
+
+        expect(await bridge.getDesktopWindowChromePolicy()).toEqual({
+            strategy: 'native-windows-frame', canSetNativeTitleBar: true,
+        });
+        await bridge.closeDesktopWindow();
+        expect(tauriState.invoke.mock.calls.map(([command]) => command)).toContain('desktop_close_window');
+    });
+
     it('guards native commands behind a supported chrome policy', async () => {
         tauriState.isDesktop = true;
         tauriState.invoke.mockImplementation(async (command: string) => {

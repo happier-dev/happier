@@ -1,3 +1,4 @@
+import { verifyAccountContentPublicKeyBinding } from "@happier-dev/protocol";
 import { createHash } from "node:crypto";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
@@ -92,11 +93,11 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
                 return reply.code(400).send({ error: "invalid-signature" });
             }
 
-            const binding = Buffer.concat([
-                Buffer.from("Happy content key v1\u0000", "utf8"),
-                Buffer.from(contentPublicKey),
-            ]);
-            const contentSigOk = tweetnacl.sign.detached.verify(binding, contentPublicKeySig, publicKeyBytes);
+            const contentSigOk = verifyAccountContentPublicKeyBinding({
+                signingPublicKeyHex: publicKeyHex,
+                contentPublicKeyB64: request.body.contentPublicKey,
+                contentPublicKeySigB64: request.body.contentPublicKeySig,
+            });
             if (!contentSigOk) {
                 return reply.code(400).send({ error: "invalid-signature" });
             }

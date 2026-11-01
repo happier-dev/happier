@@ -13,7 +13,7 @@ test('applyRuntimeServerSqliteEnv uses the bounded local pool by default', () =>
 
   assert.equal(
     env.DATABASE_URL,
-    'file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
+    'file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
   );
 });
 
@@ -28,7 +28,7 @@ test('applyRuntimeServerSqliteEnv applies sqlite URL params from env when genera
 
   assert.equal(
     env.DATABASE_URL,
-    'file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1&connection_limit=1',
+    'file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=1&connection_limit=1',
   );
 });
 

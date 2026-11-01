@@ -18,6 +18,7 @@ import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
+import { LocalVoiceHandsFreeGroup } from '@/voice/settings/panels/localStt/LocalVoiceHandsFreeGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
@@ -217,13 +218,6 @@ export function LocalConversationSection(props: {
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
   const setStreaming = (patch: Partial<typeof cfg.streaming>) => setCfg({ streaming: { ...cfg.streaming, ...patch } });
 
-  const sttProvider =
-    typeof (cfg.stt as any)?.provider === 'string'
-      ? ((cfg.stt as any).provider as any)
-      : (cfg.stt as any)?.useDeviceStt === true
-        ? 'device'
-        : 'openai_compat';
-
   return (
     <>
       <ItemGroup title={t('settingsVoice.local.title')} footer={t('settingsVoice.local.footer')}>
@@ -268,67 +262,11 @@ export function LocalConversationSection(props: {
         popoverBoundaryRef={props.popoverBoundaryRef}
       />
 
-      {sttProvider === 'device' ? (
-        <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
-          <Item
-            title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
-            rightElement={
-              <Switch
-                value={cfg.handsFree.enabled}
-                onValueChange={(v) => setCfg({ handsFree: { ...cfg.handsFree, enabled: v } })}
-              />
-            }
-          />
-          <Item
-            title={t('settingsVoice.local.conversation.handsFree.silenceTitle')}
-            detail={String(cfg.handsFree.endpointing.silenceMs)}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.conversation.handsFree.silenceTitle'), undefined, {
-                  inputType: 'numeric',
-                  placeholder: String(cfg.handsFree.endpointing.silenceMs),
-                });
-                if (raw === null) return;
-                const next = Number(String(raw).trim());
-                if (!Number.isFinite(next)) return;
-                setCfg({
-                  handsFree: {
-                    ...cfg.handsFree,
-                    endpointing: {
-                      ...cfg.handsFree.endpointing,
-                      silenceMs: Math.max(0, Math.min(5000, Math.floor(next))),
-                    },
-                  },
-                });
-              })(), { tag: 'LocalConversationSection.prompt.handsFree.silenceMs' });
-            }}
-          />
-          <Item
-            title={t('settingsVoice.local.conversation.handsFree.minSpeechTitle')}
-            detail={String(cfg.handsFree.endpointing.minSpeechMs)}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.conversation.handsFree.minSpeechTitle'), undefined, {
-                  inputType: 'numeric',
-                  placeholder: String(cfg.handsFree.endpointing.minSpeechMs),
-                });
-                if (raw === null) return;
-                const next = Number(String(raw).trim());
-                if (!Number.isFinite(next)) return;
-                setCfg({
-                  handsFree: {
-                    ...cfg.handsFree,
-                    endpointing: {
-                      ...cfg.handsFree.endpointing,
-                      minSpeechMs: Math.max(0, Math.min(5000, Math.floor(next))),
-                    },
-                  },
-                });
-              })(), { tag: 'LocalConversationSection.prompt.handsFree.minSpeechMs' });
-            }}
-          />
-        </ItemGroup>
-      ) : null}
+      <LocalVoiceHandsFreeGroup
+        cfgStt={cfg.stt}
+        handsFree={cfg.handsFree}
+        setHandsFree={(next) => setCfg({ handsFree: next })}
+      />
 
       <LocalVoiceTtsGroup
         cfgTts={cfg.tts}

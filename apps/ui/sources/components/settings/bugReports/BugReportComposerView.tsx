@@ -12,9 +12,14 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useAllMachines, useProfile } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { openReportSessionSelectionModal } from '@/components/sessions/selection/openReportSessionSelectionModal';
+import type { BugReportSessionTarget } from './bugReportDiagnostics';
+import { BugReportExpandableSection } from './BugReportExpandableSection';
 
 import {
   BugReportConsentSection,
+  BugReportDoctorSnapshotField,
   BugReportDiagnosticsSection,
   BugReportEnvironmentSection,
   BugReportFrequencySeveritySection,
@@ -26,16 +31,26 @@ import { DEFAULT_BUG_REPORT_CAPABILITIES, type BugReportsFeature } from './bugRe
 import { useBugReportComposerModel } from './hooks/useBugReportComposerModel';
 import { Icon } from '@/components/ui/icons/Icon';
 
-export const BugReportComposerView = React.memo(function BugReportComposerView() {
+export const BugReportComposerView = React.memo(function BugReportComposerView(props: Readonly<{
+  initialSessionTarget?: BugReportSessionTarget | null;
+}>) {
   const styles = bugReportComposerStyles;
   const safeArea = useSafeAreaInsets();
   const { theme } = useUnistyles();
   const machines = useAllMachines();
   const profile = useProfile();
-  const serverUrlDefault = useActiveServerSnapshot().serverUrl;
-  const bugReportsEnabled = useFeatureEnabled('bugReports');
+  const activeServer = useActiveServerSnapshot();
+  const [sessionTarget, setSessionTarget] = React.useState(props.initialSessionTarget ?? null);
+  const selectedServer = sessionTarget ? getServerProfileById(sessionTarget.serverId) : null;
+  const serverUrlDefault = sessionTarget ? selectedServer?.serverUrl ?? '' : activeServer.serverUrl;
+  const reportScope = React.useMemo(() => ({
+    scopeKind: 'spawn' as const,
+    serverId: sessionTarget?.serverId ?? activeServer.serverId,
+  }), [sessionTarget?.serverId, activeServer.serverId]);
+  const bugReportsEnabled = useFeatureEnabled('bugReports', reportScope);
   const bugReportsCapabilities = useFeatureDetails({
     featureId: 'bugReports',
+    scope: reportScope,
     fallback: DEFAULT_BUG_REPORT_CAPABILITIES,
     select: (features) => features.capabilities.bugReports,
   });
@@ -50,6 +65,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
     profile,
     serverUrlDefault,
     route: '/settings/report-issue',
+    sessionTarget,
   });
 
   return (
@@ -63,6 +79,28 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
             keyboardShouldPersistTaps="handled"
             contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
           >
+            {model.crashReportStatus === 'saved' && (
+              <View style={styles.section}>
+                <Text style={styles.helperText}>{t('appCrash.savedReportNotice')}</Text>
+                <Pressable
+                  testID="bug-report-copy-saved-crash"
+                  style={styles.previewButton}
+                  accessibilityRole="button"
+                  onPress={() => { void model.copySavedCrash(); }}
+                >
+                  <Text style={styles.previewButtonText}>{t('appCrash.copyDetails')}</Text>
+                </Pressable>
+                <Pressable
+                  testID="bug-report-discard-saved-crash"
+                  style={styles.previewButton}
+                  accessibilityRole="button"
+                  disabled={model.submitting}
+                  onPress={() => { void model.discardSavedCrash(); }}
+                >
+                  <Text style={styles.previewButtonText}>{t('appCrash.discardSavedReport')}</Text>
+                </Pressable>
+              </View>
+            )}
                 <BugReportIssueDetailsSection
                   title={model.title}
                   onTitleChange={model.setTitle}
@@ -84,7 +122,34 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
                     summary: model.fieldErrors.summary,
                   }}
                   disabled={model.submitting}
-                />
+                >
+                  <BugReportFrequencySeveritySection embedded
+              frequency={model.frequency}
+              onFrequencyChange={model.setFrequency}
+              severity={model.severity}
+              onSeverityChange={model.setSeverity}
+            />
+                </BugReportIssueDetailsSection>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{t('bugReports.composer.relatedSession')}</Text>
+              {sessionTarget ? <Text style={styles.helperText}>
+                {t('bugReports.composer.selectedSession')} · {sessionTarget.sessionId.slice(0, 12)}
+                {selectedServer ? ` · ${selectedServer.name}` : ''}
+              </Text> : <Text style={styles.helperText}>{t('bugReports.noRelatedSession')}</Text>}
+              <Pressable testID="bug-report-select-session" accessibilityRole="button" style={styles.previewButton}
+                disabled={model.submitting}
+                onPress={async () => {
+                  const selection = await openReportSessionSelectionModal();
+                  if (selection !== undefined) setSessionTarget(selection);
+                }}>
+                <Text style={styles.previewButtonText}>{t(sessionTarget ? 'bugReports.composer.changeSession' : 'bugReports.composer.chooseSession')}</Text>
+              </Pressable>
+              {sessionTarget ? <Pressable testID="bug-report-remove-session" accessibilityRole="button"
+                disabled={model.submitting} onPress={() => setSessionTarget(null)}>
+                <Text style={styles.previewButtonText}>{t('bugReports.composer.removeSession')}</Text>
+              </Pressable> : null}
+            </View>
 
             <BugReportSimilarIssuesSection
               loading={model.similarIssues.loading}
@@ -94,14 +159,9 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               disabled={model.submitting}
             />
 
-            <BugReportFrequencySeveritySection
-              frequency={model.frequency}
-              onFrequencyChange={model.setFrequency}
-              severity={model.severity}
-              onSeverityChange={model.setSeverity}
-            />
-
-            <BugReportEnvironmentSection
+            <View style={styles.section}>
+              <BugReportExpandableSection title={t('bugReports.composer.technicalInformation')} testID="bug-report-technical-information">
+            <BugReportEnvironmentSection embedded
               appVersion={model.appVersion}
               onAppVersionChange={model.setAppVersion}
               platformValue={model.platformValue}
@@ -119,6 +179,12 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               disabled={model.submitting}
             />
 
+                <BugReportDoctorSnapshotField value={model.pastedCliDoctorSnapshotJson}
+                  onChange={model.setPastedCliDoctorSnapshotJson} placeholderTextColor={theme.colors.input.placeholder}
+                  disabled={model.submitting} />
+              </BugReportExpandableSection>
+            </View>
+
             <BugReportDiagnosticsSection
               includeDiagnostics={model.includeDiagnostics}
               onIncludeDiagnosticsChange={(value) => {
@@ -127,33 +193,32 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
                   model.setDiagnosticsKinds(bugReportsFeature.acceptedArtifactKinds);
                 }
               }}
-              acceptedKinds={bugReportsFeature.acceptedArtifactKinds}
-              selectedKinds={model.diagnosticsKinds}
-              onSelectedKindsChange={model.setDiagnosticsKinds}
+              disabled={model.submitting}
+              logSelection={model.logSelection}
+              onLogSelectionChange={model.setLogSelection}
+              collectionStatuses={model.collectionStatuses}
               onPreviewDiagnostics={model.handlePreviewDiagnostics}
               previewDisabled={model.previewDisabled}
-              pastedCliDoctorSnapshotJson={model.pastedCliDoctorSnapshotJson}
-              onPastedCliDoctorSnapshotJsonChange={model.setPastedCliDoctorSnapshotJson}
-              placeholderTextColor={theme.colors.input.placeholder}
             />
 
             <BugReportConsentSection
               acceptedPrivacyNotice={model.acceptedPrivacyNotice}
               onAcceptedPrivacyNoticeChange={model.setAcceptedPrivacyNotice}
-              errorText={model.includeDiagnostics ? model.fieldErrors.privacy : undefined}
+              errorText={model.includeDiagnostics && model.title.trim().length > 0 && model.summary.trim().length > 0 ? model.fieldErrors.privacy : undefined}
             />
 
                 {model.validation.code !== 'ok' && (
                   <View style={{ marginHorizontal: 12, marginTop: -8 }}>
                     {model.title.trim().length === 0
                       && model.summary.trim().length === 0
-                      && !model.includeDiagnostics
                       ? <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.submit.requiredFieldsHint')}</Text>
                       : <Text style={bugReportComposerStyles.errorText}>{model.validation.message}</Text>}
                   </View>
                 )}
 
             <Pressable
+              testID="bug-report-submit"
+              accessibilityRole="button"
               style={[
                 styles.submitButton,
                 (model.submitting || model.validation.code !== 'ok') && styles.submitButtonDisabled,

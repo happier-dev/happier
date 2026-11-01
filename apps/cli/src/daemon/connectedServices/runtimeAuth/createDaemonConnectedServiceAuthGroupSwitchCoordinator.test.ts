@@ -11,6 +11,7 @@ import { mapCommittedGenerationApplyResult } from '../accountGroups/generation/m
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './createDaemonConnectedServiceAuthGroupSwitchCoordinator';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
 
 function group(activeProfileId: string, generation: number): ConnectedServiceAuthGroupV1 {
   return {
@@ -152,6 +153,48 @@ function createTestDaemonConnectedServiceAuthGroupSwitchCoordinator(
 }
 
 describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
+  it('recovers an unattributed goal failure through fresh pool probes without stamping an unproven member', async () => {
+    let current = group('primary', 1);
+    current.policy = { ...current.policy, strategy: 'least_limited', recoveryMode: 'switch_or_wait' };
+    const snapshots = new Map<string, ProviderAccountUsageSnapshotV1>();
+    const updateRuntimeState = vi.fn(async () => current);
+    const api = {
+      getConnectedServiceAuthGroup: async () => current,
+      updateConnectedServiceAuthGroupRuntimeState: updateRuntimeState,
+      updateConnectedServiceAuthGroupActiveProfile: async (input: { activeProfileId: string }) => {
+        current = { ...current, activeProfileId: input.activeProfileId, generation: current.generation + 1 };
+        return current;
+      },
+    };
+    const probed: string[] = [];
+    const coordinator = createTestDaemonConnectedServiceAuthGroupSwitchCoordinator({
+      api, runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      accountUsageStore: { resolveBySource: ({ profileId }) => snapshots.get(profileId) ?? null },
+      quotaFreshnessMs: 60_000, nowMs: () => 1_000, restartSession: async () => {},
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        for (const profileId of profileIds) {
+          probed.push(profileId);
+          snapshots.set(profileId, accountUsageSnapshot(profileId, profileId === 'backup' ? 90 : 0));
+        }
+      },
+    });
+    const tracked = { startedBy: 'daemon' as const, happySessionId: 'goal-pool-failure', pid: 123,
+      spawnOptions: { directory: '/tmp/project' } };
+    const result = await handleConnectedServiceRuntimeAuthFailureForSession({
+      sessionId: tracked.happySessionId, getChildren: () => [tracked], switchesThisTurn: 0,
+      classification: { kind: 'usage_limit', serviceId: 'openai-codex', profileId: null, groupId: null,
+        resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
+      resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'main',
+        profileId: 'primary', generation: 1, credentialRevision: 'csr_testcredentialrevision' }),
+      switchCoordinator: coordinator,
+    });
+    expect(result).toMatchObject({ status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'backup' } });
+    expect(probed).toContain('backup');
+    expect(current.activeProfileId).toBe('backup');
+    expect(updateRuntimeState).not.toHaveBeenCalled();
+    expect(current.members.map(member => member.state)).toEqual([{ v: 1 }, { v: 1 }]);
+  });
+
   it('loads group state, commits the selected member, and requests a session restart for rematerialization', async () => {
     const backupRevision = 'csr_abcdefghijklmnopqrstuv';
     const api = {
@@ -203,20 +246,25 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
     });
   });
 
-  it('fails the committed generation when the canonical target credential is legacy-unfenced', async () => {
+  it.each(['legacy_unfenced', 'read_back_failed'])(
+    'applies the selected account when committed credential revision is missing (%s)', async (revisionState) => {
     const restartSession = vi.fn(async () => {});
+    let current = group('primary', 1);
     const coordinator = createTestDaemonConnectedServiceAuthGroupSwitchCoordinator({
       api: {
-        getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
-        updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => group('backup', 2)),
-        updateConnectedServiceAuthGroupRuntimeState: vi.fn(async () => group('primary', 1)),
+        getConnectedServiceAuthGroup: vi.fn(async () => current),
+        updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => (current = group('backup', 2))),
+        updateConnectedServiceAuthGroupRuntimeState: vi.fn(async () => current),
       },
       runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       quotaFreshnessMs: 60_000,
       nowMs: () => 1_000,
       restartSession,
       resolveCredentialRevision: () => 'csr_staleprojectionrevision',
-      resolveCurrentCredentialRevision: vi.fn(async () => null),
+      resolveCurrentCredentialRevision: vi.fn(async () => {
+        if (revisionState === 'read_back_failed') throw Object.assign(new Error('read failed'), { code: 'ECONNRESET' });
+        return null;
+      }),
     });
 
     await expect(coordinator.switchAfterClassifiedFailure({
@@ -225,13 +273,13 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
       reason: 'usage_limit',
       switchesThisTurn: 0,
     })).resolves.toMatchObject({
-      status: 'generation_apply_failed',
+      status: 'switched',
       activeProfileId: 'backup',
       generation: 2,
-      errorCode: 'credential_revision_missing',
+      credentialRevision: null,
     });
 
-    expect(restartSession).not.toHaveBeenCalled();
+    expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({ activeProfileId: 'backup', generation: 2 }));
   });
 
   it('records runtime auth_failed as credential-unhealthy before selecting a fresh-quota candidate', async () => {
@@ -662,7 +710,7 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
     });
   });
 
-  it('threads exact revisions through application and post-fences a revision-only supersession', async () => {
+  it('accepts application to the selected account after a revision-only refresh', async () => {
     const adoptedRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const authoritativeRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({
@@ -695,11 +743,9 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
       credentialRevision: adoptedRevision,
       reason: 'credential_revision_changed',
     })).resolves.toMatchObject({
-      status: 'superseded_after_apply',
+      status: 'observed_generation',
       generation: 2,
       credentialRevision: authoritativeRevision,
-      adoptedGeneration: 2,
-      adoptedCredentialRevision: adoptedRevision,
     });
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith(expect.objectContaining({
       credentialRevision: adoptedRevision,

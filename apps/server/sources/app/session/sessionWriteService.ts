@@ -1,3 +1,4 @@
+import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -46,7 +47,7 @@ import {
     applySessionTurnMutationToTurns,
     type SessionTurnNoOpReason,
 } from "./turns/applySessionTurnMutation";
-import type { PrimaryTurnMaterializedProjection } from "./turns/materializePrimaryTurnProjection";
+import { buildPrimaryTurnProjectionWriteData, type PrimaryTurnMaterializedProjection } from "./turns/materializePrimaryTurnProjection";
 import {
     parseStoredSessionTurnMutationReceipt,
     parseStoredSessionTurns,
@@ -188,7 +189,7 @@ export function resolveReadyProjectionEventType(params: Readonly<{
         : undefined;
 }
 
-function selectSessionActivityBadgeInputs() {
+export function selectSessionActivityBadgeInputs() {
     return {
         seq: true,
         // Not a badge input: `resolveSessionUnreadSinceWrite` decides the edge against the *stored*
@@ -745,6 +746,12 @@ export async function applySessionTurnMutationInTx(params: Readonly<{
         turns,
         appliedAt: Date.now(),
     });
+    // Historical bookkeeping cannot select a new current turn or erase the
+    // cutover's freshness frontier. Only a changed current turn republishes it.
+    const updatesCurrentTurn = decision.apply && decision.changedTurn.turnId === decision.latestTurnId;
+    const materialized = updatesCurrentTurn
+        ? decision.materialized
+        : readMaterializedProjectionFromSession(params.session);
 
     if (decision.apply) {
         const existingRow = turnRows.find((row) => row.turnId === decision.changedTurn.turnId);
@@ -763,22 +770,17 @@ export async function applySessionTurnMutationInTx(params: Readonly<{
                 },
             });
         }
+    }
 
+    if (updatesCurrentTurn) {
         await params.tx.session.update({
             where: { id: params.sessionId },
             data: {
-                latestTurnId: decision.materialized.latestTurnId,
-                latestTurnStatus: decision.materialized.latestTurnStatus,
-                latestTurnStatusObservedAt: decision.materialized.latestTurnStatusObservedAt === null
-                    ? null
-                    : BigInt(decision.materialized.latestTurnStatusObservedAt),
-                lastRuntimeIssue: decision.materialized.lastRuntimeIssue === null
-                    ? null
-                    : JSON.stringify(decision.materialized.lastRuntimeIssue),
+                ...buildPrimaryTurnProjectionWriteData(materialized),
                 // `latestTurnStatus = 'failed'` is an attention arm, so this statement moves the
                 // session into or out of attention — and nothing here has to say so:
                 // `Session.needsAttention` is generated from this very column.
-                ...buildLegacyThinkingProjectionWriteData(decision.materialized),
+                ...buildLegacyThinkingProjectionWriteData(materialized),
             },
         });
     }
@@ -813,8 +815,8 @@ export async function applySessionTurnMutationInTx(params: Readonly<{
             toSessionActivityBadgeInputs(params.session),
             {
                 ...toSessionActivityBadgeInputs(params.session),
-                latestTurnStatus: decision.materialized.latestTurnStatus,
-                lastRuntimeIssue: decision.materialized.lastRuntimeIssue,
+                latestTurnStatus: materialized.latestTurnStatus,
+                lastRuntimeIssue: materialized.lastRuntimeIssue,
             },
         )
         : false;
@@ -823,10 +825,7 @@ export async function applySessionTurnMutationInTx(params: Readonly<{
         didApply: decision.apply,
         ...(!decision.apply ? { reason: decision.reason } : {}),
         receipt: decision.receipt,
-        latestTurnId: decision.materialized.latestTurnId,
-        latestTurnStatus: decision.materialized.latestTurnStatus,
-        latestTurnStatusObservedAt: decision.materialized.latestTurnStatusObservedAt,
-        lastRuntimeIssue: decision.materialized.lastRuntimeIssue,
+        ...materialized,
         participantCursors,
         badgeAttentionChanged,
     };
@@ -988,18 +987,21 @@ export async function createSessionMessage(
         return { ok: false, error: "invalid-params" };
     }
 
-    const content = "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionMessageContent) : null;
+    const rawContent = "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionMessageContent) : null;
 
-    if (!sessionId || !actorUserId || !content) {
+    if (!sessionId || !actorUserId || !rawContent) {
         return { ok: false, error: "invalid-params" };
     }
 
-    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) {
+    if (rawContent.t === "encrypted" && (!rawContent.c || typeof rawContent.c !== "string")) {
         return { ok: false, error: "invalid-params" };
     }
-    if (content.t === "plain" && !("v" in content)) {
+    if (rawContent.t === "plain" && !("v" in rawContent)) {
         return { ok: false, error: "invalid-params" };
     }
+
+    const content = normalizeSessionMessageContentForStorage(rawContent);
+    if (!content) return { ok: false, error: "invalid-params" };
 
     const resolveRoleForStorageMode = (storageMode: "e2ee" | "plain") =>
         resolveSessionMessageRole({

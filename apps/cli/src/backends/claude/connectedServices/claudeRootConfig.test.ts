@@ -14,11 +14,23 @@ describe('readClaudeOauthAccountIdentity', () => {
     })).toEqual({
       email: 'member@example.com',
       accountId: 'account-uuid',
+      providerOrganizationId: 'org-uuid',
     });
   });
 });
 
 describe('reconcileClaudeAccountScopedRootConfig', () => {
+  it.each([null, 'organization-b'])('rejects preserved account caches when organization context becomes %s for the same user', (providerOrganizationId) => {
+    const reconciled = reconcileClaudeAccountScopedRootConfig({
+      rootConfig: { oauthAccount: { accountUuid: 'user', organizationUuid: 'organization-a' },
+        modelAccessCache: ['previous-organization-model'] },
+      preserveExistingAccountState: true,
+      providerAccountId: 'user', providerEmail: null, providerOrganizationId,
+    });
+    expect(reconciled.oauthAccount).toEqual({ accountUuid: 'user',
+      ...(providerOrganizationId ? { organizationUuid: providerOrganizationId } : {}) });
+    expect(reconciled).not.toHaveProperty('modelAccessCache');
+  });
   it('drops predecessor entitlement state while preserving workspace state on exact credential replacement', () => {
     expect(reconcileClaudeAccountScopedRootConfig({
       rootConfig: {
@@ -31,9 +43,10 @@ describe('reconcileClaudeAccountScopedRootConfig', () => {
       preserveExistingAccountState: false,
       providerAccountId: 'new-account',
       providerEmail: 'new@example.test',
+      providerOrganizationId: 'new-organization',
     })).toEqual({
       hasCompletedOnboarding: true,
-      oauthAccount: { accountUuid: 'new-account', emailAddress: 'new@example.test' },
+      oauthAccount: { accountUuid: 'new-account', emailAddress: 'new@example.test', organizationUuid: 'new-organization' },
       projects: { '/repo': { hasTrustDialogAccepted: true } },
     });
   });

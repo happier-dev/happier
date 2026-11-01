@@ -140,6 +140,18 @@ Notes:
 - `--model` lets you target a specific model for that message when the backend supports it.
 - `--json` + explicit timeouts are recommended for scripts.
 
+### Display-only notices (development)
+
+Current development source can store an informational notice in session history without starting, resuming, or interrupting an Agent:
+
+```bash
+happier session send <session-id-or-prefix> "CI failed" --kind notice --from hub
+```
+
+`--no-deliver` is an alias for `--kind notice`. Notices use the transcript's informational styling; `--from` prefixes the displayed text with the sender label (or `Notice` when omitted). The label is display text, not a verified identity. Notices do not enter the Agent's input queue or supply context on its next turn. They cannot be combined with `--wait`, `--model`, or `--permission-mode`. Ordinary sends remain user prompts.
+
+Use `--local-id` to retain the same identity when retrying a notice after an unconfirmed write. Repeating the same identity and content does not create another transcript row. This option is not available in CLI 0.2.17.
+
 ### Choosing one message identity (`--local-id`)
 
 Development builds let CLI coordinators choose the message's `localId` before sending:

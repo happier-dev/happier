@@ -10,7 +10,7 @@ export type { NavigateToSessionOptions } from './navigateToSessionRoute';
 /**
  * The React entry shape of `navigateToSessionRoute` — the one way a surface opens an existing
  * session. Every in-app entry point (inbox, friends, transcript links, voice, zen, command palette,
- * approvals, notifications) routes through it so the session route stays singular and server-scoped.
+ * approvals, notifications) routes through it for server scoping and the shared platform history policy.
  *
  * Auth is read from the module accessor at press time rather than through `useAuth`, for the same
  * reason the imperative entry does: the refresh callback is only needed WHEN a server switch fires,

@@ -66,6 +66,8 @@ export interface InitializeBackendRunSessionOptions {
   onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
   onDaemonSessionReported?: (opts: { sessionId: string }) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
+  /** Runtime-owned hosts publish their own attachment, binding, and startup failures. */
+  terminalHostOwner?: 'startup' | 'runtime'
   /**
    * Providers whose runtime controls are constructed from the attached session can defer daemon
    * registration until those controls exist. The initializer starts the report in the background
@@ -279,6 +281,10 @@ export async function initializeBackendRunSession(
     metadata: Metadata,
     daemonReportMode: DaemonReportMode,
   ): Promise<void> => {
+    if (opts.terminalHostOwner === 'runtime') {
+      await startDaemonReport(sessionId, metadata, daemonReportMode)
+      return
+    }
     const bindTerminalAgent = async () => {
       if (!opts.terminalAgentLabel) return
       await bindHerdrAgentIfNeeded({

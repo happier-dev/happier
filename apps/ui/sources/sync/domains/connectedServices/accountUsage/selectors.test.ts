@@ -29,6 +29,7 @@ function meter(overrides: Partial<ConnectedServiceQuotaMeterV1> = {}): Connected
 function accountUsageSnapshot(params: Readonly<{
   providerId?: string;
   accountSubjectId?: string;
+  providerOrganizationId?: string;
   state?: ProviderAccountUsageStateV1;
   fetchedAtMs?: number;
   staleAfterMs?: number;
@@ -40,7 +41,8 @@ function accountUsageSnapshot(params: Readonly<{
     providerId,
     accountSubjectId,
     subjectKind: 'account',
-    quotaScope: 'account',
+    quotaScope: params.providerOrganizationId ? 'organization' : 'account',
+    ...(params.providerOrganizationId ? { quotaScopeId: params.providerOrganizationId } : {}),
   } as const;
   return ProviderAccountUsageSnapshotV1Schema.parse({
     v: 1,
@@ -75,9 +77,10 @@ function legacyQuotaSnapshot(): ConnectedServiceQuotaSnapshotV1 {
 }
 
 describe('selectProviderUsageDisplaySnapshot', () => {
-  it('preserves structured credit facts through the native account usage display projection', () => {
+  it('preserves organization scope and supplemental facts through the native account usage display projection', () => {
     const usage = {
-      ...accountUsageSnapshot(),
+      ...accountUsageSnapshot({ providerId: 'claude', providerOrganizationId: 'org-work' }),
+      subscription: { status: 'none' as const, renewal: 'unknown' as const, observedAtMs: 1_000, staleAfterMs: 60_000 },
       recoveryCredits: { kind: 'usage_limit_resets' as const, availableCount: 0, credits: [
         { kind: 'usage_limit_reset' as const, status: 'unknown' as const, providerCreditId: 'saved' },
       ] },
@@ -86,11 +89,16 @@ describe('selectProviderUsageDisplaySnapshot', () => {
       } },
     };
     const source = selectProviderUsageDisplaySnapshot({
-      providerId: 'codex', metadataRecordIds: [usage.recordId],
+      providerId: 'claude', metadataRecordIds: [usage.recordId],
       accountUsageSnapshotsByRecordId: { [usage.recordId]: usage },
       connectedServiceProfileRef: null, connectedServiceQuotaView: null,
     });
-    expect(source?.snapshot).toMatchObject({ recoveryCreditDetails: usage.recoveryCreditDetails });
+    expect(source?.snapshot).toMatchObject({
+      activeAccountId: usage.recordKey.accountSubjectId,
+      providerOrganizationId: 'org-work',
+      subscription: usage.subscription,
+      recoveryCreditDetails: usage.recoveryCreditDetails,
+    });
   });
 
   it('projects native account usage metadata into a non-connected provider usage display snapshot', () => {

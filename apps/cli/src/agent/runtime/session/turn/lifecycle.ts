@@ -28,6 +28,7 @@ import type {
     SessionTurnTranscriptAnchorsInput,
     TouchActiveTurnInput,
 } from './types';
+import { createTurnStallWatchdog, type TurnStallNotice } from './stallWatch';
 
 const DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS = 60_000;
 
@@ -42,9 +43,14 @@ type MutableTurn = {
 type CreateSessionTurnLifecycleParams = Readonly<{
     sessionId: string;
     enqueueSessionTurn: (mutation: SessionTurnMutationV1) => Promise<void>;
+    onTurnInputBound?: (input: Readonly<{ turnId: string; localIds: readonly string[] }>) => void;
     createId?: () => string;
     now?: () => number;
     activeTurnTouchIntervalMs?: number;
+    /** Explicit stall-watch threshold override; defaults to HAPPIER_TURN_STALL_WARN_MS / 15 min. */
+    turnStallWarnMs?: number;
+    onTurnStallNotice?: (notice: TurnStallNotice) => void;
+    onTurnFailure?: (issue: SessionRuntimeIssueV1) => void;
     onTurnLifecycleEvent?: (
         event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled',
         // REV-1: failTurn / turn_failed markers emit `assistant_message_end` too; the
@@ -139,6 +145,18 @@ export function createSessionTurnLifecycle(
     let lastTerminalTurn: MutableTurn | null = null;
     let lastActiveTurnTouchAt: number | null = null;
     const terminalWrites = new Set<string>();
+    let observationDisposed = false;
+    const stallWatch = createTurnStallWatchdog({
+        ...(params.turnStallWarnMs !== undefined ? { stallWarnMs: params.turnStallWarnMs } : {}),
+        now,
+        describeActiveTurn: () => activeTurn === null ? null : {
+            sessionId: params.sessionId,
+            turnId: activeTurn.turnId,
+            ...(activeTurn.provider ? { provider: activeTurn.provider } : {}),
+            ...(activeTurn.providerTurnId ? { providerTurnId: activeTurn.providerTurnId } : {}),
+        },
+        ...(params.onTurnStallNotice ? { onStallNotice: params.onTurnStallNotice } : {}),
+    });
 
     function emitTurnLifecycleEvent(
         event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled',
@@ -202,6 +220,9 @@ export function createSessionTurnLifecycle(
         try {
             await result.pendingWrite;
             terminalWriteAccepted = true;
+            if (status === 'failed' && result.turn.lastRuntimeIssue) {
+                params.onTurnFailure?.(result.turn.lastRuntimeIssue);
+            }
         } catch (error) {
             firstError ??= error;
         } finally {
@@ -306,8 +327,12 @@ export function createSessionTurnLifecycle(
         if (!activeTurn || activeTurn.terminalStatus) {
             activeTurn = createTurn(input);
             lastActiveTurnTouchAt = input.observedAt ?? now();
+            if (!observationDisposed) stallWatch.armTurnStallWatch();
         } else {
             mergeProviderFacts(activeTurn, input);
+        }
+        if (input.startingInputLocalIds?.length) {
+            params.onTurnInputBound?.({ turnId: activeTurn.turnId, localIds: input.startingInputLocalIds });
         }
         const mutation = buildMutation({
             action: 'begin',
@@ -328,6 +353,7 @@ export function createSessionTurnLifecycle(
         observedAt?: number;
         suppressUntrustedDuplicate?: boolean;
     }>): { turn: MutableTurn | null; pendingWrite: Promise<void> | null } {
+        stallWatch.disarmTurnStallWatch();
         const providerTurnId = normalizeOptionalString(input.providerTurnId);
         if (!activeTurn && input.suppressUntrustedDuplicate && !providerTurnId && lastTerminalTurn?.terminalStatus === input.status) {
             return { turn: lastTerminalTurn, pendingWrite: null };
@@ -441,7 +467,14 @@ export function createSessionTurnLifecycle(
 
     async function failTurn(input: FailTurnInput): Promise<void> {
         let allocatedWrite: Promise<void> | null = null;
-        if (!activeTurn && input.allocateWhenIdle) {
+        const previousIssue = lastTerminalTurn?.lastRuntimeIssue;
+        const reuseFailedTurn = input.suppressUntrustedDuplicate === true
+            && !activeTurn && !normalizeOptionalString(input.providerTurnId)
+            && lastTerminalTurn?.terminalStatus === 'failed'
+            && previousIssue?.code === input.issue?.code
+            && previousIssue?.source === input.issue?.source
+            && previousIssue?.provider === input.issue?.provider;
+        if (!activeTurn && input.allocateWhenIdle && !reuseFailedTurn) {
             // Session-scoped failure with no active turn (e.g. host death between
             // turns): allocate a session-owned turn so the failure surfaces, but do
             // NOT emit a misleading 'prompt_or_steer' observer event.
@@ -452,7 +485,10 @@ export function createSessionTurnLifecycle(
             });
             allocatedWrite = begun.pendingWrite;
         }
-        const result = terminalTurnSync({ ...input, status: 'failed' });
+        const result = terminalTurnSync({ ...input, status: 'failed', suppressUntrustedDuplicate: reuseFailedTurn });
+        if (result.turn?.lastRuntimeIssue) {
+            input.onFailureTurn?.({ turnId: result.turn.turnId, issue: result.turn.lastRuntimeIssue });
+        }
         await awaitTerminalTurnWriteAndEmit(result, 'failed', allocatedWrite);
     }
 
@@ -493,6 +529,13 @@ export function createSessionTurnLifecycle(
 
     function hasActiveTurn(): boolean {
         return activeTurn !== null;
+    }
+
+    function observeProviderTurnEvent(): void {
+        // Provider message events are the stall watch's ONLY reset signal. Never
+        // wire the keepalive/touchActiveTurn path here: presence heartbeats stay
+        // fresh through provider stalls (upstream #534) and would blind the watch.
+        stallWatch.observeProviderTurnEvent();
     }
 
     function getActiveTurnId(): string | null {
@@ -559,6 +602,10 @@ export function createSessionTurnLifecycle(
     }
 
     return {
+        dispose() {
+            observationDisposed = true;
+            stallWatch.disarmTurnStallWatch();
+        },
         beginTurn,
         attachProviderTurnId,
         appendTranscriptAnchors,
@@ -572,5 +619,6 @@ export function createSessionTurnLifecycle(
         hasActiveTurn,
         getActiveTurnId,
         observeAcpLifecycleMarker,
+        observeProviderTurnEvent,
     };
 }

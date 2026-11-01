@@ -1,7 +1,8 @@
 import {
   isTerminalProvisioningV3Payload,
   openBoxBundle,
-  openTerminalProvisioningV3Payload,
+  openTerminalProvisioningV3Response,
+  parseTerminalProvisioningV2Plaintext,
 } from '@happier-dev/protocol';
 
 export type TerminalPairingAuthentication = Readonly<{
@@ -20,7 +21,7 @@ export type OpenTerminalProvisioningResponseResult = Readonly<{
   type: 'legacy' | 'dataKey';
   key: Uint8Array;
   authenticated: boolean;
-}>;
+}> | Readonly<{ type: 'tokenOnly'; authenticated: boolean }>;
 
 const TERMINAL_PAIRING_AUTHENTICATION_TTL_MS = 60 * 60 * 1_000;
 
@@ -83,7 +84,7 @@ export function openTerminalProvisioningResponse(params: Readonly<{
 
   if (isV3) {
     if (!params.pairing) return null;
-    const key = openTerminalProvisioningV3Payload({
+    const opened = openTerminalProvisioningV3Response({
       payload: params.payload,
       recipientSecretKeyOrSeed: params.terminalSecretKey,
       terminalEphemeralPublicKey: params.terminalPublicKey,
@@ -92,7 +93,7 @@ export function openTerminalProvisioningResponse(params: Readonly<{
       expiresAtMs: params.pairing.expiresAtMs,
       nowMs: params.nowMs,
     });
-    return key ? { type: 'dataKey', key, authenticated: true } : null;
+    return opened ? { ...opened, authenticated: true } : null;
   }
 
   const opened = openBoxBundle({
@@ -103,8 +104,6 @@ export function openTerminalProvisioningResponse(params: Readonly<{
   if (opened.length === 32) {
     return { type: 'legacy', key: opened, authenticated: false };
   }
-  if (opened.length === 33 && opened[0] === 0) {
-    return { type: 'dataKey', key: opened.slice(1), authenticated: false };
-  }
-  return null;
+  const response = parseTerminalProvisioningV2Plaintext(opened);
+  return response ? { ...response, authenticated: false } : null;
 }

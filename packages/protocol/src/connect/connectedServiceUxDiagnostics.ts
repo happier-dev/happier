@@ -5,6 +5,7 @@ import {
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from './connectedServiceSchemas.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   providerSessionStateUnavailableForResume: 'provider_session_state_unavailable_for_resume',
@@ -32,7 +33,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   claudeSubscriptionSetupTokenNotSupportedForUnified: 'claude_subscription_setup_token_not_supported_for_unified',
 } as const;
 
-export const ConnectedServiceUxDiagnosticCodeV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticCodeV1Schema = lazySchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing,
@@ -56,11 +57,11 @@ export const ConnectedServiceUxDiagnosticCodeV1Schema = z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified,
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticCodeV1 = z.infer<typeof ConnectedServiceUxDiagnosticCodeV1Schema>;
 
-export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = lazySchema(() => z.enum([
   'session_lookup',
   'agent_validation',
   'normalization',
@@ -73,12 +74,12 @@ export const ConnectedServiceUxDiagnosticFailurePhaseV1Schema = z.enum([
   'post_switch_recovery',
   'post_switch_verification',
   'runtime_auth_recovery',
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticFailurePhaseV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticFailurePhaseV1Schema>;
 
-export const ConnectedServiceUxDiagnosticSourceV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticSourceV1Schema = lazySchema(() => z.enum([
   'spawn_resume',
   'new_session',
   'inactive_resume',
@@ -87,7 +88,7 @@ export const ConnectedServiceUxDiagnosticSourceV1Schema = z.enum([
   'usage_limit_recovery',
   'transcript_switch_attempt',
   'session_view',
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticSourceV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticSourceV1Schema>;
@@ -104,7 +105,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS = {
   dismiss: 'dismiss',
 } as const;
 
-export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = z.enum([
+export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = lazySchema(() => z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.startFreshUnderSelectedAccount,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.resumeCurrentAccount,
@@ -114,7 +115,7 @@ export const ConnectedServiceUxDiagnosticSuggestedActionV1Schema = z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.viewLatestFork,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.viewNativeFork,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.dismiss,
-]);
+]));
 
 export type ConnectedServiceUxDiagnosticSuggestedActionV1 =
   z.infer<typeof ConnectedServiceUxDiagnosticSuggestedActionV1Schema>;
@@ -126,7 +127,7 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_STRING_LENGTH = 512;
 const CONNECTED_SERVICE_UX_DIAGNOSTIC_SENSITIVE_KEY_PATTERN =
   /(?:^token$|[a-z0-9_-]+[_-]?token$|access[_-]?token|refresh[_-]?token|id[_-]?token|auth(?:orization)?|bearer|secret|credential|password|private[_-]?key|api[_-]?key)/i;
 
-const ConnectedServiceUxDiagnosticKeyV1Schema = z
+const ConnectedServiceUxDiagnosticKeyV1Schema = lazySchema(() => z
   .string()
   .trim()
   .min(1)
@@ -134,23 +135,23 @@ const ConnectedServiceUxDiagnosticKeyV1Schema = z
   .refine(
     (key) => !CONNECTED_SERVICE_UX_DIAGNOSTIC_SENSITIVE_KEY_PATTERN.test(key),
     'diagnostic keys must not identify secrets or tokens',
-  );
+  ));
 
-const ConnectedServiceUxDiagnosticScalarV1Schema = z.union([
+const ConnectedServiceUxDiagnosticScalarV1Schema = lazySchema(() => z.union([
   z.string().max(CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_STRING_LENGTH),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = z
+const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = lazySchema(() => z
   .record(ConnectedServiceUxDiagnosticKeyV1Schema, ConnectedServiceUxDiagnosticScalarV1Schema)
   .refine(
     (diagnostics) => Object.keys(diagnostics).length <= CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS,
     `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`,
-  );
+  ));
 
-export const ConnectedServiceUxDiagnosticV1Schema = z.object({
+export const ConnectedServiceUxDiagnosticV1Schema = lazySchema(() => z.object({
   code: ConnectedServiceUxDiagnosticCodeV1Schema,
   failurePhase: ConnectedServiceUxDiagnosticFailurePhaseV1Schema,
   source: ConnectedServiceUxDiagnosticSourceV1Schema,
@@ -162,7 +163,7 @@ export const ConnectedServiceUxDiagnosticV1Schema = z.object({
   retryable: z.boolean(),
   suggestedActions: z.array(ConnectedServiceUxDiagnosticSuggestedActionV1Schema).default([]),
   diagnostics: ConnectedServiceUxDiagnosticDiagnosticsV1Schema.optional(),
-}).strict();
+}).strict());
 
 export type ConnectedServiceUxDiagnosticV1 = z.infer<typeof ConnectedServiceUxDiagnosticV1Schema>;
 

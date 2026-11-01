@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TmuxCommandResult, TmuxSpawnOptions } from '@/integrations/tmux';
+import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 vi.mock('chalk', () => ({
@@ -13,31 +14,24 @@ const mockSpawnInTmux = vi.fn(
   async (_args: string[], _options: TmuxSpawnOptions, _env?: Record<string, string>) => ({ success: true as const }),
 );
 const mockExecuteTmuxCommand = vi.fn(
-  async (): Promise<TmuxCommandResult> => ({ returncode: 0, stdout: '', stderr: '', command: ['tmux'] }),
+  async (): Promise<TmuxCommandResult> => ({ returncode: 0, stdout: 'picked\t1\t1\n', stderr: '', command: ['tmux'] }),
 );
 
-vi.mock('@/integrations/tmux', () => {
+vi.mock('@/integrations/tmux', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/integrations/tmux')>();
   class TmuxUtilities {
-    static DEFAULT_SESSION_NAME = 'happy';
+    static DEFAULT_SESSION_NAME = actual.TmuxUtilities.DEFAULT_SESSION_NAME;
     constructor() {}
     executeTmuxCommand = mockExecuteTmuxCommand;
     spawnInTmux = mockSpawnInTmux;
   }
 
   return {
+    ...actual,
     isTmuxAvailable: vi.fn(async () => true),
-    selectPreferredTmuxSessionName: () => 'picked',
     TmuxUtilities,
   };
 });
-
-vi.mock('@/utils/spawnHappyCLI', () => ({
-  buildHappyCliSubprocessLaunchSpec: (args: string[]) => ({ runtime: 'node', filePath: 'node', args }),
-}));
-
-vi.mock('@/terminal/attachment/terminalAttachmentInfo', () => ({
-  createTerminalAttachmentId: () => 'attachment-standalone-tmux',
-}));
 
 describe.sequential('startHappyHeadlessInTmux', () => {
   const trackedEnvKeys = ['TMUX', 'TMUX_PANE', 'HAPPY_TEST_FOO'] as const;
@@ -68,6 +62,15 @@ describe.sequential('startHappyHeadlessInTmux', () => {
     nowSpy.mockRestore();
     output.restore();
     restoreTrackedEnv();
+  });
+
+  it('preserves literal tmux and terminal flags in the provider argument tail', async () => {
+    const { startHappyHeadlessInTmux } = await import('./startHappyHeadlessInTmux');
+    const literal = ['--', '--tmux', '--happy-terminal-mode', 'plain'];
+    await startHappyHeadlessInTmux(['codex', '--tmux', ...literal]);
+    const parsed = parseAndStripTerminalRuntimeFlags(mockSpawnInTmux.mock.calls[0]![0]);
+    expect(parsed.terminal).toMatchObject({ mode: 'tmux', requested: 'tmux' });
+    expect(parsed.argv.slice(-literal.length)).toEqual(literal);
   });
 
   it('prints only select-window when already inside tmux', async () => {
@@ -115,7 +118,6 @@ describe.sequential('startHappyHeadlessInTmux', () => {
     await startHappyHeadlessInTmux(['claude', '--happy-starting-mode', 'unified', '--tmux']);
 
     expect(mockSpawnInTmux.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
-      'node',
       'claude',
       '--happy-starting-mode',
       'unified',
@@ -127,9 +129,8 @@ describe.sequential('startHappyHeadlessInTmux', () => {
 
     await startHappyHeadlessInTmux([]);
 
-    expect(mockSpawnInTmux.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
-      '--happy-terminal-attachment-id',
-      'attachment-standalone-tmux',
-    ]));
+    const parsed = parseAndStripTerminalRuntimeFlags(mockSpawnInTmux.mock.calls[0]![0]);
+    expect(parsed.terminal?.attachmentId).toEqual(expect.any(String));
+    expect(parsed.terminal?.attachmentId?.length).toBeGreaterThan(0);
   });
 });

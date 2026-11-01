@@ -199,7 +199,7 @@ describe('ActionOperationActivityButton', () => {
         expect(screen.findByTestId(`action-operation-row-${active.operationId}`)).not.toBeNull();
     });
 
-    it('marks terminal operations seen when the model-backed popover opens', async () => {
+    it('acknowledges terminal operations on explicit open without acknowledging later arrivals on render', async () => {
         const terminal = operation({
             operationId: 'operation-model-backed',
             state: 'succeeded',
@@ -212,5 +212,13 @@ describe('ActionOperationActivityButton', () => {
         expect(actionOperationStore.getState().terminalSeenAtById.has(terminal.operationId)).toBe(false);
         await screen.pressByTestIdAsync('action-operation-activity-button');
         expect(actionOperationStore.getState().terminalSeenAtById.has(terminal.operationId)).toBe(true);
+
+        const later = operation({ ...terminal, operationId: 'operation-arrived-while-open' });
+        await act(async () => { actionOperationStore.merge(later); });
+        expect(actionOperationStore.getState().terminalSeenAtById.has(later.operationId)).toBe(false);
+
+        await screen.pressByTestIdAsync('action-operation-activity-button');
+        await screen.pressByTestIdAsync('action-operation-activity-button');
+        expect(actionOperationStore.getState().terminalSeenAtById.has(later.operationId)).toBe(true);
     });
 });

@@ -23,6 +23,7 @@ import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 import {
   resolveProviderPromptFailureDeliveryReason,
   type ProviderPromptWithMeta,
+  type ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
 
 type PromptRuntime = {
@@ -37,7 +38,7 @@ type PromptRuntime = {
   isProviderNativeCommand?: InFlightSteerController['isProviderNativeCommand'];
   compactContext?: (command: string) => Promise<void>;
   failTurn?: (error: unknown) => void | boolean | Promise<void | boolean>;
-  flushTurn: () => void | Promise<void>;
+  flushTurn: () => void | ProviderTurnCompletionResult | Promise<void | ProviderTurnCompletionResult>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   shouldResumeAfterPermissionModeChange?: () => boolean;
@@ -64,6 +65,7 @@ type QueuedPermissionModeMessage = {
 export type ReadyNotificationTurnContext = Readonly<{
   turnToken: string | null;
   startSeqExclusive: number | null;
+  turnResult?: ProviderTurnCompletionResult;
 }>;
 
 class StrictInitialResumeError extends Error {
@@ -120,6 +122,7 @@ export async function runPermissionModePromptLoop(opts: {
   messageBuffer: MessageBuffer;
   shouldExit: () => boolean;
   getAbortSignal: () => AbortSignal;
+  waitForPendingAbort?: () => Promise<void> | null;
   keepAlive: () => void;
   setThinking: (value: boolean) => void;
   sendReady: (context?: ReadyNotificationTurnContext) => void;
@@ -209,6 +212,7 @@ export async function runPermissionModePromptLoop(opts: {
   const confirmQueuedUserMessageDeliveredToProvider = (
     message: QueuedPermissionModeMessage,
     appliedModelId?: string | null,
+    delivery?: Readonly<{ kind: 'command' }>,
   ): void => {
     const localIds = normalizePendingDeliveryLocalIds(message.userMessageLocalIds);
     if (localIds.length !== 1) return;
@@ -216,6 +220,7 @@ export async function runPermissionModePromptLoop(opts: {
     opts.providerInputOutcomeObserver?.({
       kind: 'accepted',
       localId: localIds[0],
+      ...(delivery ? { delivery } : {}),
       ...(normalizedAppliedModelId ? { appliedModelId: normalizedAppliedModelId } : {}),
     });
   };
@@ -347,6 +352,13 @@ export async function runPermissionModePromptLoop(opts: {
   }
 
   while (!opts.shouldExit()) {
+    // The runner owns replacement of the input signal after provider cancellation.
+    // Join that operation before another input wait instead of retrying an aborted signal.
+    const pendingAbort = opts.waitForPendingAbort?.();
+    if (pendingAbort) {
+      await pendingAbort;
+      if (opts.shouldExit()) break;
+    }
     let message: QueuedPermissionModeMessage | null = pending;
     pending = null;
 
@@ -417,7 +429,7 @@ export async function runPermissionModePromptLoop(opts: {
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
-      confirmQueuedUserMessageDeliveredToProvider(message);
+      confirmQueuedUserMessageDeliveredToProvider(message, undefined, { kind: 'command' });
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();
@@ -644,7 +656,14 @@ export async function runPermissionModePromptLoop(opts: {
             await opts.runtime.flushTurn();
           } catch {}
         } else {
-          await opts.runtime.flushTurn();
+          const turnResult = await opts.runtime.flushTurn();
+          if (turnResult) {
+            readyTurnContext = {
+              turnToken: readyTurnContext?.turnToken ?? null,
+              startSeqExclusive: readyTurnContext?.startSeqExclusive ?? null,
+              turnResult,
+            };
+          }
         }
       }
       // Metadata updates can arrive while we're mid-turn.

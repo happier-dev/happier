@@ -92,25 +92,44 @@ describe('projectSessionListPlacement', () => {
         });
     });
 
-    it('places background activity in Working ahead of Ready after the foreground turn completed', () => {
+    it('keeps unread completed turns working until background work settles, with optional unread promotion', () => {
         const nowMs = 10_000;
+        const backgroundActiveCompletedTurn = {
+            active: true,
+            activeAt: nowMs - 180_000,
+            presence: 'online' as const,
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'completed' as const,
+            latestTurnStatusObservedAt: nowMs - 2_000,
+            lastRuntimeIssue: null,
+            runtimeActivityState: 'active' as const,
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: nowMs - 1_000,
+            runtimeActivityRevision: 1,
+        };
 
         expect(projectSessionListPlacement({
             nowMs,
-            session: makeSession({
-                active: true,
-                activeAt: nowMs - 180_000,
-                presence: 'online',
-                thinking: false,
-                thinkingAt: 0,
-                latestTurnStatus: 'completed',
-                latestTurnStatusObservedAt: nowMs - 2_000,
-                lastRuntimeIssue: null,
-                runtimeActivityState: 'active',
-                runtimeActivityActiveCount: 1,
-                runtimeActivityObservedAt: nowMs - 1_000,
-                runtimeActivityRevision: 1,
-            }),
+            session: makeSession(backgroundActiveCompletedTurn),
+        }).kind).toBe('working');
+        expect(projectSessionListPlacement({
+            nowMs,
+            backgroundWorkAttentionMode: 'showUnread',
+            session: makeSession(backgroundActiveCompletedTurn),
+        }).kind).toBe('unread');
+        expect(projectSessionListPlacement({
+            nowMs,
+            backgroundWorkAttentionMode: 'keepWorkingUnread',
+            session: makeSession(backgroundActiveCompletedTurn),
+        }).kind).toBe('working');
+        expect(projectSessionListPlacement({
+            nowMs,
+            session: makeSession({ ...backgroundActiveCompletedTurn, runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 }),
+        }).kind).toBe('ready');
+        expect(projectSessionListPlacement({
+            nowMs,
+            session: makeSession({ ...backgroundActiveCompletedTurn, lastViewedSessionSeq: 1 }),
         })).toEqual({
             kind: 'working',
             timestamp: null,
@@ -140,6 +159,7 @@ describe('projectSessionListPlacement', () => {
                 runtimeActivityActiveCount: 1,
                 runtimeActivityObservedAt: nowMs - 3_600_000,
                 runtimeActivityRevision: 1,
+                lastViewedSessionSeq: 1,
             }),
         });
 
@@ -147,11 +167,7 @@ describe('projectSessionListPlacement', () => {
         expect(placement.retainedWorking).toBe(false);
     });
 
-    it('drops background activity out of Working once nothing witnesses the runtime any more', () => {
-        // Was: "keeps canonical background activity in Working without an observedAt freshness
-        // lease" — the contract that kept a session published `active` moments before an
-        // unwitnessed death pinned to Working forever. With the session keep-alive at 15 s, a
-        // three-minute silence is twelve missed pings, not a slow session.
+    it('keeps unread background work in Working when heartbeat persistence trails the live publisher', () => {
         const nowMs = 10_000_000;
 
         const placement = projectSessionListPlacement({
@@ -172,7 +188,24 @@ describe('projectSessionListPlacement', () => {
             }),
         });
 
-        expect(placement.kind).not.toBe('working');
+        expect(placement.kind).toBe('working');
+    });
+
+    it.each(['active', 'unknown'] as const)('does not call an unread completed turn ready when background activity is %s after disconnection', (runtimeActivityState) => {
+        expect(projectSessionListPlacement({
+            nowMs: 1_000_000,
+            session: makeSession({
+                active: false,
+                presence: 1,
+                latestTurnStatus: 'completed',
+                latestReadyEventSeq: 4,
+                lastViewedSessionSeq: 1,
+                hasUnreadMessages: true,
+                runtimeActivityState,
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 1,
+            }),
+        }).kind).toBe('unread');
     });
 
     it.each([

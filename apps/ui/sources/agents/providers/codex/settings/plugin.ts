@@ -9,6 +9,35 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     settings: CODEX_PROVIDER_FIELDS,
     uiSections: [
         {
+            id: 'codexReasoningSummaries',
+            title: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.title' },
+            footer: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.footer' },
+            fields: [
+                {
+                    key: 'codexReasoningSummaries',
+                    kind: 'enum',
+                    title: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.generation' },
+                    enumOptions: [
+                        {
+                            id: 'default',
+                            title: { key: 'common.default' },
+                            subtitle: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.options.default' },
+                        },
+                        {
+                            id: 'enabled',
+                            title: { key: 'common.enabled' },
+                            subtitle: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.options.enabled' },
+                        },
+                        {
+                            id: 'disabled',
+                            title: { key: 'common.disabled' },
+                            subtitle: { key: 'settingsProviders.plugins.codex.fields.codexReasoningSummaries.options.disabled' },
+                        },
+                    ],
+                },
+            ],
+        },
+        {
             id: 'codexMode',
             title: { key: 'settingsProviders.plugins.codex.sections.backendMode.title' },
             footer: { key: 'settingsProviders.plugins.codex.sections.backendMode.footer' },

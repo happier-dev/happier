@@ -1,7 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier",
-  "version": "0.2.17",
+  "mainBinaryName": "happier-desktop",
+  "version": "0.2.19",
   "identifier": "dev.happier.app",
   "build": {
     "frontendDist": "../dist",
@@ -37,6 +38,10 @@
     ]
   },
   "bundle": {
+    "category": "DeveloperTool",
+    "publisher": "Happier",
+    "shortDescription": "A cross-device companion for coding agents",
+    "longDescription": "Monitor, steer, approve, review, and continue coding agent sessions across your computers, phone, and browser.",
     "active": true,
     "createUpdaterArtifacts": false,
     "targets": "all",

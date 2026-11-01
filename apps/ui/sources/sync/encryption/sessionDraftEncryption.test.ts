@@ -31,7 +31,7 @@ describe('sessionDraftEncryption', () => {
     it('uses plain envelopes for plain targets and validates the single private address binding', async () => {
         const cipher = createSessionDraftCipher({
             accountMode: 'plain',
-            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            accountCryptoMaterial: null,
             getSessionContext: () => ({ mode: 'plain' }),
             randomBytes: (length) => new Uint8Array(length),
         });
@@ -39,6 +39,10 @@ describe('sessionDraftEncryption', () => {
 
         await expect(cipher.open(sessionAddress, envelope)).resolves.toEqual(document('session'));
         await expect(cipher.open(newAddress, envelope)).resolves.toBeNull();
+        const newEnvelope = await cipher.seal(newAddress, document('newSession'));
+        expect(newEnvelope.t).toBe('plain');
+        await expect(cipher.open(newAddress, newEnvelope)).resolves.toEqual(document('newSession'));
+        await expect(cipher.open(newAddress, { t: 'encrypted', c: 'opaque' })).resolves.toBeNull();
     });
 
     it('uses the Session cipher for encrypted existing-session drafts and the Account kind for new drafts', async () => {
@@ -73,7 +77,7 @@ describe('sessionDraftEncryption', () => {
 
         const plainSession = createSessionDraftCipher({
             accountMode: 'plain',
-            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            accountCryptoMaterial: null,
             getSessionContext: () => ({ mode: 'plain' }),
             randomBytes: (length) => new Uint8Array(length),
         });

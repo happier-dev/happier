@@ -72,7 +72,7 @@ describe("authRoutes (pairing auth) (integration)", () => {
         await app.close();
     });
 
-    it("creates a pairing session, allows phone request, and exposes status to the owning account", async () => {
+    it.each([undefined, true])("creates a pairing session and projects reader support (%s) to the owning account", async (supportsCredentialVariants) => {
         const account = await db.account.create({
             data: { publicKey: `pk-${Date.now()}` },
             select: { id: true },
@@ -124,10 +124,21 @@ describe("authRoutes (pairing auth) (integration)", () => {
         const requestRes = await app.inject({
             method: "POST",
             url: "/v1/auth/pairing/request",
-            payload: { pairId, secret, publicKey: publicKeyBase64, deviceLabel: "iPhone" },
+            payload: { pairId, secret, publicKey: publicKeyBase64, deviceLabel: "iPhone", supportsCredentialVariants },
         });
         expect(requestRes.statusCode).toBe(200);
         expect(requestRes.json()).toEqual({ state: "requested", confirmCode: expect.any(String) });
+
+        // An idempotent retry from a caller omitting negotiation must preserve the reader support.
+        const retryRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/pairing/request",
+            payload: { pairId, secret, publicKey: publicKeyBase64, deviceLabel: "iPhone" },
+        });
+        expect(retryRes.statusCode).toBe(200);
+        expect(await db.authPairingSession.findUnique({ where: { id: pairId } })).toMatchObject({
+            supportsCredentialVariants: supportsCredentialVariants ?? false,
+        });
 
         const tooLongDeviceLabelRes = await app.inject({
             method: "POST",
@@ -157,6 +168,7 @@ describe("authRoutes (pairing auth) (integration)", () => {
             expiresAt: expect.any(String),
             requestedPublicKey: publicKeyBase64,
             requestedDeviceLabel: "iPhone",
+            supportsCredentialVariants: supportsCredentialVariants ?? false,
             confirmCode: expect.any(String),
         });
 

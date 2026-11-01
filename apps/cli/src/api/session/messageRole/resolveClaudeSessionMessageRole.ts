@@ -1,5 +1,5 @@
 import type { RawJSONLines } from '@/backends/claude/types';
-import type { SessionMessageRole } from '@happier-dev/protocol';
+import { readClaudePeerMessage, type SessionMessageRole } from '@happier-dev/protocol';
 
 import { asRecord, readNestedProperty, readStringProperty, readType } from './messageRoleClassificationPrimitives';
 
@@ -53,6 +53,8 @@ function isClaudeSyntheticNoResponseAssistant(body: unknown): boolean {
 export function resolveClaudeSessionMessageRole(body: RawJSONLines | unknown): SessionMessageRole {
     const type = readType(body);
     if (type === 'user') {
+        // Teammate and subagent deliveries are agent output, not human input.
+        if (readClaudePeerMessage(body)) return 'agent';
         const content = readClaudeContent(body);
         if (hasToolBlock(content)) return 'event';
         return hasTextBlock(content) ? 'user' : 'event';

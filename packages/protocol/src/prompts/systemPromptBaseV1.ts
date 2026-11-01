@@ -1,7 +1,8 @@
 import { trimIdent } from '../strings/trimIdent.js';
+import { isSessionHappierToolsEnabled } from '../mcpServers/sessionSelectionV1.js';
 import {
   isCodingPromptResponseOptionsEnabled,
-  resolveCodingPromptSessionTitleUpdatesModeV1,
+  resolveCodingPromptSessionTitleInstructionModeV1,
 } from './codingPromptBehaviorV1.js';
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 = trimIdent(`
@@ -50,7 +51,7 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 = trimIdent(`
   - <path> (...)
   [/attachments]
 
-  When present, open and analyze the referenced file paths before answering. If a file cannot be opened, explain the error and ask the user how to proceed.
+  When present, open and analyze the referenced file paths before answering. Relative paths are relative to the session working directory, not your home directory. If a file cannot be opened, explain the error and ask the user how to proceed.
 `);
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
@@ -64,12 +65,14 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
 export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   settings?: Record<string, unknown> | null | undefined;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
 }>): string {
   const blocks: string[] = [];
-  const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleUpdatesModeV1(args?.settings);
-  if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'initial') {
+  const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleInstructionModeV1(args?.settings, args?.sessionMetadata);
+  const titleToolAvailable = args?.sessionTitleToolAvailable !== false && isSessionHappierToolsEnabled(args?.sessionMetadata);
+  if (titleToolAvailable && sessionTitleUpdatesMode === 'initial') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
-  } else if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'ongoing') {
+  } else if (titleToolAvailable && sessionTitleUpdatesMode === 'ongoing') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
   }
   if (isCodingPromptResponseOptionsEnabled(args?.settings)) {

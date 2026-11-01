@@ -132,6 +132,11 @@ export function hasAgentInputCollapsedOptionsPopoverContent(
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
     /**
+     * The control cannot act right now (for example while its composer is launching). The chip
+     * renders its own inert state; the collapsed action menu disables every entry it builds for it.
+     */
+    disabled?: boolean;
+    /**
      * Signals that the reader is reaching for this control, whether through its
      * visible chip or the collapsed action menu. Expensive detail owned by the
      * control can wait for this signal instead of loading while the control is

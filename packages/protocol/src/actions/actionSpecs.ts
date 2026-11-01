@@ -50,6 +50,7 @@ import {
   ActionOperationDeclarationV1Schema,
   type ActionOperationDeclarationV1,
 } from './operations/actionOperationDeclarationV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -65,13 +66,13 @@ export {
   type ActionOperationDeclarationV1,
 } from './operations/actionOperationDeclarationV1.js';
 
-const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
+const ZodSchemaLike = lazySchema(() => z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
   const v = value as any;
   return typeof v.safeParse === 'function' && typeof v.parse === 'function';
-}, { message: 'Expected a Zod schema' });
+}, { message: 'Expected a Zod schema' }));
 
-export const ActionSurfaceSchema = z.object({
+export const ActionSurfaceSchema = lazySchema(() => z.object({
   ui_button: z.boolean(),
   ui_slash_command: z.boolean(),
   voice_tool: z.boolean(),
@@ -79,51 +80,51 @@ export const ActionSurfaceSchema = z.object({
   session_agent: z.boolean(),
   mcp: z.boolean(),
   cli: z.boolean(),
-}).strict();
+}).strict());
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
-export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
+export const ActionToolExposureModeSchema = lazySchema(() => z.enum(['direct', 'discoverable_only']));
 export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
 
-export const ActionToolExposureSurfaceSchema = z.enum(['session_agent', 'mcp', 'cli']);
+export const ActionToolExposureSurfaceSchema = lazySchema(() => z.enum(['session_agent', 'mcp', 'cli']));
 export type ActionToolExposureSurface = z.infer<typeof ActionToolExposureSurfaceSchema>;
 
-export const ActionToolExposureSchema = z.object({
+export const ActionToolExposureSchema = lazySchema(() => z.object({
   session_agent: ActionToolExposureModeSchema.optional(),
   mcp: ActionToolExposureModeSchema.optional(),
   cli: ActionToolExposureModeSchema.optional(),
-}).strict();
+}).strict());
 export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
 
-export const ActionContextualDefaultSourceSchema = z.enum([
+export const ActionContextualDefaultSourceSchema = lazySchema(() => z.enum([
   'current_session',
   'current_session_machine',
-]);
+]));
 export type ActionContextualDefaultSource = z.infer<typeof ActionContextualDefaultSourceSchema>;
 
-export const ActionContextualDefaultsSchema = z.object({
+export const ActionContextualDefaultsSchema = lazySchema(() => z.object({
   sessionId: ActionContextualDefaultSourceSchema.optional(),
   machineId: ActionContextualDefaultSourceSchema.optional(),
-}).strict();
+}).strict());
 export type ActionContextualDefaults = z.infer<typeof ActionContextualDefaultsSchema>;
 
-export const ActionSafetySchema = z.enum(['safe', 'danger']);
+export const ActionSafetySchema = lazySchema(() => z.enum(['safe', 'danger']));
 export type ActionSafety = z.infer<typeof ActionSafetySchema>;
 
-export const ActionInputWidgetSchema = z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox']);
+export const ActionInputWidgetSchema = lazySchema(() => z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox']));
 export type ActionInputWidget = z.infer<typeof ActionInputWidgetSchema>;
 
-export const ActionInputOptionSchema = z
+export const ActionInputOptionSchema = lazySchema(() => z
   .object({
     value: z.string().min(1),
     label: z.string().min(1),
     description: z.string().min(1).optional(),
     disabled: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type ActionInputOption = z.infer<typeof ActionInputOptionSchema>;
 
-export const ActionInputFieldHintSchema = z
+export const ActionInputFieldHintSchema = lazySchema(() => z
   .object({
     /**
      * Dot-path in the action input object, e.g. `engineIds` or `base.kind`.
@@ -180,26 +181,26 @@ export const ActionInputFieldHintSchema = z
         });
       }
     }
-  });
+  }));
 export type ActionInputFieldHint = z.infer<typeof ActionInputFieldHintSchema>;
 
-export const ActionInputHintsSchema = z
+export const ActionInputHintsSchema = lazySchema(() => z
   .object({
     title: z.string().min(1).optional(),
     description: z.string().min(1).optional(),
     fields: z.array(ActionInputFieldHintSchema).default([]),
   })
-  .strict();
+  .strict());
 export type ActionInputHints = z.infer<typeof ActionInputHintsSchema>;
 
-export const ActionPromptingSchema = z
+export const ActionPromptingSchema = lazySchema(() => z
   .object({
     voiceHotPath: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type ActionPrompting = z.infer<typeof ActionPromptingSchema>;
 
-export const ActionSpecSchema = z.object({
+export const ActionSpecSchema = lazySchema(() => z.object({
   id: ActionIdSchema,
   title: z.string().min(1),
   description: z.string().min(1).optional(),
@@ -242,55 +243,61 @@ export const ActionSpecSchema = z.object({
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
   inputHints: ActionInputHintsSchema.optional(),
-}).passthrough();
+}).passthrough());
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: readonly ActionUiPlacement[];
   operation?: ActionOperationDeclarationV1;
 }>;
 
-const EmptyObjectSchema = z.object({}).strict();
-const OptionalSessionIdInputSchema = z.object({
+const EmptyObjectSchema = lazySchema(() => z.object({}).strict());
+const OptionalSessionIdInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionIdRequiredInputSchema = z.object({
+const SessionIdRequiredInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const SessionTitleSetInputSchema = z.object({
+const SessionTitleSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   title: z.string().trim().min(1),
-}).passthrough();
+}).passthrough());
 
-const SessionPermissionModeSetInputSchema = z.object({
+const SessionPermissionModeSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   permissionMode: SessionPermissionModeInputSchema,
-}).passthrough();
+}).passthrough());
 
-const SessionModelSetInputSchema = z.object({
+const SessionModelSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   modelId: z.string().refine((value) => value.trim().length > 0, { message: 'Model ID must not be blank' }),
-}).passthrough();
+}).passthrough());
 
-const SessionStatusGetInputSchema = z.object({
+const SessionConfigOptionSetInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1).optional(),
+  configId: z.string().refine((value) => value.trim().length > 0, { message: 'Config ID must not be blank' }),
+  valueId: z.string().refine((value) => value.trim().length > 0, { message: 'Value ID must not be blank' }),
+}).strict());
+
+const SessionStatusGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   live: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionHistoryGetInputSchema = z.object({
+const SessionHistoryGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(250).optional(),
   format: z.enum(['compact', 'raw']).optional(),
   includeMeta: z.boolean().optional(),
   includeStructuredPayload: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionTranscriptRoleSchema = z.enum(['user', 'assistant']);
-const SessionTranscriptScopeSchema = z.enum(['main', 'sidechain', 'all']);
-const SessionTranscriptDirectionSchema = z.enum(['before', 'after']);
+const SessionTranscriptRoleSchema = lazySchema(() => z.enum(['user', 'assistant']));
+const SessionTranscriptScopeSchema = lazySchema(() => z.enum(['main', 'sidechain', 'all']));
+const SessionTranscriptDirectionSchema = lazySchema(() => z.enum(['before', 'after']));
 
-export const SessionTranscriptGetInputSchema = z.object({
+export const SessionTranscriptGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).nullable().optional(),
@@ -306,7 +313,7 @@ export const SessionTranscriptGetInputSchema = z.object({
   includeRaw: z.boolean().optional(),
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
   maxRawPayloadChars: z.number().int().min(0).max(32768).nullable().optional(),
-}).passthrough();
+}).passthrough());
 export type SessionTranscriptGetInput = z.infer<typeof SessionTranscriptGetInputSchema>;
 export type SessionTranscriptGetItem = Readonly<{
   id: string;
@@ -342,9 +349,9 @@ export type SessionTranscriptGetOutput =
     candidates?: readonly string[];
   }>;
 
-const SessionEventRoleSchema = z.enum(['event', 'agent', 'user', 'unknown']);
+const SessionEventRoleSchema = lazySchema(() => z.enum(['event', 'agent', 'user', 'unknown']));
 
-export const SessionEventsGetInputSchema = z.object({
+export const SessionEventsGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(200).optional(),
   cursor: z.string().min(1).nullable().optional(),
@@ -367,7 +374,7 @@ export const SessionEventsGetInputSchema = z.object({
       path: ['scope'],
     });
   }
-});
+}));
 export type SessionEventsGetInput = z.infer<typeof SessionEventsGetInputSchema>;
 export type SessionEventsGetItem = Readonly<{
   id: string;
@@ -406,12 +413,12 @@ export type SessionEventsGetOutput =
     candidates?: readonly string[];
   }>;
 
-const SessionWaitIdleInputSchema = z.object({
+const SessionWaitIdleInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionGoalSetInputSchema = z.object({
+const SessionGoalSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   objective: z.string().trim().min(1).max(4000).optional(),
   status: SessionWorkStateStatusV1Schema.optional(),
@@ -420,14 +427,14 @@ const SessionGoalSetInputSchema = z.object({
   typeof value.objective === 'string'
   || typeof value.status === 'string'
   || Object.prototype.hasOwnProperty.call(value, 'tokenBudget')
-), { message: 'At least one goal mutation field is required' });
+), { message: 'At least one goal mutation field is required' }));
 
-const SessionCatalogListInputSchema = z.object({
+const SessionCatalogListInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   cwd: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const IntentStartCommonSchema = z.object({
+const IntentStartCommonSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   backendTargetKeys: z.array(BackendTargetKeySchema).min(1),
   instructions: z.string().trim().min(1),
@@ -454,35 +461,35 @@ const IntentStartCommonSchema = z.object({
   connectedServicesByBackendTargetKey: z.record(z.string().min(1), z.unknown()).optional(),
   waitForCompletion: z.boolean().optional(),
   waitTimeoutSeconds: z.number().int().min(1).max(MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS).optional(),
-}).passthrough();
+}).passthrough());
 
-const PlanStartInputSchema = IntentStartCommonSchema.extend({
+const PlanStartInputSchema = lazySchema(() => IntentStartCommonSchema.extend({
   permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
-}).passthrough();
+}).passthrough());
 
-const DelegateStartInputSchema = IntentStartCommonSchema.extend({
+const DelegateStartInputSchema = lazySchema(() => IntentStartCommonSchema.extend({
   permissionMode: ExecutionRunActionPermissionModeSchema.optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
-}).passthrough();
+}).passthrough());
 
-const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
+const VoiceAgentStartInputSchema = lazySchema(() => IntentStartCommonSchema.extend({
   permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('long_lived'),
   ioMode: z.enum(['request_response', 'streaming']).default('streaming'),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunIdInputSchema = z.object({
+const ExecutionRunIdInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   runId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunStartInputSchema = z.object({
+const ExecutionRunStartInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   intent: z.enum(['review', 'plan', 'delegate', 'voice_agent', 'memory_hints']),
   backendTarget: BackendTargetRefSchema,
@@ -512,27 +519,27 @@ const ExecutionRunStartInputSchema = z.object({
   connectedServices: z.unknown().optional(),
   waitForCompletion: z.boolean().optional(),
   waitTimeoutSeconds: z.number().int().min(1).max(MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS).optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunGetInputSchema = lazySchema(() => ExecutionRunIdInputSchema.extend({
   includeStructured: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunSendInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunSendInputSchema = lazySchema(() => ExecutionRunIdInputSchema.extend({
   message: z.string().min(1),
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunActionInputSchema = lazySchema(() => ExecutionRunIdInputSchema.extend({
   actionId: z.string().min(1),
   input: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunWaitInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunWaitInputSchema = lazySchema(() => ExecutionRunIdInputSchema.extend({
   timeoutSeconds: z.number().int().min(1).max(MAX_EXECUTION_RUN_OBSERVATION_TIMEOUT_SECONDS).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionOpenInputSchema = z.object({
+const SessionOpenInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   sessionTitle: z.string().trim().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -543,26 +550,26 @@ const SessionOpenInputSchema = z.object({
       path: ['sessionId'],
     });
   }
-});
+}));
 
 /**
  * Action-facing fork recipe. The transport's parent session id is resolved from
  * the action input/context, while legacy callers may continue to omit a fork
  * point and let their host adapter apply its existing default.
  */
-export const SessionForkActionInputSchema = SessionForkRpcParamsSchema
+export const SessionForkActionInputSchema = lazySchema(() => SessionForkRpcParamsSchema
   .omit({ v: true, parentSessionId: true })
   .partial()
   .extend({ sessionId: z.string().min(1).optional() })
-  .passthrough();
+  .passthrough());
 export type SessionForkActionInput = z.infer<typeof SessionForkActionInputSchema>;
 
-const SessionRollbackInputSchema = z.object({
+const SessionRollbackInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   target: SessionRollbackTargetSchema.optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionHandoffInputSchema = z.object({
+const SessionHandoffInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   targetMachineId: z.string().min(1).optional(),
   targetPath: z.string().min(1).optional(),
@@ -573,9 +580,9 @@ const SessionHandoffInputSchema = z.object({
   if (value.stateTransfer === 'existing' && value.workspaceTransfer?.enabled === true) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['workspaceTransfer'], message: 'Existing session state requires workspace copying to be disabled' });
   }
-});
+}));
 
-const SessionSpawnTerminalInputSchema = z.object({
+const SessionSpawnTerminalInputSchema = lazySchema(() => z.object({
   mode: z.enum(['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
     sessionName: z.string().optional(),
@@ -583,7 +590,7 @@ const SessionSpawnTerminalInputSchema = z.object({
     tmpDir: z.string().nullable().optional(),
   }).strict().optional(),
   herdr: z.object({ sessionName: z.string().optional() }).strict().optional(),
-}).strict();
+}).strict());
 
 function normalizeSpawnTargetAlias(value: string): string {
   const trimmed = value.trim();
@@ -591,11 +598,11 @@ function normalizeSpawnTargetAlias(value: string): string {
   return trimmed === 'customAcp' ? trimmed : `agent:${trimmed}`;
 }
 
-const SessionSpawnAttemptIdentifierSchema = z.string().refine((value) => value.trim().length > 0, {
+const SessionSpawnAttemptIdentifierSchema = lazySchema(() => z.string().refine((value) => value.trim().length > 0, {
   message: 'Spawn attempt identifier must not be blank',
-});
+}));
 
-export const SessionSpawnNewInputSchema = z.object({
+export const SessionSpawnNewInputSchema = lazySchema(() => z.object({
   tag: z.string().min(1).optional(),
   tags: z.array(z.string().min(1)).optional(),
   agentId: z.string().trim().min(1).optional(),
@@ -717,40 +724,40 @@ export const SessionSpawnNewInputSchema = z.object({
   rejectConflictingAliases(['prompt', 'initialPrompt', 'initialMessage']);
   rejectConflictingTargetAliases();
   rejectConflictingConfigAliases();
-});
+}));
 export type SessionSpawnNewInput = z.infer<typeof SessionSpawnNewInputSchema>;
 
-const SessionSpawnPickerInputSchema = z.object({
+const SessionSpawnPickerInputSchema = lazySchema(() => z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const PathsListRecentInputSchema = z.object({
+const PathsListRecentInputSchema = lazySchema(() => z.object({
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(50).optional(),
-}).passthrough();
+}).passthrough());
 
-const MachinesListInputSchema = z.object({
+const MachinesListInputSchema = lazySchema(() => z.object({
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
-const ServersListInputSchema = z.object({
+const ServersListInputSchema = lazySchema(() => z.object({
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
-const ReviewEnginesListInputSchema = z.object({
+const ReviewEnginesListInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   includeDisabled: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const AgentsBackendsListInputSchema = z.object({
+const AgentsBackendsListInputSchema = lazySchema(() => z.object({
   includeDisabled: z.boolean().optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
-const AgentsModelsListInputSchema = z.object({
+const AgentsModelsListInputSchema = lazySchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: BackendTargetKeySchema.optional(),
   machineId: z.string().min(1).optional(),
@@ -781,12 +788,12 @@ const AgentsModelsListInputSchema = z.object({
       });
     }
   }
-});
+}));
 
 const AgentsSessionModesListInputSchema = AgentsModelsListInputSchema;
 const AgentsConfigOptionsListInputSchema = AgentsModelsListInputSchema;
 
-const SpawnDiscoveryAgentContextInputSchema = z.object({
+const SpawnDiscoveryAgentContextInputSchema = lazySchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: BackendTargetKeySchema.optional(),
   includeDisabled: z.boolean().optional(),
@@ -804,12 +811,12 @@ const SpawnDiscoveryAgentContextInputSchema = z.object({
       });
     }
   }
-});
+}));
 
 const SessionsSpawnProfilesListInputSchema = SpawnDiscoveryAgentContextInputSchema;
 const SessionsSpawnConnectedServicesListInputSchema = SpawnDiscoveryAgentContextInputSchema;
 
-const SessionsSpawnMcpServersPreviewInputSchema = z.object({
+const SessionsSpawnMcpServersPreviewInputSchema = lazySchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: BackendTargetKeySchema.optional(),
   machineId: z.string().min(1).optional(),
@@ -838,18 +845,18 @@ const SessionsSpawnMcpServersPreviewInputSchema = z.object({
       path: ['directory'],
     });
   }
-});
+}));
 
-const ActionSpecSearchInputSchema = z.object({
+const ActionSpecSearchInputSchema = lazySchema(() => z.object({
   query: z.string().trim().optional(),
   limit: z.number().int().min(1).max(100).optional(),
-}).passthrough();
+}).passthrough());
 
-const ActionSpecGetInputSchema = z.object({
+const ActionSpecGetInputSchema = lazySchema(() => z.object({
   id: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const ActionOptionsResolveInputSchema = z.object({
+const ActionOptionsResolveInputSchema = lazySchema(() => z.object({
   actionId: z.string().min(1).optional(),
   fieldPath: z.string().min(1).optional(),
   optionsSourceId: z.string().min(1).optional(),
@@ -868,11 +875,13 @@ const ActionOptionsResolveInputSchema = z.object({
       path: ['actionId'],
     });
   }
-});
+}));
 
-const SessionSendMessageInputSchema = z.object({
+const SessionSendMessageInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   message: z.string().min(1),
+  kind: z.enum(['user', 'notice']).optional(),
+  from: z.string().trim().min(1).optional(),
   requestedAction: PendingRequestedActionV1Schema.optional(),
   permissionModeOverride: z.string().trim().min(1).optional(),
   modelOverride: z.union([
@@ -881,15 +890,15 @@ const SessionSendMessageInputSchema = z.object({
   ]).optional(),
   wait: z.boolean().optional(),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionPermissionRespondInputSchema = z.object({
+const SessionPermissionRespondInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   decision: z.enum(['allow', 'deny']),
   requestId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionUserActionAnswerItemSchema = z.object({
+const SessionUserActionAnswerItemSchema = lazySchema(() => z.object({
   question: z.string()
     .min(1)
     .max(STRUCTURED_QUESTION_LIMITS.maxStringLength)
@@ -906,9 +915,9 @@ const SessionUserActionAnswerItemSchema = z.object({
   if (value.answer === undefined && value.values === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer or values is required' });
   }
-});
+}));
 
-const SessionUserActionAnswerInputSchema = z.object({
+const SessionUserActionAnswerInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
@@ -948,15 +957,15 @@ const SessionUserActionAnswerInputSchema = z.object({
       path: ['reason'],
     });
   }
-});
+}));
 
-const SessionModeSetInputSchema = z.object({
+const SessionModeSetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   // An empty id clears the override; native `default` remains a provider mode.
   modeId: z.string(),
-}).passthrough();
+}).passthrough());
 
-const SessionPrimaryTargetInputSchema = z.object({
+const SessionPrimaryTargetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).nullable().optional(),
   sessionTitle: z.string().trim().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -969,13 +978,13 @@ const SessionPrimaryTargetInputSchema = z.object({
       path: ['sessionId'],
     });
   }
-});
+}));
 
-const SessionTrackedTargetsInputSchema = z.object({
+const SessionTrackedTargetsInputSchema = lazySchema(() => z.object({
   sessionIds: z.array(z.string().min(1)).max(50),
-}).passthrough();
+}).passthrough());
 
-const SessionListInputSchema = z.object({
+const SessionListInputSchema = lazySchema(() => z.object({
   limit: z.number().int().min(1).max(200).optional(),
   cursor: z.string().min(1).nullable().optional(),
   includeLastMessagePreview: z.boolean().optional(),
@@ -984,28 +993,28 @@ const SessionListInputSchema = z.object({
   includeSystem: z.boolean().optional(),
   resumableOnly: z.boolean().optional(),
   includeRows: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionActivityInputSchema = z.object({
+const SessionActivityInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   windowSeconds: z.number().int().min(1).max(86_400).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionRecentMessagesInputSchema = z.object({
+const SessionRecentMessagesInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).nullable().optional(),
   includeUser: z.boolean().optional(),
   includeAssistant: z.boolean().optional(),
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
-}).passthrough();
+}).passthrough());
 
-const MemorySearchInputSchema = z.object({
+const MemorySearchInputSchema = lazySchema(() => z.object({
   machineId: z.string().min(1),
   query: MemorySearchQueryV1Schema,
-}).passthrough();
+}).passthrough());
 
-const MemoryGetWindowInputSchema = z.object({
+const MemoryGetWindowInputSchema = lazySchema(() => z.object({
   machineId: z.string().min(1),
   sessionId: z.string().min(1),
   seqFrom: z.number().int().min(0),
@@ -1014,44 +1023,44 @@ const MemoryGetWindowInputSchema = z.object({
   if (value.seqFrom > value.seqTo) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
   }
-});
+}));
 
-const MemoryEnsureUpToDateInputSchema = z.object({
+const MemoryEnsureUpToDateInputSchema = lazySchema(() => z.object({
   machineId: z.string().min(1),
   sessionId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const ApprovalRequestCreateInputSchema = z.object({
+const ApprovalRequestCreateInputSchema = lazySchema(() => z.object({
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),
   summary: z.string().min(1),
   createdBy: ApprovalRequestCreatedBySchema,
   origin: ApprovalRequestOriginV1Schema.optional(),
   preview: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 
-const ApprovalRequestDecideInputSchema = z.object({
+const ApprovalRequestDecideInputSchema = lazySchema(() => z.object({
   artifactId: z.string().min(1),
   decision: z.enum(['approve', 'reject']),
-}).passthrough();
+}).passthrough());
 
-const PromptDocUpdateInputSchema = z.object({
+const PromptDocUpdateInputSchema = lazySchema(() => z.object({
   artifactId: z.string().min(1),
   title: z.string().min(1),
   markdown: z.string(),
   folderId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
-}).passthrough();
+}).passthrough());
 
-const PromptBundleUpdateInputSchema = z.object({
+const PromptBundleUpdateInputSchema = lazySchema(() => z.object({
   artifactId: z.string().min(1),
   title: z.string().min(1),
   skillMarkdown: z.string(),
   folderId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
-}).passthrough();
+}).passthrough());
 
-const PromptAssetExportInputSchema = z.object({
+const PromptAssetExportInputSchema = lazySchema(() => z.object({
   artifactId: z.string().min(1),
   machineId: z.string().min(1),
   assetTypeId: z.string().min(1),
@@ -1070,9 +1079,9 @@ const PromptAssetExportInputSchema = z.object({
       path: ['targetPath'],
     });
   }
-});
+}));
 
-const PromptRegistryInstallInputSchema = z.object({
+const PromptRegistryInstallInputSchema = lazySchema(() => z.object({
   machineId: z.string().min(1),
   sourceId: z.string().min(1),
   itemId: z.string().min(1),
@@ -1084,7 +1093,7 @@ const PromptRegistryInstallInputSchema = z.object({
     targetName: z.string().min(1),
     installMode: PromptAssetInstallModeV1Schema.optional(),
   }).optional(),
-}).passthrough();
+}).passthrough());
 
 const APPROVAL_RESULT_REQUIRED: ActionApproval = Object.freeze({ result: 'required' });
 const APPROVAL_RESULT_NONE: ActionApproval = Object.freeze({ result: 'none' });
@@ -2416,6 +2425,36 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionModelSetInputSchema,
+  },
+  {
+    id: 'session.config_option.set',
+    title: 'Set session configuration option',
+    description: 'Request one provider-owned configuration option through the session metadata control plane.',
+    safety: 'safe',
+    approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
+    placements: [],
+    bindings: { mcpToolName: 'session_config_option_set' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","configId":"reasoning_effort","valueId":"high"}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Set session configuration option',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'configId', title: 'Configuration id', widget: 'text', required: true },
+        { path: 'valueId', title: 'Value id', widget: 'text', required: true },
+      ],
+    },
+    inputSchema: SessionConfigOptionSetInputSchema,
   },
   {
     id: 'session.archive',

@@ -84,6 +84,17 @@ That lets different custom backends behave as distinct backend choices, even whe
 
 Custom ACP models can also be saved as favorites from the new-session engine picker. Favorites are stored per configured backend, not just per provider family.
 
+## Session resume
+
+In development source, the backend editor includes **Supports session resume**.
+It defaults to off. Enable it before starting a session with an agent that
+supports ACP `session/load`; Happier also checks the agent's negotiated support
+before recording a resumable session identity.
+
+Enabling this setting cannot recover an older session whose agent session
+identity was never recorded. A failed explicit resume remains an error rather
+than silently starting a new agent conversation.
+
 ## Authentication
 
 Custom ACP does not imply one single provider-level auth system.

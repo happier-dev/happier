@@ -72,6 +72,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     it: new Set([
         // "Offline" is the standard Italian status word for a disconnected machine.
         'updates.offline',
+        // "Feedback" is an established Italian loanword used for user feedback.
+        'settingsAppearance.feedback',
         // "File" is the standard Italian computing noun, not an untranslated fallback.
         'notifications.activity.requestLabels.file',
         'settingsSession.sessionList.headerIdentityDisplayAvatarTitle',
@@ -785,7 +787,8 @@ const UNTRANSLATED_PREFIX_BASELINE_COUNTS: Record<string, Record<string, number>
         'settingsSession.promptPersonalization.': 0,
         'commandPalette.commands.': 3,
         'releaseNotes.onboardingShowcase.': 0,
-        'sessionsList.': 6,
+        // +2: "Orange" and "Indigo" are the French colour names (sessionsList.appearance.colors).
+        'sessionsList.': 8,
     },
     ru: {
         'settingsAppearance.themeProfiles.': 106,
@@ -875,7 +878,8 @@ const UNTRANSLATED_PREFIX_BASELINE_COUNTS: Record<string, Record<string, number>
         'settingsSession.promptPersonalization.': 0,
         'commandPalette.commands.': 6,
         'releaseNotes.onboardingShowcase.': 0,
-        'sessionsList.': 1,
+        // +2: "Orange" and "Indigo" are the German colour names (sessionsList.appearance.colors).
+        'sessionsList.': 3,
     },
 };
 

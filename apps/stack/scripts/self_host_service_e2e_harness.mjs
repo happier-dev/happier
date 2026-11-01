@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { cp, mkdtemp, readdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const SELF_HOST_PORT_MIN = 20_000;
 const SELF_HOST_PORT_MAX = 29_999;
@@ -18,18 +18,31 @@ export function commandExists(cmd) {
   return spawnSync('sh', ['-lc', `command -v ${name} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
 }
 
-export function run(cmd, args, { label, cwd, env, timeoutMs = 0, allowFail = false, stdio = 'pipe' } = {}) {
+export function run(cmd, args, { label, cwd, env, timeoutMs = 0, deadlineAtMs, allowFail = false, stdio = 'pipe' } = {}) {
   const prefix = label ? `[${label}] ` : '';
   const startedAt = Date.now();
+  const remainingMs = deadlineAtMs === undefined ? undefined : deadlineAtMs - startedAt;
+  if (remainingMs !== undefined && remainingMs <= 0) {
+    throw new Error(`${prefix}test deadline exceeded before running ${cmd}`);
+  }
+  const commandTimeoutMs = remainingMs === undefined
+    ? timeoutMs
+    : timeoutMs > 0 ? Math.min(timeoutMs, remainingMs) : remainingMs;
   if (label) {
     console.log(`${prefix}starting: ${cmd} ${args.join(' ')}`);
   }
+  const commandEnv = env ?? process.env;
+  // Isolated application settings must not erase Windows' native executable
+  // extension contract. Preserve caller overrides, including empty/mixed-case keys.
+  const inheritWindowsPathExt = process.platform === 'win32'
+    && !Object.keys(commandEnv).some((key) => key.toUpperCase() === 'PATHEXT')
+    && process.env.PATHEXT !== undefined;
   const result = spawnSync(cmd, args, {
     cwd,
-    env: env ?? process.env,
+    env: inheritWindowsPathExt ? { ...commandEnv, PATHEXT: process.env.PATHEXT } : commandEnv,
     encoding: 'utf-8',
     stdio,
-    timeout: timeoutMs || undefined,
+    timeout: commandTimeoutMs || undefined,
   });
   if (label) {
     console.log(`${prefix}completed in ${Date.now() - startedAt}ms: ${cmd} (status ${String(result.status ?? 'null')})`);
@@ -57,6 +70,12 @@ export async function extractBinaryFromArtifact({ artifactPath, binaryName, labe
     extractDir,
     binaryPath: join(extractDir, roots[0], name),
   };
+}
+
+export async function stageExtractedBinaryPayload(binaryPath, destinationDir) {
+  const stagedBinaryPath = join(destinationDir, basename(binaryPath));
+  await cp(dirname(binaryPath), destinationDir, { recursive: true });
+  return stagedBinaryPath;
 }
 
 export async function waitForHealth(url, timeoutMs = 60_000) {

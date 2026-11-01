@@ -18,7 +18,7 @@ export const sessionExecutionRunGet = vi.fn();
 export const sessionExecutionRunSend = vi.fn();
 export const sessionExecutionRunStop = vi.fn();
 export const sendSessionMessageWithServerScope = vi.fn();
-export const sessionRpcWithServerScope = vi.fn();
+export const sessionRpc = vi.fn();
 export const createdAudioPlayers: any[] = [];
 export const fileDelete = vi.fn(async () => {});
 export const expoSpeechSpeak = vi.fn();
@@ -253,6 +253,7 @@ vi.mock('@/sync/sync', () => ({
             }
         },
         onSessionVisible,
+        decryptSecretValue: (value: unknown) => (value ? 'test-secret-key' : null),
         encryption: {
             getSessionEncryption: vi.fn(() => ({})),
         },
@@ -286,8 +287,9 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: (sessionId: string, request: any) => sessionExecutionRunStop(sessionId, request),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
-    sessionRpcWithServerScope: (args: any) => sessionRpcWithServerScope(args),
+// Permission dispatch and scope selection remain real below the socket boundary.
+vi.mock('@/sync/api/session/apiSocket', () => ({
+    apiSocket: { sessionRPC: (...args: unknown[]) => sessionRpc(...args) },
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
@@ -296,11 +298,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMes
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: (params: any) => setActiveServerAndSwitch(params),
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
-    subscribeActiveServer: () => () => {},
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -381,23 +378,27 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('expo-audio', () => ({
+vi.mock('expo-audio', () => {
+    class AudioRecorder {
+        uri: string | null = null;
+        async prepareToRecordAsync() {
+            if (nextRecorderPrepareError) {
+                const error = nextRecorderPrepareError;
+                nextRecorderPrepareError = null;
+                throw error;
+            }
+        }
+        record() { }
+        async stop() {
+            this.uri = platformOs === 'web' ? 'blob:voice-recording' : 'file:///tmp/rec.m4a';
+        }
+    }
+    return {
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
     AudioModule: {
-        AudioRecorder: class {
-            uri: string | null = null;
-            async prepareToRecordAsync() {
-                if (nextRecorderPrepareError) {
-                    const error = nextRecorderPrepareError;
-                    nextRecorderPrepareError = null;
-                    throw error;
-                }
-            }
-            record() { }
-            async stop() {
-                this.uri = 'file:///tmp/rec.m4a';
-            }
-        },
+        // expo-audio 1.0.16 exposes different constructor names on native and web.
+        get AudioRecorder() { return platformOs === 'web' ? undefined : AudioRecorder; },
+        get AudioRecorderWeb() { return platformOs === 'web' ? AudioRecorder : undefined; },
     },
     createAudioPlayer: (source?: any) => {
         const listeners = new Map<string, (arg: any) => void>();
@@ -415,7 +416,8 @@ vi.mock('expo-audio', () => ({
         createdAudioPlayers.push(player);
         return player;
     },
-}));
+    };
+});
 
 vi.mock('expo-file-system', () => ({
     Paths: { cache: 'file:///tmp/' },
@@ -505,6 +507,9 @@ export function registerLocalVoiceEngineHarnessHooks() {
 
     beforeEach(async () => {
         vi.resetModules();
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const server = upsertServerProfile({ serverUrl: 'https://server-a' });
+        setActiveServerId(server.id);
         console.error = (() => {}) as any;
         submitMessage.mockReset();
         enqueuePendingMessage.mockReset();
@@ -527,7 +532,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentCommit.mockReset();
         daemonVoiceAgentStop.mockReset();
         sendSessionMessageWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockReset();
+        sessionRpc.mockReset();
         platformOs = 'ios';
         createdAudioPlayers.length = 0;
         nextRecorderPrepareError = null;

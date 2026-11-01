@@ -45,4 +45,9 @@ describe('isClaudeLocalCommandTranscriptMessage', () => {
   it('does not treat ordinary user text as a local command artifact', () => {
     expect(isClaudeLocalCommandTranscriptMessage(userRow('Please run the model benchmarks.'))).toBe(false);
   });
+
+  it('preserves native shell input and output as visible transcript messages', () => {
+    expect(isClaudeLocalCommandTranscriptMessage(userRow('<bash-input> echo hi</bash-input>'))).toBe(false);
+    expect(isClaudeLocalCommandTranscriptMessage(userRow('<bash-stdout>hi\n</bash-stdout><bash-stderr></bash-stderr>'))).toBe(false);
+  });
 });

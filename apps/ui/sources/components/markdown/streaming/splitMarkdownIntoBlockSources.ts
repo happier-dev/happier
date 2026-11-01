@@ -1,5 +1,7 @@
 import { parser, GFM } from '@lezer/markdown';
 import { readIncompleteMarkdownBlockKind, type IncompleteMarkdownBlockKind } from './isIncompleteMarkdownBlockSource';
+import type { MarkdownBlock } from '../parseMarkdown';
+import { containsMarkdownCode, readMarkdownCodeBlock, readMarkdownContainerBlock, type MarkdownContainerBlock } from './readMarkdownContainerBlock';
 
 const markdownBlockParser = parser.configure(GFM);
 
@@ -10,6 +12,8 @@ export type MarkdownBlockSource = Readonly<{
     blockType: string;
     referenceDefinitions: string;
     incompleteKind: IncompleteMarkdownBlockKind | null;
+    container?: MarkdownContainerBlock;
+    codeBlock?: MarkdownBlock;
 }>;
 
 /** One grammar owns boundaries for both grouped rendering and source-range measurement. */
@@ -40,6 +44,9 @@ export function splitMarkdownIntoBlockSources(markdown: string): MarkdownBlockSo
             blockType: node.name,
             referenceDefinitions,
             incompleteKind: readIncompleteMarkdownBlockKind(source),
+            ...((node.name === 'BulletList' || node.name === 'OrderedList' || node.name === 'Blockquote') && containsMarkdownCode(node)
+                ? { container: readMarkdownContainerBlock(markdown, node, referenceDefinitions) } : null),
+            ...(node.name === 'CodeBlock' ? { codeBlock: readMarkdownCodeBlock(markdown, node) } : null),
         });
     }
     return sources;

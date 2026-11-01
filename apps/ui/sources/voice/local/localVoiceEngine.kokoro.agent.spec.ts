@@ -83,6 +83,7 @@ describe('local voice engine agent behavior (kokoro)', () => {
     });
 
     (globalThis.fetch as any)
+      .mockResolvedValueOnce(new Response(new Blob(['recording'], { type: 'audio/webm' })))
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ text: 'hello world' }),

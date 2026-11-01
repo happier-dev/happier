@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
-export const ChangeKindSchema = z.enum([
+export const ChangeKindSchema = lazySchema(() => z.enum([
   'account',
   'automation',
   'artifact',
@@ -13,37 +14,37 @@ export const ChangeKindSchema = z.enum([
   'pet',
   'session',
   'share',
-]);
+]));
 
 export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 
-export const ChangeEntrySchema = z.object({
+export const ChangeEntrySchema = lazySchema(() => z.object({
   cursor: z.number().int().min(0),
   kind: z.string().trim().min(1),
   entityId: z.string(),
   changedAt: z.number().int().min(0),
   hint: z.unknown().nullable().optional(),
-}).strict();
+}).strict());
 
 export type ChangeEntry = z.infer<typeof ChangeEntrySchema>;
 
-export const ChangesResponseSchema = z.object({
+export const ChangesResponseSchema = lazySchema(() => z.object({
   changes: z.array(ChangeEntrySchema),
   nextCursor: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type ChangesResponse = z.infer<typeof ChangesResponseSchema>;
 
-export const CurrentCursorResponseSchema = z.object({
+export const CurrentCursorResponseSchema = lazySchema(() => z.object({
   cursor: z.number().int().min(0),
   changesFloor: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type CurrentCursorResponse = z.infer<typeof CurrentCursorResponseSchema>;
 
-export const CursorGoneErrorSchema = z.object({
+export const CursorGoneErrorSchema = lazySchema(() => z.object({
   error: z.literal('cursor-gone'),
   currentCursor: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;

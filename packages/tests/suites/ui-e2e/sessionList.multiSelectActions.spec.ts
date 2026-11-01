@@ -337,7 +337,7 @@ test.describe('ui e2e: session list multi-select actions', () => {
     await dismissSelectionResult(page);
   });
 
-  test('selects a Shift range and archives it with progress and result state', async ({ page }) => {
+  test('selects a Shift range and archives it with progress and result state', { tag: '@smoke' }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
 
@@ -368,9 +368,12 @@ test.describe('ui e2e: session list multi-select actions', () => {
 
     const archiveGate = createDeferred();
     let delayedFirstArchive = false;
-    await page.route('**/v2/sessions/*/archive', async (route) => {
+    let pendingSessionId: string | null = null;
+    const archiveUrl = (url: URL) => /^\/v2\/sessions\/[^/]+\/archive$/.test(url.pathname);
+    await page.route(archiveUrl, async (route) => {
       if (!delayedFirstArchive) {
         delayedFirstArchive = true;
+        pendingSessionId = new URL(route.request().url()).pathname.split('/')[3] ?? null;
         await archiveGate.promise;
       }
       await route.continue();
@@ -380,13 +383,19 @@ test.describe('ui e2e: session list multi-select actions', () => {
       await clickSelectionAction(page, 'session.archive');
       const progress = page.getByTestId(testIds.selectionProgress);
       await expect(progress).toBeVisible({ timeout: 60_000 });
+      expect(delayedFirstArchive).toBe(true);
+      expect(pendingSessionId).not.toBeNull();
+      // Minimal rows put status on the accessible trailing indicator instead of a subtitle.
+      const pendingStatus = page.getByTestId(testIds.row(pendingSessionId!))
+        .getByRole('img', { name: /archiving/i });
+      await expect(pendingStatus).toBeVisible({ timeout: 60_000 });
 
       archiveGate.resolve();
 
       await expectBulkResult({ page, succeeded: rangeIds.length });
     } finally {
       archiveGate.resolve();
-      await page.unroute('**/v2/sessions/*/archive').catch(() => {});
+      await page.unrouteAll({ behavior: 'wait' });
     }
 
     for (const sessionId of rangeIds) {

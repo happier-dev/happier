@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { normalizeSessionListBackgroundWorkAttentionMode, type SessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
+import { useShallow } from 'zustand/react/shallow';
+import { storage } from '@/sync/domains/state/storage';
+import { projectSessionArchivesToListViewData, readSessionArchiveOperationsForServers } from '@/sync/domains/session/listing/sessionArchiveState';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { SessionListViewItem, useLocalSetting, useOpenApprovalSessionIds, useSessionListViewData, useSessionListViewDataByServerId, useSessionOrganizationProjection, useSetting } from '@/sync/domains/state/storage';
 import { buildSessionListShellViewItemSignature } from '@/sync/store/hooks';
@@ -83,6 +87,7 @@ type SessionListDataState = Readonly<{
     sessionAttentionStandingPolicy: SessionAttentionStandingPolicy;
     sessionListAttentionPromotionMode: SessionListAttentionPromotionMode;
     sessionListWorkingPlacementMode: SessionListWorkingPlacementMode;
+    backgroundWorkAttentionMode: SessionListBackgroundWorkAttentionMode;
     sessionListFolderSortModeV1: SessionListFolderSortModeV1;
     sessionListOrderingModeV1: SessionListOrderingModeV1;
     sessionListSectionModeV1: SessionListOrderingSectionMode;
@@ -223,6 +228,7 @@ function buildVisibleSessionListIndexForState(
                 standingPolicy: state.sessionAttentionStandingPolicy,
             }
             : DISABLED_ATTENTION_PROMOTION_OPTIONS,
+        backgroundWorkAttentionMode: state.backgroundWorkAttentionMode,
         workingPlacement: state.sessionListWorkingPlacementMode !== 'off'
             ? {
                 mode: state.sessionListWorkingPlacementMode,
@@ -377,6 +383,7 @@ type RetainedVisibleSessionListProjection = Readonly<{
     sessionAttentionStandingPolicy: SessionAttentionStandingPolicy;
     sessionListAttentionPromotionMode: SessionListAttentionPromotionMode;
     sessionListWorkingPlacementMode: SessionListWorkingPlacementMode;
+    backgroundWorkAttentionMode: SessionListBackgroundWorkAttentionMode;
     sessionListFolderSortModeV1: SessionListFolderSortModeV1;
     sessionListOrderingModeV1: SessionListOrderingModeV1;
     sessionListSectionModeV1: SessionListOrderingSectionMode;
@@ -498,6 +505,7 @@ function canReuseRetainedVisibleSessionListProjection(params: Readonly<{
         && areAttentionStandingPoliciesEqual(cached.sessionAttentionStandingPolicy, params.state.sessionAttentionStandingPolicy)
         && cached.sessionListAttentionPromotionMode === params.state.sessionListAttentionPromotionMode
         && cached.sessionListWorkingPlacementMode === params.state.sessionListWorkingPlacementMode
+        && cached.backgroundWorkAttentionMode === params.state.backgroundWorkAttentionMode
         && cached.sessionListFolderSortModeV1 === params.state.sessionListFolderSortModeV1
         && cached.sessionListOrderingModeV1 === params.state.sessionListOrderingModeV1
         && cached.sessionListSectionModeV1 === params.state.sessionListSectionModeV1
@@ -633,6 +641,7 @@ function useVisibleSessionListComputation(
             sessionAttentionStandingPolicy: state.sessionAttentionStandingPolicy,
             sessionListAttentionPromotionMode: state.sessionListAttentionPromotionMode,
             sessionListWorkingPlacementMode: state.sessionListWorkingPlacementMode,
+            backgroundWorkAttentionMode: state.backgroundWorkAttentionMode,
             sessionListFolderSortModeV1: state.sessionListFolderSortModeV1,
             sessionListOrderingModeV1: state.sessionListOrderingModeV1,
             sessionListSectionModeV1: state.sessionListSectionModeV1,
@@ -785,6 +794,7 @@ function useSessionListDataState(
     const openApprovalSessionIdList = useOpenApprovalSessionIds();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const sessionListWorkingPlacementMode = normalizeSessionListWorkingPlacementMode(useSetting('sessionListWorkingPlacementModeV1'));
+    const backgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(useSetting('sessionListBackgroundWorkAttentionModeV1'));
     const sessionListFolderSortModeV1 = normalizeSessionListFolderSortModeV1(useLocalSetting('sessionListFolderSortModeV1'));
     const sessionListOrderingModeV1 = normalizeSessionListOrderingModeV1(useSetting('sessionListOrderingModeV1'));
     const sessionListSectionModeV1 = normalizeSessionListOrderingSectionMode(useSetting('sessionListSectionModeV1'));
@@ -811,17 +821,22 @@ function useSessionListDataState(
         ? selection.allowedServerIds
         : EMPTY_SELECTED_SESSION_LIST_SERVER_IDS;
     const dataByServerId = useSessionListViewDataByServerId(selectedServerIdsForCache);
+    const archiveOperations = storage(useShallow((state) => {
+        const serverIds = selection.enabled ? selection.allowedServerIds : [selection.activeServerId];
+        return readSessionArchiveOperationsForServers(state, serverIds);
+    }));
 
     const source = React.useMemo(() => {
-        return resolveSessionListSourceData({
+        return projectSessionArchivesToListViewData(resolveSessionListSourceData({
             enabled: selection.enabled,
             activeServerId: selection.activeServerId,
             activeData,
             byServerId: dataByServerId,
             selectedServerIds: selection.allowedServerIds,
-        });
+        }), archiveOperations, selection.activeServerId);
     }, [
         activeData,
+        archiveOperations,
         dataByServerId,
         selectedServerIdsKey,
         selection.activeServerId,
@@ -837,9 +852,7 @@ function useSessionListDataState(
         () => normalizeSessionFolders(sessionFoldersV1 ?? { v: 1, folders: [] }),
         [sessionFoldersV1],
     );
-    const sessionFoldersAvailableForStorage = storageFilter !== 'direct';
-    const folderTreeSourceActive = sessionFoldersAvailableForStorage
-        && sessionFoldersEnabled
+    const folderTreeSourceActive = sessionFoldersEnabled
         && sessionFolderViewModeV1 === 'tree';
 
     const folderSource = React.useMemo(() => {
@@ -893,10 +906,10 @@ function useSessionListDataState(
     );
 
     const assignmentFetchBatches = React.useMemo(
-        () => sessionFoldersAvailableForStorage && sessionFoldersEnabled && sessionFolderViewModeV1 === 'tree'
+        () => folderTreeSourceActive
             ? collectVisibleSessionIdsByServer(storageFilteredSource)
             : {},
-        [sessionFolderViewModeV1, sessionFoldersAvailableForStorage, sessionFoldersEnabled, storageFilteredSource],
+        [folderTreeSourceActive, storageFilteredSource],
     );
 
     React.useEffect(() => {
@@ -931,6 +944,7 @@ function useSessionListDataState(
         sessionAttentionStandingPolicy,
         sessionListAttentionPromotionMode,
         sessionListWorkingPlacementMode,
+        backgroundWorkAttentionMode,
         sessionListFolderSortModeV1,
         sessionListOrderingModeV1,
         sessionListSectionModeV1,
@@ -955,6 +969,7 @@ function useSessionListDataState(
         sessionAttentionStandingPolicy,
         sessionListAttentionPromotionMode,
         sessionListWorkingPlacementMode,
+        backgroundWorkAttentionMode,
         sessionListFolderSortModeV1,
         sessionListOrderingModeV1,
         sessionListSectionModeV1,

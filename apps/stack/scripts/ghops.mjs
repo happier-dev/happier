@@ -57,7 +57,7 @@ Examples:
 }
 
 function resolveRepoRoot(cwd) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
+  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', windowsHide: true });
   if (res.status !== 0) return resolve(cwd);
   const out = String(res.stdout ?? '').trim();
   return out ? resolve(out) : resolve(cwd);
@@ -129,6 +129,7 @@ async function readMacHostBotToken(repoRoot) {
     encoding: 'utf8',
     env: process.env,
     input: `${JSON.stringify({ version: 1, operation: 'read-ghops-credential' })}\n`,
+    windowsHide: true,
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
   });
@@ -242,12 +243,13 @@ function runBotGitPush({ gitPath, token, repo, source, target, expectedLease }) 
   const hooksDir = mkdtempSync(join(tmpdir(), 'happier-ghops-empty-hooks-'));
   try {
     const environment = buildBotGitEnvironment({ token, hooksDir });
-    const refCheck = spawnSync(gitPath, ['check-ref-format', target], { encoding: 'utf8', env: environment });
+    const refCheck = spawnSync(gitPath, ['check-ref-format', target], { encoding: 'utf8', env: environment, windowsHide: true });
     if (refCheck.error || refCheck.status !== 0) {
       throw new Error(`Invalid target branch ref '${target}'.`);
     }
 
     const sourceResult = spawnSync(gitPath, ['rev-parse', '--verify', `${source}^{commit}`], {
+      windowsHide: true,
       encoding: 'utf8',
       env: environment,
     });
@@ -274,6 +276,7 @@ function runBotGitPush({ gitPath, token, repo, source, target, expectedLease }) 
     }
 
     const verifyResult = spawnSync(gitPath, ['ls-remote', '--refs', remote, target], {
+      windowsHide: true,
       encoding: 'utf8',
       env: environment,
     });
@@ -291,6 +294,7 @@ function runBotGitPush({ gitPath, token, repo, source, target, expectedLease }) 
 
 function validateBotIdentity({ ghPath, token, configDir }) {
   const result = spawnSync(ghPath, ['api', 'user', '--jq', '.login'], {
+    windowsHide: true,
     encoding: 'utf8',
     env: buildGhEnvironment(token, configDir),
   });

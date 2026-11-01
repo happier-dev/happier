@@ -8,6 +8,7 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { confirmSessionStop, executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -15,6 +16,7 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     resolveAttentionStandingFromSessionActionId,
@@ -44,6 +46,20 @@ import {
     type SessionReminderPresetV1,
 } from '@/sync/domains/session/organization/sessionReminderPreset';
 import { showSessionReminderDateTimeModal, showSessionReminderPresetManagerModal } from './sessionReminderModals';
+import {
+    resolveSessionAppearanceColorMenuChoice,
+    type SessionAppearanceColorMenuInput,
+} from '@/components/sessions/shell/appearance/sessionAppearanceColorMenu';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+
+function findMenuItem(items: readonly DropdownMenuItem[], itemId: string): DropdownMenuItem | null {
+    for (const item of items) {
+        if (item.id === itemId) return item;
+        const nested = item.submenu ? findMenuItem(item.submenu.items, itemId) : null;
+        if (nested) return nested;
+    }
+    return null;
+}
 
 function showActionError(error: unknown) {
     if (error instanceof HappyError) {
@@ -97,7 +113,8 @@ export function useSessionRowActionMenu(params: Readonly<{
     onTogglePinned?: (() => void) | null;
     onMoveToFolder?: () => void;
     leadingMenuItems?: readonly DropdownMenuItem[];
-    onSelectLeadingMenuItem?: (itemId: string) => void | Promise<void>;
+    trailingMenuItems?: readonly DropdownMenuItem[];
+    onSelectCustomMenuItem?: (itemId: string) => void | Promise<void>;
     selectionModeAvailable?: boolean;
     selectionModeActive?: boolean;
     onEnterSelectionMode?: () => void;
@@ -105,8 +122,21 @@ export function useSessionRowActionMenu(params: Readonly<{
     setContextMenuOpen: (open: boolean) => void;
     openTagsMenuFromContext: () => void;
     reminder?: SessionReminderPresentation | null;
+    /** The canonical archive flow already has this session's archive in flight. */
+    archiving?: boolean;
+    /** The session's own colour menu; null hides it (server without session appearances). */
+    appearance?: (SessionAppearanceColorMenuInput & Readonly<{
+        onChange: (color: SessionAppearanceColor | null) => void;
+    }>) | null;
+    /** Closes this row's open menus (an item that kept them open while it loaded is ready). */
+    closeMenus?: () => void;
 }>): SessionRowActionMenuState {
     const target = params.target;
+    const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
+    const appearanceMenu = React.useMemo(
+        () => (params.appearance ? { ...params.appearance, customPickerLoading: customColorPickerLoading } : null),
+        [customColorPickerLoading, params.appearance],
+    );
     const [reminderPresets, setReminderPresets] = useSettingMutable('sessionReminderPresetsV1');
     const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
         return params.knownTags.map((tag) => ({
@@ -224,10 +254,12 @@ export function useSessionRowActionMenu(params: Readonly<{
             target,
             iconColor: params.iconColor,
             leadingItems: params.leadingMenuItems,
+            trailingItems: params.trailingMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
+            appearance: appearanceMenu,
         });
         if (
             !params.isNativeMobile
@@ -246,9 +278,11 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
         return items;
     }, [
+        appearanceMenu,
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
+        params.trailingMenuItems,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
         params.selectionModeActive,
@@ -258,17 +292,36 @@ export function useSessionRowActionMenu(params: Readonly<{
         target,
     ]);
 
-    const leadingMenuItemIds = React.useMemo(() => {
-        return new Set((params.leadingMenuItems ?? []).map((item) => item.id));
-    }, [params.leadingMenuItems]);
+    const customMenuItems = React.useMemo(
+        () => [...(params.leadingMenuItems ?? []), ...(params.trailingMenuItems ?? [])],
+        [params.leadingMenuItems, params.trailingMenuItems],
+    );
 
     const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
         if (itemId === 'selection.select') {
             params.onEnterSelectionMode?.();
             return;
         }
-        if (leadingMenuItemIds.has(itemId)) {
-            await params.onSelectLeadingMenuItem?.(itemId);
+        if (findMenuItem(customMenuItems, itemId)) {
+            await params.onSelectCustomMenuItem?.(itemId);
+            return;
+        }
+        if (params.appearance && itemId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
+            const appearance = params.appearance;
+            try {
+                const color = await resolveSessionAppearanceColorMenuChoice({
+                    menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+                    itemId,
+                    current: appearance.current,
+                    inherited: appearance.inherited,
+                    serverId: target.serverId,
+                    onPickerLoading: setCustomColorPickerLoading,
+                    closeMenus: params.closeMenus,
+                });
+                if (color !== undefined) appearance.onChange(color);
+            } catch (error) {
+                showActionError(error);
+            }
             return;
         }
         if (itemId.startsWith(`${SESSION_ATTENTION_REMINDER_MENU_ID}:`)) {
@@ -330,6 +383,13 @@ export function useSessionRowActionMenu(params: Readonly<{
             case SESSION_ACTION_ARCHIVE_ID:
                 await confirmArchiveSession();
                 break;
+            case SESSION_ACTION_DELETE_ID:
+                try {
+                    await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target });
+                } catch (error) {
+                    showActionError(error);
+                }
+                break;
         }
     }, [
         confirmArchiveSession,
@@ -337,11 +397,12 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleAttentionStandingAction,
         handleReadStateAction,
         handleRenameSession,
-        leadingMenuItemIds,
+        customMenuItems,
         target,
+        params.appearance,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
-        params.onSelectLeadingMenuItem,
+        params.onSelectCustomMenuItem,
         reminderPresets,
         setReminderPresets,
     ]);
@@ -406,9 +467,14 @@ export function useSessionRowActionMenu(params: Readonly<{
             }).catch(showActionError);
             return;
         }
+        // An item that loads first keeps the menu open; its owner closes it when ready.
+        if (findMenuItem(contextMenuItems, itemId)?.keepMenuOpen) {
+            void handleMoreMenuSelect(itemId);
+            return;
+        }
         params.setContextMenuOpen(false);
         void handleMoreMenuSelect(itemId);
-    }, [handleMoreMenuSelect, params, target]);
+    }, [contextMenuItems, handleMoreMenuSelect, params, target]);
 
     return {
         tagMenuItems,
@@ -418,6 +484,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleMoreMenuSelect,
         contextMenuItems,
         handleContextMenuSelect,
-        mutatingSession: stoppingSession || archivingSession,
+        mutatingSession: stoppingSession || archivingSession || params.archiving === true,
     };
 }

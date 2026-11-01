@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -62,9 +62,14 @@ function writeNodePackageFixture({ repoRoot, packageName, packageJson = {}, file
 }
 
 function writeLinuxX64SharpFixtures(repoRoot) {
-  writeNodePackageFixture({ repoRoot, packageName: 'sharp' });
-  writeNodePackageFixture({ repoRoot, packageName: '@img/sharp-linux-x64' });
-  writeNodePackageFixture({ repoRoot, packageName: '@img/sharp-libvips-linux-x64' });
+  const optionalDependencies = Object.fromEntries(['linux', 'linuxmusl'].flatMap((platform) => [
+    [`@img/sharp-${platform}-x64`, '0.35.5'],
+    [`@img/sharp-libvips-${platform}-x64`, '1.3.4'],
+  ]));
+  writeNodePackageFixture({ repoRoot, packageName: 'sharp', packageJson: { version: '0.35.5', optionalDependencies } });
+  for (const [packageName, version] of Object.entries(optionalDependencies)) {
+    writeNodePackageFixture({ repoRoot, packageName, packageJson: { version, os: ['linux'], cpu: ['x64'] } });
+  }
 }
 
 function writeDarwinArm64SharpFixtures(repoRoot) {
@@ -124,6 +129,7 @@ function writeCliRuntimePackageFixture(
         name: '@happier-dev/cli',
         version: '0.0.0',
         dependencies: {
+          sharp: '^0.35.5',
           '@huggingface/transformers': '1.0.0',
           'node-pty': '1.0.0',
           '@homebridge/node-pty-prebuilt-multiarch': '1.0.0',
@@ -137,12 +143,27 @@ function writeCliRuntimePackageFixture(
   );
 
   writeCliToolUnpackFixture(repoRoot);
+  writeLinuxX64SharpFixtures(cliDir);
+  cpSync(
+    new URL('../../../apps/cli/scripts/native_process_exit.cjs', import.meta.url),
+    join(cliDir, 'scripts', 'native_process_exit.cjs'),
+  );
 
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/agents', relativeDir: ['packages', 'agents'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/cli-common', relativeDir: ['packages', 'cli-common'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/connection-supervisor', relativeDir: ['packages', 'connection-supervisor'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/protocol', relativeDir: ['packages', 'protocol'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/release-runtime', relativeDir: ['packages', 'release-runtime'] });
+}
+
+function writeCliDistFixture(cliDistDir, files = { 'index.mjs': 'console.log("cli");\n' }) {
+  mkdirSync(cliDistDir, { recursive: true });
+  for (const [relativePath, content] of Object.entries(files)) {
+    const path = join(cliDistDir, relativePath);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, content, 'utf8');
+  }
+  cliDistBuildManifest.writeCliDistBuildManifest(join(cliDistDir, 'index.mjs'));
 }
 
 function prismaEngineFileNameForFixture({ platform = 'linux', arch = 'x64' } = {}) {
@@ -321,8 +342,7 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     mkdirSync(homebridgePtyDir, { recursive: true });
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
-    writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
-    cliDistBuildManifest.writeCliDistBuildManifest(join(cliDistDir, 'index.mjs'));
+    writeCliDistFixture(cliDistDir);
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_launcher_runtime.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_launcher_runtime.cjs");\n', 'utf8');
@@ -385,7 +405,7 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
       runCommand: (cmd, args) => {
         runCalls.push({ cmd, args });
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+        writeCliDistFixture(cliDistDir);
       },
       compileBinary: async ({ outfile, externals, autoloadDotenv }) => {
         compileCalls.push({ outfile, externals, autoloadDotenv });
@@ -405,6 +425,8 @@ test('buildCliBinaryArtifactPayload compiles the local CLI binary into the paylo
     ]);
     assert.equal(readFileSync(join(payloadDir, 'happier'), 'utf8'), '#!/bin/sh\necho happier\n');
     assert.equal(readFileSync(join(payloadDir, 'package-dist', 'index.mjs'), 'utf8'), 'console.log("cli");\n');
+    assert.equal(JSON.parse(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64', 'package.json'), 'utf8')).version, '0.35.5');
+    assert.equal(JSON.parse(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-linux-x64', 'package.json'), 'utf8')).version, '1.3.4');
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.mjs'), 'utf8'),
       'export const packageName = "@happier-dev/protocol";\n',
@@ -506,7 +528,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
       ),
       'utf8',
     );
-    writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writeCliDistFixture(cliDistDir);
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_launcher_runtime.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_launcher_runtime.cjs");\n', 'utf8');
@@ -566,7 +588,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+        writeCliDistFixture(cliDistDir);
       },
       compileBinary: async ({ outfile }) => {
         const compileChownrDir = join(payloadDir, 'node_modules', 'chownr');
@@ -679,8 +701,10 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
       commandProbe: () => true,
       runCommand: async () => {
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'export { detect } from "./detect-BwxnBwvx.mjs";\n', 'utf8');
-        writeFileSync(join(cliDistDir, 'detect-BwxnBwvx.mjs'), 'export const detect = true;\n', 'utf8');
+        writeCliDistFixture(cliDistDir, {
+          'index.mjs': 'export { detect } from "./detect-BwxnBwvx.mjs";\n',
+          'detect-BwxnBwvx.mjs': 'export const detect = true;\n',
+        });
       },
       compileBinary: async ({ outfile }) => {
         rmSync(cliDistDir, { recursive: true, force: true });
@@ -720,7 +744,7 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
       '@happier-dev/protocol',
       '@happier-dev/release-runtime',
     ]);
-    writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writeCliDistFixture(cliDistDir);
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_launcher_runtime.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_launcher_runtime.cjs");\n', 'utf8');
@@ -765,7 +789,7 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+        writeCliDistFixture(cliDistDir);
       },
       compileBinary: async ({ outfile }) => {
         writeFileSync(outfile, '#!/bin/sh\necho happier\n', 'utf8');
@@ -801,7 +825,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
     mkdirSync(homebridgePtyDir, { recursive: true });
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
-    writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writeCliDistFixture(cliDistDir);
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_launcher_runtime.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_launcher_runtime.cjs");\n', 'utf8');
@@ -849,7 +873,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+        writeCliDistFixture(cliDistDir);
       },
       compileBinary: async ({ outfile }) => {
         rmSync(payloadDir, { recursive: true, force: true });
@@ -869,7 +893,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
   }
 });
 
-test('buildCliBinaryArtifactPayload stages embeddings runtime packages and externalizes transformers', async () => {
+test('buildCliBinaryArtifactPayload externalizes the separately acquired embeddings runtime', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-cli-embeddings-'));
   try {
     const repoRoot = join(tempRoot, 'repo');
@@ -894,7 +918,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
     mkdirSync(homebridgePtyDir, { recursive: true });
     writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
     writeCliRuntimePackageFixture(repoRoot);
-    writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+    writeCliDistFixture(cliDistDir);
     writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_launcher_runtime.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
     writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_launcher_runtime.cjs");\n', 'utf8');
@@ -948,7 +972,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
-        writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+        writeCliDistFixture(cliDistDir);
       },
       compileBinary: async (args) => {
         compileCalls.push(args);
@@ -956,36 +980,12 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       },
     });
 
-    assert.deepEqual(compileCalls[0]?.externals, [
+    assert.deepEqual([...compileCalls[0].externals].sort(), [
       '@huggingface/transformers',
       'node-pty',
       '@homebridge/node-pty-prebuilt-multiarch',
-    ]);
-    assert.equal(
-      readFileSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers', 'package.json'), 'utf8'),
-      JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
-    );
-    assert.equal(
-      readFileSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers', 'node_modules', 'onnxruntime-node', 'package.json'), 'utf8'),
-      JSON.stringify({ name: 'onnxruntime-node', version: '1.0.0', dependencies: { 'onnxruntime-common': '1.0.0' } }, null, 2),
-    );
-    assert.equal(
-      readFileSync(
-        join(
-          payloadDir,
-          'node_modules',
-          '@huggingface',
-          'transformers',
-          'node_modules',
-          'onnxruntime-node',
-          'node_modules',
-          'onnxruntime-common',
-          'package.json',
-        ),
-        'utf8',
-      ),
-      JSON.stringify({ name: 'onnxruntime-common', version: '1.0.0', dependencies: {} }, null, 2),
-    );
+    ].sort());
+    assert.equal(existsSync(join(payloadDir, 'node_modules', '@huggingface', 'transformers')), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -1347,6 +1347,7 @@ test('buildServerBinaryArtifactPayload stages sharp native runtime sidecars for 
       repoRoot,
       packageName: 'sharp',
       packageJson: {
+        version: '0.34.5',
         dependencies: {
           '@img/colour': '^1.0.0',
           'detect-libc': '^2.1.2',
@@ -1391,6 +1392,40 @@ test('buildServerBinaryArtifactPayload stages sharp native runtime sidecars for 
       },
     });
 
+    // A newer workspace Sharp must not inherit the older hoisted native cohort.
+    const serverPackageRoot = join(repoRoot, 'apps', 'server');
+    writeFileSync(join(serverPackageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/server', dependencies: { sharp: '^0.35.5' },
+    }));
+    writeNodePackageFixture({
+      repoRoot: serverPackageRoot,
+      packageName: 'sharp',
+      packageJson: {
+        version: '0.35.5',
+        exports: { '.': './dist/index.cjs' },
+        dependencies: { colour: '^1.1.0', 'detect-libc': '^2.1.2', semver: '^7.8.5' },
+        optionalDependencies: {
+          '@img/sharp-darwin-arm64': '0.35.5',
+          '@img/sharp-libvips-darwin-arm64': '1.3.4',
+        },
+      },
+      files: { 'dist/index.cjs': 'module.exports = require("@img/sharp-darwin-arm64/sharp.node");\n' },
+    });
+    writeNodePackageFixture({ repoRoot: serverPackageRoot, packageName: 'colour' });
+    writeNodePackageFixture({
+      repoRoot: serverPackageRoot,
+      packageName: '@img/sharp-darwin-arm64',
+      packageJson: {
+        version: '0.35.5', os: ['darwin'], cpu: ['arm64'],
+        optionalDependencies: { '@img/sharp-libvips-darwin-arm64': '1.3.4' },
+      },
+    });
+    writeNodePackageFixture({
+      repoRoot: serverPackageRoot,
+      packageName: '@img/sharp-libvips-darwin-arm64',
+      packageJson: { version: '1.3.4', os: ['darwin'], cpu: ['arm64'] },
+    });
+
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
     await artifacts.buildServerBinaryArtifactPayload({
@@ -1415,17 +1450,21 @@ test('buildServerBinaryArtifactPayload stages sharp native runtime sidecars for 
     assert.deepEqual(compileCalls[0]?.externals, ['redis']);
     assert.equal(
       compileCalls[0]?.buildRunnerEntrypoint,
-      join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
+      join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildBunBinary.mjs'),
     );
-    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'lib', 'index.js'), 'utf8'), 'module.exports = require("@img/sharp-darwin-arm64");\n');
-    assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'colour', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(JSON.parse(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'package.json'), 'utf8')).version, '0.35.5');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'dist', 'index.cjs'), 'utf8'), 'module.exports = require("@img/sharp-darwin-arm64/sharp.node");\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'colour', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(readFileSync(join(payloadDir, 'node_modules', 'detect-libc', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(readFileSync(join(payloadDir, 'node_modules', 'semver', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-darwin-arm64', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(JSON.parse(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64', 'package.json'), 'utf8')).version, '0.35.5');
+    assert.equal(JSON.parse(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-darwin-arm64', 'package.json'), 'utf8')).version, '1.3.4');
     assert.equal(existsSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64')), false);
 
     rmSync(join(repoRoot, 'node_modules', '@img', 'sharp-libvips-darwin-arm64'), { recursive: true, force: true });
+    rmSync(join(serverPackageRoot, 'node_modules', '@img', 'sharp-libvips-darwin-arm64'), { recursive: true, force: true });
     await assert.rejects(
       artifacts.buildServerBinaryArtifactPayload({
         repoRoot,

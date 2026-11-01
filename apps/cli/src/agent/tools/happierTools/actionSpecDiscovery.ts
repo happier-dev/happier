@@ -13,16 +13,17 @@ import {
   type ActionsSettingsV1,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const actionSpecSearchSchema = z.object({
+export const actionSpecSearchSchema = lazySchema(() => z.object({
   query: z.string().optional(),
   draftInput: z.record(z.string(), z.unknown()).optional(),
   limit: z.number().int().positive().max(100).optional(),
-}).passthrough();
+}).passthrough());
 
-export const actionSpecGetSchema = z.object({ id: z.string().min(1) }).passthrough();
+export const actionSpecGetSchema = lazySchema(() => z.object({ id: z.string().min(1) }).passthrough());
 
-export const actionOptionsResolveSchema = z.object({
+export const actionOptionsResolveSchema = lazySchema(() => z.object({
   actionId: z.string().min(1).optional(),
   fieldPath: z.string().min(1).optional(),
   optionsSourceId: z.string().min(1).optional(),
@@ -40,7 +41,7 @@ export const actionOptionsResolveSchema = z.object({
       path: ['actionId'],
     });
   }
-});
+}));
 
 export type ActionSpecDiscoveryResult<T> =
   | Readonly<{ ok: true; result: T }>

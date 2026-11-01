@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFile, open } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -8,6 +9,9 @@ import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 type TranscriptEntry = Readonly<{
     type?: string;
     uuid?: string;
+    sessionId?: string;
+    cwd?: string;
+    isSidechain?: boolean;
     session_id?: string;
     parent_tool_use_id?: string | null;
     message?: Readonly<{
@@ -28,7 +32,17 @@ function parseJsonLine(line: string): TranscriptEntry | null {
     }
 }
 
+/**
+ * Only chained conversation entries carry tool calls Claude will replay on resume. Other entry types
+ * (for example Claude Code's `api-request-blob`) echo earlier messages and must not be read as new calls.
+ */
+function isConversationEntry(entry: TranscriptEntry): boolean {
+    if (entry.type !== 'user' && entry.type !== 'assistant') return false;
+    return readNonBlankOpaqueIdentifier(entry.uuid) !== null;
+}
+
 function extractToolUseIds(entry: TranscriptEntry): string[] {
+    if (!isConversationEntry(entry)) return [];
     const content = entry.message?.content;
     if (!Array.isArray(content)) return [];
     const out: string[] = [];
@@ -43,6 +57,7 @@ function extractToolUseIds(entry: TranscriptEntry): string[] {
 }
 
 function extractToolResultIds(entry: TranscriptEntry): string[] {
+    if (!isConversationEntry(entry)) return [];
     const content = entry.message?.content;
     if (!Array.isArray(content)) return [];
     const out: string[] = [];
@@ -262,18 +277,19 @@ export async function repairClaudeTranscriptAfterInterrupt(params: Readonly<{
 
     await repairJsonlTail({ transcriptPath: path });
 
-    const computeMissingToolResults = async (): Promise<{ missing: string[]; text: string }> => {
+    const computeMissingToolResults = async (): Promise<{ missing: string[]; text: string; toolUseEntry: TranscriptEntry | null }> => {
         const { text, truncatedPrefix } = await readTailUtf8(path, configuration.filesReadMaxBytes).catch(() => ({
             text: '',
             truncatedPrefix: false,
         }));
-        if (!text.trim()) return { missing: [], text };
+        if (!text.trim()) return { missing: [], text, toolUseEntry: null };
 
         const rawLines = text.split(/\r?\n/u);
         const lines = truncatedPrefix ? rawLines.slice(1) : rawLines;
 
         let lastToolUseIndex = -1;
         let lastToolUseIds: string[] = [];
+        let lastToolUseEntry: TranscriptEntry | null = null;
         for (let i = 0; i < lines.length; i += 1) {
             const entry = parseJsonLine(lines[i] ?? '');
             if (!entry) continue;
@@ -281,9 +297,10 @@ export async function repairClaudeTranscriptAfterInterrupt(params: Readonly<{
             if (ids.length > 0) {
                 lastToolUseIndex = i;
                 lastToolUseIds = ids;
+                lastToolUseEntry = entry;
             }
         }
-        if (lastToolUseIndex < 0 || lastToolUseIds.length === 0) return { missing: [], text };
+        if (lastToolUseIndex < 0 || lastToolUseIds.length === 0) return { missing: [], text, toolUseEntry: null };
 
         const seenResults = new Set<string>();
         for (let i = lastToolUseIndex + 1; i < lines.length; i += 1) {
@@ -295,7 +312,7 @@ export async function repairClaudeTranscriptAfterInterrupt(params: Readonly<{
         }
 
         const missing = lastToolUseIds.filter((id) => !seenResults.has(id));
-        return { missing, text };
+        return { missing, text, toolUseEntry: lastToolUseEntry };
     };
 
     const initialMissing = await computeMissingToolResults();
@@ -304,29 +321,31 @@ export async function repairClaudeTranscriptAfterInterrupt(params: Readonly<{
     await waitForToolResultIdsToAppear({ transcriptPath: path, toolUseIds: initialMissing.missing });
 
     const afterWait = await computeMissingToolResults();
-    const missing = afterWait.missing;
-    const text = afterWait.text;
-    if (missing.length === 0) return;
+    const { missing, text, toolUseEntry } = afterWait;
+    if (missing.length === 0 || !toolUseEntry) return;
+
+    // Claude Code rejects the whole transcript on resume ("No conversation found") unless the entry is
+    // chained to the tool_use entry and carries the session identity of a real conversation entry.
+    const sessionId = toolUseEntry.sessionId ?? params.sessionId;
+    const appended = JSON.stringify({
+        parentUuid: toolUseEntry.uuid,
+        isSidechain: toolUseEntry.isSidechain ?? false,
+        type: 'user',
+        message: {
+            role: 'user',
+            content: missing.map((toolUseId) => ({
+                type: 'tool_result',
+                tool_use_id: toolUseId,
+                content: 'Interrupted',
+                is_error: true,
+            })),
+        },
+        uuid: randomUUID(),
+        timestamp: new Date().toISOString(),
+        ...(sessionId ? { sessionId } : {}),
+        ...(toolUseEntry.cwd ? { cwd: toolUseEntry.cwd } : {}),
+    });
 
     const prefix = text.endsWith('\n') ? '' : '\n';
-    const appended = missing.map((toolUseId) =>
-        JSON.stringify({
-            type: 'user',
-            uuid: toolUseId,
-            isSidechain: false,
-            message: {
-                role: 'user',
-                content: [
-                    {
-                        type: 'tool_result',
-                        tool_use_id: toolUseId,
-                        content: 'Interrupted',
-                        is_error: true,
-                    },
-                ],
-            },
-        }),
-    ).join('\n');
-
     await appendFile(path, `${prefix}${appended}\n`, 'utf8');
 }

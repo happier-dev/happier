@@ -47,7 +47,82 @@ function onlineState(): ManagedEndpointSupervisorState {
     };
 }
 
+async function acquireReadyEndpointSupervisor() {
+    getCredentialsForServerUrlMock.mockResolvedValue(null);
+    runtimeFetchMock.mockResolvedValue(okResponse());
+    const { acquireEndpointSupervisor } = await import('./endpointSupervisorPool');
+    return await acquireEndpointSupervisor({ serverId: 'server-a', endpoint: 'https://a.example.test', tokenOverride: 'token-1' });
+}
+
 describe('createEndpointSupervisedRequest', () => {
+    it.each([403, 500, 503])('keeps resource HTTP %s operation-scoped and admits an unrelated request', async (status) => {
+        const handle = await acquireReadyEndpointSupervisor();
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+            String(input).endsWith('/resource') ? new Response(null, { status }) : okResponse());
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a', serverUrl: 'https://a.example.test', token: 'token-1', endpointSupervisor: handle.supervisor,
+        });
+        try {
+            expect((await request('/resource', { method: 'GET' })).status).toBe(status);
+            expect(handle.supervisor.getState().phase).toBe('online');
+            expect((await request('/unrelated', { method: 'POST' })).ok).toBe(true);
+        } finally {
+            await handle.release({ immediate: true });
+        }
+    });
+
+    it.each([401, 502, 503, 504])('applies HTTP %s to the real endpoint supervisor and recovers when retryable', async (status) => {
+        vi.useFakeTimers();
+        const handle = await acquireReadyEndpointSupervisor();
+        const { supervisor } = handle;
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+            String(input).endsWith('/v1/sessions') ? new Response(null, { status, headers: status === 503 ? { 'Retry-After': '2' } : {} }) : okResponse());
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a', serverUrl: 'https://a.example.test', token: 'token-1', endpointSupervisor: supervisor,
+        });
+        try {
+            await request('/v1/sessions', { method: 'GET' });
+            expect(supervisor.getState().phase).toBe(status === 401 ? 'auth_failed' : 'offline');
+            if (status !== 401) {
+                expect(supervisor.getState().nextRetryAt).toBeGreaterThan(Date.now());
+                await vi.advanceTimersToNextTimerAsync();
+                expect(supervisor.getState().phase).toBe('online');
+            }
+        } finally {
+            await handle.release({ immediate: true });
+        }
+    });
+
+    it.each([401, 503])('ignores a stale HTTP %s response after a newer probe', async (status) => {
+        const handle = await acquireReadyEndpointSupervisor();
+        const { supervisor } = handle;
+        let respond!: (response: Response) => void;
+        let dispatched!: () => void;
+        const dispatchedPromise = new Promise<void>((resolve) => { dispatched = resolve; });
+        runtimeFetchMock.mockImplementation((input: RequestInfo | URL) => String(input).endsWith('/v1/sessions') ? new Promise<Response>((resolve) => {
+            respond = resolve;
+            dispatched();
+        }) : Promise.resolve(okResponse()));
+        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
+        const request = createEndpointSupervisedRequest({
+            serverId: 'server-a', serverUrl: 'https://a.example.test', token: 'token-1', endpointSupervisor: supervisor,
+        });
+        try {
+            const pending = request('/v1/sessions', { method: 'GET' });
+            await dispatchedPromise;
+            supervisor.invalidate();
+            await supervisor.waitUntilOnline();
+            expect(supervisor.getState().phase).toBe('online');
+            respond(new Response(null, { status, headers: status === 503 ? { 'Retry-After': '2' } : {} }));
+            await pending;
+            expect(supervisor.getState().phase).toBe('online');
+        } finally {
+            await handle.release({ immediate: true });
+        }
+    });
+
     afterEach(async () => {
         runtimeFetchMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
@@ -127,60 +202,17 @@ describe('createEndpointSupervisedRequest', () => {
         expect(message).not.toContain('hdr.eyJ');
     });
 
-    it('reports authenticated 401 responses directly to the endpoint supervisor', async () => {
-        getCredentialsForServerUrlMock.mockResolvedValue(null);
-        runtimeFetchMock.mockResolvedValue(new Response('{}', { status: 401, headers: new Headers() }));
-
-        const supervisor: ManagedEndpointSupervisor = {
-            start: vi.fn(async () => {}),
-            stop: vi.fn(async () => {}),
-            invalidate: vi.fn(),
-            reportFailure: vi.fn(),
-            reportProbeResult: vi.fn(),
-            waitUntilOnline: vi.fn(async () => {}),
-            getState: () => onlineState(),
-            subscribe: () => () => {},
-        };
-
-        const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
-        const request = createEndpointSupervisedRequest({
-            serverId: 'server-a',
-            serverUrl: 'https://a.example.test',
-            token: 'token-1',
-            endpointSupervisor: supervisor,
-        });
-
-        const response = await request('/v1/sessions', { method: 'GET', headers: {} });
-
-        expect(response.status).toBe(401);
-        expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
-            status: 'auth_failed',
-            statusCode: 401,
-            errorMessage: 'HTTP 401',
-        });
-        expect(supervisor.invalidate).not.toHaveBeenCalled();
-    });
-
     it('reports proxy maintenance 503 responses as planned server restarts', async () => {
-        getCredentialsForServerUrlMock.mockResolvedValue(null);
-        runtimeFetchMock.mockResolvedValue(new Response('Server reload in progress', {
+        vi.useFakeTimers();
+        const handle = await acquireReadyEndpointSupervisor();
+        const { supervisor } = handle;
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/v1/sessions') ? new Response('Server reload in progress', {
             status: 503,
             headers: {
                 'Retry-After': '2',
                 'X-Happier-Retry-Reason': 'server_restarting',
             },
-        }));
-
-        const supervisor: ManagedEndpointSupervisor = {
-            start: vi.fn(async () => {}),
-            stop: vi.fn(async () => {}),
-            invalidate: vi.fn(),
-            reportFailure: vi.fn(),
-            reportProbeResult: vi.fn(),
-            waitUntilOnline: vi.fn(async () => {}),
-            getState: () => onlineState(),
-            subscribe: () => () => {},
-        };
+        }) : okResponse());
 
         const { createEndpointSupervisedRequest } = await import('./createEndpointSupervisedRequest');
         const request = createEndpointSupervisedRequest({
@@ -190,16 +222,14 @@ describe('createEndpointSupervisedRequest', () => {
             endpointSupervisor: supervisor,
         });
 
-        const response = await request('/v1/sessions', { method: 'GET', headers: {} });
-
-        expect(response.status).toBe(503);
-        expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
-            status: 'retry_later',
-            retryAfterMs: 2000,
-            reason: 'server_restarting',
-            errorMessage: 'HTTP 503',
-        });
-        expect(supervisor.invalidate).not.toHaveBeenCalled();
+        try {
+            const response = await request('/v1/sessions', { method: 'GET', headers: {} });
+            expect(response.status).toBe(503);
+            expect(supervisor.getState()).toMatchObject({ phase: 'offline', reason: 'server_restarting' });
+            expect(supervisor.getState().nextRetryAt! - Date.now()).toBe(2_000);
+        } finally {
+            await handle.release({ immediate: true });
+        }
     });
 
     it('does not report unauthenticated 401 responses as endpoint auth failures', async () => {

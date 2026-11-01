@@ -7,6 +7,7 @@ import type {
   SessionRuntimeActivityContributionHandle,
 } from '@/session/runtimeActivity/types';
 import { logger } from '@/ui/logger';
+import { listExecutionRunMarkers, removeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 
 import { ExecutionRunManager } from './ExecutionRunManager';
 
@@ -77,6 +78,94 @@ function createDelayedJsonBackend(responseText: string, delayMs: number): AgentB
 }
 
 describe('ExecutionRunManager start request idempotency', () => {
+  it('settles resumed bounded runs through the same result, activity and marker lifecycle as their initial turn', async () => {
+    const contribution = createRuntimeActivityContributionHarness();
+    const prompts: string[] = [];
+    const loadSession = vi.fn(async (sessionId: SessionId) => ({ sessionId }));
+    const disposals: Array<ReturnType<typeof vi.fn>> = [];
+    let occurrence = 0;
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude', cwd: process.cwd(), sendAcp: () => {},
+      runtimeActivityContributionHandle: contribution.handle,
+      createBackend: () => {
+        const summary = `Complete ${++occurrence}`;
+        const backend = createStaticJsonBackend(JSON.stringify({ summary, deliverables: [] }));
+        const dispose = vi.fn(async () => {});
+        disposals.push(dispose);
+        return { ...backend, loadSession, dispose,
+          async sendPrompt(sessionId, prompt) {
+            prompts.push(prompt);
+            await backend.sendPrompt(sessionId, prompt);
+          },
+        };
+      },
+    });
+    const started = await manager.start({
+      sessionId: 'parent-bounded-resume', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'First task', permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'bounded', ioMode: 'request_response',
+    });
+    try {
+      await manager.waitForTerminal(started.runId);
+      for (const message of ['Second task', 'Third task']) {
+        await expect(manager.send(started.runId, { message, resume: true })).resolves.toEqual({ ok: true });
+        await expect.poll(() => manager.get(started.runId)?.status).toBe('succeeded');
+        await manager.waitForTerminal(started.runId);
+        expect(manager.getLatestToolResult(started.runId)).toMatchObject({ summary: `Complete ${occurrence}` });
+        expect(prompts.at(-1)).toContain(message);
+        expect(prompts.at(-1)).toContain('deliverables');
+        expect(contribution.reports.at(-1)).toEqual({ state: 'idle', activeCount: 0 });
+        expect((await listExecutionRunMarkers()).find(marker => marker.runId === started.runId))
+          .toMatchObject({ status: 'succeeded' });
+      }
+      expect(loadSession.mock.calls.map(([id]) => id)).toEqual(['child_session_1', 'child_session_1']);
+      expect(disposals.every(dispose => dispose.mock.calls.length === 1)).toBe(true);
+    } finally {
+      await manager.dispose();
+      await removeExecutionRunMarker(started.runId);
+    }
+  });
+
+  it('recreates a terminal resumable occurrence while its original backend disposal is pending', async () => {
+    let releaseDisposal!: () => void;
+    const disposalGate = new Promise<void>((resolve) => { releaseDisposal = resolve; });
+    let markDisposalStarted!: () => void;
+    const disposalStarted = new Promise<void>((resolve) => { markDisposalStarted = resolve; });
+    const loadSession = vi.fn(async (_sessionId: SessionId) => ({ sessionId: 'child_session_1' as SessionId }));
+    const initial = {
+      ...createStaticJsonBackend('{"summary":"Complete","deliverables":[]}'),
+      loadSession,
+      async dispose() { markDisposalStarted(); await disposalGate; },
+    };
+    const replacement = { ...createStaticJsonBackend('{"summary":"Continued","deliverables":[]}'), loadSession };
+    let acquired = 0;
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude', cwd: process.cwd(), sendAcp: () => {},
+      createBackend: () => acquired++ === 0 ? initial : replacement,
+    });
+    const started = await manager.start({
+      sessionId: 'parent-pending-disposal', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Complete', permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'bounded', ioMode: 'request_response',
+    });
+    try {
+      await disposalStarted;
+      expect(manager.get(started.runId)?.status).toBe('succeeded');
+      await expect(manager.send(started.runId, { message: 'Continue', resume: true })).resolves.toEqual({ ok: true });
+      expect(acquired).toBe(2);
+      expect(loadSession).toHaveBeenCalledWith('child_session_1');
+      expect(manager.get(started.runId)?.status).toBe('running');
+      releaseDisposal();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await expect(manager.send(started.runId, { message: 'Continue again', resume: true })).resolves.toEqual({ ok: true });
+    } finally {
+      releaseDisposal();
+      await manager.dispose();
+    }
+  });
+
   it('keeps a waiter from the first running publication pending until canonical terminal state', async () => {
     const backend = createStaticJsonBackend('{"summary":"unused","findings":[]}');
     backend.sendPrompt = async () => {};

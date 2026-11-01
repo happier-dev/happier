@@ -64,6 +64,12 @@ function createSyncUnitStub() {
 
 async function createResumableSync() {
     const { sync } = await import('./sync');
+    const { storage } = await import('./domains/state/storage');
+    storage.getState().applySessions([{
+        id: 's1', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        archivedAt: null, encryptionMode: 'plain', metadata: { path: '/workspace', host: 'test' },
+        metadataVersion: 1, agentState: null, agentStateVersion: 0, thinking: false, thinkingAt: 0, presence: 1,
+    }]);
     (sync as unknown as { subscribeToUpdates: () => void }).subscribeToUpdates();
 
     const units = {
@@ -113,7 +119,7 @@ describe('foreground catch-up request count', () => {
         });
     });
 
-    it('issues exactly one session-list refresh for a foreground cycle whose delta contains a session change', async () => {
+    it('hydrates a known changed row and performs one presence refresh for a foreground cycle', async () => {
         const { sync, units, fetchSessions } = await createResumableSync();
 
         const appStateHandler = Array.from(appStateHandlers)[0];
@@ -127,9 +133,9 @@ describe('foreground catch-up request count', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         expect(fetchSessions).toHaveBeenCalledTimes(1);
-        expect(fetchSessions.mock.calls[0]?.[0]).toMatchObject({ hydrationTelemetrySource: 'changesCatchUp' });
-        // The resume tail must not repeat the refresh the catch-up already completed.
-        expect(units.sessionsSync.invalidateCoalesced).not.toHaveBeenCalled();
+        expect(fetchSessions.mock.calls[0]?.[0]).toMatchObject({ hydrationTelemetrySource: 'changesCatchUp', sessionListScope: 'required' });
+        // Targeted rows do not refresh the other sessions' missed activity ephemerals.
+        expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
     });
 
     it('repeats the session-list refresh only when the catch-up refresh actually failed', async () => {

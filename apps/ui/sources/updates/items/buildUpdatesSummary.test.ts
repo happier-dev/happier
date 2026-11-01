@@ -68,7 +68,8 @@ describe('buildUpdatesSummary — completion not yet seen', () => {
     it('a remote update counts as finished only once the machine reports the new version', () => {
         const pending = new Map([['m2:cli', 'pendingRemote' as const]]);
         expect(buildUpdatesSummary([item({ id: 'm2:cli', state: 'running', step: 'reconnecting' })], pending).phase).toBe('running');
-        expect(buildUpdatesSummary([item({ id: 'm2:cli', state: 'upToDate' })], pending).phase).toBe('completed');
+        expect(buildUpdatesSummary([item({ id: 'm2:cli', state: 'unknown', updateCompleted: true })], pending).phase).toBe('completed');
+        expect(buildUpdatesSummary([item({ id: 'm2:cli', state: 'upToDate' })], pending).phase).toBe('none');
     });
 });
 

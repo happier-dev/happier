@@ -18,7 +18,7 @@ services:
       - relay-data:/data
 
   release-feed:
-    image: node:22-bookworm
+    image: node:24-bookworm
     command: ["node", "/opt/happier-npm-e2e/bin/release-feed-server.mjs"]
     environment:
       FEED_ROOT: /feed
@@ -31,7 +31,7 @@ services:
           - api.github.com
 
   approver:
-    image: node:22-bookworm
+    image: node:24-bookworm
     command: ["sleep", "infinity"]
     volumes:
       - ${DESKTOP_SETUP_APPROVER_CLI_DIR:?Missing DESKTOP_SETUP_APPROVER_CLI_DIR}:/opt/approver-cli:ro

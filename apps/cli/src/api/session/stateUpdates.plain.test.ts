@@ -3,13 +3,134 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   updateSessionAgentStateWithAck,
   updateSessionMetadataWithAck,
+  updateSessionMetadataWithAckResult,
 } from './stateUpdates';
 import { logger } from '@/ui/logger';
-import type { Metadata } from '../types';
+import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt } from '../encryption';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
+type TestAckSocket = Parameters<typeof updateSessionMetadataWithAck>[0]['socket'];
+
 describe('stateUpdates (plaintext sessions)', () => {
+  it('re-reads the current socket for metadata retries after transport replacement', async () => {
+    vi.useFakeTimers();
+    let currentSocket: TestAckSocket;
+    let oldAttempts = 0;
+    let replacementAttempts = 0;
+    let metadata: Metadata | null = createTestMetadata({ path: '/tmp', host: 'localhost' });
+    let version = 1;
+    const replacementSocket = {
+      emitWithAck: async (_event: string, payload: { metadata: string; expectedVersion: number }) => {
+        replacementAttempts++;
+        return { result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1 };
+      },
+    };
+    const oldSocket = {
+      emitWithAck: async () => {
+        oldAttempts++;
+        currentSocket = replacementSocket;
+        throw new Error('transport disconnected');
+      },
+    };
+    currentSocket = oldSocket;
+    const update = updateSessionMetadataWithAckResult({
+      socket: oldSocket,
+      getSocket: () => currentSocket,
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => { metadata = next; },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => { version = next; },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => ({ metadata: { ...current, path: '/tmp2' }, result: 'updated' }),
+    } satisfies Parameters<typeof updateSessionMetadataWithAckResult>[0] & {
+      getSocket: () => TestAckSocket;
+    });
+    const settled = update.then((value) => ({ value }), (error: unknown) => ({ error }));
+
+    try {
+      await vi.runAllTimersAsync();
+      await expect(settled).resolves.toEqual({ value: 'updated' });
+      expect(oldAttempts).toBe(1);
+      expect(replacementAttempts).toBe(1);
+      expect(metadata?.path).toBe('/tmp2');
+      expect(version).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-reads the current socket for agent-state retries and keeps independent requests', async () => {
+    vi.useFakeTimers();
+    let currentSocket: TestAckSocket;
+    let oldAttempts = 0;
+    let replacementAttempts = 0;
+    let agentState: AgentState = {
+      requests: {
+        completeA: { tool: 'Write', arguments: { path: '/tmp/a' }, createdAt: 1 },
+        pendingB: { tool: 'Bash', arguments: { command: 'echo independent' }, createdAt: 2 },
+      },
+    };
+    let version = 4;
+    const replacementSocket = {
+      emitWithAck: async (_event: string, payload: { agentState: string; expectedVersion: number }) => {
+        replacementAttempts++;
+        const next = JSON.parse(payload.agentState) as AgentState;
+        expect(next.requests).toEqual({
+          pendingB: { tool: 'Bash', arguments: { command: 'echo independent' }, createdAt: 2 },
+        });
+        return { result: 'success', agentState: payload.agentState, version: payload.expectedVersion + 1 };
+      },
+    };
+    const oldSocket = {
+      emitWithAck: async () => {
+        oldAttempts++;
+        currentSocket = replacementSocket;
+        throw new Error('transport disconnected');
+      },
+    };
+    currentSocket = oldSocket;
+    const update = updateSessionAgentStateWithAck({
+      socket: oldSocket,
+      getSocket: () => currentSocket,
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getAgentState: () => agentState,
+      setAgentState: (next) => { agentState = next ?? {}; },
+      getAgentStateVersion: () => version,
+      setAgentStateVersion: (next) => { version = next; },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => {
+        const requests: NonNullable<AgentState['requests']> = {};
+        const pendingB = current.requests?.pendingB;
+        if (pendingB) requests.pendingB = pendingB;
+        return { ...current, requests };
+      },
+    } satisfies Parameters<typeof updateSessionAgentStateWithAck>[0] & {
+      getSocket: () => TestAckSocket;
+    });
+    const settled = update.then(() => ({ succeeded: true }), (error: unknown) => ({ error }));
+
+    try {
+      await vi.runAllTimersAsync();
+      await expect(settled).resolves.toEqual({ succeeded: true });
+      expect(oldAttempts).toBe(1);
+      expect(replacementAttempts).toBe(1);
+      expect(agentState.requests).toEqual({
+        pendingB: { tool: 'Bash', arguments: { command: 'echo independent' }, createdAt: 2 },
+      });
+      expect(version).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['plain', 'e2ee'] as const)('keeps Herdr metadata readable by released UIs across %s metadata acknowledgements', async (mode) => {
     let metadata: Metadata | null = createTestMetadata({
       path: '/tmp', host: 'localhost',
@@ -202,6 +323,37 @@ describe('stateUpdates (plaintext sessions)', () => {
 
     expect(agentState.requests.req_permission.tool).toBe('Write');
     expect(version).toBe(2);
+  });
+
+  it('reports a settled agent-state write failure without logging private state or server payloads', async () => {
+    const privateServerError = 'private server response /private/workspace';
+    const agentState: AgentState = {
+      requests: { pending: { tool: 'Bash', arguments: { command: 'private command' }, createdAt: 1 } },
+    };
+    const infoFile = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    try {
+      await expect(updateSessionAgentStateWithAck({
+        socket: { emitWithAck: async () => ({ result: 'error', error: privateServerError }) },
+        sessionId: 's1',
+        sessionEncryptionMode: 'plain',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'legacy',
+        getAgentState: () => agentState,
+        setAgentState: () => { throw new Error('failed write must not replace the acknowledged snapshot'); },
+        getAgentStateVersion: () => 1,
+        setAgentStateVersion: () => { throw new Error('failed write must not advance the version'); },
+        syncSessionSnapshotFromServer: async () => {},
+        handler: (current) => ({ ...current, requests: {} }),
+      })).rejects.toMatchObject({ code: 'agent_state_update_failed', retryable: false });
+      expect(infoFile.mock.calls).toEqual([[
+        '[API] session_agent_state_update_failed',
+        { phase: 'terminal_failure', operation: 'update-state', sessionId: 's1' },
+      ]]);
+      expect(JSON.stringify(infoFile.mock.calls)).not.toContain(privateServerError);
+      expect(JSON.stringify(infoFile.mock.calls)).not.toContain('private command');
+    } finally {
+      infoFile.mockRestore();
+    }
   });
 
   it('does not send stale runtime issue summaries with update-state payloads', async () => {

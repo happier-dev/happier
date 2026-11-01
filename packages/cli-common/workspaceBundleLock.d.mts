@@ -11,7 +11,9 @@ export interface WorkspaceBundleLockOptions {
   lockPath: string;
   heldLockValue?: string;
   heldLockPath?: string;
-  timeoutMs?: number;
+  /** null waits until the caller cancels; omitted retains the build-lock deadline. */
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
   pollIntervalMs?: number;
   staleAfterMs?: number;
   errorLabel?: string;
@@ -19,7 +21,7 @@ export interface WorkspaceBundleLockOptions {
     lockPath: string;
     owner: Record<string, unknown> | null;
     staleAfterMs: number;
-    timeoutMs: number;
+    timeoutMs: number | null;
     waitedMs: number;
   }) => void;
 }
@@ -35,5 +37,5 @@ export function withWorkspaceBundleLock<T>(
 ): Promise<T>;
 export function withWorkspaceBundleLockSync<T>(
   fn: (context: WorkspaceBundleLockContext) => T,
-  options: WorkspaceBundleLockOptions,
+  options: Omit<WorkspaceBundleLockOptions, 'timeoutMs' | 'signal'> & { timeoutMs?: number },
 ): T;

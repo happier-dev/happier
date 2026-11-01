@@ -5,10 +5,91 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { resolveClaudeProjectId } from '../utils/path';
+import { resolveExistingClaudeSessionHandoffState } from '../sessionHandoff/resolveExistingSessionHandoffState';
 import { exportClaudeSessionBundle } from './exportClaudeSessionBundle';
 import { importClaudeSessionBundle } from './importClaudeSessionBundle';
+import { readClaudeSessionTitle } from '../directSessions/readClaudeSessionTitle';
 
 describe('claude session handoff bundle', () => {
+  it.each(['inline', 'file'] as const)('refreshes cached titles when a %s handoff replaces an existing transcript', async (storage) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-title-'));
+    const targetPath = join(root, 'workspace');
+    const env = { HOME: root, USERPROFILE: root };
+    const transcriptPath = join(root, '.claude', 'projects', resolveClaudeProjectId(targetPath), 'session-one.jsonl');
+    const padding = `${JSON.stringify({ type: 'progress', data: 'x'.repeat(5_000) })}\n`;
+    const transcript = (title: string) => `${padding}${JSON.stringify({ type: 'custom-title', customTitle: title })}\n${padding}`;
+    const importTranscript = async (contents: string) => {
+      const sourcePath = join(root, 'source.jsonl');
+      await writeFile(sourcePath, contents, 'utf8');
+      return importClaudeSessionBundle({
+        bundle: {
+          providerId: 'claude',
+          remoteSessionId: 'session-one',
+          ...(storage === 'file'
+            ? { transcriptFile: { t: 'happier.handoff.file.v1' as const, filePath: sourcePath, offsetBytes: 0, sizeBytes: Buffer.byteLength(contents) } }
+            : { transcriptBase64: Buffer.from(contents).toString('base64') }),
+        },
+        targetPath,
+        env,
+      });
+    };
+
+    await importTranscript(transcript('Original title'));
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Original title');
+    // Neither rewrite changes the head or the previous boundary sample.
+    await importTranscript(transcript('Modified title'));
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Modified title');
+    await importTranscript(`${transcript('Replaced title')}${JSON.stringify({ type: 'progress', data: 'more' })}\n`);
+    await expect(readClaudeSessionTitle(transcriptPath)).resolves.toBe('Replaced title');
+  });
+
+  it('preserves the previous transcript when importing an incomplete file slice fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-failed-copy-'));
+    const targetPath = join(root, 'workspace');
+    const env = { HOME: root, USERPROFILE: root };
+    const contents = '{"type":"custom-title","customTitle":"Original title"}\n';
+    await importClaudeSessionBundle({
+      bundle: { providerId: 'claude', remoteSessionId: 'session-one', transcriptBase64: Buffer.from(contents).toString('base64') },
+      targetPath,
+      env,
+    });
+    const sourcePath = join(root, 'incomplete.jsonl');
+    await writeFile(sourcePath, 'incomplete', 'utf8');
+    await expect(importClaudeSessionBundle({
+      bundle: {
+        providerId: 'claude', remoteSessionId: 'session-one',
+        transcriptFile: { t: 'happier.handoff.file.v1', filePath: sourcePath, offsetBytes: 0, sizeBytes: 100 },
+      },
+      targetPath,
+      env,
+    })).rejects.toThrow();
+    const transcriptPath = join(root, '.claude', 'projects', resolveClaudeProjectId(targetPath), 'session-one.jsonl');
+    await expect(readFile(transcriptPath, 'utf8')).resolves.toBe(contents);
+  });
+
+  it('keeps native default authentication unset for imported and existing target state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-native-auth-'));
+    const targetPath = join(root, 'workspace');
+    const env = { HOME: root, USERPROFILE: root };
+    const imported = await importClaudeSessionBundle({
+      bundle: {
+        providerId: 'claude', remoteSessionId: 'native-auth-session',
+        transcriptBase64: Buffer.from('{"type":"user"}\n').toString('base64'),
+      },
+      targetPath,
+      env,
+    });
+    const existing = await resolveExistingClaudeSessionHandoffState({
+      metadata: {}, vendorResumeId: 'native-auth-session', targetPath, env, sessionStorageMode: 'direct',
+    });
+
+    expect(imported.resume.environmentVariables).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+    expect(existing.resume.environmentVariables).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+    expect(existing.directSource).toEqual(imported.directSource);
+    const projectId = resolveClaudeProjectId(targetPath);
+    expect(await readFile(join(root, '.claude', 'projects', projectId, 'native-auth-session.jsonl'), 'utf8'))
+      .toBe('{"type":"user"}\n');
+  });
   it('exports the transcript from the explicit transcript path when available', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-'));
     const transcriptPath = join(root, 'source.jsonl');
@@ -284,7 +365,7 @@ describe('claude session handoff bundle', () => {
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"type":"assistant","text":"override"}\n');
   });
 
-  it('falls back to an explicit HOME-based Claude config dir when no override is provided', async () => {
+  it('uses the HOME-based transcript directory without an authentication override', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-import-home-fallback-'));
     const targetPath = join(root, 'workspace');
     await mkdir(targetPath, { recursive: true });
@@ -307,9 +388,7 @@ describe('claude session handoff bundle', () => {
         configDir: join(root, '.claude'),
         projectId: resolveClaudeProjectId(targetPath),
       });
-      expect(result.resume.environmentVariables).toEqual({
-        CLAUDE_CONFIG_DIR: join(root, '.claude'),
-      });
+      expect(result.resume.environmentVariables).toEqual({});
 
       const projectId = resolveClaudeProjectId(targetPath);
       const importedPath = join(root, '.claude', 'projects', projectId, 'claude_session_home_fallback.jsonl');

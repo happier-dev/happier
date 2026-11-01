@@ -20,7 +20,7 @@ function blocked(reason: SessionListInstructionBlockReason): SessionListTreeDrop
     };
 }
 
-function resolveEligibilityBlock(params: Readonly<{
+export function resolveSessionListDragEligibilityBlock(params: Readonly<{
     source: SessionListTreeDragSource;
     foldersFeatureEnabled: boolean;
 }>): SessionListInstructionBlockReason | null {
@@ -31,7 +31,6 @@ function resolveEligibilityBlock(params: Readonly<{
     });
     if (eligibility.reason === 'eligible') return null;
     if (eligibility.reason === 'feature-disabled') return 'feature-disabled';
-    if (eligibility.reason === 'direct-session') return 'direct-session';
     return 'unsupported-item';
 }
 
@@ -43,7 +42,7 @@ export function resolveSessionListInstruction(params: Readonly<{
     folderSortMode?: SessionListFolderSortMode;
     maxDepth?: number;
 }>): SessionListTreeDropResult {
-    const eligibilityBlock = resolveEligibilityBlock({
+    const eligibilityBlock = resolveSessionListDragEligibilityBlock({
         source: params.source,
         foldersFeatureEnabled: params.foldersFeatureEnabled,
     });

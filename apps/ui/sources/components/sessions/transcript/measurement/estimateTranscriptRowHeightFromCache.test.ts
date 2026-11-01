@@ -249,7 +249,7 @@ describe('estimateTranscriptRowHeightFromContent', () => {
     // Real painted heights from the live web capture 2026-07-28 (session
     // `cms3bvdv13hlutm9p19hw1n9s` plus the three healthy control sessions, whose row contiguity
     // was exact). These are the oracle every tool-group estimate below is calibrated against.
-    const MEASURED_TOOL_GROUP_HEADER_PX = 33;
+    const MEASURED_TOOL_GROUP_HEADER_PX = 50;
     const MEASURED_TOOL_ROW_PX = 28;
     const MEASURED_TOOL_GROUP_FOOTER_PX = 34;
 
@@ -380,14 +380,32 @@ describe('P · a tool row is sized by the chrome it actually paints', () => {
 
     const MEASURED_FEED_TOOL_ROW_PX = 28;
 
+    it('estimates compact desktop disclosure rows without the native touch-height reservation', () => {
+        const estimate = (kind: string, variant: 'feed' | 'feed_background') => estimateTranscriptRowHeightFromContent({
+            platformIsWeb: true, getMessageById: () => null,
+            item: toolUnitItem(kind, false), toolCallsGroupChromeVariant: variant,
+        });
+        expect(estimate('tool-group-header', 'feed')).toBe(28);
+        expect(estimate('tool-group-header', 'feed_background')).toBe(34);
+        expect(estimate('tool-group-expand', 'feed')).toBe(24);
+    });
+
+
+    it('reserves the normal message gap after visible tools, including collapsed previews', () => {
+        for (const expanded of [false, true]) {
+            const footer = { ...toolUnitItem('tool-group-footer', expanded), hasVisibleTools: true };
+            expect(estimateFor(footer, 'feed')).toBe(28);
+        }
+    });
+
+
     it('keeps the feed variants on their measured single-line caps', () => {
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed')).toBe(MEASURED_FEED_TOOL_ROW_PX);
         expect(estimateFor(toolUnitItem('tool-group-tool', false), 'feed_background')).toBe(MEASURED_FEED_TOOL_ROW_PX);
-        // The chrome caps differ between the two feed variants; the group background adds 6px to
-        // both the header and the footer (measured: feed 27/28, feed_background 33/34).
-        expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed')).toBe(27);
-        expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed')).toBe(28);
-        expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed_background')).toBe(33);
+        // Headers provide a full touch target; plain feed footers keep only the compact message gap.
+        expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed')).toBe(44);
+        expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed')).toBe(8);
+        expect(estimateFor(toolUnitItem('tool-group-header', false), 'feed_background')).toBe(50);
         expect(estimateFor(toolUnitItem('tool-group-footer', false), 'feed_background')).toBe(34);
         // The "show N more" row is the same single-line cap in both (measured 28).
         expect(estimateFor(toolUnitItem('tool-group-expand', false), 'feed')).toBe(28);

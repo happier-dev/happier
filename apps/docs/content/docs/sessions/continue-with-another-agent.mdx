@@ -5,9 +5,12 @@ description: Switch the coding Agent running a session in place, keep the same s
 
 A Happier session normally runs under one coding Agent for its whole life. **Continue with another Agent** lets you change that Agent in place, mid-conversation, without starting a new session.
 
-## Development status
+Available since Happier 0.2.11.
 
-This capability exists in the current development source and is **not yet available in released Happier builds**. Treat the behavior described below as the current development contract rather than as shipped behavior. Availability, copy, and failure handling can still change.
+In development builds, **Session title updates: At session start** preserves an
+existing title when you continue with another Agent. An untitled session can
+still receive its initial title. Ongoing title updates remain available when
+you select that setting.
 
 The promise is narrow and worth stating exactly:
 
@@ -43,6 +46,8 @@ Selecting another Agent **arms** it. There is no separate confirm step:
 2. The detail pane states what will happen: *"Your recent conversation carries over as text; images and files don't. Nothing is sent until your next message."*
 3. The composer's send control changes to **Continue with `{Agent}`**.
 4. Type your message and send. That send stops the current Agent and starts the chosen one.
+
+In development builds, you can also press **Continue with `{Agent}`** with an empty composer. Happier sends a short "Continue" prompt in your interface language. If you have typed a message or added attachments or review comments, that content is sent instead.
 
 To cancel, reselect the Agent that is currently running the session. Leaving the session is not required, and nothing has been sent until you press send.
 

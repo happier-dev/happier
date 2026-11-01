@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@/api/types';
+import { readSessionNativeEnvironment } from '@/agent/runtime/sessionNativeEnvironment';
 import { isPermissionMode } from '@/api/types';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import {
@@ -399,8 +400,19 @@ export function resolveSessionRuntimeSnapshot(
     vendorResumeId: chooseVendorResumeId(params),
   };
 
+  const persistedNativeEnvironment = readSessionNativeEnvironment(params.persistedMetadata?.nativeAgentEnvironmentV1);
+  const trackedNativeEnvironment = readSessionNativeEnvironment(params.trackedSpawnOptions?.environmentVariables);
   return {
     snapshot,
-    spawnOptions: applySnapshotToSpawnOptions(params.incomingOptions, snapshot),
+    spawnOptions: applySnapshotToSpawnOptions({
+      ...params.incomingOptions,
+      ...((persistedNativeEnvironment || trackedNativeEnvironment) ? {
+        environmentVariables: {
+          ...trackedNativeEnvironment,
+          ...persistedNativeEnvironment,
+          ...params.incomingOptions.environmentVariables,
+        },
+      } : {}),
+    }, snapshot),
   };
 }

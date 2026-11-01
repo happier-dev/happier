@@ -22,12 +22,14 @@ import {
 } from './createClaudeUnifiedController';
 import {
   createClaudeUnifiedHookLifecycleBridge,
+  type ClaudeUnifiedDialogProbeOutcome,
   type ClaudeUnifiedPromptTurnTerminalEvent,
   type ClaudeUnifiedSessionEndEvent,
   type ClaudeUnifiedSessionHookSubscription,
 } from './createClaudeUnifiedHookLifecycleBridge';
 import { createReplayableHookSubscription } from './createReplayableHookSubscription';
 import { createClaudeUnifiedTranscriptBridge } from './createClaudeUnifiedTranscriptBridge';
+import type { ClaudeEffectiveModelObservation } from '../sessionModels/effectiveModelUpdate';
 import type { ClaudeWorkflowActivityObservationContext } from '../workflows/claudeWorkflowActivitySource';
 import { isClaudeMainChainCompactBoundary } from '../localControl/readClaudeTranscriptTurnSignal';
 import type { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
@@ -39,7 +41,7 @@ import { createClaudeUnifiedHostLivenessBridge } from './createClaudeUnifiedHost
 import { assertClaudeUnifiedHookActivationBeforeTranscriptFallback } from './claudeUnifiedHookActivation';
 import { createClaudeUnifiedInputArbiter } from './createClaudeUnifiedInputArbiter';
 import { interruptClaudeUnifiedQueuedPrompt } from './interruptClaudeUnifiedQueuedPrompt';
-import { releaseClaudeUsageLimitDialogAfterExactApplication } from './releaseClaudeUsageLimitDialogAfterExactApplication';
+import { releaseClaudeUsageLimitDialogBeforePromptInjection } from './releaseClaudeUsageLimitDialogBeforePromptInjection';
 import { isClaudeUnifiedPendingInputInterruptAndRunEnabled } from './pendingInputInterruptAndRunActivation';
 import {
   createClaudeGoalRuntimeControls,
@@ -60,6 +62,8 @@ import {
   type ClaudeUnifiedInFlightSteerWiring,
 } from './createClaudeUnifiedInFlightSteerEvaluator';
 import { createClaudeOwnComposerTextLog, type ClaudeOwnComposerTextLog } from './ownComposerTextLog';
+import { isReplaySdkMessage } from '../remote/runtimeActivityEvidence';
+import { isClaudeSidechainRuntimeEvidence } from '../utils/sessionHookAttribution';
 import { createClaudeUnifiedAcceptedPromptTranscriptDiscovery } from './acceptedPromptTranscriptDiscovery';
 import { retireClaudeEndpointArtifactsForTerminalAttachment } from '../endpointRecovery/claudeEndpointArtifacts';
 import { doesClaudeUnifiedPromptBatchMatchAcceptedTranscript } from './acceptedPromptDeliveryIdentity';
@@ -94,6 +98,7 @@ import {
 import {
   createClaudeUnifiedDialogChoiceScreenProbe,
   type ClaudeUnifiedDialogChoiceScreenProbe,
+  type ClaudeUnifiedDialogChoiceScreenProbeResult,
 } from './dialogChoice/claudeUnifiedDialogChoiceScreenProbe';
 import type { ClaudeUnifiedDialogChoiceBroker } from './dialogChoice/claudeUnifiedDialogChoiceBroker';
 import { hasClaudeUnifiedVisibleDialog } from './tuiControls/dialogRegistry';
@@ -300,9 +305,13 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   onThinkingChange?: ((thinking: boolean) => void) | undefined;
   onReady?: (() => void | Promise<void>) | undefined;
   onUsageLimitDetails?: ((details: NormalizedProviderUsageLimitDetailsV1) => void | Promise<void>) | undefined;
+  onQuotaEvidence?: ((windows: readonly NormalizedProviderUsageLimitDetailsV1[]) => void | Promise<void>) | undefined;
   onTerminalScreenObserved?: ((observation: ClaudeUnifiedTerminalScreenObservation) => void) | undefined;
   onRuntimeAuthFailureEvent?: ((error: unknown) => void | Promise<void>) | undefined;
   onProviderPromptStarted?: (() => void | Promise<void>) | undefined;
+  /** Live provider ingress, independent of visible transcript delivery. */
+  onProviderEvent?: (() => void) | undefined;
+  readProviderSessionId?: (() => string | null) | undefined;
   /** Fires only when this runner is about to create a new provider host with spawn argv. */
   onProviderLaunchStarting?: (() => void | Promise<void>) | undefined;
   onProviderSessionStarted?: (() => void) | undefined;
@@ -321,6 +330,7 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
   ) => void) | undefined;
   providerActivityLedger?: ReturnType<typeof createClaudeProviderActivityLedger> | undefined;
   onMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
+  onEffectiveModel?: ((facts: ClaudeEffectiveModelObservation) => void) | undefined;
   onHistoricalMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
   /**
    * Raw transcript channel (plan H7): every parsed JSONL value BEFORE the scanner's
@@ -415,11 +425,11 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
       request: Readonly<SessionTerminalComposerClearRequestV1>,
     ) => Promise<SessionTerminalComposerClearResultV1>,
   ) => (() => void) | void) | undefined;
-  /** Registers the provider-owned release applied only after exact connected-service settlement. */
+  /** Registers the Pending wake applied after exact connected-service settlement, without terminal input. */
   registerConnectedServiceExactApplicationHandler?: ((
-    releaseProviderUi: () => Promise<void>,
+    wakePendingInput: () => Promise<void>,
   ) => (() => void) | void) | undefined;
-  /** Wakes the canonical Pending owner after the stale usage-limit overlay was dismissed. */
+  /** Wakes the canonical Pending owner after exact application, independently of dialog visibility. */
   onConnectedServiceExactApplicationReleased?: (() => void) | undefined;
   onPendingInputInterruptAndRunLocalIdChange?: ((localId: string | null) => void) | undefined;
   registerPendingInputInterruptAndRunRuntimeControl?: ((
@@ -569,6 +579,24 @@ const DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS: readonly number[] = [
   30_000,
   60_000,
 ];
+
+// A screen with no dialog, an owner answering, or a published/pending surface is resolved (stop the
+// probe window). A capture failure or a still-hidden dialog keeps the bounded re-arm going and, at
+// exhaustion, escalates once.
+function resolveDialogProbeOutcome(
+  result: ClaudeUnifiedDialogChoiceScreenProbeResult | undefined,
+): ClaudeUnifiedDialogProbeOutcome {
+  switch (result?.kind) {
+    case 'not_visible':
+    case 'owned':
+    case 'request_published':
+    case 'already_pending':
+    case 'automatic_answer_started':
+      return 'resolved';
+    default:
+      return 'pending';
+  }
+}
 const MAX_RECENT_ACCEPTED_TRANSCRIPT_CANDIDATES = 64;
 const PROVIDER_ACCEPTANCE_PENDING_PREFIX_RESIDUE_MIN_CHARS = 16;
 
@@ -1555,33 +1583,26 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     return guardedAttempt;
   };
   try {
-    if (opts.registerTerminalComposerClearRuntimeControl || opts.registerConnectedServiceExactApplicationHandler) {
-      const terminalSessionControlPort = hostResolution.adapter.createControlPort?.(activeHandle) ?? null;
-      if (terminalSessionControlPort && opts.registerTerminalComposerClearRuntimeControl) {
-        const unregister = opts.registerTerminalComposerClearRuntimeControl(async (request) => {
-          const result = await clearUserAuthorizedClaudeComposerDraft({
-            port: terminalSessionControlPort,
-          });
-          const protocolResult = mapClaudeComposerClearResultToProtocolResult(result, request.sessionId);
-          if (protocolResult.ok) {
-            opts.onInFlightSteerAvailabilitySnapshot?.({ available: true, reason: null });
-            wakeAfterTerminalComposerClear();
-          }
-          return protocolResult;
+    const terminalSessionControlPort = hostResolution.adapter.createControlPort?.(activeHandle) ?? null;
+    if (terminalSessionControlPort && opts.registerTerminalComposerClearRuntimeControl) {
+      const unregister = opts.registerTerminalComposerClearRuntimeControl(async (request) => {
+        const result = await clearUserAuthorizedClaudeComposerDraft({
+          port: terminalSessionControlPort,
         });
-        unregisterTerminalComposerClearRuntimeControl = typeof unregister === 'function' ? unregister : null;
-      }
-      if (terminalSessionControlPort && opts.registerConnectedServiceExactApplicationHandler) {
-        const unregister = opts.registerConnectedServiceExactApplicationHandler(async () => {
-          const result = await releaseClaudeUsageLimitDialogAfterExactApplication({
-            port: terminalSessionControlPort,
-          });
-          if (result.status === 'released') {
-            opts.onConnectedServiceExactApplicationReleased?.();
-          }
-        });
-        unregisterConnectedServiceExactApplicationHandler = typeof unregister === 'function' ? unregister : null;
-      }
+        const protocolResult = mapClaudeComposerClearResultToProtocolResult(result, request.sessionId);
+        if (protocolResult.ok) {
+          opts.onInFlightSteerAvailabilitySnapshot?.({ available: true, reason: null });
+          wakeAfterTerminalComposerClear();
+        }
+        return protocolResult;
+      });
+      unregisterTerminalComposerClearRuntimeControl = typeof unregister === 'function' ? unregister : null;
+    }
+    if (opts.registerConnectedServiceExactApplicationHandler) {
+      const unregister = opts.registerConnectedServiceExactApplicationHandler(async () => {
+        opts.onConnectedServiceExactApplicationReleased?.();
+      });
+      unregisterConnectedServiceExactApplicationHandler = typeof unregister === 'function' ? unregister : null;
     }
 
     terminalAttachment = await persistTerminalHostAttachmentInfoIfAvailable({
@@ -1856,6 +1877,23 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           reason: 'pane_initializing',
           retryAfterMs: 250,
         };
+      }
+      if (terminalSessionControlPort) {
+        const release = await releaseClaudeUsageLimitDialogBeforePromptInjection({
+          port: terminalSessionControlPort,
+          wait: waitMs,
+        });
+        if (release.status === 'failed') {
+          logger.infoFile('[unified]: usage-limit menu could not be released before prompt injection', {
+            reason: release.reason,
+          });
+          return {
+            status: 'deferred',
+            reason: 'terminal_busy',
+            retryAfterMs: blockedInjectionRetryMs,
+            blocker: { kind: 'provider_unavailable', source: 'readiness', detail: release.reason },
+          };
+        }
       }
       if (!runtimeControlBridge) return null;
 
@@ -2177,7 +2215,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         onPromptDeliveryRetired: (batch) => {
           acceptedPromptTranscriptDiscovery.forgetRetiredPromptByBatch(batch);
         },
-        onPromptAccepted: (batch, acceptance) => {
+        onPromptAccepted: (batch) => {
           acceptedPromptTranscriptDiscovery.consumeAcceptedPromptByBatch({
             message: batch.message,
             maxUserMessageSeq: batch.maxUserMessageSeq ?? null,
@@ -2187,11 +2225,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             message: batch.message,
             maxUserMessageSeq: batch.maxUserMessageSeq ?? null,
             userMessageLocalIds: batch.userMessageLocalIds ?? [],
-            ...(acceptance.acceptedAs === 'new_turn'
-              && typeof batch.mode?.model === 'string'
-              && batch.mode.model.trim()
-              ? { appliedModelId: batch.mode.model.trim() }
-              : {}),
           });
           // Exact provider acceptance settles Pending custody even when the hook bridge is
           // unusable. Fail the runtime only after settlement, including evidence received
@@ -2415,7 +2448,12 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       };
       lifecycleBridge = activeHookSubscription.subscribe
         ? createClaudeUnifiedHookLifecycleBridge({
-            subscribeClaudeSessionHooks: activeHookSubscription.subscribe,
+            subscribeClaudeSessionHooks: (callback) => activeHookSubscription.subscribe?.((data, observation) => {
+              // Subscribe with the startup bridges: an earlier subscriber would close the
+              // replay window before provider-launch SessionStart reaches identity validation.
+              opts.dialogChoiceBroker?.observeSessionHook(data);
+              callback(data, observation);
+            }),
             arbiter,
             completionQuiescenceMs:
               opts.lifecycleCompletionQuiescenceMs ?? configuration.claudeLocalTurnCompletionQuiescenceMs,
@@ -2425,6 +2463,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               await opts.onReady?.();
             },
             onUsageLimitDetails: opts.onUsageLimitDetails,
+            onQuotaEvidence: opts.onQuotaEvidence,
             onRuntimeAuthFailureEvent: opts.onRuntimeAuthFailureEvent,
             onProviderPromptStarted: opts.onProviderPromptStarted,
             onProviderPromptSubmitMetadata: runtimeControlBridge
@@ -2443,6 +2482,8 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             },
             onTrustedHookActivation: observeTrustedHookActivation,
             onTrustedProviderProgress: observeTrustedProviderProgress,
+            onProviderEvent: opts.onProviderEvent,
+            readProviderSessionId: opts.readProviderSessionId,
             onMainSessionScreenMayHaveChanged: observePossibleDialogScreenChange,
             onPromptTurnTerminal: async (event) => {
               await observeMetadataApplySafeBoundary();
@@ -2455,18 +2496,13 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                       ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_QUIET_MS,
                     maxAttempts: opts.dialogTurnStallScreenProbeMaxAttempts
                       ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_MAX_ATTEMPTS,
-                    onStalled: async () => {
-                      await dialogChoiceScreenProbe?.probe();
-                    },
+                    onStalled: async () => resolveDialogProbeOutcome(await dialogChoiceScreenProbe?.probe()),
                     onStarvation: () => {
-                      // Mid-turn stall budget exhausted with the turn still active (e.g. an API-retry
-                      // loop that never reaches turn-terminal, incident cmr3dpuka). Make one FINAL
-                      // user-visible probe so a dialog stuck on the mid-turn screen — the Fable
-                      // safeguard chooser — is still published through the dialog-choice broker, and
-                      // emit a one-shot escalation so the residual stuck-turn is observable instead of
-                      // a silent "computing…". This is the mid-turn analog of the turn-end tail's
-                      // one-shot starvation — ONE escalation discipline, never silent.
-                      void dialogChoiceScreenProbe?.probe().catch(() => undefined);
+                      // Mid-turn stall budget exhausted with the turn still active and the last probe
+                      // unable to clear the screen (e.g. an API-retry loop that never reaches
+                      // turn-terminal, incident cmr3dpuka). Emit a one-shot escalation so the residual
+                      // stuck-turn is observable instead of a silent "computing…". This is the mid-turn
+                      // analog of the turn-end tail's one-shot starvation — ONE escalation discipline.
                       const quietMs = opts.dialogTurnStallScreenProbeQuietMs
                         ?? DEFAULT_DIALOG_TURN_STALL_SCREEN_PROBE_QUIET_MS;
                       const attempts = opts.dialogTurnStallScreenProbeMaxAttempts
@@ -2475,7 +2511,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                         attempts,
                         windowMs: Math.max(0, quietMs) * Math.max(0, attempts),
                       });
-                      logger.warn('[unified]: mid-turn stall dialog probe budget exhausted with the turn still active', {
+                      logger.warnFile('[unified]: mid-turn stall dialog probe budget exhausted with the turn still active', {
                         attempts,
                       });
                     },
@@ -2483,22 +2519,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                   turnEndScreenProbe: {
                     delaysMs: opts.dialogTurnEndScreenProbeDelaysMs
                       ?? DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS,
-                    onProbe: async () => {
-                      const result = await dialogChoiceScreenProbe?.probe();
-                      // A screen with no dialog, an owner answering, or a published/pending surface is
-                      // resolved (stop the tail). A capture failure or a still-hidden dialog keeps the
-                      // bounded re-arm going and, at exhaustion, escalates once.
-                      switch (result?.kind) {
-                        case 'not_visible':
-                        case 'owned':
-                        case 'request_published':
-                        case 'already_pending':
-                        case 'automatic_answer_started':
-                          return 'resolved';
-                        default:
-                          return 'pending';
-                      }
-                    },
+                    onProbe: async () => resolveDialogProbeOutcome(await dialogChoiceScreenProbe?.probe()),
                     onStarvation: () => {
                       const delays = opts.dialogTurnEndScreenProbeDelaysMs
                         ?? DEFAULT_DIALOG_TURN_END_SCREEN_PROBE_DELAYS_MS;
@@ -2506,7 +2527,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                         shots: delays.length,
                         windowMs: delays.length > 0 ? delays[delays.length - 1] ?? 0 : 0,
                       });
-                      logger.warn('[unified]: turn-end idle dialog re-arm exhausted with a dialog still unresolved', {
+                      logger.warnFile('[unified]: turn-end idle dialog re-arm exhausted with a dialog still unresolved', {
                         shots: delays.length,
                       });
                     },
@@ -2532,12 +2553,13 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         }
         await handler?.(message);
       };
-      const transcriptBridge = opts.runtimeActivityAdapter || opts.onMessage || opts.onHistoricalMessage || opts.onSessionFound || lifecycleBridge
+      const transcriptBridge = opts.runtimeActivityAdapter || opts.onMessage || opts.onEffectiveModel || opts.onHistoricalMessage || opts.onSessionFound || lifecycleBridge
         ? createClaudeUnifiedTranscriptBridge({
             sessionId: opts.sessionId ?? null,
             transcriptPath: opts.transcriptPath,
             workingDirectory: opts.path,
             claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+            onEffectiveModel: opts.onEffectiveModel,
             onMessage: opts.onMessage
               ? (message) => forwardVisibleTranscriptMessage(message, opts.onMessage)
               : undefined,
@@ -2554,12 +2576,18 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               lifecycleBridge?.observeTranscript(message);
             },
             onLiveProviderTaskJsonlValue: ({ sessionId, value }) => {
+              if (!isReplaySdkMessage(value) && !isClaudeSidechainRuntimeEvidence(value)) opts.onProviderEvent?.();
               lifecycleBridge?.observeLiveProviderActivityRow(value, sessionId);
             },
             onLiveProviderTaskObservationLost: ({ reason }) => {
               lifecycleBridge?.handleProviderActivityObservationLoss(reason);
             },
             onRawTranscriptValue: (value, observation) => {
+              if (!observation.historicalReplay) {
+                void opts.dialogChoiceBroker?.observeTranscript(value).catch((error) => {
+                  logger.infoFile('[unified]: Native prompt transcript settlement failed', error);
+                });
+              }
               acceptedPromptTranscriptDiscovery.observeControlCommandTranscript(value);
               // Native Claude `/goal` source (plan H7): the goal_status attachment +
               // system/init slash_commands survive only on this raw channel (the

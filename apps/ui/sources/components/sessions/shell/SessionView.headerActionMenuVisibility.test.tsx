@@ -3,6 +3,7 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -337,7 +338,7 @@ installSessionShellCommonModuleMocks({
     const getStorageStateForTest = () => ({
       sessions: { s1: sessionState.session },
       settings: {},
-      sessionListViewDataByServerId: {},
+      sessionListRenderables: {}, sessionListViewDataByServerId: {},
     });
     return createStorageModuleStub({
       storage: Object.assign(
@@ -944,10 +945,12 @@ describe('SessionView header action menu visibility', () => {
     sessionExecutionRunsSupportedState.supported = true;
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [
-      {
-        kind: 'tool-call',
-        tool: { name: 'SubAgentRun', input: { runId: 'run_1' }, result: { runId: 'run_1' } },
-      },
+      createToolCallMessageFixture({
+        tool: {
+          name: 'SubAgentRun', input: { runId: 'run_1' }, result: { runId: 'run_1' },
+          state: 'completed', createdAt: 1, startedAt: 1, completedAt: 2, description: null,
+        },
+      }),
     ];
 
     await renderSessionView();
@@ -966,18 +969,21 @@ describe('SessionView header action menu visibility', () => {
     sessionExecutionRunsSupportedState.supported = false;
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [
-      {
+      createToolCallMessageFixture({
         id: 'tool-msg-1',
         kind: 'tool-call',
         createdAt: 1,
         tool: {
           name: 'Task',
-          id: 'toolu_task_1',
           input: { name: 'Investigate regression', team_name: 'qa-team', agent_id: 'alpha@qa-team' },
           result: { tool_use_result: { team_name: 'qa-team', agent_id: 'alpha@qa-team', name: 'alpha' } },
           state: 'running',
+          createdAt: 1,
+          startedAt: 1,
+          completedAt: null,
+          description: null,
         },
-      },
+      }),
     ];
 
     const screen = await renderSessionView();

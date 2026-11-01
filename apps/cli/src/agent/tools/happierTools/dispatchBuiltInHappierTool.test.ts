@@ -638,15 +638,18 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(executeActionByToolName).toHaveBeenCalledWith('subagents_delegate_start', expect.objectContaining({
-      sessionId: 'sess-1',
-      instructions: 'Delegate.',
-      backendTargetKeys: ['agent:claude'],
-    }), 'sess-1');
+    expect(executeActionByToolName).toHaveBeenCalledWith('action_execute', {
+      actionId: 'subagents.delegate.start',
+      input: expect.objectContaining({
+        sessionId: 'sess-1',
+        instructions: 'Delegate.',
+        backendTargetKeys: ['agent:claude'],
+      }),
+    }, 'sess-1');
     expect(startExecutionRun).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      result: expect.objectContaining({ toolName: 'subagents_delegate_start' }),
+      result: expect.objectContaining({ toolName: 'action_execute' }),
     });
   });
 
@@ -673,15 +676,18 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(executeActionByToolName).toHaveBeenCalledWith('voice_agent_start', expect.objectContaining({
-      sessionId: 'sess-1',
-      instructions: 'Start voice agent.',
-      backendTargetKeys: ['agent:claude'],
-    }), 'sess-1');
+    expect(executeActionByToolName).toHaveBeenCalledWith('action_execute', {
+      actionId: 'voice_agent.start',
+      input: expect.objectContaining({
+        sessionId: 'sess-1',
+        instructions: 'Start voice agent.',
+        backendTargetKeys: ['agent:claude'],
+      }),
+    }, 'sess-1');
     expect(startExecutionRun).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      result: expect.objectContaining({ toolName: 'voice_agent_start' }),
+      result: expect.objectContaining({ toolName: 'action_execute' }),
     });
   });
 
@@ -708,15 +714,18 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(executeActionByToolName).toHaveBeenCalledWith('subagents_plan_start', expect.objectContaining({
-      sessionId: 'sess-1',
-      instructions: 'Plan.',
-      backendTargetKeys: ['agent:codex'],
-    }), 'sess-1');
+    expect(executeActionByToolName).toHaveBeenCalledWith('action_execute', {
+      actionId: 'subagents.plan.start',
+      input: expect.objectContaining({
+        sessionId: 'sess-1',
+        instructions: 'Plan.',
+        backendTargetKeys: ['agent:codex'],
+      }),
+    }, 'sess-1');
     expect(startExecutionRun).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      result: expect.objectContaining({ toolName: 'subagents_plan_start' }),
+      result: expect.objectContaining({ toolName: 'action_execute' }),
     });
   });
 

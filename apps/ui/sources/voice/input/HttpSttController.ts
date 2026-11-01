@@ -5,6 +5,7 @@ import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { buildOpenAiTranscriptionRequest } from '@/voice/local/openaiCompat';
 import { RecordingPresets } from 'expo-audio';
+import { SttRequestError } from '@/voice/input/sttRequestError';
 
 export class MissingSttBaseUrlError extends Error {
   constructor() {
@@ -61,7 +62,7 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
 
   const response = await fetchWithTimeout(transcriptionReq.url, transcriptionReq.init, networkTimeoutMs, 'stt_timeout');
   if (!response.ok) {
-    return null;
+    throw new SttRequestError({ provider: 'openai_compat', status: response.status });
   }
 
   const json = await response.json().catch(() => null);

@@ -5,7 +5,8 @@ import {
     StyleProp, 
     ViewStyle,
     Platform,
-    ScrollViewProps
+    ScrollViewProps,
+    StyleSheet as RNStyleSheet,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
@@ -13,6 +14,7 @@ import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollView
 import { PopoverScrollSourceProvider } from '@/components/ui/popover';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
+import { ScreenBackdropBoundary, useScreenSafeAreaBackdrop } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
 const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
@@ -81,6 +83,9 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
 
     // Override background for non-inset grouped lists on iOS
     const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface.base : theme.colors.background.canvas;
+    // A screen-level list is the screen's backdrop: extend it under the side safe-area insets.
+    const styleBackgroundColor = RNStyleSheet.flatten(style)?.backgroundColor;
+    useScreenSafeAreaBackdrop(typeof styleBackgroundColor === 'string' ? styleBackgroundColor : backgroundColor);
 
     const { onScroll, ...restScrollViewProps } = scrollViewProps;
 
@@ -117,10 +122,12 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
             : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {})),
     };
+    // Lists nested inside this one never own the screen backdrop.
+    const boundedChildren = <ScreenBackdropBoundary>{children}</ScreenBackdropBoundary>;
     const scrollContent = keyboardAware ? (
-        <KeyboardAwareScrollView {...scrollProps}>{children}</KeyboardAwareScrollView>
+        <KeyboardAwareScrollView {...scrollProps}>{boundedChildren}</KeyboardAwareScrollView>
     ) : (
-        <ScrollView {...scrollProps}>{children}</ScrollView>
+        <ScrollView {...scrollProps}>{boundedChildren}</ScrollView>
     );
 
     return (

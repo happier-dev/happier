@@ -2,20 +2,21 @@ import { z } from 'zod';
 
 import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const ApprovalRequestStatusSchema = z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']);
+export const ApprovalRequestStatusSchema = lazySchema(() => z.enum(['open', 'approved', 'rejected', 'executed', 'failed', 'canceled']));
 export type ApprovalRequestStatus = z.infer<typeof ApprovalRequestStatusSchema>;
 
-const ApprovalRequestedSurfaceSchema = z.string().min(1);
+const ApprovalRequestedSurfaceSchema = lazySchema(() => z.string().min(1));
 
-export const ApprovalRequestCreatedBySchema = z.object({
+export const ApprovalRequestCreatedBySchema = lazySchema(() => z.object({
   surface: z.enum(['voice', 'session_agent', 'mcp', 'cli', 'system']),
   agentId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
-}).strict();
+}).strict());
 export type ApprovalRequestCreatedBy = z.infer<typeof ApprovalRequestCreatedBySchema>;
 
-export const ApprovalRequestOriginV1Schema = z.object({
+export const ApprovalRequestOriginV1Schema = lazySchema(() => z.object({
   kind: z.literal('transcript_tool_call'),
   sessionId: z.string().min(1),
   messageId: z.string().min(1).optional(),
@@ -32,25 +33,25 @@ export const ApprovalRequestOriginV1Schema = z.object({
       message: 'transcript tool-call origin requires a messageId, parentMessageId, toolCallId, or toolName',
     });
   }
-});
+}));
 export type ApprovalRequestOriginV1 = z.infer<typeof ApprovalRequestOriginV1Schema>;
 
-export const ApprovalDecisionV1Schema = z.object({
+export const ApprovalDecisionV1Schema = lazySchema(() => z.object({
   kind: z.enum(['approve', 'reject']),
   decidedAtMs: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 export type ApprovalDecisionV1 = z.infer<typeof ApprovalDecisionV1Schema>;
 
-export const ApprovalExecutionV1Schema = z.object({
+export const ApprovalExecutionV1Schema = lazySchema(() => z.object({
   executedAtMs: z.number().int().min(0),
   ok: z.boolean(),
   result: z.unknown().optional(),
   errorCode: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type ApprovalExecutionV1 = z.infer<typeof ApprovalExecutionV1Schema>;
 
-export const ApprovalRequestV1Schema = z.object({
+export const ApprovalRequestV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   status: ApprovalRequestStatusSchema,
   createdAtMs: z.number().int().min(0),
@@ -153,5 +154,5 @@ export const ApprovalRequestV1Schema = z.object({
       message: 'status failed requires a failed execution result',
     });
   }
-});
+}));
 export type ApprovalRequestV1 = z.infer<typeof ApprovalRequestV1Schema>;

@@ -37,14 +37,7 @@ function rowFromAutomaticStartup(
   entry: AutomaticStartupEntry,
   matchedDaemon: RunningDaemonEntry | null,
 ): Row {
-  // Prefer the live daemon's data when one is present — `runningCliVersion`
-  // from the inventory can lag (it's read from the plist; a fresh takeover
-  // doesn't rewrite the plist, but the daemon's `startedWithCliVersion`
-  // IS up to date). pid/running are also authoritative from the daemon.
-  const raw = matchedDaemon?.startedWithCliVersion
-    ?? entry.runningCliVersion
-    ?? entry.configuredCliVersion
-    ?? null;
+  const raw = entry.runningCliVersion ?? entry.configuredCliVersion ?? null;
   const isRunning = matchedDaemon !== null || entry.running === true;
   return {
     sortKey: isRunning ? 0 : 1,
@@ -193,8 +186,8 @@ function subLine(row: Row, findings: readonly RepairFinding[]): string | null {
     switch (primary.kind) {
       case 'automatic_startup_version_stale': {
         const current = compactVersion(primary.currentCliVersion);
-        const configured = entry.configuredCliVersion ? compactVersion(entry.configuredCliVersion) : '(unknown)';
-        return `configured CLI ${configured} — newer CLI ${current} installed, restart to pick it up`;
+        const running = primary.entry.runningCliVersion ? compactVersion(primary.entry.runningCliVersion) : '(unknown)';
+        return `running CLI ${running} — CLI ${current} installed, restart to pick it up`;
       }
       case 'automatic_startup_stale_definition':
         return 'service definition drifted — reinstalling brings it back in sync';
@@ -224,7 +217,7 @@ function subLine(row: Row, findings: readonly RepairFinding[]): string | null {
         const fromChannel = daemon.startedWithReleaseChannel ?? 'another channel';
         return `${fromChannel} daemon on this CLI's profile — take over and run on ${primary.currentCliReleaseChannel} · ${target}`;
       }
-      return `older than this CLI — restart to pick up ${target}`;
+      return `different CLI version — restart to pick up ${target}`;
     }
     if (primary.kind === 'running_daemon_duplicate_profile') {
       return `duplicate — two daemons own the same relay profile (pid ${daemon.pid})`;
@@ -240,7 +233,7 @@ function subLine(row: Row, findings: readonly RepairFinding[]): string | null {
       const fromChannel = row.mergedDaemon.startedWithReleaseChannel ?? 'another channel';
       return `${fromChannel} daemon on this CLI's profile — take over and run on ${primary.currentCliReleaseChannel} · ${target}`;
     }
-    return `older than this CLI — restart to pick up ${target}`;
+    return `different CLI version — restart to pick up ${target}`;
   }
 
   return null;

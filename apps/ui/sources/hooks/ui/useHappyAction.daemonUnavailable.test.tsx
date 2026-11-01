@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +26,28 @@ vi.mock('@/text', async () => {
 });
 
 describe('useHappyAction (daemon unavailable)', () => {
+    it('returns a completed action result and leaves a dropped action unknown', async () => {
+        const { useHappyAction } = await import('./useHappyAction');
+        const deferred = createDeferred<'applied'>();
+        const hook = await renderHook(() => useHappyAction(() => deferred.promise));
+        let completion: unknown;
+        await act(async () => {
+            completion = hook.getCurrent()[1]();
+            expect(await hook.getCurrent()[1]()).toBeUndefined();
+            deferred.resolve('applied');
+            expect(await completion).toBe('applied');
+        });
+    });
+
+    it('returns no success result for a rejected action while surfacing the error', async () => {
+        modalAlertSpy.mockClear();
+        const { useHappyAction } = await import('./useHappyAction');
+        const hook = await renderHook(() => useHappyAction(async () => { throw new Error('boom'); }));
+        await act(async () => {
+            expect(await hook.getCurrent()[1]()).toBeUndefined();
+        });
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.unknownError', expect.any(Array));
+    });
     it('shows a daemon-unavailable alert with Retry when action throws RPC method-not-available', async () => {
         vi.resetModules();
         modalAlertSpy.mockClear();

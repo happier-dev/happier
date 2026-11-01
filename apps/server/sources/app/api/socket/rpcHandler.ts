@@ -486,6 +486,7 @@ export function rpcHandler(
                         activeAt: closed.activeAt.getTime(),
                         ...(closed.projection ? { projection: closed.projection } : {}),
                         ...(closed.turnProjection ?? {}),
+                        badgeAttentionChanged: closed.badgeAttentionChanged,
                     });
                     return forwarded;
                 }

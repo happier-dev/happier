@@ -24,10 +24,24 @@ export type OidcAuthProviderInstanceConfig = Readonly<{
     }>;
     fetchUserInfo: boolean;
     storeRefreshToken: boolean;
+    /**
+     * Lets a machine trade an access token from this issuer for a token on the account
+     * already linked to the token's user. Null (the default) leaves the exchange off.
+     */
+    tokenExchange: OidcTokenExchangeConfig | null;
     ui: Readonly<{
         buttonColor: string | null;
         iconHint: string | null;
     }>;
+}>;
+
+export type OidcTokenExchangeConfig = Readonly<{
+    /** Clients (OAuth client ids) whose access tokens may be exchanged. Never empty. */
+    allowedClientIds: readonly string[];
+    /** Access-token claim naming the client. Null reads `client_id` (RFC 9068), then `azp`. */
+    clientIdClaim: string | null;
+    /** Access-token claim that must equal the `sub` returned by `/userinfo`. */
+    subjectClaim: string;
 }>;
 
 export type ResolveAuthProviderInstancesResult = Readonly<{
@@ -54,6 +68,32 @@ function normalizeProviderId(input: unknown): string | null {
 function expectString(value: unknown, field: string, errors: string[]): string | null {
     if (typeof value !== "string" || value.trim() === "") {
         errors.push(`Invalid ${field}: expected non-empty string`);
+        return null;
+    }
+    return value;
+}
+
+/**
+ * A literal `clientSecret` wins. Otherwise `clientSecretEnv` names the environment variable that holds the
+ * secret, so provider config can live in non-secret deployment values while the secret comes from a secret store.
+ * An unset or empty variable is a config error, like a missing literal secret.
+ */
+function resolveClientSecret(
+    record: Record<string, unknown>,
+    env: NodeJS.ProcessEnv,
+    providerId: string,
+    errors: string[],
+): string | null {
+    if (record.clientSecret !== undefined || record.clientSecretEnv === undefined) {
+        return expectString(record.clientSecret, `clientSecret for ${providerId}`, errors);
+    }
+
+    const envName = expectString(record.clientSecretEnv, `clientSecretEnv for ${providerId}`, errors)?.trim();
+    if (!envName) return null;
+
+    const value = env[envName];
+    if (typeof value !== "string" || value.trim() === "") {
+        errors.push(`Invalid clientSecretEnv for ${providerId}: environment variable ${envName} is unset or empty`);
         return null;
     }
     return value;
@@ -155,6 +195,18 @@ function parseAllow(raw: unknown): OidcAuthProviderInstanceConfig["allow"] {
     });
 }
 
+function parseTokenExchange(raw: unknown): OidcTokenExchangeConfig | null {
+    const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    const allowedClientIds = parseStringList(record.allowedClientIds);
+    if (allowedClientIds.length === 0) return null;
+    const clientIdClaim = typeof record.clientIdClaim === "string" && record.clientIdClaim.trim() ? record.clientIdClaim.trim() : null;
+    return Object.freeze({
+        allowedClientIds: Object.freeze(allowedClientIds),
+        clientIdClaim,
+        subjectClaim: parseClaimName(record.subjectClaim, "sub"),
+    });
+}
+
 function parseUi(raw: unknown): OidcAuthProviderInstanceConfig["ui"] {
     const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
     const buttonColor =
@@ -229,7 +281,7 @@ export function resolveAuthProviderInstancesFromEnv(env: NodeJS.ProcessEnv): Res
         const displayName = expectString(record.displayName, `displayName for ${normalizedId}`, errors);
         const issuer = expectString(record.issuer, `issuer for ${normalizedId}`, errors);
         const clientId = expectString(record.clientId, `clientId for ${normalizedId}`, errors);
-        const clientSecret = expectString(record.clientSecret, `clientSecret for ${normalizedId}`, errors);
+        const clientSecret = resolveClientSecret(record, env, normalizedId, errors);
         const redirectUrl = expectString(record.redirectUrl, `redirectUrl for ${normalizedId}`, errors);
 
         if (!displayName || !issuer || !clientId || !clientSecret || !redirectUrl) continue;
@@ -243,6 +295,7 @@ export function resolveAuthProviderInstancesFromEnv(env: NodeJS.ProcessEnv): Res
         const allow = parseAllow(record.allow);
         const fetchUserInfo = parseBoolean(record.fetchUserInfo, false);
         const storeRefreshToken = parseBoolean(record.storeRefreshToken, false);
+        const tokenExchange = parseTokenExchange(record.tokenExchange);
         const ui = parseUi(record.ui);
 
         instances.push({
@@ -259,6 +312,7 @@ export function resolveAuthProviderInstancesFromEnv(env: NodeJS.ProcessEnv): Res
             allow,
             fetchUserInfo,
             storeRefreshToken,
+            tokenExchange,
             ui,
         });
     }

@@ -20,6 +20,7 @@ const ConnectedServiceCredentialMetadataResponseSchema = z.object({
   kind: z.enum(['oauth', 'token']),
   providerEmail: z.string().nullable().optional(),
   providerAccountId: z.string().nullable().optional(),
+  providerOrganizationId: z.string().nullable().optional(),
   expiresAt: z.number().finite().nullable().optional(),
 });
 
@@ -32,6 +33,7 @@ type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
   providerEmail?: string | null;
   providerAccountId?: string | null;
+    providerOrganizationId?: string | null;
   expiresAt?: number | null;
 }>;
 

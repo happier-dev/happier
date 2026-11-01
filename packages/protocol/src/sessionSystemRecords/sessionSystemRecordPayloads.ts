@@ -8,11 +8,12 @@ import {
   MemorySessionSystemRecordRawPayloadSchema,
   type MemorySessionSystemRecordRawPayload,
 } from './memory/memorySystemRecordPayload.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const SessionSystemRecordPayloadSchema = z.union([
+export const SessionSystemRecordPayloadSchema = lazySchema(() => z.union([
   MemorySessionSystemRecordRawPayloadSchema,
   ActivitySessionSystemRecordRawPayloadSchema,
-]);
+]));
 export type SessionSystemRecordPayload =
   | MemorySessionSystemRecordRawPayload
   | ActivitySessionSystemRecordRawPayload;

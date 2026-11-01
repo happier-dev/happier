@@ -114,6 +114,15 @@ export type RuntimeActivitySnapshotMutationV1 = Readonly<{
     snapshot: SessionRuntimeActivitySnapshot;
 }>;
 
+/** Local intent encrypted with genuine account keys or the keyless runtime's installation identity. */
+export type AgentStateRequestSettlementMutationV1 = Readonly<{
+    v: 1;
+    source: 'agent_state_request_settlement';
+    sessionId: string;
+    mutationId: string;
+    content: Readonly<{ t: 'encrypted' | 'installation_encrypted_v1'; c: string }>;
+}>;
+
 export function resolveRuntimeActivitySnapshotMutationId(sessionId: string): string {
     return `runtime-activity-snapshot:${normalizeRequiredString(sessionId, 'sessionId')}`;
 }
@@ -142,6 +151,14 @@ export function resolveTranscriptMessageAppendMutationId(params: Readonly<{
 }
 
 export type QueuedSessionMutation =
+    | Readonly<{
+        kind: 'agent_state_request_settlement';
+        mutationId: string;
+        payload: AgentStateRequestSettlementMutationV1;
+        createdAt: number;
+        attempts: number;
+        nextAttemptAt: number;
+    }>
     | Readonly<{
         kind: 'session_turn';
         mutationId: string;

@@ -767,28 +767,16 @@ function pendingScopedSessionKey(scope: ServerAccountScope, sessionId: string): 
 }
 
 /**
- * Records that the SERVER has confirmed it holds a pending row for `localId`, so a snapshot response
- * read before that confirmation may no longer be applied — see
- * {@link pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture}.
- *
- * THE INVARIANT: every point at which this client learns the server took custody of a localId must
- * reach this function, or an in-flight snapshot can delete the message. Acknowledgement is a
- * property of the HTTP RESPONSE, while every store-mutation choke point in this module is shared
- * with anti-acknowledgement retirements (cancel, discard, delivery-handled, delete, definitive
- * rejection), so no downstream owner can discriminate — which is why each acknowledging response
- * records here directly, immediately after its own success check and before any branch. The
- * converse is equally load-bearing: recording a localId the server has STOPPED listing would make
- * the guard refuse every snapshot for the remainder of the in-flight refresh chain.
- * `pendingQueueV2.acknowledgementBoundaries.test.ts` holds both directions for every export.
+ * Bind acceptance to the read outstanding at the successful HTTP response. Payload validation may
+ * await the body before proving custody of an exact localId, but must never fence a newer read
+ * that already observes settlement. Capturing no read must likewise remain a no-op.
  */
-function markPendingLocalIdAcceptedAfterSnapshotCapture(
+function capturePendingSnapshotAcceptance(
     scope: ServerAccountScope,
     sessionId: string,
-    localId: string,
-): void {
-    latestPendingSnapshotRefreshByScopedSession
-        .get(pendingScopedSessionKey(scope, sessionId))
-        ?.acceptedLocalIdsAfterCapture.add(localId);
+): (localId: string) => void {
+    const refreshToken = latestPendingSnapshotRefreshByScopedSession.get(pendingScopedSessionKey(scope, sessionId));
+    return (localId) => { refreshToken?.acceptedLocalIdsAfterCapture.add(localId); };
 }
 
 /** A successful local queue write invalidates a read issued before that write. */
@@ -1935,6 +1923,7 @@ async function enqueuePendingMessageV2Owned(params: {
                 serverCommitMayExist = false;
                 assertPendingResponseOk(response, 'Failed to enqueue pending message');
             }
+            const recordAcceptance = capturePendingSnapshotAcceptance(outboxScope, sessionId);
             const payload = await response.json().catch(() => null) as unknown;
             assertPendingEnqueueAcknowledgedAndRefreshOnMismatch({
                 payload,
@@ -1943,15 +1932,9 @@ async function enqueuePendingMessageV2Owned(params: {
                 requestedAction,
                 onWireContractMismatch: params.onWireContractMismatch,
             });
-            // The acknowledgement is a fact about THIS RESPONSE: a 2xx that proves the exact row (or
-            // its exact committed twin) means the server took custody, so a snapshot read issued
-            // BEFORE it cannot list the row and must not be applied over it. Recorded here, above
-            // every branch below, for the same reason the two PATCH boundaries record at their
-            // response: the branches below decide what happened to LOCAL custody, which is a
-            // different question, and each of their early returns would otherwise leave the fence
-            // relying on `apiSocket.request`'s in-flight de-dupe — the very mechanism that creates
-            // the losing ordering — rather than on the invariant.
-            markPendingLocalIdAcceptedAfterSnapshotCapture(outboxScope, sessionId, localId);
+            // Prove exact server custody before retiring the local outbox. Record it only against
+            // the read captured at HTTP success, never one started during body validation.
+            recordAcceptance(localId);
             const terminal = isPlainObject(payload) && payload.terminal === true;
             if (deliveryMode === 'external_handoff') {
                 const pending = isPlainObject(payload) && isPlainObject(payload.pending) ? payload.pending : null;
@@ -2222,6 +2205,7 @@ export async function retryPendingOutboxOperationV2(params: {
                 serverCommitMayExist = false;
                 assertPendingResponseOk(response, 'Failed to enqueue pending message');
             }
+            const recordAcceptance = capturePendingSnapshotAcceptance(outboxScope, sessionId);
             const payload = await response.json().catch(() => null) as unknown;
             assertPendingEnqueueAcknowledgedAndRefreshOnMismatch({
                 payload,
@@ -2233,7 +2217,7 @@ export async function retryPendingOutboxOperationV2(params: {
             // The replay POST is an acknowledgement exactly like the initial enqueue above, and is
             // recorded at the response for the same reason: every branch below reads LOCAL custody,
             // and each of their early returns is downstream of the fact the server already stated.
-            markPendingLocalIdAcceptedAfterSnapshotCapture(outboxScope, sessionId, pendingLocalId);
+            recordAcceptance(pendingLocalId);
             if (deliveryMode === 'external_handoff') {
                 const pending = isPlainObject(payload) && isPlainObject(payload.pending) ? payload.pending : null;
                 const status = pending ? parsePendingDeliveryStatusV1(pending.deliveryStatus) : null;
@@ -2421,7 +2405,7 @@ export async function updatePendingMessageV2(params: {
     // retirement is conditional on durable `enqueue` custody a canonical server row need not carry,
     // and because the acknowledgement is a fact about the response rather than about whichever
     // branch this client happens to take afterwards.
-    markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, sessionId, pendingId);
+    capturePendingSnapshotAcceptance(params.outboxScope, sessionId)(pendingId);
     supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
     const currentPendingOutbox = (await findPendingOutboxMessage(sessionId, pendingId, params.outboxScope));
     if (currentPendingOutbox?.operation === 'cancel') return;
@@ -2475,8 +2459,12 @@ export async function updatePendingRequestedActionV2(params: {
                         : params.requestedAction,
             }),
     });
-    // Successful status already makes a pre-write read obsolete, even while the body is loading.
-    if (response.ok) supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, params.sessionId);
+    // Acknowledge at the response boundary. A refresh started while the body loads may already
+    // prove this row was materialized; it must not inherit the earlier acceptance fence.
+    if (response.ok) {
+        capturePendingSnapshotAcceptance(params.outboxScope, params.sessionId)(localId);
+        supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, params.sessionId);
+    }
     const payload = await response.json().catch(() => null) as { error?: unknown; didUpdate?: unknown } | null;
     if (!response.ok) {
         const errorCode = typeof payload?.error === 'string' ? payload.error : undefined;
@@ -2485,10 +2473,6 @@ export async function updatePendingRequestedActionV2(params: {
             ...(errorCode ? [{ code: errorCode }] : []),
         );
     }
-    // Recorded at the RESPONSE, for the reason given in `updatePendingMessageV2`: the PATCH
-    // succeeded, so the server holds the row, and every guard below — including the malformed-payload
-    // throw — is downstream of that fact.
-    markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, params.sessionId, localId);
     if (typeof payload?.didUpdate !== 'boolean') {
         throw new Error('Pending requested-action response is missing didUpdate');
     }

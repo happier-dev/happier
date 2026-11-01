@@ -81,7 +81,7 @@ describe('Action operation v1 protocol', () => {
     }).success).toBe(true);
   });
 
-  it('carries bounded request correlation and an opaque encrypted account event', () => {
+  it('carries bounded request correlation and explicitly typed encrypted or plain revisions', () => {
     expect(ActionOperationSnapshotV1Schema.parse({
       ...acceptedSnapshot,
       requestId: 'request-1',
@@ -99,6 +99,11 @@ describe('Action operation v1 protocol', () => {
       type: 'action-operation-updated',
       machineId: 'machine-1',
       content: { t: 'plain', v: acceptedSnapshot },
+    }).success).toBe(true);
+    expect(ActionOperationRevisionEphemeralV1Schema.safeParse({
+      type: 'action-operation-updated',
+      machineId: 'machine-1',
+      content: { t: 'plain', v: { ...acceptedSnapshot, state: 'succeeded' } },
     }).success).toBe(false);
   });
 

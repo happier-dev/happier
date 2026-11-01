@@ -1,11 +1,36 @@
 name: Install Tauri Linux dependencies
 description: Install the canonical native and packaging dependencies required by Tauri Linux bundling
 
+inputs:
+  bundled-webkit:
+    description: Prepare the pinned AppImage runtime in the trusted Linux finalizer
+    default: 'false'
+
 runs:
   using: composite
   steps:
+    - name: Select bundled WebKit SDK
+      if: inputs.bundled-webkit == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        . /etc/os-release
+        test "$ID:$VERSION_ID:$(uname -m)" = ubuntu:22.04:x86_64
+        printf 'HAPPIER_WEBKIT_STAGE=%s/tauri-webkit-sdk\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+    - name: Restore exact bundled WebKit SDK
+      if: inputs.bundled-webkit == 'true'
+      id: webkit-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/tauri-webkit-sdk
+        key: tauri-webkit-jammy-x64-${{ hashFiles('scripts/ci/prepare-tauri-webkit.sh', 'scripts/pipeline/tauri/linux-webkit-runtime.mjs', '.github/actions/install-tauri-linux-dependencies/action.yml') }}
+
     - name: Install native and packaging dependencies
       shell: bash
+      env:
+        BUNDLED_WEBKIT: ${{ inputs.bundled-webkit }}
+        WEBKIT_CACHE_HIT: ${{ steps.webkit-cache.outputs.cache-hit }}
       run: |
         set -euo pipefail
         tauri_packages=(
@@ -26,6 +51,45 @@ runs:
           rpm
         )
 
+        if [ "$BUNDLED_WEBKIT" = true ]; then
+          # Keep one proven dependency superset on cache hits and misses. Native
+          # candidates never opt in, so their headers and package ABI stay unchanged.
+          tauri_packages+=(
+            bubblewrap xdg-dbus-proxy libseccomp-dev libglib2.0-dev
+            libharfbuzz-dev libcairo2-dev libdrm-dev libfontconfig-dev
+            libfreetype-dev libicu-dev libgcrypt20-dev libhyphen-dev liblcms2-dev
+            libmanette-0.2-dev libsysprof-capture-4-dev libxslt1-dev libxml2-dev
+            libsoup-3.0-dev libsqlite3-dev libsystemd-dev libgudev-1.0-dev
+            libwoff-dev libjpeg-dev libopenjp2-7-dev libpng-dev libtasn1-6-dev
+            libwebp-dev libxt-dev libgstreamer1.0-dev
+            # Request libunwind-dev explicitly: the runner image's libunwind-14-dev
+            # Breaks it, and apt replaces that installed package only for an explicit
+            # request; otherwise libgstreamer1.0-dev's libunwind-dev dependency is unmet.
+            libunwind-dev
+            libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev
+            libenchant-2-dev libsecret-1-dev gobject-introspection
+            libgirepository1.0-dev libegl-dev libgl-dev libgles-dev libepoxy-dev
+            libgbm-dev libwayland-dev wayland-protocols zlib1g-dev python3
+          )
+          if [ "$WEBKIT_CACHE_HIT" != true ]; then
+            # Jammy's GCC12 rejects unmodified ANGLE. Use the tested LLVM18
+            # compiler with Jammy's GCC12 libstdc++, retaining the old libc ABI.
+            llvm_key="$RUNNER_TEMP/tauri-llvm18.asc"
+            curl --proto '=https' --proto-redir '=https' -L --fail --show-error \
+              https://apt.llvm.org/llvm-snapshot.gpg.key -o "$llvm_key"
+            printf '%s  %s\n' \
+              8b2a587ffd672c4687e7581dad4b2f6c1bb2ad6b480cd9771ba2ff48e0b8c75d \
+              "$llvm_key" | sha256sum --check --strict
+            sudo install -m 0644 "$llvm_key" /usr/share/keyrings/apt-llvm18.asc
+            printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/apt-llvm18.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main' | sudo tee /etc/apt/sources.list.d/tauri-llvm18.list > /dev/null
+            tauri_packages+=(
+              clang-18=1:18.1.8~++20240731024944+3b5b5c1ec4a3-1~exp1~20240731145000.144
+              gcc-12 g++-12 cmake ninja-build ruby bison flex gperf unifdef
+              gettext curl ca-certificates xz-utils
+            )
+          fi
+        fi
+
         # Refresh apt metadata before choosing runner-specific optional FUSE
         # packages, then install the complete set under one bounded retry owner.
         sudo bash scripts/ci/apt-install-with-retry.sh \
@@ -39,7 +103,9 @@ runs:
         linuxdeploy_version="1-alpha-20251107-1"
         linuxdeploy_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/tauri"
         mkdir -p "${linuxdeploy_dir}"
-        linuxdeploy_path="${linuxdeploy_dir}/linuxdeploy-x86_64.AppImage"
+        # Tauri CLI 2.12.1 prepare_tools uses this cache basename.
+        # Populate its entry so it consumes the verified upstream build.
+        linuxdeploy_path="${linuxdeploy_dir}/linuxdeploy-07333c6-x86_64.AppImage"
         curl -L --fail --show-error \
           --connect-timeout 20 --max-time 300 \
           --retry 3 --retry-delay 2 --retry-max-time 180 \
@@ -50,3 +116,18 @@ runs:
           "${linuxdeploy_path}" | sha256sum --check --strict
         chmod +x "${linuxdeploy_path}"
         APPIMAGE_EXTRACT_AND_RUN=1 "${linuxdeploy_path}" --appimage-version
+
+    - name: Prepare and install bundled WebKit SDK
+      if: inputs.bundled-webkit == 'true'
+      shell: bash
+      env:
+        WEBKIT_CACHE_HIT: ${{ steps.webkit-cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        bash scripts/ci/prepare-tauri-webkit.sh \
+          --stage-dir "$HAPPIER_WEBKIT_STAGE" \
+          --build-dir "$RUNNER_TEMP/tauri-webkit-build" \
+          --cache-hit "${WEBKIT_CACHE_HIT:-false}"
+        sudo cp -a "$HAPPIER_WEBKIT_STAGE/usr/." /usr/
+        sudo ldconfig
+        node scripts/pipeline/tauri/linux-webkit-runtime.mjs --root / --layout installed

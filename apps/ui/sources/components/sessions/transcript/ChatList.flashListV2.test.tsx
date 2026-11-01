@@ -1032,8 +1032,7 @@ function routeSessionViewportChangeIntoTestStore(
 
 vi.mock('@/sync/sync', async () => {
     const loadNewerMessages = vi.fn();
-    return (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
-        loadOlderMessages: vi.fn(),
+    const syncModule = (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
         loadTargetWindowMessages: vi.fn(),
         loadNewerMessages,
         hasDeferredNewerMessages: (sessionId: string) => deferredNewerSessionIdsState.has(sessionId),
@@ -1047,6 +1046,9 @@ vi.mock('@/sync/sync', async () => {
         markSessionLiveTailIntent: (sessionId: string) =>
             requireCanonicalSessionViewportSync().markSessionLiveTailIntent(qualifySessionViewportTestId(sessionId)),
     });
+    // Preserve the canonical empty-page result when beforeEach resets per-test overrides.
+    syncModule.sync.loadOlderMessages = vi.fn(syncModule.sync.loadOlderMessages);
+    return syncModule;
 });
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -1112,7 +1114,8 @@ describe('ChatList (FlashList v2)', () => {
 
     beforeEach(async () => {
         const syncMod = await import('@/sync/sync');
-        vi.mocked(syncMod.sync.loadOlderMessages).mockReset();
+        // The real loader always resolves a result; web open-fill may now page older on its own.
+        vi.mocked(syncMod.sync.loadOlderMessages).mockReset().mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
         vi.mocked(syncMod.sync.loadNewerMessages).mockReset();
         vi.mocked(
             (syncMod.sync as unknown as { loadTargetWindowMessages: ReturnType<typeof vi.fn> }).loadTargetWindowMessages,
@@ -1579,6 +1582,31 @@ describe('ChatList (FlashList v2)', () => {
         function listDataIds(): string[] {
             return (getCapturedFlashListProps()?.data ?? []).map((item: any) => item.id);
         }
+
+        it('keeps header-only plain groups collapsed with a stable boundary, including after a background toggle', async () => {
+            configureToolTurn(['t1', 't2', 't3', 't4', 't5'], { previewCount: 0, readerMessage: true });
+            settingValues.transcriptToolCallsGroupShowBackground = false;
+            const { ChatList } = await import('./ChatList');
+            const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+            await screen.settle();
+
+            const plainIds = listDataIds();
+            expect(plainIds).toContain(`${groupId}#header`);
+            expect(plainIds).toContain(`${groupId}#footer`);
+            expect(plainIds).not.toContain(`${groupId}#expand`);
+            expect(plainIds.filter((id) => /^msg:t[1-5]$/.test(id))).toEqual([]);
+
+            settingValues.transcriptToolCallsGroupShowBackground = true;
+            await screen.update(<ChatList session={{ ...sessionState, seq: 1 }} />);
+            await screen.settle();
+            expect(listDataIds()).toContain(`${groupId}#footer`);
+
+            settingValues.transcriptToolCallsGroupShowBackground = false;
+            await screen.update(<ChatList session={{ ...sessionState, seq: 2 }} />);
+            await screen.settle();
+            expect(listDataIds()).toEqual(plainIds);
+            await screen.unmount();
+        });
 
         it('turns a prepend that merges into the visible group into BETWEEN-row insertion with stable keys', async () => {
             configureToolTurn(['t2', 't3']);

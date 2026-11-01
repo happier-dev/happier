@@ -7,6 +7,24 @@ Agents write Markdown, so most of what you read in Happier is Markdown that has
 been rendered rather than shown raw. Two parts of that are worth knowing about:
 diagrams, and what happens when you edit a Markdown file yourself.
 
+## Code block wrapping
+
+<Callout type="info">
+  These chat code block controls are available in the development source and
+  have not yet been released to stable or preview.
+</Callout>
+
+Use the wrap button on a chat code block to switch between wrapped lines and
+horizontal scrolling. This also works for fenced code inside lists and
+blockquotes. Each block keeps its own choice while you scroll through the
+transcript.
+
+In **Settings → Appearance**, the **Chat code blocks** group lets you hide the
+wrap buttons and choose **Wrap code blocks by default**. The default still
+applies when the buttons are hidden. Changing it updates blocks you have not
+adjusted; blocks you adjusted keep their own choice for the current transcript.
+These chat preferences are separate from wrapping in file and diff views.
+
 ## Mermaid diagrams
 
 Mermaid diagrams in a transcript render as diagrams, on every client including

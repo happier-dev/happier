@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 function dedupeStrings(values: ReadonlyArray<string>): string[] {
   const seen = new Set<string>();
@@ -11,31 +12,38 @@ function dedupeStrings(values: ReadonlyArray<string>): string[] {
   return out;
 }
 
-export const SessionMcpSelectionV1Schema = z
-  .preprocess(
-    (raw) => {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-      return raw;
-    },
-    z.object({
-      v: z.literal(1).default(1),
-      managedServersEnabled: z.boolean().default(true),
-      forceIncludeServerIds: z.array(z.string().min(1)).default([]),
-      forceExcludeServerIds: z.array(z.string().min(1)).default([]),
-    }),
-  )
-  .transform((value) => ({
+const sessionMcpSelectionFieldsSchema = lazySchema(() => z.object({
+  v: z.literal(1).default(1),
+  managedServersEnabled: z.boolean().default(true),
+  happierToolsEnabled: z.boolean().optional(),
+  forceIncludeServerIds: z.array(z.string().min(1)).default([]),
+  forceExcludeServerIds: z.array(z.string().min(1)).default([]),
+}));
+
+function normalizeSelection(value: z.infer<typeof sessionMcpSelectionFieldsSchema>) {
+  return {
     ...value,
     forceIncludeServerIds: dedupeStrings(value.forceIncludeServerIds),
     forceExcludeServerIds: dedupeStrings(value.forceExcludeServerIds),
-  }));
+  };
+}
+
+/** Authoring input rejects unsupported fields rather than silently enabling defaults. */
+export const SessionMcpSelectionV1InputSchema = lazySchema(() =>
+  sessionMcpSelectionFieldsSchema.strict().transform(normalizeSelection));
+
+/** Stored metadata retains the tolerant V1 reader contract. */
+export const SessionMcpSelectionV1Schema = lazySchema(() => z.preprocess(
+  (raw) => !raw || typeof raw !== 'object' || Array.isArray(raw) ? {} : raw,
+  sessionMcpSelectionFieldsSchema,
+).transform(normalizeSelection));
 
 export type SessionMcpSelectionV1 = z.infer<typeof SessionMcpSelectionV1Schema>;
 
-export const SessionMcpSelectionRestartRequiredV1Schema = z.object({
+export const SessionMcpSelectionRestartRequiredV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   appliedSelection: SessionMcpSelectionV1Schema,
-});
+}));
 
 export type SessionMcpSelectionRestartRequiredV1 = z.infer<typeof SessionMcpSelectionRestartRequiredV1Schema>;
 
@@ -48,6 +56,7 @@ function selectionBehaviorKey(selection: SessionMcpSelectionV1): string {
     .sort();
   return JSON.stringify({
     managedServersEnabled: normalized.managedServersEnabled,
+    happierToolsEnabled: normalized.happierToolsEnabled ?? true,
     forceIncludeServerIds,
     forceExcludeServerIds,
   });
@@ -65,7 +74,7 @@ export function parseSessionMcpSelectionV1Json(raw: string | null | undefined): 
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(raw);
-    const selection = SessionMcpSelectionV1Schema.safeParse(parsed);
+    const selection = SessionMcpSelectionV1InputSchema.safeParse(parsed);
     return selection.success ? selection.data : null;
   } catch {
     return null;
@@ -78,6 +87,11 @@ export function readSessionMcpSelectionV1FromMetadata(metadata: unknown): Sessio
   if (raw === undefined) return null;
   const parsed = SessionMcpSelectionV1Schema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+/** Session-start delivery policy; absence preserves the released built-in tools default. */
+export function isSessionHappierToolsEnabled(metadata: unknown): boolean {
+  return readSessionMcpSelectionV1FromMetadata(metadata)?.happierToolsEnabled !== false;
 }
 
 export function readSessionMcpSelectionRestartRequiredV1FromMetadata(

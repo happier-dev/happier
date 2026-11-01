@@ -49,7 +49,7 @@ describe('splitMarkdownRenderSegments source ranges', () => {
     it('retains top-level fences and tables while keeping a fenced list item in its complete list', () => {
         const markdown = '- Item\n\n  ```ts\n  const nested = 1;\n  ```\n\n```ts\nconst top = 2;\n```\n\n| Name | Value |\n| --- | --- |\n| one | two |';
         const segments = splitMarkdownRenderSegments({ markdown, streamingMode: 'static', splitEnrichedSourceRanges: true });
-        expect(segments.map((segment) => segment.type)).toEqual(['enriched-markdown', 'special-block', 'special-block']);
+        expect(segments.map((segment) => segment.type)).toEqual(['container-block', 'special-block', 'special-block']);
         expect(segments[0]?.markdown).toContain('const nested = 1;');
         expect(segments[1]?.type === 'special-block' && segments[1].blocks[0]?.type).toBe('code-block');
         expect(segments[2]?.type === 'special-block' && segments[2].blocks[0]?.type).toBe('table');

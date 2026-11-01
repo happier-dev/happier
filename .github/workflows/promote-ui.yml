@@ -250,7 +250,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enforce trusted workflow control ref
         env:
           CALLER_REPOSITORY: ${{ github.repository }}
@@ -345,7 +345,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Create GitHub App token
         id: app_token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
@@ -415,9 +415,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack
         if: ${{ !inputs.use_prepared }}
         uses: ./.github/actions/enable-corepack-yarn
@@ -544,9 +542,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack
         if: ${{ !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
         uses: ./.github/actions/enable-corepack-yarn

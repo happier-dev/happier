@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { splitMarkdownRenderSegments } from './splitMarkdownRenderSegments';
 
 describe('splitMarkdownRenderSegments', () => {
+    it.each(['static', 'streaming'] as const)('renders dedicated continuation option lines in %s mode without converting inline examples', (streamingMode) => {
+        const segments = splitMarkdownRenderSegments({
+            markdown: 'Choose next:\n<option>Continue</option>\n<option>Review first</option>\n</options>',
+            streamingMode,
+        });
+        expect(segments.flatMap((segment) => segment.type === 'special-block' ? segment.blocks : [])).toContainEqual({
+            type: 'options', items: ['Continue', 'Review first'],
+        });
+        const prose = splitMarkdownRenderSegments({
+            markdown: 'Mention <option>Continue</option> in a sentence.',
+            streamingMode,
+        });
+        expect(prose.map((segment) => segment.type)).toEqual(['enriched-markdown']);
+    });
+
     it('reuses segment arrays for unchanged markdown and rendering mode', () => {
         const markdown = [
             '## Long section',
@@ -167,7 +182,7 @@ describe('splitMarkdownRenderSegments', () => {
         expect(next[0]?.key).toBe(first[0]?.key);
     });
 
-    it('preserves leading indentation and hard-break trailing spaces in enriched segments', () => {
+    it('preserves indented code source and trailing spaces while separating the following prose', () => {
         const markdown = [
             '    keep this indent  ',
             'next line',
@@ -183,8 +198,10 @@ describe('splitMarkdownRenderSegments', () => {
         });
 
         expect(segments[0]).toMatchObject({
-            type: 'enriched-markdown',
-            markdown: '    keep this indent  \nnext line',
+            type: 'special-block',
+            markdown: '    keep this indent  ',
+            blocks: [{ type: 'code-block', content: 'keep this indent  ', language: null }],
         });
+        expect(segments[1]).toMatchObject({ type: 'enriched-markdown', markdown: 'next line' });
     });
 });

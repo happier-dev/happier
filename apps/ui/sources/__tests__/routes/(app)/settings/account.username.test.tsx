@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -7,7 +8,7 @@ import {
 } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
-import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
+import { createAccountFeaturesResponse, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
 import {
     getAccountSettingsRouteModalMockRef,
     getAccountSettingsRouteRouterMockRef,
@@ -95,7 +96,7 @@ describe('Settings → Account (username)', () => {
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 return {
                     ok: true,

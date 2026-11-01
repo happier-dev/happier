@@ -154,6 +154,7 @@ const idleResolvedDrop: UseSessionInlineDragResolvedDrop = Object.freeze({
         visual: Object.freeze({ kind: 'none' }),
     }),
     geometry: Object.freeze({ kind: 'none' }),
+    destinationKey: null,
 });
 
 function createBoundaryProps() {

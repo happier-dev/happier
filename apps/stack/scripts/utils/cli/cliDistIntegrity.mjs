@@ -120,6 +120,7 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
 
   await new Promise((resolve, reject) => {
     const child = spawn(nodeExecutable, [entry, 'daemon', '--help'], {
+      windowsHide: true,
       cwd: options.cwd,
       env,
       stdio: ['ignore', 'ignore', 'pipe'],

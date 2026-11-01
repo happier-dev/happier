@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODES } from './windowsRemoteSessionLaunchMode.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Session terminal attachment metadata (stored in encrypted `session.metadata`).
@@ -90,7 +91,7 @@ export function createSessionTerminalMetadataSchema(zod: typeof z) {
   return zod.preprocess(normalizeTerminalWireSelectors, schema);
 }
 
-export const SessionTerminalMetadataSchema = createSessionTerminalMetadataSchema(z);
+export const SessionTerminalMetadataSchema = lazySchema(() => createSessionTerminalMetadataSchema(z));
 export type SessionTerminalMetadata = z.infer<typeof SessionTerminalMetadataSchema>;
 
 /**

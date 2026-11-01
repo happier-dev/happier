@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parsePreflightModelListFromProbeModelsResult } from './parsePreflightModelListFromProbeModelsResult';
 
 import {
     findModelOptionForEffectiveModelId,
@@ -11,7 +12,7 @@ import {
     isModelSelectableForSession,
     supportsFreeformModelSelectionForSession,
 } from './modelOptions';
-import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { MetadataSchema, type Metadata } from '@/sync/domains/state/storageTypes';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
     return {
@@ -22,6 +23,29 @@ function withMetadata(overrides: Partial<Metadata>): Metadata {
 }
 
 describe('modelOptions', () => {
+    it('keeps all discovered MiniMax models selectable across preflight and session refreshes', () => {
+        const modelIds = ['MiniMax-M2.7', 'MiniMax-M2.5', 'MiniMax-M3', 'MiniMax-M3.1-Flash', 'speech-02-hd'];
+        const availableModels = modelIds.map(id => ({ id, name: id }));
+        // Obsolete presentation metadata must not override the discovered catalog.
+        const miniMaxModelChoices = { provider: 'minimax', configuredModelIds: ['MiniMax-M2.5'] };
+        const preflight = parsePreflightModelListFromProbeModelsResult({ availableModels, miniMaxModelChoices, supportsFreeform: true })!;
+        const expectedChoices = ['default', ...modelIds];
+        expect(getModelOptionsForPreflightModelList(preflight).map(row => row.value)).toEqual(expectedChoices);
+
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            sessionModelsV1: {
+                v: 1, provider: 'claude', updatedAt: 2, currentModelId: 'MiniMax-M2.7', availableModels, miniMaxModelChoices,
+            },
+        });
+        expect(getModelOptionsForSession('claude', metadata).map(row => row.value)).toEqual(expectedChoices);
+        expect(getModelOptionsForSession('claude', metadata, {
+            preflight,
+            preflightUpdatedAt: 3,
+        }).map(row => row.value)).toEqual(expectedChoices);
+        expect(availableModels.map(row => row.id)).toEqual(modelIds);
+    });
     it('uses refreshed models for both session choices and non-freeform validation', () => {
         const metadata = withMetadata({
             sessionModelsV1: { v: 1, provider: 'grok', updatedAt: 1, currentModelId: 'old', availableModels: [{ id: 'old', name: 'Old' }] },

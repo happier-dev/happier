@@ -87,7 +87,7 @@ export async function maybeReexecToRuntime(params: Readonly<{
   if (!String(childEnv.HAPPIER_PUBLIC_RELEASE_CHANNEL ?? '').trim()) {
     childEnv.HAPPIER_PUBLIC_RELEASE_CHANNEL = getReleaseRingCatalogEntry(publicReleaseRing).publicLabel;
   }
-  const opts: ExecFileSyncOptions = { stdio: 'inherit', env: childEnv };
+  const opts: ExecFileSyncOptions = { stdio: 'inherit', env: childEnv, windowsHide: true };
   const exitImpl = params.exit ?? process.exit;
   let exitCode = 0;
   try {

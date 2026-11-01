@@ -14,6 +14,7 @@ import {
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
@@ -93,6 +94,10 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     [SESSION_ACTION_MOVE_TO_FOLDER_ID]: {
         titleKey: 'sessionsList.moveToFolder',
         icon: 'folder',
+    },
+    [SESSION_ACTION_SET_APPEARANCE_COLOR_ID]: {
+        titleKey: 'sessionsList.appearance.setColor',
+        icon: 'palette',
     },
     [SESSION_ACTION_SET_ATTENTION_STANDING_ID]: {
         titleKey: 'sessionInfo.keepInAttention',

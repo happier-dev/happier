@@ -108,12 +108,12 @@ installSessionShellCommonModuleMocks({
             sessionListViewDataByServerId: Record<string, unknown>;
           }) => unknown,
         ) => {
-          const snapshot = { sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} };
+          const snapshot = { sessions: { s1: sessionState.session }, settings: {}, sessionListRenderables: {}, sessionListViewDataByServerId: {} };
           return typeof selector === 'function' ? selector(snapshot) : snapshot;
         },
         {
-          getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }),
-          getInitialState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }),
+          getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListRenderables: {}, sessionListViewDataByServerId: {} }),
+          getInitialState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListRenderables: {}, sessionListViewDataByServerId: {} }),
           setState: () => undefined,
           subscribe: () => () => undefined,
           destroy: () => undefined,
@@ -210,14 +210,14 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => ({
-    clearDraft: () => onChange(''),
+  useDraft: (_sessionId: string, textStore: { getPrompt: () => string; setPrompt: (next: string) => void }) => ({
+    clearDraft: () => textStore.setPrompt(''),
     setDraftValue: (nextValueOrUpdater: string | ((currentValue: string) => string)) => {
-      onChange(typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(value) : nextValueOrUpdater);
+      textStore.setPrompt(typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(textStore.getPrompt()) : nextValueOrUpdater);
     },
     clearDraftForSessionIfCurrentValueMatches: (snapshot: Readonly<{ text: string }>) => {
-      if (value !== snapshot.text) return false;
-      onChange('');
+      if (textStore.getPrompt() !== snapshot.text) return false;
+      textStore.setPrompt('');
       return true;
     },
   }),
@@ -347,9 +347,6 @@ vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => (
 }));
 vi.mock('@/sync/domains/input/slashCommands/executeSessionComposerResolution', () => ({
   executeSessionComposerResolution: executeSessionComposerResolutionMock,
-}));
-vi.mock('@/sync/domains/session/control/submitMode', () => ({
-  chooseSubmitMode: () => 'direct',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/sync/domains/session/control/localControlSwitch')>()),

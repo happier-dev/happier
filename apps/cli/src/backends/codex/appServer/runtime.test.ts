@@ -11,6 +11,9 @@ import {
 } from '@happier-dev/agents';
 import {
     buildConnectedServiceCredentialRecord,
+    buildUsageLimitIssueFingerprint,
+    type SessionRuntimeIssueV1,
+    type SessionTurnMutationV1,
     SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1,
     SessionMediaMessageMetaEnvelopeV1Schema,
     SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
@@ -23,10 +26,13 @@ import type { Metadata, PermissionMode } from '@/api/types';
 import type { AgentMessage } from '@/agent';
 import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/types';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createCodexAppServerExecutionRunBackend } from '@/backends/codex/executionRuns/createCodexAppServerExecutionRunBackend';
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
+import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
+import { readCodexTurnFailureSettlement } from '@/backends/codex/runtime/sessionTurnLifecycle';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -41,12 +47,13 @@ import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spa
 import { logger } from '@/ui/logger';
 import { resolveConnectedServiceSelectionHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { writeCodexAuthStoreFile } from '../connectedServices/writeCodexAuthStoreFile';
+import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 
 import {
     createCodexAppServerRuntime as createCodexAppServerRuntimeProduction,
-    writeUsageLimitRecoveryIntentToMetadata,
 } from './runtime';
 import { createCodexAppServerProcessEnv, createCodexAppServerTestEnvScope } from './testkit/fakeCodexAppServer';
+import { createCodexAppServerClient } from './client/createCodexAppServerClient';
 
 type CommittedSnapshotBody = Readonly<{
     type?: string;
@@ -77,45 +84,9 @@ function createRuntimeMetadata(path: string): Metadata {
     };
 }
 
-it('recomputes the Codex scheduler usage-limit merge from latest metadata at the write boundary', async () => {
-    const terminal = {
-        v: 1 as const,
-        status: 'cancelled' as const,
-        issueFingerprint: 'usage-limit:codex:turn-1',
-        armedAtMs: 100,
-        resetAtMs: null,
-        nextCheckAtMs: null,
-        attemptCount: 3,
-        maxAttempts: 4,
-        lastProbeError: null,
-        resumePromptMode: 'standard' as const,
-        selectedAuth: { kind: 'native' as const },
-    };
-    const staleWaiting = {
-        ...terminal,
-        status: 'waiting' as const,
-        nextCheckAtMs: 200,
-        attemptCount: 1,
-    };
-    let metadata = { path: '/tmp/session', sessionUsageLimitRecoveryV1: terminal } as unknown as Metadata;
-    const session = {
-        updateMetadata: vi.fn(async (updater: (latest: Metadata) => Metadata) => {
-            metadata = updater(metadata);
-        }),
-    } as unknown as ApiSessionClient;
-
-    await writeUsageLimitRecoveryIntentToMetadata(session, staleWaiting);
-
-    expect(metadata).toMatchObject({
-        sessionUsageLimitRecoveryV1: {
-            status: 'cancelled',
-            attemptCount: 3,
-        },
-    });
-});
-
-function createSessionTurnLifecycleTestDouble(overrides: Partial<SessionTurnLifecycle> = {}): SessionTurnLifecycle {
+function createSessionTurnLifecycleTestDouble(overrides: Partial<SessionTurnLifecycle> = {}): SessionTurnLifecycle & { observeProviderTurnEvent(): void } {
     return {
+        observeProviderTurnEvent: vi.fn(),
         beginTurn: vi.fn(async () => ({ turnId: 'session-turn-1' })),
         attachProviderTurnId: vi.fn(async () => {}),
         appendTranscriptAnchors: vi.fn(async () => {}),
@@ -163,6 +134,8 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     ambiguousManagedApprovalRejection?: boolean;
     rejectGoalMethods?: boolean;
     rejectGoalMethodsAsInvalidRequest?: boolean;
+    nativeGoal?: Record<string, unknown>;
+    goalStatusAfterPrompt?: string;
     omitGoalGetResponse?: boolean;
     omitSessionControlsResponses?: boolean;
     emitGoalContinuationTurn?: boolean;
@@ -216,6 +189,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         'let loginStartCount = 0;',
         'let accountReadCount = 0;',
         'let interruptCount = 0;',
+        `let nativeGoal = ${JSON.stringify(params.nativeGoal ?? null)};`,
         'const resumedThreadIds = new Set();',
         `const managedAllowedApprovalPolicies = ${JSON.stringify(params.managedAllowedApprovalPolicies ?? null)};`,
         `const ambiguousManagedApprovalRejection = ${JSON.stringify(params.ambiguousManagedApprovalRejection === true)};`,
@@ -244,7 +218,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions) {`,
+        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions && typeof msg.params.permissions !== "string") {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
         '            continue;',
         '        }',
@@ -254,7 +228,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "missing thread/start flags" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: ${JSON.stringify(params.threadStartServiceTier ?? null)}, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");`,
+        `        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: ${JSON.stringify(params.threadStartServiceTier ?? null)}, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null } }) + "\\n");`,
         `        if (${JSON.stringify(params.emitIdleMcpRequestAfterThreadStart === true)}) {`,
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ id: "idle-mcp-request", method: "mcpServer/elicitation/request", params: { threadId: "thread-started", id: "request_scoped_idle_mcp", serverName: "happier", message: "Tool \\"change_title\\" needs input", _meta: { tool_params: { title: "Idle Title" } } } }) + "\\n");',
@@ -284,7 +258,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions) {`,
+        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions && typeof msg.params.permissions !== "string") {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
         '            continue;',
         '        }',
@@ -302,7 +276,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId: resumedThreadId, turn: { id: resumeTurnId } } }) + "\\n");',
         '            process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: resumedThreadId, turnId: resumeTurnId, itemId: "resume_msg_1", delta: "Still working" } }) + "\\n");',
         '            setTimeout(() => {',
-        '                process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");',
+        '                process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null } }) + "\\n");',
         '            }, 20);',
         '            continue;',
         '        }',
@@ -348,7 +322,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         `        const oversizedPayload = ${JSON.stringify(params.oversizedResumePayloadChars ?? 0)} > 0 ? "x".repeat(${JSON.stringify(params.oversizedResumePayloadChars ?? 0)}) : undefined;`,
-        '        const resumeResponse = JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: msg.params?.permissions ?? null, ...(oversizedPayload ? { oversizedPayload } : {}) } }) + "\\n";',
+        '        const resumeResponse = JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null, ...(oversizedPayload ? { oversizedPayload } : {}) } }) + "\\n";',
         `        if (${JSON.stringify(params.resumeResponseDelayMs ?? 0)} > 0) {`,
         `            setTimeout(() => { process.stdout.write(resumeResponse); }, ${JSON.stringify(params.resumeResponseDelayMs ?? 0)});`,
         '        } else {',
@@ -404,6 +378,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "thread/goal/get") {',
+        '        if (nativeGoal) { process.stdout.write(JSON.stringify({ id: msg.id, result: { goal: nativeGoal } }) + String.fromCharCode(10)); continue; }',
         `        if (${JSON.stringify(params.omitGoalGetResponse === true)}) { continue; }`,
         `        if (${JSON.stringify(params.rejectGoalMethodsAsInvalidRequest === true)}) {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request" } }) + "\\n");',
@@ -417,6 +392,11 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "thread/goal/set") {',
+        '        if (nativeGoal) {',
+        '            nativeGoal = { ...nativeGoal, ...msg.params, updatedAt: "2026-05-13T10:05:00.000Z" };',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, result: { goal: nativeGoal } }) + String.fromCharCode(10));',
+        '            continue;',
+        '        }',
         `        if (${JSON.stringify(params.rejectGoalMethodsAsInvalidRequest === true)}) {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request" } }) + "\\n");',
         '            continue;',
@@ -565,6 +545,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "turn/start") {',
+        '        if (msg.params?.permissions != null && typeof msg.params.permissions !== "string") {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
+        '            continue;',
+        '        }',
         `        if (${JSON.stringify(params.rejectPermissionsProfile === true)} && msg.params?.permissions) {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
@@ -576,6 +560,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         '        const text = Array.isArray(msg.params?.input) ? String(msg.params.input[0]?.text ?? "unknown") : "unknown";',
+        `        if (nativeGoal && ${JSON.stringify(params.goalStatusAfterPrompt ?? null)}) nativeGoal.status = ${JSON.stringify(params.goalStatusAfterPrompt ?? null)};`,
         '        const matchingTurnStartCount = (await readFile(requestLogPath, "utf8").catch(() => "")).split("\\n").filter((line) => { try { const entry = JSON.parse(line); return entry.method === "turn/start" && Array.isArray(entry.params?.input) && String(entry.params.input[0]?.text ?? "") === text; } catch { return false; } }).length;',
         '        const turnId = matchingTurnStartCount > 1 ? `turn-${text}-${matchingTurnStartCount}` : `turn-${text}`;',
         '        const completionDelayMs = text === "connected-service-invalidation-active-turn" && matchingTurnStartCount === 1 ? 120000 : text === "overlap-start" ? 180 : text === "steer-delay-over-one-second" ? 200 : text === "cancel-me" ? 50 : 15;',
@@ -698,7 +683,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         '        setTimeout(() => {',
-        '            const result = text === "no-id-response-unknown-before-owned-start" || text === "no-id-response-owned-terminal-before-owned-start" || text === "child-terminal-before-primary-identity-no-activity" || text === "child-terminal-after-primary-idless-activity"',
+        '            const result = text === "no-id-response-unknown-before-owned-start" || text === "no-id-response-owned-terminal-before-owned-start" || text === "child-terminal-before-primary-identity-no-activity" || text === "child-terminal-after-primary-idless-activity" || text === "bridge-generated-image-no-turn-id"',
         '                ? { threadId: msg.params?.threadId ?? null }',
         '                : { turn: { id: turnId }, threadId: msg.params?.threadId ?? null };',
         '            process.stdout.write(JSON.stringify({ id: msg.id, result }) + "\\n");',
@@ -933,7 +918,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 18);',
         '            continue;',
         '        }',
-        '        if (text === "bridge-generated-image") {',
+        '        if (text === "bridge-generated-image" || text === "bridge-generated-image-no-turn-id") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_img", delta: "Generated image:" } }) + "\\n");',
         '            }, 6);',
@@ -1574,6 +1559,13 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, respondDelayMs + completionDelayMs + successorCompletionDelayMs);',
         '            continue;',
         '        }',
+        '        if (text.startsWith("watch-stale-top-level-")) {',
+        '            const method = text.slice("watch-stale-top-level-".length);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method, params: { threadId: msg.params?.threadId ?? null, id: turnId + "-old", status: method === "turn/started" ? "inProgress" : "completed" } }) + "\\n");',
+        '            }, respondDelayMs + 7);',
+        '            continue;',
+        '        }',
         '        if (text === "ignore-unknown-mismatched-turn-completion") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId + "-unknown" } } }) + "\\n");',
@@ -1759,6 +1751,8 @@ describe('createCodexAppServerRuntime', () => {
             ambiguousManagedApprovalRejection?: boolean;
             rejectGoalMethods?: boolean;
             rejectGoalMethodsAsInvalidRequest?: boolean;
+            nativeGoal?: Record<string, unknown>;
+            goalStatusAfterPrompt?: string;
             omitGoalGetResponse?: boolean;
             omitSessionControlsResponses?: boolean;
             emitGoalContinuationTurn?: boolean;
@@ -1828,6 +1822,8 @@ describe('createCodexAppServerRuntime', () => {
             ambiguousManagedApprovalRejection: options.ambiguousManagedApprovalRejection,
             rejectGoalMethods: options.rejectGoalMethods,
             rejectGoalMethodsAsInvalidRequest: options.rejectGoalMethodsAsInvalidRequest,
+            nativeGoal: options.nativeGoal,
+            goalStatusAfterPrompt: options.goalStatusAfterPrompt,
             omitGoalGetResponse: options.omitGoalGetResponse,
             omitSessionControlsResponses: options.omitSessionControlsResponses,
             emitGoalContinuationTurn: options.emitGoalContinuationTurn,
@@ -1912,6 +1908,37 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({ method: 'thread/start' }),
             ]),
         );
+    });
+
+    it('leaves a missing-CLI startOrLoad failure unsettled for the runner to surface once', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-missing-cli-');
+        // The explicit override is exclusive: a bogus HAPPIER_CODEX_PATH defeats the fixture's
+        // fake app-server binary and makes requireProviderCliCommand throw ProviderCliNotFoundError.
+        envScope.patch({
+            HAPPIER_CODEX_APP_SERVER_BIN: undefined,
+            HAPPIER_CODEX_PATH: '/definitely-missing-happier-codex/codex',
+        });
+        const mutations: SessionTurnMutationV1[] = [];
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: createSessionTurnLifecycle({
+                sessionId: 'session-missing-cli',
+                enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+            }),
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            session,
+            onThinkingChange: vi.fn(),
+        });
+
+        const error = await runtime.startOrLoad({}).then(() => null, (caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ProviderCliNotFoundError);
+        // No provider turn began, so the runner's prompt-loop catch owns the one classified failed
+        // turn; the runtime surfacing it too would double-report resume + fallback attempts.
+        expect(readCodexTurnFailureSettlement(error)).toBeNull();
+        expect(mutations).toEqual([]);
     });
 
     it('retries native resume when Codex transiently cannot initialize its shared SQLite state runtime', async () => {
@@ -2163,10 +2190,7 @@ describe('createCodexAppServerRuntime', () => {
                     method: 'thread/start',
                     params: expect.objectContaining({
                         cwd: root,
-                        permissions: {
-                            type: 'profile',
-                            id: ':workspace',
-                        },
+                        sandbox: 'workspace-write',
                         experimentalRawEvents: true,
                         persistExtendedHistory: true,
                     }),
@@ -2177,36 +2201,31 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('starts safe-yolo app-server threads with auto-reviewer approvals instead of disabling approvals', async () => {
+    it('preserves workspace network access and Auto review when native profiles have narrower permissions', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-safe-yolo-start-');
-
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
+            session: createApiSessionClientFixture(),
             permissionMode: 'safe-yolo',
         });
 
         await runtime.startOrLoad({});
-
-        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-        expect(requestLog).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    method: 'thread/start',
-                    params: expect.objectContaining({
-                        permissions: {
-                            type: 'profile',
-                            id: ':workspace',
-                        },
-                    }),
-                }),
-            ]),
-        );
-        const startRequest = requestLog.find((entry: { method: string }) => entry.method === 'thread/start') as { params?: Record<string, unknown> } | undefined;
-        expect(startRequest?.params).not.toHaveProperty('sandbox');
-        expect(startRequest?.params).not.toHaveProperty('approvalPolicy');
-        expect(startRequest?.params).not.toHaveProperty('approvalsReviewer');
+        await runtime.sendPrompt('workspace-network');
+        const requests = await readRequestLog(requestLogPath);
+        const start = requests.find((entry) => entry.method === 'thread/start');
+        expect(start?.params).toMatchObject({
+            sandbox: 'workspace-write',
+            approvalPolicy: { granular: expect.objectContaining({ sandbox_approval: true }) },
+            approvalsReviewer: 'auto_review',
+        });
+        expect(start?.params).not.toHaveProperty('permissions');
+        const turn = requests.find((entry) => entry.method === 'turn/start');
+        expect(turn?.params).toMatchObject({
+            sandboxPolicy: { type: 'workspaceWrite', writableRoots: [root], networkAccess: true },
+            approvalsReviewer: 'auto_review',
+        });
+        expect(turn?.params).not.toHaveProperty('permissions');
     });
 
     it('falls back to legacy app-server permission fields after older Codex rejects permission profiles', async () => {
@@ -2228,10 +2247,7 @@ describe('createCodexAppServerRuntime', () => {
         const startRequests = requestLog.filter((entry) => entry.method === 'thread/start') as Array<{ params?: Record<string, unknown> }>;
         expect(startRequests).toHaveLength(2);
         expect(startRequests[0]?.params).toMatchObject({
-            permissions: {
-                type: 'profile',
-                id: ':read-only',
-            },
+            permissions: ':read-only',
         });
         expect(startRequests[0]?.params).not.toHaveProperty('sandbox');
         expect(startRequests[1]?.params).toMatchObject({
@@ -2245,85 +2261,53 @@ describe('createCodexAppServerRuntime', () => {
             approvalPolicy: 'never',
             sandboxPolicy: {
                 type: 'readOnly',
+                networkAccess: false,
             },
         });
         expect(turnStart?.params).not.toHaveProperty('permissions');
     });
 
-    it('uses one managed scalar fallback after canonical Auto reaches a rejected legacy granular policy', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-auto-', {
-            rejectPermissionsProfile: true,
+    it.each(['start', 'resume', 'turn'] as const)('keeps workspace policy through the managed scalar fallback at %s without disabling native profiles', async (entryPoint) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-workspace-', {
+            rejectPermissionsProfileAsStringShape: true,
             managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
         });
-        const permissionMode = normalizePermissionModeForAgentStart({ agentId: 'codex', value: 'acceptEdits' });
-        expect(permissionMode).toBe('safe-yolo');
+        const autoMode = normalizePermissionModeForAgentStart({ agentId: 'codex', value: 'acceptEdits' });
+        expect(autoMode).toBe('safe-yolo');
+        let permissionMode: PermissionMode = entryPoint === 'turn' ? 'default' : autoMode!;
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
-            permissionMode: permissionMode!,
-        });
-
-        await runtime.startOrLoad({});
-        await runtime.sendPrompt('managed-auto');
-
-        const requests = await readRequestLog(requestLogPath);
-        const starts = requests.filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(3);
-        expect(starts[0]?.params).toMatchObject({ permissions: { type: 'profile', id: ':workspace' } });
-        expect(starts[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
-        expect(starts[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' });
-        const turns = requests.filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(1);
-        expect(turns[0]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
-    });
-
-    it('uses the managed scalar fallback on thread resume before starting a turn', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-resume-', {
-            rejectPermissionsProfile: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
-            permissionMode: 'safe-yolo',
-        });
-
-        await runtime.startOrLoad({ resumeId: 'thread-managed-resume' });
-        await runtime.sendPrompt('managed-resume');
-
-        const requests = await readRequestLog(requestLogPath);
-        const resumes = requests.filter((entry) => entry.method === 'thread/resume');
-        expect(resumes).toHaveLength(3);
-        expect(resumes[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' });
-        const turns = requests.filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(1);
-        expect(turns[0]?.params).toMatchObject({ approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite' } });
-    });
-
-    it('uses the same managed fallback when Auto first reaches a turn after thread start', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-turn-', {
-            rejectPermissionsProfile: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-        });
-        let permissionMode: PermissionMode = 'default';
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
+            session: createApiSessionClientFixture(),
             getPermissionMode: () => permissionMode,
         });
 
-        await runtime.startOrLoad({});
-        permissionMode = 'safe-yolo';
-        await runtime.sendPrompt('managed-turn');
+        await runtime.startOrLoad(entryPoint === 'resume' ? { resumeId: 'thread-managed-workspace' } : {});
+        permissionMode = autoMode!;
+        await runtime.sendPrompt('managed-workspace');
 
-        const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(3);
-        expect(turns[0]?.params).toMatchObject({ permissions: { type: 'profile', id: ':workspace' } });
-        expect(turns[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
-        expect(turns[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
+        const requests = await readRequestLog(requestLogPath);
+        const method = entryPoint === 'turn' ? 'turn/start' : entryPoint === 'resume' ? 'thread/resume' : 'thread/start';
+        const attempts = requests.filter((entry) => entry.method === method);
+        expect(attempts).toHaveLength(2);
+        expect(attempts[0]?.params).toMatchObject({
+            approvalPolicy: { granular: expect.any(Object) },
+            approvalsReviewer: 'auto_review',
+        });
+        expect(attempts[1]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user' });
+        for (const entry of attempts) expect(entry.params).not.toHaveProperty('permissions');
+        const turns = requests.filter((entry) => entry.method === 'turn/start');
+        expect(turns.at(-1)?.params).toMatchObject({
+            approvalPolicy: 'on-request',
+            approvalsReviewer: 'user',
+            sandboxPolicy: { type: 'workspaceWrite', writableRoots: [root], networkAccess: true },
+        });
+
+        permissionMode = 'read-only';
+        await runtime.sendPrompt('read-only-after-workspace');
+        const readOnlyTurn = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start').at(-1);
+        expect(readOnlyTurn?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(readOnlyTurn?.params).not.toHaveProperty('sandboxPolicy');
     });
 
     it('preserves structured input when a managed scalar policy retry is rejected', async () => {
@@ -2353,8 +2337,8 @@ describe('createCodexAppServerRuntime', () => {
         })).rejects.toThrow(/structured turn input unsupported/);
 
         const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(3);
-        expect(turns[2]?.params).toMatchObject({
+        expect(turns).toHaveLength(2);
+        expect(turns[1]?.params).toMatchObject({
             approvalPolicy: 'on-request',
             approvalsReviewer: 'user',
             input: [
@@ -2378,8 +2362,8 @@ describe('createCodexAppServerRuntime', () => {
 
         await expect(runtime.startOrLoad({})).rejects.toThrow(/approval_policy/);
         const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(2);
-        expect(starts[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) } });
+        expect(starts).toHaveLength(1);
+        expect(starts[0]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) } });
     });
 
     it('does not downgrade an ambiguous legacy approval rejection', async () => {
@@ -2397,10 +2381,10 @@ describe('createCodexAppServerRuntime', () => {
 
         await expect(runtime.startOrLoad({})).rejects.toThrow(/invalid approval policy/);
         const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(2);
+        expect(starts).toHaveLength(1);
     });
 
-    it('falls back to legacy app-server permission fields when older Codex expects a string profile id', async () => {
+    it('keeps native read-only permissions when Codex 0.166 expects a string profile id', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-permission-string-fallback-', {
             rejectPermissionsProfileAsStringShape: true,
         });
@@ -2416,18 +2400,13 @@ describe('createCodexAppServerRuntime', () => {
 
         const requestLog = await readRequestLog(requestLogPath);
         const startRequests = requestLog.filter((entry) => entry.method === 'thread/start') as Array<{ params?: Record<string, unknown> }>;
-        expect(startRequests).toHaveLength(2);
-        expect(startRequests[0]?.params).toMatchObject({
-            permissions: {
-                type: 'profile',
-                id: ':read-only',
-            },
-        });
-        expect(startRequests[1]?.params).toMatchObject({
-            approvalPolicy: 'never',
-            sandbox: 'read-only',
-        });
-        expect(startRequests[1]?.params).not.toHaveProperty('permissions');
+        expect(startRequests).toHaveLength(1);
+        expect(startRequests[0]?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(startRequests[0]?.params).not.toHaveProperty('sandbox');
+        await runtime.sendPrompt('native-profile-network-restriction');
+        const turnStart = (await readRequestLog(requestLogPath)).find((entry) => entry.method === 'turn/start');
+        expect(turnStart?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(turnStart?.params).not.toHaveProperty('sandboxPolicy');
     });
 
     it('publishes connected-service direct-session metadata when activeServerDir owns CODEX_HOME', async () => {
@@ -2661,10 +2640,7 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({
                     params: expect.objectContaining({
                         threadId: 'resume-123',
-                        permissions: {
-                            type: 'profile',
-                            id: ':read-only',
-                        },
+                        permissions: ':read-only',
                         persistExtendedHistory: true,
                         excludeTurns: false,
                     }),
@@ -2830,22 +2806,59 @@ describe('createCodexAppServerRuntime', () => {
                 params: expect.objectContaining({
                     threadId: 'thread-started',
                     input: [{ type: 'text', text: 'hello-world' }],
-                    permissions: {
-                        type: 'profile',
-                        id: ':read-only',
-                    },
+                    permissions: ':read-only',
                 }),
             }),
         ]);
         const turnStart = requestLog.find((entry: { method: string }) => entry.method === 'turn/start') as { params?: Record<string, unknown> } | undefined;
         expect(turnStart?.params).not.toHaveProperty('sandboxPolicy');
-        expect(turnStart?.params).not.toHaveProperty('approvalPolicy');
+        expect(turnStart?.params).toHaveProperty('approvalPolicy', 'never');
     });
 
     it.each([
-        ['turn-ledger', true],
-        ['legacy', false],
-    ] as const)('cancels a pending usage-limit recovery intent on normal turn completion (%s path)', async (_label, useTurnLedger) => {
+        { status: 'usageLimited', afterPrompt: undefined, prompt: 'hello-world', expected: 'active' },
+        { status: 'paused', afterPrompt: undefined, prompt: 'hello-world', expected: 'paused' },
+        { status: 'blocked', afterPrompt: undefined, prompt: 'hello-world', expected: 'blocked' },
+        { status: 'budgetLimited', afterPrompt: undefined, prompt: 'hello-world', expected: 'budgetLimited' },
+        { status: 'complete', afterPrompt: undefined, prompt: 'hello-world', expected: 'complete' },
+        { status: 'usageLimited', afterPrompt: 'paused', prompt: 'hello-world', expected: 'paused' },
+        { status: 'usageLimited', afterPrompt: 'complete', prompt: 'hello-world', expected: 'complete' },
+        { status: 'usageLimited', afterPrompt: undefined, prompt: 'usage-limit-before-turn-response', expected: 'usageLimited' },
+    ])('reactivates only a still usageLimited native goal after successful new work ($status, $afterPrompt, $prompt)', async ({ status, afterPrompt, prompt, expected }) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-goal-quota-recovery-', {
+            nativeGoal: {
+                threadId: 'thread-started', objective: 'Preserve this goal', status,
+                tokenBudget: 1200, tokensUsed: 25, timeUsedSeconds: 3,
+                updatedAt: '2026-05-13T10:00:00.000Z',
+            },
+            goalStatusAfterPrompt: afterPrompt,
+        });
+        const session = createMutableApiSessionClientFixture({ metadata: createRuntimeMetadata(root) });
+        const runtime = createCodexAppServerRuntime({
+            directory: root, onThinkingChange: vi.fn(), session, permissionMode: 'read-only',
+        });
+        await runtime.startOrLoad({});
+        await runtime.refreshGoal();
+
+        if (prompt === 'usage-limit-before-turn-response') {
+            await expect(runtime.sendPrompt(prompt)).rejects.toThrow();
+        } else {
+            await runtime.sendPrompt(prompt);
+        }
+        await runtime.refreshGoal();
+
+        const requests = await readRequestLog(requestLogPath);
+        const goalWrites = requests.filter((entry) => entry.method === 'thread/goal/set');
+        expect(goalWrites.map((entry) => entry.params)).toEqual(expected === 'active'
+            ? [{ threadId: 'thread-started', status: 'active' }]
+            : []);
+        expect(session.getMetadataSnapshot()).toMatchObject({ sessionWorkStateV1: { items: [{
+            title: 'Preserve this goal', status: expected === 'usageLimited' || expected === 'budgetLimited' ? 'blocked' : expected,
+            tokenBudget: 1200, tokensUsed: 25, timeUsedSeconds: 3,
+        }] } });
+    });
+
+    it('settles an older quota wait through the shared Session lifecycle when new work starts', async () => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-turn-usage-limit-cancel-');
 
         let metadata: Metadata = {
@@ -2871,6 +2884,19 @@ describe('createCodexAppServerRuntime', () => {
         const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
             metadata = handler(metadata);
         });
+        const recovery = createSessionUsageLimitRecoveryRuntime({
+            sessionId: 'session-usage-limit-cancel', getMetadata: () => metadata,
+            updateMetadata, getCredentials: async () => null, getAccountSettings: () => null,
+        });
+        let supersession: Promise<void> | undefined;
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'session-usage-limit-cancel', enqueueSessionTurn: async () => {},
+            onTurnLifecycleEvent: (event, terminalStatus) => {
+                if (event !== 'assistant_message_end' || terminalStatus !== 'failed') {
+                    supersession = recovery.observeSupersession();
+                }
+            },
+        });
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
@@ -2888,17 +2914,22 @@ describe('createCodexAppServerRuntime', () => {
                 sessionId: 'session-usage-limit-cancel',
                 updateMetadata,
                 getMetadataSnapshot: () => metadata,
-                ...(useTurnLedger ? { sessionTurnLifecycle: createSessionTurnLifecycleTestDouble() } : {}),
+                sessionTurnLifecycle: lifecycle,
             } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
             permissionMode: 'read-only',
         });
 
-        await runtime.startOrLoad({});
-        await runtime.sendPrompt('hello-world');
-
-        expect((metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
-            status: 'cancelled',
-        });
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('hello-world');
+            await supersession;
+            expect(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
+                status: 'cancelled', nextCheckAtMs: null,
+            });
+        } finally {
+            recovery.dispose();
+            await runtime.reset();
+        }
     });
 
     it('does not report an active provider turn before native Codex starts one', async () => {
@@ -3011,7 +3042,11 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        await expect(runtime.sendPrompt('top-level-failed-turn')).rejects.toThrow(/top-level failed turn/);
+        const failure = await runtime.sendPrompt('top-level-failed-turn').then(() => null, (caught: unknown) => caught);
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toMatch(/top-level failed turn/);
+        // The runtime already failed the session turn; the runner must not surface it again.
+        expect(readCodexTurnFailureSettlement(failure)).toBe('failed');
 
         expect(sessionTurnLifecycle.completeTurn).not.toHaveBeenCalled();
         expect(sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
@@ -4800,7 +4835,7 @@ describe('createCodexAppServerRuntime', () => {
                 { type: 'skill', name: 'Review', path: '/skills/review/SKILL.md' },
                 { type: 'image', url: 'https://example.com/review.png' },
             ],
-            permissions: { type: 'profile', id: ':read-only' },
+            permissions: ':read-only',
         });
         // A failed structured submission must leave the runtime ready for a valid follow-up.
         await runtime.sendPrompt('plain-follow-up');
@@ -5156,6 +5191,71 @@ describe('createCodexAppServerRuntime', () => {
                 }),
             }),
         ]);
+    });
+
+    it('binds normalized native input identities before dispatching start and steer', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-normalized-turn-inputs-');
+        const bound: Array<{ turnId: string; localIds: readonly string[] }> = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'normalized-native-inputs',
+            enqueueSessionTurn: async () => {},
+            onTurnInputBound: (input) => { bound.push(input); },
+        });
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: lifecycle,
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({ directory: root, onThinkingChange: vi.fn(), session });
+        await runtime.startOrLoad({});
+        const completion = runtime.sendPrompt('overlap-start', { localIds: ['normalized-start'] });
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000, intervalMs: 10, label: 'normalized input turn to become steerable',
+        });
+        await runtime.steerPrompt('normalized-steer', { localIds: ['normalized-steer'] });
+        await completion;
+        expect(bound.map(({ localIds }) => localIds)).toEqual([['normalized-start'], ['normalized-steer']]);
+        expect(bound[1].turnId).toBe(bound[0].turnId);
+        expect((await readRequestLog(requestLogPath)).filter(({ method }) => method === 'turn/steer')).toHaveLength(1);
+    });
+
+    it('does not dispatch a steer after its canonical admission outlives the active native turn', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-steer-admission-race-');
+        let releaseAdmission!: () => void;
+        const admission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+        let holdAdmission = false;
+        let admissionHeld = false;
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'steer-admission-race',
+            enqueueSessionTurn: async (mutation) => {
+                if (mutation.action === 'begin' && holdAdmission) {
+                    admissionHeld = true;
+                    await admission;
+                }
+            },
+        });
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: lifecycle,
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({ directory: root, onThinkingChange: vi.fn(), session });
+        await runtime.startOrLoad({});
+        const completion = runtime.sendPrompt('overlap-start', { localId: 'first-input' });
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000, intervalMs: 10, label: 'native turn to become steerable before held admission',
+        });
+        holdAdmission = true;
+        const steer = runtime.steerPrompt('must-not-dispatch-after-completion', { localIds: ['held-steer'] });
+        const outcome = steer.then(() => null, (error: unknown) => error);
+        try {
+            await waitForCondition(() => admissionHeld, {
+                timeoutMs: 1_000, intervalMs: 10, label: 'steer canonical admission to be held',
+            });
+            await completion;
+        } finally {
+            releaseAdmission();
+        }
+        expect(await outcome).toBeInstanceOf(Error);
+        expect((await readRequestLog(requestLogPath)).filter(({ method }) => method === 'turn/steer')).toEqual([]);
     });
 
     it('does not steer a turn whose ownership changes while structured input is resolving', async () => {
@@ -8402,6 +8502,46 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it.each(['auto', 'none', undefined] as const)('applies reasoning summary %s on native thread starts, resumes, and each subsequent turn', async (reasoningSummary) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-reasoning-summary-');
+        for (const resume of [false, true]) {
+            const runtime = createCodexAppServerRuntime({
+                directory: root,
+                onThinkingChange: vi.fn(),
+                session: createApiSessionClientFixture(),
+                ...{ reasoningSummary },
+            });
+            if (reasoningSummary === 'auto') await runtime.setSessionConfigOption('reasoning_effort', 'high');
+            await runtime.startOrLoad(resume ? { existingSessionId: 'thread-existing', importHistory: false } : {});
+            await runtime.sendPrompt('reasoning-summary-first');
+            await runtime.sendPrompt('reasoning-summary-second');
+            await runtime.reset();
+        }
+        const requestLog = await readRequestLog(requestLogPath);
+        const turns = requestLog.filter((entry) => entry.method === 'turn/start');
+        expect(turns).toHaveLength(4);
+        for (const turn of turns) {
+            if (reasoningSummary === undefined) {
+                expect(turn.params).not.toHaveProperty('summary');
+            } else {
+                expect(turn.params).toHaveProperty('summary', reasoningSummary);
+            }
+        }
+        const requests = requestLog.filter((entry) => entry.method === 'thread/start' || entry.method === 'thread/resume');
+        expect(requests.some((entry) => entry.method === 'thread/start')).toBe(true);
+        expect(requests.some((entry) => entry.method === 'thread/resume')).toBe(true);
+        for (const request of requests) {
+            if (reasoningSummary === undefined) {
+                expect(request.params).not.toHaveProperty('config');
+            } else {
+                expect(request.params).toHaveProperty('config', {
+                    ...(reasoningSummary === 'auto' ? { model_reasoning_effort: 'high' } : {}),
+                    model_reasoning_summary: reasoningSummary,
+                });
+            }
+        }
+    });
+
     it('includes preselected model, reasoning, and Fast service tier in fresh thread/start requests', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-thread-start-overrides-');
 
@@ -8547,6 +8687,192 @@ describe('createCodexAppServerRuntime', () => {
             ]));
         });
     }
+
+    it.each(['turn/started', 'turn/completed'])(
+        'does not refresh active-turn silence for an old top-level native %s id', async (staleMethod) => {
+        const { root } = await createRuntimeFixture('happier-codex-native-stale-turn-id-');
+        vi.useFakeTimers();
+        const notices: unknown[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'codex-stale-turn', turnStallWarnMs: 1000,
+            onTurnStallNotice: (notice) => notices.push(notice),
+            enqueueSessionTurn: async () => {},
+        });
+        let releaseStale: () => void = () => {};
+        const staleGate = new Promise<void>((resolve) => { releaseStale = resolve; });
+        let nativeStarted: () => void = () => {};
+        const nativeStartDelivered = new Promise<void>((resolve) => { nativeStarted = resolve; });
+        let staleReceived: () => void = () => {};
+        const staleDelivered = new Promise<void>((resolve) => { staleReceived = resolve; });
+        const session = createMutableApiSessionClientFixture({
+            metadata: createRuntimeMetadata(root), overrides: { sessionTurnLifecycle: lifecycle },
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root, session, onThinkingChange: vi.fn(),
+            createClient: async () => {
+                const client = await createCodexAppServerClient({ cwd: root });
+                return {
+                    ...client,
+                    registerNotificationHandler: (method, handler) => client.registerNotificationHandler(method, async (payload) => {
+                        const stale = method === staleMethod && typeof payload === 'object' && payload !== null && 'id' in payload;
+                        if (stale) await staleGate;
+                        const work = handler(payload);
+                        if (stale) staleReceived();
+                        else if (method === 'turn/started') nativeStarted();
+                        await work;
+                    }),
+                };
+            },
+        });
+        let prompt: Promise<void> | undefined;
+        try {
+            await runtime.startOrLoad({});
+            prompt = runtime.sendPrompt(`watch-stale-top-level-${staleMethod}`);
+            await nativeStartDelivered;
+            await vi.advanceTimersByTimeAsync(600);
+            releaseStale();
+            await staleDelivered;
+            await vi.advanceTimersByTimeAsync(400);
+            expect(notices).toHaveLength(1);
+            expect(notices[0]).toMatchObject({
+                lastEventAgeMs: 1000, providerTurnId: `turn-watch-stale-top-level-${staleMethod}`,
+            });
+            expect(runtime.isTurnInFlight()).toBe(true);
+        } finally {
+            releaseStale();
+            await lifecycle.endSession();
+            vi.useRealTimers();
+            await runtime.reset();
+            await prompt?.catch(() => {});
+        }
+    });
+
+    it.each(['bridge-generated-image', 'bridge-generated-image-no-turn-id'])(
+        'observes native receipt while media persistence blocks bridge work (%s)', async (promptText) => {
+        const { root } = await createRuntimeFixture('happier-codex-native-blocked-transcript-', {
+            omitTurnStartedForPrompt: promptText.endsWith('-no-turn-id') ? promptText : undefined,
+        });
+        vi.useFakeTimers();
+        const notices: unknown[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'codex-blocked-media', turnStallWarnMs: 1000,
+            onTurnStallNotice: (notice) => notices.push(notice),
+            enqueueSessionTurn: async () => {},
+        });
+        let persistenceEntered: () => void = () => {};
+        let releasePersistence: () => void = () => {};
+        const persistenceStarted = new Promise<void>((resolve) => { persistenceEntered = resolve; });
+        const blockedPersistence = new Promise<void>((resolve) => { releasePersistence = resolve; });
+        let releaseTerminal: () => void = () => {};
+        const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+        let terminalReceived: () => void = () => {};
+        const terminalDelivered = new Promise<void>((resolve) => { terminalReceived = resolve; });
+        const session = createMutableApiSessionClientFixture({
+            metadata: createRuntimeMetadata(root),
+            overrides: {
+                sessionTurnLifecycle: lifecycle,
+            },
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root, session, onThinkingChange: vi.fn(),
+            sessionMedia: { persist: async () => {
+                persistenceEntered();
+                await blockedPersistence;
+                return { media: [], unavailable: [] };
+            } },
+            createClient: async () => {
+                const client = await createCodexAppServerClient({ cwd: root });
+                return {
+                    ...client,
+                    registerNotificationHandler: (method, handler) => client.registerNotificationHandler(method, async (payload) => {
+                        // Hold only the external delivery boundary; keep the real native parser and runtime.
+                        if (method === 'turn/completed') await terminalGate;
+                        const work = handler(payload);
+                        if (method === 'turn/completed') terminalReceived();
+                        await work;
+                    }),
+                };
+            },
+        });
+        let prompt: Promise<void> | undefined;
+        try {
+            await runtime.startOrLoad({});
+            prompt = runtime.sendPrompt(promptText);
+            await persistenceStarted;
+            await vi.advanceTimersByTimeAsync(600);
+            releaseTerminal();
+            await terminalDelivered;
+            await vi.advanceTimersByTimeAsync(600);
+            expect(notices).toEqual([]);
+        } finally {
+            releaseTerminal();
+            releasePersistence();
+            await lifecycle.endSession();
+            vi.useRealTimers();
+            await runtime.reset();
+            await prompt?.catch(() => {});
+        }
+    });
+
+    it('postpones silence on native token usage even without transcript output', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-stall-backflow-');
+        vi.useFakeTimers();
+        const notices: unknown[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'codex-native-backflow', turnStallWarnMs: 1000,
+            enqueueSessionTurn: async () => {},
+            onTurnStallNotice: (notice) => notices.push(notice),
+        });
+        let started: () => void = () => {};
+        const startDelivered = new Promise<void>((resolve) => { started = resolve; });
+        let releaseUsage: () => void = () => {};
+        const usageGate = new Promise<void>((resolve) => { releaseUsage = resolve; });
+        let usageReceived: () => void = () => {};
+        const usageDelivered = new Promise<void>((resolve) => { usageReceived = resolve; });
+        let releaseTerminal: () => void = () => {};
+        const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+        const session = createMutableApiSessionClientFixture({
+            metadata: createRuntimeMetadata(root), overrides: { sessionTurnLifecycle: lifecycle },
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root, session, onThinkingChange: vi.fn(),
+            createClient: async () => {
+                const client = await createCodexAppServerClient({ cwd: root });
+                return {
+                    ...client,
+                    registerNotificationHandler: (method, handler) => client.registerNotificationHandler(method, async (payload) => {
+                        if (method === 'thread/tokenUsage/updated') await usageGate;
+                        if (method === 'turn/completed') await terminalGate;
+                        const work = handler(payload);
+                        if (method === 'turn/started') started();
+                        if (method === 'thread/tokenUsage/updated') usageReceived();
+                        await work;
+                    }),
+                };
+            },
+        });
+        let prompt: Promise<void> | undefined;
+        try {
+            await runtime.startOrLoad({});
+            prompt = runtime.sendPrompt('bridge-token-usage');
+            await startDelivered;
+            await vi.advanceTimersByTimeAsync(600);
+            releaseUsage();
+            await usageDelivered;
+            await vi.advanceTimersByTimeAsync(600);
+            expect(notices).toEqual([]);
+            await vi.advanceTimersByTimeAsync(400);
+            expect(notices).toHaveLength(1);
+            expect(notices[0]).toMatchObject({ lastEventAgeMs: 1000 });
+        } finally {
+            releaseUsage();
+            releaseTerminal();
+            await lifecycle.endSession();
+            vi.useRealTimers();
+            await runtime.reset();
+            await prompt?.catch(() => {});
+        }
+    });
 
     it('forwards thread token usage updates and patches the active model context window from runtime telemetry', async () => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-token-usage-');
@@ -8847,6 +9173,55 @@ describe('createCodexAppServerRuntime', () => {
         }));
     });
 
+    it('reports the canonical failed-turn fingerprint to group recovery and admits the next failed turn', async () => {
+        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-canonical-failure-witness-');
+        const failedIssues: SessionRuntimeIssueV1[] = [];
+        let releaseFailureWrite: () => void = () => {};
+        const pendingFailureWrite = new Promise<void>((resolve) => { releaseFailureWrite = resolve; });
+        const sessionTurnLifecycle = createSessionTurnLifecycle({
+            sessionId: 'canonical-failure-session',
+            enqueueSessionTurn: async (mutation) => {
+                if (mutation.action === 'fail' && mutation.issue) {
+                    failedIssues.push(mutation.issue);
+                    if (failedIssues.length === 1) await pendingFailureWrite;
+                }
+            },
+        });
+        const reports: Array<Parameters<NonNullable<Parameters<typeof createCodexAppServerRuntime>[0]['onUsageLimitGroupRecovery']>>[0]> = [];
+        const runtime = createCodexAppServerRuntime({
+            directory: root, processEnv: createCodexAppServerProcessEnv(fakeAppServer), onThinkingChange: () => {},
+            initialConnectedServiceRuntimeIdentity: { serviceId: 'openai-codex', activeAccountId: 'provider-user',
+                profileId: 'primary', groupId: 'pool', generation: 1, credentialFingerprint: 'sha256:account1',
+                source: 'spawn_selection', accountLabel: null },
+            onUsageLimitGroupRecovery: async (report) => {
+                reports.push(report);
+                return { handled: false, report: null, statusCode: null, statusMessage: null };
+            },
+            session: { sessionId: 'canonical-failure-session', updateMetadata: async () => {}, sessionTurnLifecycle,
+                sendCodexMessage: () => {}, sendSessionEvent: () => {} } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
+        });
+        try {
+            await runtime.startOrLoad({});
+            for (let turn = 0; turn < 2; turn += 1) {
+                const failed = runtime.sendPrompt(turn === 0 ? 'usage-limit-structured' : 'usage-limit-after-mid-turn-auth-apply');
+                const expected = failed.catch(error => error as unknown);
+                if (turn === 0) {
+                    await waitForCondition(() => failedIssues.length === 1, { timeoutMs: 1_000, intervalMs: 1, label: 'accepted canonical failed-turn issue' });
+                    // Recovery consumes the accepted failure even while its durable publication is held.
+                    await waitForCondition(() => reports.length === 1, { timeoutMs: 1_000, intervalMs: 1, label: 'canonical failed-turn recovery report before durable write' });
+                    releaseFailureWrite();
+                }
+                await expect(failed).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } });
+                const issue = failedIssues[turn];
+                if (!issue) throw new Error('Missing canonical failed-turn issue');
+                const fingerprint = buildUsageLimitIssueFingerprint(issue);
+                if (turn === 0) expect(reports[0]?.classification).toMatchObject({ runtimeIssueFingerprint: fingerprint });
+                expect(await expected).toMatchObject({ runtimeAuthClassification: { runtimeIssueFingerprint: fingerprint } });
+            }
+            expect(buildUsageLimitIssueFingerprint(failedIssues[1]!)).not.toBe(buildUsageLimitIssueFingerprint(failedIssues[0]!));
+        } finally { releaseFailureWrite(); await runtime.reset(); }
+    });
+
     it('carries selected Codex group context on app-server usage-limit failures', async () => {
         const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-limit-group-');
         const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
@@ -8957,7 +9332,10 @@ describe('createCodexAppServerRuntime', () => {
             session: {
                 sessionId: 'session-plan-incompatible-group',
                 updateMetadata: vi.fn(),
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
+                sessionTurnLifecycle: createSessionTurnLifecycle({
+                    sessionId: 'session-plan-incompatible-group',
+                    enqueueSessionTurn: async () => {},
+                }),
                 sendCodexMessage: vi.fn(),
                 sendSessionEvent: vi.fn(),
             } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
@@ -9165,7 +9543,14 @@ describe('createCodexAppServerRuntime', () => {
                 },
             },
         );
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
+        const failedIssues: SessionRuntimeIssueV1[] = [];
+        const sessionTurnLifecycle = createSessionTurnLifecycle({
+            sessionId: 'session-provider-started-identity-race',
+            enqueueSessionTurn: async mutation => {
+                if (mutation.action === 'fail' && mutation.issue) failedIssues.push(mutation.issue);
+            },
+        });
+        const notifyDaemon = vi.fn(async () => ({ ok: true, result: { status: 'recovery_superseded' } }));
         const runtime = createCodexAppServerRuntime({
             directory: root,
             processEnv: createCodexAppServerProcessEnv(fakeAppServer),
@@ -9180,6 +9565,11 @@ describe('createCodexAppServerRuntime', () => {
                 source: 'spawn_selection',
             },
             onThinkingChange: vi.fn(),
+            onUsageLimitGroupRecovery: async ({ sessionId, classification }) =>
+                await reportConnectedServiceRuntimeAuthFailureToDaemon({
+                    sessionId, classification, notify: notifyDaemon,
+                    reportOutboxDir: join(root, 'recovery-outbox'),
+                }),
             onConnectedServiceAuthGenerationApplied: vi.fn(async () => {}),
             session: {
                 sessionId: 'session-provider-started-identity-race',
@@ -9232,25 +9622,25 @@ describe('createCodexAppServerRuntime', () => {
                 },
             })).resolves.toMatchObject({ ok: true, activeAccountId: 'acct_replacement' });
 
-            await waitForCondition(() => vi.mocked(sessionTurnLifecycle.failTurn).mock.calls.length > 0, {
+            await waitForCondition(() => failedIssues.length > 0, {
                 timeoutMs: 1_000,
                 intervalMs: 10,
                 label: 'provider-started usage-limit failure after auth observation race',
             });
-            expect(sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+            expect(failedIssues[0]).toMatchObject({
                 provider: 'codex',
-                issue: expect.objectContaining({
-                    source: 'usage_limit',
-                    usageLimit: expect.objectContaining({
-                        recoverability: 'wait',
-                        connectedService: {
-                            serviceId: 'openai-codex',
-                            profileId: null,
-                            groupId: null,
-                        },
-                    }),
-                }),
-            }));
+                source: 'usage_limit',
+                usageLimit: { recoverability: 'wait', connectedService: {
+                    serviceId: 'openai-codex', profileId: null, groupId: null,
+                } },
+            });
+            await waitForCondition(() => notifyDaemon.mock.calls.length === 1, {
+                timeoutMs: 1_000, intervalMs: 10, label: 'unattributed goal failure daemon recovery report',
+            });
+            expect(notifyDaemon).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                sessionId: 'session-provider-started-identity-race',
+                classification: expect.objectContaining({ kind: 'usage_limit', profileId: null, groupId: null, resetsAtMs: null }),
+            }), expect.anything());
         } finally {
             await runtime.reset();
         }
@@ -9332,7 +9722,13 @@ describe('createCodexAppServerRuntime', () => {
                 },
             },
         });
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
+        const failedIssues: SessionRuntimeIssueV1[] = [];
+        const sessionTurnLifecycle = createSessionTurnLifecycle({
+            sessionId: 'session-stale-env-group',
+            enqueueSessionTurn: async (mutation) => {
+                if (mutation.action === 'fail' && mutation.issue) failedIssues.push(mutation.issue);
+            },
+        });
         let metadata: Metadata = {
             path: root,
             host: 'test-host',
@@ -9419,18 +9815,16 @@ describe('createCodexAppServerRuntime', () => {
                     failingAccessTokenFingerprint: 'sha256:deadbeef',
                 },
             });
-            expect(sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+            expect(failedIssues).toContainEqual(expect.objectContaining({
                 provider: 'codex',
-                issue: expect.objectContaining({
-                    source: 'usage_limit',
-                    usageLimit: expect.objectContaining({
-                        recoverability: 'switch_account',
-                        connectedService: {
-                            serviceId: 'openai-codex',
-                            profileId: 'backup',
-                            groupId: 'happier',
-                        },
-                    }),
+                source: 'usage_limit',
+                usageLimit: expect.objectContaining({
+                    recoverability: 'switch_account',
+                    connectedService: {
+                        serviceId: 'openai-codex',
+                        profileId: 'backup',
+                        groupId: 'happier',
+                    },
                 }),
             }));
             expect(onRateLimitSnapshot).toHaveBeenCalledWith({
@@ -9465,44 +9859,11 @@ describe('createCodexAppServerRuntime', () => {
                     failingAccessTokenFingerprint: 'sha256:deadbeef',
                 }),
             });
-            onUsageLimitGroupRecovery.mockClear();
-            const requestLogBeforeManualCheck = await readRequestLog(requestLogPath);
-            expect(requestLogBeforeManualCheck.map((entry) => entry.method)).toEqual(expect.arrayContaining([
+            const requestLog = await readRequestLog(requestLogPath);
+            expect(requestLog.map((entry) => entry.method)).toEqual(expect.arrayContaining([
                 'account/rateLimits/read',
                 'account/read',
             ]));
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await expect(runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-stale-env-group',
-            })).resolves.toMatchObject({
-                ok: true,
-                recovery: {
-                    selectedAuth: {
-                        kind: 'group',
-                        serviceId: 'openai-codex',
-                        groupId: 'happier',
-                        profileId: 'backup',
-                    },
-                },
-            });
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-stale-env-group',
-            })).resolves.toMatchObject({
-                ok: true,
-                status: 'waiting',
-            });
-            expect(onUsageLimitGroupRecovery).toHaveBeenCalledWith({
-                sessionId: 'session-stale-env-group',
-                classification: expect.objectContaining({
-                    kind: 'usage_limit',
-                    serviceId: 'openai-codex',
-                    groupId: 'happier',
-                    profileId: 'backup',
-                }),
-            });
         } finally {
             await runtime.reset();
         }
@@ -9827,1558 +10188,6 @@ describe('createCodexAppServerRuntime', () => {
             providerTurnId: 'turn-usage-limit-before-turn-response',
             userMessageSeq: 50,
         });
-    });
-
-    it('arms usage-limit wait/resume from the latest issue and probes Codex rate limits on check-now', async () => {
-        const { root, fakeAppServer, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-recovery-');
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
-        const rememberUsageLimitRecoveryPreference = vi.fn(async () => {});
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
-                {
-                    kind: 'profile',
-                    serviceId: 'openai-codex',
-                    profileId: 'work',
-                },
-            ]),
-        });
-        const session = {
-            sessionId: 'session-usage-recovery',
-            updateMetadata,
-            sessionTurnLifecycle,
-            getMetadataSnapshot: () => metadata,
-            sendCodexMessage: vi.fn(),
-            sendSessionEvent: vi.fn(),
-        } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'];
-        const runtimeParams: Parameters<typeof createCodexAppServerRuntime>[0] & {
-            rememberUsageLimitRecoveryPreference: typeof rememberUsageLimitRecoveryPreference;
-        } = {
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session,
-            rememberUsageLimitRecoveryPreference,
-        };
-        const runtime = createCodexAppServerRuntime(runtimeParams);
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: {
-                    kind: 'usage_limit',
-                },
-            });
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string; rememberPreference?: boolean; resumePromptMode?: 'standard' | 'off' | 'custom' }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-
-            expect(runtimeControls.enableUsageLimitWaitResume).toBeTypeOf('function');
-            await expect(runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-usage-recovery',
-                rememberPreference: true,
-                resumePromptMode: 'custom',
-            })).resolves.toMatchObject({
-                ok: true,
-                recovery: {
-                    status: 'waiting',
-                    resumePromptMode: 'custom',
-                },
-            });
-            expect(rememberUsageLimitRecoveryPreference).toHaveBeenCalledTimes(1);
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                    resumePromptMode: 'custom',
-                    resetAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
-                    selectedAuth: {
-                        kind: 'profile',
-                        serviceId: 'openai-codex',
-                        profileId: 'work',
-                    },
-                },
-            });
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({ sessionId: 'session-usage-recovery' })).resolves.toMatchObject({
-                ok: true,
-                status: 'resumed',
-            });
-            const requestLog = await readRequestLog(requestLogPath);
-            expect(requestLog.map((entry) => entry.method)).toContain('account/rateLimits/read');
-            expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toEqual([
-                expect.objectContaining({
-                    params: expect.objectContaining({
-                        threadId: 'thread-started',
-                    }),
-                }),
-            ]);
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'cancelled',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('allocates distinct same-millisecond epochs through the production metadata transaction and preserves them across restart', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-cas-');
-        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-        let metadata: Metadata = {
-            ...createRuntimeMetadata(root),
-            sessionUsageLimitRecoveryV1: {
-                v: 1,
-                status: 'waiting',
-                issueFingerprint: 'base-issue',
-                armedAtMs: 999,
-                resetAtMs: 5_000,
-                nextCheckAtMs: 5_000,
-                attemptCount: 0,
-                maxAttempts: 3,
-                lastProbeError: null,
-                resumePromptMode: 'standard',
-                selectedAuth: { kind: 'native' },
-            },
-        };
-        const pendingUpdates: Array<Readonly<{
-            commit: () => void;
-        }>> = [];
-        let holdUsageUpdates = false;
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            if (!holdUsageUpdates) {
-                metadata = handler(metadata);
-                return;
-            }
-            await new Promise<void>((resolve, reject) => {
-                pendingUpdates.push({
-                    commit: () => {
-                        try {
-                            metadata = handler(metadata);
-                            resolve();
-                        } catch (error) {
-                            reject(error);
-                        }
-                    },
-                });
-            });
-        });
-        const createRuntime = () => createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-cas',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-        const olderRuntime = createRuntime();
-        const newerRuntime = createRuntime();
-
-        try {
-            await Promise.all([olderRuntime.startOrLoad({}), newerRuntime.startOrLoad({})]);
-            await Promise.all([
-                expect(olderRuntime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } }),
-                expect(newerRuntime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } }),
-            ]);
-            const olderControls = olderRuntime as typeof olderRuntime & {
-                enableUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string }) => Promise<unknown>;
-            };
-            const newerControls = newerRuntime as typeof newerRuntime & {
-                enableUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string }) => Promise<unknown>;
-            };
-
-            holdUsageUpdates = true;
-            const older = olderControls.enableUsageLimitWaitResume({
-                sessionId: 'session-usage-cas',
-                issueFingerprint: 'z-older',
-            });
-            const newer = newerControls.enableUsageLimitWaitResume({
-                sessionId: 'session-usage-cas',
-                issueFingerprint: 'a-newer',
-            });
-            await waitForCondition(() => pendingUpdates.length === 2, {
-                timeoutMs: 1_000,
-                label: 'two production usage-limit metadata transactions',
-            });
-            pendingUpdates[0]!.commit();
-            const olderResult = await older;
-            pendingUpdates[1]!.commit();
-            const newerResult = await newer;
-
-            expect(olderResult).toMatchObject({ ok: true, recovery: { issueFingerprint: 'z-older', armedAtMs: 1_000 } });
-            expect(newerResult).toMatchObject({ ok: true, recovery: { issueFingerprint: 'a-newer', armedAtMs: 1_001 } });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: { issueFingerprint: 'a-newer', armedAtMs: 1_001 },
-            });
-
-            await Promise.all([olderRuntime.reset(), newerRuntime.reset()]);
-            holdUsageUpdates = false;
-            const replacement = createRuntime();
-            try {
-                await replacement.startOrLoad({});
-                await expect(replacement.sendPrompt('usage-limit-structured')).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } });
-                const replacementControls = replacement as typeof replacement & {
-                    enableUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string }) => Promise<unknown>;
-                };
-                await expect(replacementControls.enableUsageLimitWaitResume({
-                    sessionId: 'session-usage-cas',
-                    issueFingerprint: 'm-after-restart',
-                })).resolves.toMatchObject({
-                    ok: true,
-                    recovery: { issueFingerprint: 'm-after-restart', armedAtMs: 1_002 },
-                });
-            } finally {
-                await replacement.reset();
-            }
-        } finally {
-            nowSpy.mockRestore();
-            await Promise.allSettled([olderRuntime.reset(), newerRuntime.reset()]);
-        }
-    });
-
-    it('reports a superseded exact cancel when attempt B commits between attempt A observation and settlement', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-cancel-cas-');
-        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_001);
-        let metadata: Metadata = createRuntimeMetadata(root);
-        const pendingUpdates: Array<Readonly<{ commit: () => void }>> = [];
-        let holdUsageUpdates = false;
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            if (!holdUsageUpdates) {
-                metadata = handler(metadata);
-                return;
-            }
-            await new Promise<void>((resolve, reject) => {
-                pendingUpdates.push({
-                    commit: () => {
-                        try {
-                            metadata = handler(metadata);
-                            resolve();
-                        } catch (error) {
-                            reject(error);
-                        }
-                    },
-                });
-            });
-        });
-        const createRuntime = () => createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-cancel-cas',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-        const cancellingRuntime = createRuntime();
-        const rearmingRuntime = createRuntime();
-
-        try {
-            await Promise.all([cancellingRuntime.startOrLoad({}), rearmingRuntime.startOrLoad({})]);
-            await expect(rearmingRuntime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } });
-            metadata = {
-                ...createRuntimeMetadata(root),
-                sessionUsageLimitRecoveryV1: {
-                    v: 1,
-                    status: 'waiting',
-                    issueFingerprint: 'attempt-a',
-                    armedAtMs: 1_000,
-                    resetAtMs: 5_000,
-                    nextCheckAtMs: 5_000,
-                    attemptCount: 0,
-                    maxAttempts: 3,
-                    lastProbeError: null,
-                    resumePromptMode: 'standard',
-                    selectedAuth: { kind: 'native' },
-                },
-            };
-            const cancelControls = cancellingRuntime as typeof cancellingRuntime & {
-                cancelUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string; armedAtMs: number }) => Promise<unknown>;
-            };
-            const rearmControls = rearmingRuntime as typeof rearmingRuntime & {
-                enableUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string }) => Promise<unknown>;
-                cancelUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string; armedAtMs: number }) => Promise<unknown>;
-            };
-
-            holdUsageUpdates = true;
-            const cancelA = cancelControls.cancelUsageLimitWaitResume({
-                sessionId: 'session-usage-cancel-cas',
-                issueFingerprint: 'attempt-a',
-                armedAtMs: 1_000,
-            });
-            await waitForCondition(() => pendingUpdates.length === 1, { timeoutMs: 1_000, label: 'attempt A cancel transaction' });
-            const enableB = rearmControls.enableUsageLimitWaitResume({
-                sessionId: 'session-usage-cancel-cas',
-                issueFingerprint: 'attempt-b',
-            });
-            await waitForCondition(() => pendingUpdates.length === 2, { timeoutMs: 1_000, label: 'attempt B rearm transaction' });
-            pendingUpdates[1]!.commit();
-            const enabledB = await enableB as { recovery: { armedAtMs: number } };
-            pendingUpdates[0]!.commit();
-
-            await expect(cancelA).resolves.toMatchObject({
-                ok: false,
-                errorCode: 'usage_limit_recovery_attempt_superseded',
-            });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: { issueFingerprint: 'attempt-b', armedAtMs: enabledB.recovery.armedAtMs, status: 'waiting' },
-            });
-
-            holdUsageUpdates = false;
-            await expect(rearmControls.cancelUsageLimitWaitResume({
-                sessionId: 'session-usage-cancel-cas',
-                issueFingerprint: 'attempt-b',
-                armedAtMs: enabledB.recovery.armedAtMs,
-            })).resolves.toMatchObject({ ok: true, recovery: { status: 'cancelled' } });
-        } finally {
-            nowSpy.mockRestore();
-            await Promise.allSettled([cancellingRuntime.reset(), rearmingRuntime.reset()]);
-        }
-    });
-
-    it('returns a typed failure when the production usage-limit metadata transaction cannot persist', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-persist-failure-');
-        let metadata: Metadata = createRuntimeMetadata(root);
-        let failUsagePersistence = false;
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            const next = handler(metadata);
-            if (failUsagePersistence && SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY in next) {
-                throw new Error('metadata persistence unavailable');
-            }
-            metadata = next;
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-persist-failure',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({ runtimeAuthClassification: { kind: 'usage_limit' } });
-            failUsagePersistence = true;
-            const controls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume: (request: { sessionId: string; issueFingerprint: string }) => Promise<unknown>;
-            };
-            await expect(controls.enableUsageLimitWaitResume({
-                sessionId: 'session-usage-persist-failure',
-                issueFingerprint: 'persist-failure',
-            })).resolves.toMatchObject({
-                ok: false,
-                errorCode: 'usage_limit_recovery_persistence_failed',
-            });
-            expect(metadata).not.toHaveProperty(SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY);
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it.each([
-        ['mismatched generation', JSON.stringify({ daemonExecutionGenerationV1: 'daemon-after-restart' })],
-        ['malformed JSON', '{'],
-        ['non-string generation field', JSON.stringify({ daemonExecutionGenerationV1: ['daemon-before-restart'] })],
-        ['missing daemon state', null],
-    ])('keeps a surviving runner automatic usage-limit retry active across %s', async (_label, daemonStateContents) => {
-        const { root, fakeAppServer, requestLogPath } = await createRuntimeFixture(
-            'happier-codex-app-server-runtime-stale-daemon-usage-recovery-',
-        );
-        const daemonStatePath = join(root, 'daemon.state.json');
-        if (daemonStateContents !== null) {
-            await writeFile(daemonStatePath, daemonStateContents);
-        }
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-            HAPPIER_DAEMON_EXECUTION_GENERATION_V1: 'daemon-before-restart',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            daemonStatePath,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-stale-daemon-usage-recovery',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-
-            await runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-stale-daemon-usage-recovery',
-            });
-            await waitForCondition(async () => (
-                (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/resume').length === 1
-            ), {
-                timeoutMs: 2_000,
-                label: 'surviving-runner usage recovery to continue',
-            });
-
-            const requestLog = await readRequestLog(requestLogPath);
-            expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toHaveLength(1);
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: { status: 'cancelled' },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('arms usage-limit recovery from the latest issue before probing on check-now', async () => {
-        const { root, fakeAppServer, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-check-now-');
-        const codexHome = join(root, 'codex-home');
-        await mkdir(codexHome, { recursive: true });
-        await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
-            tokens: { access_token: 'native-access', account_id: 'native-account' },
-        }));
-        const creditRequestHeaders: Headers[] = [];
-        vi.stubGlobal('fetch', async (_url: unknown, options?: RequestInit) => {
-            creditRequestHeaders.push(new Headers(options?.headers));
-            return new Response(JSON.stringify({ credits: [] }), { status: 200 });
-        });
-        // runCodex installs this bridge even for native sessions. With no
-        // connected selection it rejects rather than returning native tokens.
-        const onChatGptAuthTokensRefresh = vi.fn(async () => {
-            throw new Error('connected_service_chatgpt_refresh_selection_unavailable');
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: codexHome,
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            onChatGptAuthTokensRefresh,
-            session: {
-                sessionId: 'session-usage-check-now',
-                updateMetadata,
-                sessionTurnLifecycle,
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const runtimeControls = runtime as typeof runtime & {
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string; resumePromptMode?: 'standard' | 'off' | 'custom' }) => Promise<unknown>;
-            };
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-check-now',
-                resumePromptMode: 'off',
-            })).resolves.toMatchObject({
-                ok: true,
-                status: 'resumed',
-            });
-
-            const requestLog = await readRequestLog(requestLogPath);
-            expect(requestLog.map((entry) => entry.method)).toContain('account/rateLimits/read');
-            expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toHaveLength(1);
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'cancelled',
-                    resumePromptMode: 'off',
-                    selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
-                },
-            });
-            expect(onChatGptAuthTokensRefresh).not.toHaveBeenCalled();
-            expect(creditRequestHeaders.length).toBeGreaterThan(0);
-            expect(creditRequestHeaders.every(headers => headers.get('Authorization') === 'Bearer native-access'
-                && headers.get('ChatGPT-Account-Id') === 'native-account')).toBe(true);
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({ sessionId: 'session-usage-check-now' })).resolves.toMatchObject({
-                ok: true,
-                status: 'rate_limited',
-                errorCode: 'probe_rate_limited',
-                retryAfterMs: expect.any(Number),
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('routes usage-limit rate-limit probes through the shared param-compat reader with null params when accepted', async () => {
-        const { root, fakeAppServer, requestLogPath } = await createRuntimeFixture(
-            'happier-codex-app-server-runtime-rate-limit-params-',
-        );
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-check-now',
-                updateMetadata,
-                sessionTurnLifecycle,
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const runtimeControls = runtime as typeof runtime & {
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({ sessionId: 'session-usage-check-now' })).resolves.toMatchObject({
-                ok: true,
-                status: 'resumed',
-            });
-
-            const rateLimitReads = (await readRequestLog(requestLogPath))
-                .filter((entry) => entry.method === 'account/rateLimits/read');
-            expect(rateLimitReads.map((entry) => entry.params)).toEqual([null, null]);
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('reruns connected-service group fallback when check-now finds the active Codex member still exhausted', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-group-recovery-', {
-            rateLimitReadResult: {
-                plan_type: 'pro',
-                primary: {
-                    used_percent: 100,
-                    resets_at: '2026-05-17T12:00:00.000Z',
-                },
-            },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: true,
-            statusCode: null,
-            statusMessage: null,
-            report: {
-                ok: true,
-                result: {
-                    status: 'switch_attempted',
-                    result: {
-                        status: 'switched',
-                        activeProfileId: 'backup',
-                        generation: 2,
-                        verificationByServiceId: {
-                            'openai-codex': { status: 'verified', reason: 'active_account_match' },
-                        },
-                    },
-                },
-            },
-        }));
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
-                {
-                    kind: 'group',
-                    serviceId: 'openai-codex',
-                    groupId: 'team',
-                    activeProfileId: 'primary',
-                    fallbackProfileId: 'primary',
-                    generation: 1,
-                },
-            ]),
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            session: {
-                sessionId: 'session-usage-group-recovery',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await expect(runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-usage-group-recovery',
-            })).resolves.toMatchObject({
-                ok: true,
-                recovery: {
-                    selectedAuth: {
-                        kind: 'group',
-                        serviceId: 'openai-codex',
-                        groupId: 'team',
-                        profileId: 'primary',
-                    },
-                },
-            });
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({ sessionId: 'session-usage-group-recovery' })).resolves.toMatchObject({
-                ok: true,
-                status: 'ready',
-            });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'paused',
-                    nextCheckAtMs: null,
-                    selectedAuth: {
-                        kind: 'group',
-                        serviceId: 'openai-codex',
-                        groupId: 'team',
-                        profileId: 'backup',
-                    },
-                },
-            });
-            expect(onUsageLimitGroupRecovery).toHaveBeenCalledWith({
-                sessionId: 'session-usage-group-recovery',
-                classification: expect.objectContaining({
-                    kind: 'usage_limit',
-                    serviceId: 'openai-codex',
-                    groupId: 'team',
-                    profileId: 'primary',
-                    resetsAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
-                    planType: 'pro',
-                }),
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('surfaces typed group generation apply failures during usage-limit check-now', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-group-apply-failed-', {
-            rateLimitReadResult: {
-                plan_type: 'pro',
-                primary: {
-                    used_percent: 100,
-                    resets_at: '2026-05-17T12:00:00.000Z',
-                },
-            },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: true,
-            statusCode: null,
-            statusMessage: null,
-            report: {
-                ok: true,
-                result: {
-                    status: 'switch_attempted',
-                    result: {
-                        status: 'generation_apply_failed',
-                        activeProfileId: 'backup',
-                        generation: 2,
-                        errorCode: 'provider_session_state_unavailable_for_resume',
-                    },
-                },
-            },
-        }));
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
-                {
-                    kind: 'group',
-                    serviceId: 'openai-codex',
-                    groupId: 'team',
-                    activeProfileId: 'primary',
-                    fallbackProfileId: 'primary',
-                    generation: 1,
-                },
-            ]),
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            session: {
-                sessionId: 'session-usage-group-apply-failed',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-usage-group-apply-failed',
-            });
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-group-apply-failed',
-            })).resolves.toMatchObject({
-                ok: true,
-                status: 'exhausted',
-            });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'exhausted',
-                    lastProbeError: 'connected_service_generation_apply_failed:provider_session_state_unavailable_for_resume',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('keeps usage-limit recovery waiting when the rate-limit probe fails transiently (never durable exhausted)', async () => {
-        // RD-CDX-8: a transient `account/rateLimits/read` failure (timeout/conn-reset/RPC
-        // unavailable, incl. a probe racing the hot-swap app-server restart) is not an
-        // authoritative provider verdict and must keep the durable intent WAITING.
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-probe-failure-', {
-            rejectRateLimitRead: true,
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-probe-failure',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-usage-probe-failure',
-            });
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-probe-failure',
-            })).resolves.toMatchObject({
-                ok: true,
-                status: 'waiting',
-            });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                    nextCheckAtMs: expect.any(Number),
-                    lastProbeError: 'codex_app_server_rate_limit_probe_unavailable',
-                },
-            });
-            const recovery = (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY] as { nextCheckAtMs?: number };
-            // Bounded degraded retry: never immediate, never terminal.
-            expect(recovery.nextCheckAtMs).toBeGreaterThan(Date.now());
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('routes a source-real token_invalidated quota-probe verdict into connected credential recovery', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-probe-token-invalid-', {
-            rateLimitReadError: {
-                code: -32000,
-                message: 'unexpected status 401 Unauthorized: authentication token has been invalidated; auth error code: token_invalidated',
-            },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: true,
-            statusCode: null,
-            statusMessage: null,
-            report: {
-                ok: true,
-                result: { status: 'recovery_action_required', action: { kind: 'reconnect_profile' } },
-            },
-        }));
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
-                kind: 'group',
-                serviceId: 'openai-codex',
-                groupId: 'team',
-                activeProfileId: 'primary',
-                fallbackProfileId: 'primary',
-                generation: 7,
-            }]),
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            initialConnectedServiceRuntimeIdentity: {
-                serviceId: 'openai-codex',
-                activeAccountId: 'acct_primary',
-                accountLabel: null,
-                profileId: 'primary',
-                groupId: 'team',
-                generation: 7,
-                credentialFingerprint: 'sha256:primary1',
-                source: 'spawn_selection',
-            },
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            session: {
-                sessionId: 'session-usage-probe-token-invalid',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const runtimeControls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await runtimeControls.enableUsageLimitWaitResume?.({
-                sessionId: 'session-usage-probe-token-invalid',
-            });
-
-            await expect(runtimeControls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-probe-token-invalid',
-            })).resolves.toMatchObject({ ok: true, status: 'exhausted' });
-            expect(onUsageLimitGroupRecovery).toHaveBeenCalledWith({
-                sessionId: 'session-usage-probe-token-invalid',
-                classification: expect.objectContaining({
-                    kind: 'auth_expired',
-                    serviceId: 'openai-codex',
-                    profileId: 'primary',
-                    groupId: 'team',
-                    groupGeneration: 7,
-                }),
-            });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'exhausted',
-                    lastProbeError: 'connected_service_probe_credential_recovery_committed',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it.each(['recovery_retry_scheduled', 'recovery_handler_failed', 'action_required'] as const)(
-      'keeps waiting when token_invalidated recovery reports %s without a committed disposition',
-      async (recoveryStatus) => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-probe-token-invalid-unhandled-', {
-            rateLimitReadError: {
-                code: -32000,
-                message: 'unexpected status 401 Unauthorized: authentication token has been invalidated; auth error code: token_invalidated',
-            },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: true,
-            report: { ok: true, result: { status: recoveryStatus } },
-            statusCode: null,
-            statusMessage: null,
-        }));
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
-                CODEX_HOME: join(root, 'codex-home'),
-                OPENAI_API_KEY: 'test-openai-key',
-                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
-                    kind: 'group', serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 7,
-                }]),
-            }),
-            initialConnectedServiceRuntimeIdentity: {
-                serviceId: 'openai-codex',
-                activeAccountId: 'acct_primary',
-                accountLabel: null,
-                profileId: 'primary',
-                groupId: 'team',
-                generation: 7,
-                credentialFingerprint: 'sha256:primary1',
-                source: 'spawn_selection',
-            },
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            session: {
-                sessionId: 'session-usage-probe-token-invalid-unhandled',
-                updateMetadata: vi.fn(async (handler: (current: Metadata) => Metadata) => { metadata = handler(metadata); }),
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            expect(onUsageLimitGroupRecovery).toHaveBeenCalledOnce();
-            onUsageLimitGroupRecovery.mockClear();
-            const controls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await controls.enableUsageLimitWaitResume?.({ sessionId: 'session-usage-probe-token-invalid-unhandled' });
-            await expect(controls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-probe-token-invalid-unhandled',
-            })).resolves.toMatchObject({ ok: true, status: 'waiting' });
-            expect(onUsageLimitGroupRecovery).toHaveBeenCalledOnce();
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                    lastProbeError: 'connected_service_probe_credential_recovery_uncommitted',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-      },
-    );
-
-    it('settles token_invalidated waiting from an explicit terminal recovery receipt independent of presentation handling', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-usage-probe-terminal-receipt-', {
-            rateLimitReadError: {
-                code: -32000,
-                message: 'unexpected status 401 Unauthorized: authentication token has been invalidated; auth error code: token_invalidated',
-            },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: false,
-            report: { ok: true, result: { status: 'recovery_retry_scheduled' } },
-            statusCode: null,
-            statusMessage: null,
-            recoveryReceipt: {
-                reportId: 'runtime-auth-report:terminal-receipt',
-                attemptId: 'attempt-terminal-receipt',
-                transition: 'terminal',
-                eventLocalId: 'runtime-auth-recovery:attempt-terminal-receipt:terminal',
-            },
-        }));
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
-                CODEX_HOME: join(root, 'codex-home'),
-                OPENAI_API_KEY: 'test-openai-key',
-                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
-                    kind: 'group', serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 7,
-                }]),
-            }),
-            initialConnectedServiceRuntimeIdentity: {
-                serviceId: 'openai-codex', activeAccountId: 'acct_primary', accountLabel: null,
-                profileId: 'primary', groupId: 'team', generation: 7,
-                credentialFingerprint: 'sha256:primary1', source: 'spawn_selection',
-            },
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            session: {
-                sessionId: 'session-usage-probe-terminal-receipt',
-                updateMetadata: vi.fn(async (handler: (current: Metadata) => Metadata) => { metadata = handler(metadata); }),
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const controls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-            };
-            await controls.enableUsageLimitWaitResume?.({ sessionId: 'session-usage-probe-terminal-receipt' });
-            await expect(controls.checkUsageLimitRecoveryNow?.({
-                sessionId: 'session-usage-probe-terminal-receipt',
-            })).resolves.toMatchObject({ ok: true, status: 'exhausted' });
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'exhausted',
-                    lastProbeError: 'connected_service_probe_credential_recovery_committed',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('does not attribute a delayed quota-probe auth error to a credential hot-applied after the request began', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-quota-probe-identity-race-', {
-            rateLimitReadDelayMs: 200,
-            rateLimitReadError: {
-                code: -32000,
-                message: 'unexpected status 401 Unauthorized: authentication token has been invalidated; auth error code: token_invalidated',
-            },
-            accountReadResult: { account: { email: 'replacement@example.test' } },
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const onUsageLimitGroupRecovery = vi.fn(async () => ({
-            handled: false,
-            report: null,
-            statusCode: null,
-            statusMessage: null,
-        }));
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-            initialConnectedServiceRuntimeIdentity: {
-                serviceId: 'openai-codex',
-                activeAccountId: 'acct_original',
-                accountLabel: 'original@example.test',
-                profileId: 'original',
-                groupId: 'team',
-                generation: 7,
-                credentialFingerprint: 'sha256:original1',
-                source: 'spawn_selection',
-            },
-            onThinkingChange: vi.fn(),
-            onUsageLimitGroupRecovery,
-            onConnectedServiceAuthGenerationApplied: vi.fn(async () => {}),
-            session: {
-                sessionId: 'session-quota-probe-identity-race',
-                updateMetadata: vi.fn(async (handler: (current: Metadata) => Metadata) => { metadata = handler(metadata); }),
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-        const replacement = buildConnectedServiceCredentialRecord({
-            now: 1_000,
-            serviceId: 'openai-codex',
-            profileId: 'replacement',
-            kind: 'oauth',
-            expiresAt: 2_000,
-            oauth: {
-                accessToken: 'replacement-access',
-                refreshToken: 'replacement-refresh',
-                idToken: 'replacement-id',
-                scope: null,
-                tokenType: null,
-                providerAccountId: 'acct_replacement',
-                providerEmail: 'replacement@example.test',
-            },
-        });
-        await writeCodexAuthStoreFile({ codexHome: join(root, 'codex-home'), record: replacement });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            const controls = runtime as typeof runtime & {
-                enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
-                checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;
-                applyConnectedServiceAuthGeneration?: (request: unknown) => Promise<unknown>;
-            };
-            await controls.enableUsageLimitWaitResume?.({ sessionId: 'session-quota-probe-identity-race' });
-            onUsageLimitGroupRecovery.mockClear();
-
-            const check = controls.checkUsageLimitRecoveryNow?.({ sessionId: 'session-quota-probe-identity-race' });
-            await new Promise((resolve) => setTimeout(resolve, 25));
-            const apply = controls.applyConnectedServiceAuthGeneration?.({
-                serviceId: 'openai-codex',
-                reason: 'usage_limit',
-                expected: { profileId: 'replacement', groupId: 'team', generation: 8 },
-                authGeneration: {
-                    credential: replacement,
-                    selection: {
-                        kind: 'group',
-                        serviceId: 'openai-codex',
-                        groupId: 'team',
-                        activeProfileId: 'replacement',
-                        fallbackProfileId: 'original',
-                        generation: 8,
-                    },
-                    forcedWorkspaceId: null,
-                },
-            });
-
-            await expect(check).resolves.toMatchObject({ ok: true, status: 'waiting' });
-            await expect(apply).resolves.toMatchObject({ ok: true, activeAccountId: 'acct_replacement' });
-            expect(onUsageLimitGroupRecovery).not.toHaveBeenCalled();
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                    lastProbeError: 'codex_app_server_rate_limit_probe_unavailable',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('reads reset credits with the current daemon account instead of the launch-home credential', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-reset-current-account-');
-        setActiveAccountSettingsSnapshot({ source: 'network',
-            settings: { usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' } } as AccountSettings,
-            settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
-        });
-        const codexHome = join(root, 'codex-home');
-        await mkdir(codexHome, { recursive: true });
-        await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
-            tokens: { access_token: 'launch-A', account_id: 'account-A' },
-        }));
-        const headers: Headers[] = [];
-        vi.stubGlobal('fetch', async (_url: unknown, options?: RequestInit) => {
-            headers.push(new Headers(options?.headers));
-            return new Response(JSON.stringify({ credits: [] }), { status: 200 });
-        });
-        const session = createMutableApiSessionClientFixture({ metadata: createRuntimeMetadata(root),
-            overrides: {
-                sendCodexMessage: vi.fn(), sendSessionEvent: vi.fn(),
-            },
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root, processEnv: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome }),
-            onThinkingChange: vi.fn(), session,
-            initialConnectedServiceRuntimeIdentity: {
-                serviceId: 'openai-codex', activeAccountId: 'account-B', accountLabel: null,
-                profileId: 'current', credentialFingerprint: null, source: 'applied_credential',
-            },
-            onChatGptAuthTokensRefresh: async () => ({
-                accessToken: 'current-B', chatgptAccountId: 'account-B', chatgptPlanType: null,
-            }),
-        });
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-            expect(headers.length).toBeGreaterThan(0);
-            expect(headers.every(value => value.get('Authorization') === 'Bearer current-B'
-                && value.get('ChatGPT-Account-Id') === 'account-B')).toBe(true);
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('auto-arms usage-limit wait/resume when the account setting is auto-wait', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-auto-wait-');
-        setActiveAccountSettingsSnapshot({
-            source: 'network',
-            settings: {
-                usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' },
-            } as AccountSettings,
-            settingsVersion: 1,
-            loadedAtMs: Date.now(),
-            settingsSecretsReadKeys: [],
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-auto-wait',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                runtimeAuthClassification: { kind: 'usage_limit' },
-            });
-
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                    resetAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
-                    selectedAuth: { kind: 'native' },
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it.each(['off', 'custom'] as const)(
-        'auto-arms usage-limit wait/resume preserving the account resumePromptMode=%s',
-        async (resumePromptMode) => {
-            const { root, fakeAppServer } = await createRuntimeFixture(`happier-codex-app-server-runtime-usage-auto-wait-resume-${resumePromptMode}-`);
-            setActiveAccountSettingsSnapshot({
-                source: 'network',
-                settings: {
-                    usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait', resumePromptMode },
-                } as AccountSettings,
-                settingsVersion: 1,
-                loadedAtMs: Date.now(),
-                settingsSecretsReadKeys: [],
-            });
-            let metadata: Metadata = {
-                path: root,
-                host: 'test-host',
-                homeDir: root,
-                happyHomeDir: join(root, '.happier'),
-                happyLibDir: join(root, '.happier', 'lib'),
-                happyToolsDir: join(root, '.happier', 'tools'),
-            };
-            const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-                metadata = handler(metadata);
-            });
-            const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-                CODEX_HOME: join(root, 'codex-home'),
-                OPENAI_API_KEY: 'test-openai-key',
-            });
-            const runtime = createCodexAppServerRuntime({
-                directory: root,
-                processEnv,
-                onThinkingChange: vi.fn(),
-                session: {
-                    sessionId: `session-usage-auto-wait-resume-${resumePromptMode}`,
-                    updateMetadata,
-                    sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                    getMetadataSnapshot: () => metadata,
-                    sendCodexMessage: vi.fn(),
-                    sendSessionEvent: vi.fn(),
-                } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-            });
-
-            try {
-                await runtime.startOrLoad({});
-                await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
-                    runtimeAuthClassification: { kind: 'usage_limit' },
-                });
-
-                // The auto-armed recovery intent must carry the account's configured resume-prompt
-                // behavior, not silently default to 'standard'.
-                expect(metadata).toMatchObject({
-                    sessionUsageLimitRecoveryV1: {
-                        status: 'waiting',
-                        resumePromptMode,
-                    },
-                });
-            } finally {
-                await runtime.reset();
-            }
-        },
-    );
-
-    it('auto-arms usage-limit recovery with a derived next check when only retry-after timing is available', async () => {
-        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-retry-after-auto-wait-');
-        setActiveAccountSettingsSnapshot({
-            source: 'network',
-            settings: {
-                usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' },
-            } as AccountSettings,
-            settingsVersion: 1,
-            loadedAtMs: Date.now(),
-            settingsSecretsReadKeys: [],
-        });
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-retry-after-auto-wait',
-                updateMetadata,
-                sessionTurnLifecycle: createSessionTurnLifecycleTestDouble(),
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-            const beforeFailureMs = Date.now();
-            await expect(runtime.sendPrompt('usage-limit-retry-after-only')).rejects.toMatchObject({
-                runtimeAuthClassification: {
-                    kind: 'usage_limit',
-                    resetsAtMs: null,
-                    retryAfterMs: 120_000,
-                },
-            });
-            const afterFailureMs = Date.now();
-
-            const recovery = (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY] as {
-                resetAtMs?: number | null;
-                nextCheckAtMs?: number | null;
-            };
-            expect(recovery).toMatchObject({
-                status: 'waiting',
-                resetAtMs: null,
-                selectedAuth: { kind: 'native' },
-            });
-            expect(recovery.nextCheckAtMs).toBeGreaterThanOrEqual(beforeFailureMs + 120_000);
-            expect(recovery.nextCheckAtMs).toBeLessThanOrEqual(afterFailureMs + 120_000);
-        } finally {
-            await runtime.reset();
-        }
-    });
-
-    it('keeps a persisted usage-limit intent dormant after start without resuming the provider', async () => {
-        const { root, fakeAppServer, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-usage-recovery-restore-');
-        let metadata: Metadata = {
-            path: root,
-            host: 'test-host',
-            homeDir: root,
-            happyHomeDir: join(root, '.happier'),
-            happyLibDir: join(root, '.happier', 'lib'),
-            happyToolsDir: join(root, '.happier', 'tools'),
-            sessionUsageLimitRecoveryV1: {
-                v: 1,
-                status: 'waiting',
-                issueFingerprint: 'usage-limit:session-usage-restore:1',
-                armedAtMs: Date.now() - 1_000,
-                resetAtMs: Date.now(),
-                nextCheckAtMs: Date.now(),
-                attemptCount: 0,
-                maxAttempts: 3,
-                lastProbeError: null,
-                resumePromptMode: 'standard',
-                selectedAuth: { kind: 'native' },
-            },
-        };
-        const updateMetadata = vi.fn(async (handler: (current: Metadata) => Metadata) => {
-            metadata = handler(metadata);
-        });
-        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
-            CODEX_HOME: join(root, 'codex-home'),
-            OPENAI_API_KEY: 'test-openai-key',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            processEnv,
-            onThinkingChange: vi.fn(),
-            session: {
-                sessionId: 'session-usage-restore',
-                updateMetadata,
-                getMetadataSnapshot: () => metadata,
-                sendCodexMessage: vi.fn(),
-                sendSessionEvent: vi.fn(),
-            } as unknown as Parameters<typeof createCodexAppServerRuntime>[0]['session'],
-        });
-
-        try {
-            await runtime.startOrLoad({});
-
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            const requestLog = await readRequestLog(requestLogPath);
-            expect(requestLog.map((entry) => entry.method)).not.toContain('thread/resume');
-            expect(metadata).toMatchObject({
-                sessionUsageLimitRecoveryV1: {
-                    status: 'waiting',
-                },
-            });
-        } finally {
-            await runtime.reset();
-        }
     });
 
     it('publishes Codex account/rateLimits/updated snapshots to the runtime quota callback', async () => {
@@ -11707,8 +10516,10 @@ describe('createCodexAppServerRuntime', () => {
 
         const sendCodexMessage = vi.fn();
         const sendSessionEvent = vi.fn();
+        const reportFailure = vi.fn(async () => ({ handled: true, report: null, statusCode: null, statusMessage: null }));
         const runtime = createCodexAppServerRuntime({
             directory: root,
+            onUsageLimitGroupRecovery: reportFailure,
             onThinkingChange: vi.fn(),
             session: {
                 updateMetadata: vi.fn(),
@@ -11737,6 +10548,9 @@ describe('createCodexAppServerRuntime', () => {
         expect(retriedTurnStarts.map((entry: { params?: { threadId?: string } }) => entry.params?.threadId)).toEqual([
             'thread-started',
         ]);
+        expect(reportFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            classification: expect.objectContaining({ kind: 'account_changed' }),
+        }));
         expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
             type: 'message',
             message: expect.stringContaining('access token could not be refreshed'),
@@ -11862,8 +10676,10 @@ describe('createCodexAppServerRuntime', () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-model-capacity-retry-');
 
         const sendCodexMessage = vi.fn();
+        const reportFailure = vi.fn(async () => ({ handled: true, report: null, statusCode: null, statusMessage: null }));
         const runtime = createCodexAppServerRuntime({
             directory: root,
+            onUsageLimitGroupRecovery: reportFailure,
             onThinkingChange: vi.fn(),
             session: {
                 updateMetadata: vi.fn(),
@@ -11883,6 +10699,9 @@ describe('createCodexAppServerRuntime', () => {
             return entry.method === 'turn/start' && params?.input?.[0]?.text === 'model-capacity-once';
         });
         expect(turnStarts).toHaveLength(1);
+        expect(reportFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            classification: expect.objectContaining({ kind: 'capacity' }),
+        }));
         expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
             type: 'message',
             message: expect.stringContaining('capacity'),
@@ -12035,6 +10854,39 @@ describe('createCodexAppServerRuntime', () => {
             type: 'message',
             message: expect.stringContaining('upstream provider rejected'),
         }));
+    });
+
+    it('records context-window exhaustion as the failed turn when Codex recovery is disabled', async () => {
+        const { root, fakeAppServer } = await createRuntimeFixture('happier-codex-app-server-runtime-context-window-disabled-lifecycle-');
+        const processEnv = createCodexAppServerProcessEnv(fakeAppServer, {
+            HAPPIER_CODEX_CONTEXT_WINDOW_RECOVERY_MODE: 'off',
+        });
+        const mutations: SessionTurnMutationV1[] = [];
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            processEnv,
+            onThinkingChange: vi.fn(),
+            session: {
+                ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+                sessionTurnLifecycle: createSessionTurnLifecycle({
+                    sessionId: 'session-context-window-disabled',
+                    enqueueSessionTurn: async (mutation) => { mutations.push(mutation); },
+                }),
+            } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'],
+        });
+
+        await runtime.startOrLoad({});
+        const error = await runtime.sendPrompt('context-window-exhausted-once').then(() => null, (caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        // No retry remains, so the runtime records the provider failure itself and the runner
+        // must not report it again.
+        expect(readCodexTurnFailureSettlement(error)).toBe('failed');
+        expect(mutations.at(-1)).toMatchObject({
+            action: 'fail',
+            provider: 'codex',
+            issue: expect.objectContaining({ provider: 'codex' }),
+        });
     });
 
     it('surfaces the original context-window failure when retrying after compaction fails again', async () => {

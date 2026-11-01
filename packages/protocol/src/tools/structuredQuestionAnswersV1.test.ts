@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   StructuredQuestionAnswersV1Schema,
+  StructuredQuestionResponseV1Schema,
   buildLegacyStructuredQuestionAnswers,
   isAskUserQuestionToolName,
   normalizeStructuredQuestionDescriptors,
@@ -9,6 +10,15 @@ import {
 } from './structuredQuestionAnswersV1.js';
 
 describe('StructuredQuestionAnswersV1', () => {
+  it('accepts an optional nonblank occurrence while retaining the strict structured response', () => {
+    const response = { id: 'question', structuredAnswersV1: { q: ['a'] } };
+    expect(StructuredQuestionResponseV1Schema.parse(response)).toEqual(response);
+    expect(StructuredQuestionResponseV1Schema.parse({ ...response, occurrenceId: ' occurrence ' }))
+      .toEqual({ ...response, occurrenceId: 'occurrence' });
+    expect(StructuredQuestionResponseV1Schema.safeParse({ ...response, occurrenceId: ' ' }).success).toBe(false);
+    expect(StructuredQuestionResponseV1Schema.safeParse({ ...response, approved: true }).success).toBe(false);
+  });
+
   it('recognizes exactly the two canonical AskUserQuestion aliases', () => {
     expect(isAskUserQuestionToolName('AskUserQuestion')).toBe(true);
     expect(isAskUserQuestionToolName('ask_user_question')).toBe(true);

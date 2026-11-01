@@ -43,6 +43,7 @@ describe('AgentInput armed continuation controls', () => {
                 path: '/repo',
                 host: 'host',
                 flavor: 'codex',
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'build' },
                 sessionModesV1: { v: 1, updatedAt: 1, provider: 'codex', currentModeId: 'build', availableModes: [
                     { id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' },
                 ] },

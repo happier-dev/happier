@@ -1,36 +1,37 @@
-import {
-  methods,
-  type AuthenticateRequest,
-  type AuthenticateResponse,
-  type CancelNotification,
-  type ClientContext,
-  type CloseSessionRequest,
-  type CloseSessionResponse,
-  type DeleteSessionRequest,
-  type DeleteSessionResponse,
-  type ForkSessionRequest,
-  type ForkSessionResponse,
-  type InitializeRequest,
-  type InitializeResponse,
-  type LoadSessionRequest,
-  type LoadSessionResponse,
-  type ListSessionsRequest,
-  type ListSessionsResponse,
-  type NewSessionRequest,
-  type NewSessionResponse,
-  type PromptRequest,
-  type PromptResponse,
-  type SetSessionConfigOptionRequest,
-  type SetSessionConfigOptionResponse,
-  type SetSessionModeRequest,
-  type SetSessionModeResponse,
+import type {
+  AuthenticateRequest,
+  AuthenticateResponse,
+  CancelNotification,
+  ClientContext,
+  CloseSessionRequest,
+  CloseSessionResponse,
+  DeleteSessionRequest,
+  DeleteSessionResponse,
+  ForkSessionRequest,
+  ForkSessionResponse,
+  InitializeRequest,
+  InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  PromptRequest,
+  PromptResponse,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
+  SetSessionModeRequest,
+  SetSessionModeResponse,
 } from '@agentclientprotocol/sdk';
 import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
 } from '@happier-dev/protocol';
 
+import type { AcpSdk } from './acpSdk';
 import type { AcpClientConnectionOptions } from './types';
+import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 
 const ACP_ERROR_DIAGNOSTIC_MAX_BYTES = 16_384;
 
@@ -54,6 +55,7 @@ function cloneErrorWithSanitizedData(
 
 export class AcpAgentPeer {
   constructor(
+    private readonly methods: AcpSdk['methods'],
     private readonly context: ClientContext,
     private readonly connectionSignal: AbortSignal,
     private readonly isAuthenticationSetupFailure?: AcpClientConnectionOptions['isAuthenticationSetupFailure'],
@@ -91,12 +93,19 @@ export class AcpAgentPeer {
             ACP_ERROR_DIAGNOSTIC_MAX_BYTES,
           ).trim()
           : '';
+        const limitCategory = classifyProviderLimitEvidence([error, dataRecord]);
+        const sanitizedData = {
+          ...(sanitizedDetails ? { details: sanitizedDetails } : {}),
+          ...(limitCategory === 'usage_limit' || limitCategory === 'rate_limit' ? {
+            limitCategory,
+            ...parseProviderResetAt({ body: dataRecord, headers: dataRecord?.headers, nowMs: Date.now() }),
+          } : {}),
+        };
         let safeError = error as Error & { data?: unknown };
         if (dataRecord) {
           // JSON-RPC error data is provider-controlled. Happier consumes only the
-          // bounded diagnostic detail; retaining arbitrary sibling fields would
+          // bounded diagnostic and normalized limit evidence; arbitrary sibling fields would
           // surface unbounded payloads and secrets through callers/loggers.
-          const sanitizedData = sanitizedDetails ? { details: sanitizedDetails } : {};
           try {
             safeError.data = sanitizedData;
           } catch {
@@ -119,7 +128,7 @@ export class AcpAgentPeer {
         if (authenticationSetupFailure) {
           if (!Object.isExtensible(safeError)
             || Object.getOwnPropertyDescriptor(safeError, 'authenticationSetupFailure')?.configurable === false) {
-            safeError = cloneErrorWithSanitizedData(safeError, sanitizedDetails ? { details: sanitizedDetails } : {});
+            safeError = cloneErrorWithSanitizedData(safeError, sanitizedData);
           }
           Object.defineProperty(safeError, 'authenticationSetupFailure', {
             configurable: true,
@@ -134,58 +143,58 @@ export class AcpAgentPeer {
 
   initialize(params: InitializeRequest): Promise<InitializeResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.initialize, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.initialize, params));
   }
 
   authenticate(params: AuthenticateRequest): Promise<AuthenticateResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.authenticate, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.authenticate, params));
   }
 
   newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.session.new, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.session.new, params));
   }
 
   loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     this.assertActive();
     return this.requestWithDiagnostics(
-      () => this.context.request(methods.agent.session.load, params),
+      () => this.context.request(this.methods.agent.session.load, params),
     ).then((response) => response ?? {});
   }
 
   listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.session.list, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.session.list, params));
   }
 
   deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
     this.assertActive();
     return this.requestWithDiagnostics(
-      () => this.context.request(methods.agent.session.delete, params),
+      () => this.context.request(this.methods.agent.session.delete, params),
     ).then((response) => response ?? {});
   }
 
   closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
     this.assertActive();
     return this.requestWithDiagnostics(
-      () => this.context.request(methods.agent.session.close, params),
+      () => this.context.request(this.methods.agent.session.close, params),
     ).then((response) => response ?? {});
   }
 
   forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.session.fork, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.session.fork, params));
   }
 
   prompt(params: PromptRequest): Promise<PromptResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.session.prompt, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.session.prompt, params));
   }
 
   setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
     this.assertActive();
-    return this.requestWithDiagnostics(() => this.context.request(methods.agent.session.setMode, params));
+    return this.requestWithDiagnostics(() => this.context.request(this.methods.agent.session.setMode, params));
   }
 
   setSessionConfigOption(
@@ -193,7 +202,7 @@ export class AcpAgentPeer {
   ): Promise<SetSessionConfigOptionResponse> {
     this.assertActive();
     return this.requestWithDiagnostics(
-      () => this.context.request(methods.agent.session.setConfigOption, params),
+      () => this.context.request(this.methods.agent.session.setConfigOption, params),
     );
   }
 
@@ -207,7 +216,7 @@ export class AcpAgentPeer {
 
   cancel(params: CancelNotification): Promise<void> {
     this.assertActive();
-    return this.context.notify(methods.agent.session.cancel, params);
+    return this.context.notify(this.methods.agent.session.cancel, params);
   }
 
   async requestExtension<Response = unknown, Params = unknown>(

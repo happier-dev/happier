@@ -166,4 +166,42 @@ describe('playAudioBytesWithStopper (web)', () => {
     expect(pause).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
   });
+
+  it('does not start WebAudio playback when stopped while the audio is still decoding', async () => {
+    vi.resetModules();
+    const start = vi.fn();
+    let finishDecode: ((buffer: unknown) => void) | null = null;
+    class FakeAudioContext {
+      destination = {};
+      async resume() {}
+      decodeAudioData(_buf: ArrayBuffer) {
+        return new Promise((resolve) => {
+          finishDecode = resolve;
+        });
+      }
+      createBufferSource() {
+        return { connect() {}, disconnect() {}, start, stop() {}, onended: null };
+      }
+    }
+    (globalThis as any).AudioContext = FakeAudioContext;
+    const { playAudioBytesWithStopper: play } = await import('@/voice/output/playAudioBytesWithStopper');
+
+    let stopper: (() => void) | null = null;
+    const promise = play({
+      bytes: new Uint8Array([1]).buffer,
+      format: 'wav',
+      registerPlaybackStopper: (s) => {
+        stopper = s;
+        return () => {};
+      },
+    });
+
+    await vi.waitFor(() => expect(finishDecode).toBeTruthy());
+    stopper!();
+    await promise;
+    finishDecode!({ duration: 1 });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(start).not.toHaveBeenCalled();
+  });
 });

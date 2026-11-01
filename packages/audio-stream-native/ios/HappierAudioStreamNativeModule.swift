@@ -6,6 +6,7 @@ import Foundation
 private final class AudioStreamSession {
   private let queue: DispatchQueue
   private let emitFrame: (_ event: [String: Any]) -> Void
+  private let emitError: (_ event: [String: Any]) -> Void
 
   let streamId: String
   let sampleRate: Double
@@ -14,10 +15,12 @@ private final class AudioStreamSession {
 
   private var engine: AVAudioEngine?
   private var accumulated = Data()
+  private var reportedError = false
 
   init(
     queue: DispatchQueue,
     emitFrame: @escaping (_ event: [String: Any]) -> Void,
+    emitError: @escaping (_ event: [String: Any]) -> Void,
     streamId: String,
     sampleRate: Double,
     channels: Int,
@@ -25,6 +28,7 @@ private final class AudioStreamSession {
   ) {
     self.queue = queue
     self.emitFrame = emitFrame
+    self.emitError = emitError
     self.streamId = streamId
     self.sampleRate = sampleRate
     self.channels = channels
@@ -32,31 +36,75 @@ private final class AudioStreamSession {
   }
 
   func start(frameMs: Int) throws {
+    do {
+      try startEngine(frameMs: frameMs)
+    } catch {
+      // Leave no active session behind a failed start: it would keep other apps' audio interrupted.
+      try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+      throw error
+    }
+  }
+
+  // AVAudioConverter can emit a few frames more than the exact rate ratio while its resampler drains.
+  private static let convertedFrameSlack: AVAudioFrameCount = 32
+
+  private func startEngine(frameMs: Int) throws {
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .measurement, options: [.allowBluetooth])
+    // Voice turns alternate listening with spoken replies played by other players while this category is
+    // still set, so output must default to the speaker rather than the receiver (earpiece).
+    // `.default` mode: `.measurement` lowers loudspeaker output, and `.voiceChat` only adds echo cancellation
+    // for audio rendered through this engine's voice-processing unit, which spoken replies are not.
+    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
     try session.setPreferredSampleRate(sampleRate)
     try session.setActive(true, options: [])
 
     let engine = AVAudioEngine()
     let input = engine.inputNode
 
+    // An input-node tap must use the hardware format (AVAudioEngine raises an exception otherwise), so
+    // capture in that format and convert to the requested PCM16 rate and channel count.
+    let hardwareFormat = input.outputFormat(forBus: 0)
+    guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 101, userInfo: [NSLocalizedDescriptionKey: "no_audio_input"])
+    }
     guard
       let format = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: sampleRate,
         channels: AVAudioChannelCount(channels),
         interleaved: true
-      )
+      ),
+      let converter = AVAudioConverter(from: hardwareFormat, to: format)
     else {
       throw NSError(domain: "HappierAudioStreamNative", code: 100, userInfo: [NSLocalizedDescriptionKey: "invalid_audio_format"])
     }
 
-    let framesPerBuffer = max(256, Int(sampleRate * Double(frameMs) / 1000.0))
-    input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(framesPerBuffer), format: format) { [weak self] buffer, _ in
+    let framesPerBuffer = max(256, Int(hardwareFormat.sampleRate * Double(frameMs) / 1000.0))
+    let rateRatio = sampleRate / hardwareFormat.sampleRate
+    input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(framesPerBuffer), format: hardwareFormat) { [weak self] buffer, _ in
       guard let self else { return }
-      guard let mData = buffer.audioBufferList.pointee.mBuffers.mData else { return }
+      let capacity = AVAudioFrameCount((Double(buffer.frameLength) * rateRatio).rounded(.up)) + Self.convertedFrameSlack
+      guard let converted = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return }
 
-      let byteSize = Int(buffer.audioBufferList.pointee.mBuffers.mDataByteSize)
+      // Taps arrive serially, so one converter keeps its resampler state across buffers.
+      var supplied = false
+      var conversionError: NSError?
+      let status = converter.convert(to: converted, error: &conversionError) { _, inputStatus in
+        if supplied {
+          inputStatus.pointee = .noDataNow
+          return nil
+        }
+        supplied = true
+        inputStatus.pointee = .haveData
+        return buffer
+      }
+      if status == .error {
+        self.emitErrorOnce(code: "conversion_failed", message: conversionError?.localizedDescription ?? "audio conversion failed")
+        return
+      }
+
+      guard let mData = converted.audioBufferList.pointee.mBuffers.mData else { return }
+      let byteSize = Int(converted.audioBufferList.pointee.mBuffers.mDataByteSize)
       if byteSize <= 0 { return }
 
       let bytes = Data(bytes: mData, count: byteSize)
@@ -76,8 +124,25 @@ private final class AudioStreamSession {
       }
     }
 
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      input.removeTap(onBus: 0)
+      throw error
+    }
     self.engine = engine
+  }
+
+  private func emitErrorOnce(code: String, message: String) {
+    queue.async {
+      if self.reportedError { return }
+      self.reportedError = true
+      self.emitError([
+        "streamId": self.streamId,
+        "code": code,
+        "message": message,
+      ])
+    }
   }
 
   func stop() {
@@ -102,7 +167,7 @@ public final class HappierAudioStreamNativeModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HappierAudioStreamNative")
 
-    Events("audioFrame")
+    Events("audioFrame", "audioError")
 
     AsyncFunction("start") { (params: [String: Any]) -> [String: String] in
       let sampleRate = (params["sampleRate"] as? Double) ?? 16000
@@ -125,6 +190,9 @@ public final class HappierAudioStreamNativeModule: Module {
           queue: self.queue,
           emitFrame: { event in
             self.sendEvent("audioFrame", event)
+          },
+          emitError: { event in
+            self.sendEvent("audioError", event)
           },
           streamId: streamId,
           sampleRate: sampleRate,

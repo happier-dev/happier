@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Console } from 'node:console';
-import axios from 'axios';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { requestSessionStop } from './requestSessionStop';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { AccountMachineInventoryRow } from '@/api/machine/fetchAccountMachines';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const boundary = vi.hoisted(() => ({ socket: null as unknown, mode: 'timeout' }));
 vi.mock('socket.io-client', () => ({ io: () => boundary.socket }));
@@ -14,18 +18,29 @@ describe('requestSessionStop machine transport', () => {
   const secret = new Uint8Array(32).fill(1);
   const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret } };
   let calls: string[];
+  let relay: FastifyInstance;
+  let restoreHttp: () => void;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     calls = [];
     // Only the network adapters are replaced; resolution, encryption, request disposition,
     // and Stop outcome classification all execute through their production owners.
-    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: {
+    const session = createSessionRecordFixture({
       id: sessionId, seq: 0, createdAt: 0, updatedAt: 0, active: false, activeAt: 0,
       metadata: encodeBase64(encrypt(secret, 'legacy', { machineId: 'owning-machine' })),
       metadataVersion: 0, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
       machineId: 'owning-machine',
-    } } });
+    });
+    const machine = { id: 'owning-machine', dataEncryptionKey: null } satisfies AccountMachineInventoryRow;
+    relay = Fastify();
+    relay.addHook('onRequest', async (request) => {
+      expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+    });
+    relay.get(`/v2/sessions/${sessionId}`, async () => ({ session }));
+    relay.get('/v1/machines/owning-machine', async () => ({ machine }));
+    await relay.ready();
+    restoreHttp = installAxiosFastifyAdapter({ app: relay, origin: new URL(resolveServerHttpBaseUrl()).origin });
     const events = new EventEmitter();
     boundary.socket = {
       on: events.on.bind(events), off: events.off.bind(events),
@@ -48,7 +63,9 @@ describe('requestSessionStop machine transport', () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    restoreHttp?.();
+    await relay?.close();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });

@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -121,7 +122,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') && method === 'GET') {
                 return createReachabilityProbeResponse();
@@ -153,7 +154,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
     });
 
     it('fetches + updates account encryption mode when enabled', async () => {
-        useFeatureEnabledMock.mockReturnValue(true);
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId === 'encryption.accountOptOut');
         useAuthMock.mockReturnValue({
             isAuthenticated: true,
             credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
@@ -164,7 +165,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') && method === 'GET') {
                 return createReachabilityProbeResponse();
@@ -229,7 +230,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
     });
 
     it('stores both the synced preference and trusted local pin when E2EE is required', async () => {
-        useFeatureEnabledMock.mockReturnValue(true);
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId === 'encryption.accountOptOut');
         useAuthMock.mockReturnValue({
             isAuthenticated: true,
             credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
@@ -244,7 +245,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         } as any, 7);
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) return createReachabilityProbeResponse();
             if (isFeaturesRequest(url)) {
@@ -276,7 +277,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
     });
 
     it('shows an error alert when updating account encryption mode fails', async () => {
-        useFeatureEnabledMock.mockReturnValue(true);
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId === 'encryption.accountOptOut');
         useAuthMock.mockReturnValue({
             isAuthenticated: true,
             credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
@@ -287,7 +288,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') && method === 'GET') {
                 return createReachabilityProbeResponse();
@@ -345,7 +346,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
     });
 
     it('enables e2ee on keyless credentials by generating a secret and migrating', async () => {
-        useFeatureEnabledMock.mockReturnValue(true);
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId === 'encryption.accountOptOut');
         const loginSpy = vi.fn(async () => {});
         useAuthMock.mockReturnValue({
             isAuthenticated: true,
@@ -360,7 +361,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') && method === 'GET') {
                 return createReachabilityProbeResponse();
@@ -424,7 +425,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
     });
 
     it('shows a restore-required message when enabling e2ee fails with invalid params on keyless credentials', async () => {
-        useFeatureEnabledMock.mockReturnValue(true);
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId === 'encryption.accountOptOut');
         const loginSpy = vi.fn(async () => {});
         useAuthMock.mockReturnValue({
             isAuthenticated: true,
@@ -439,7 +440,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             const method = (init?.method ?? 'GET').toUpperCase();
             if (url.endsWith('/health') && method === 'GET') {
                 return createReachabilityProbeResponse();

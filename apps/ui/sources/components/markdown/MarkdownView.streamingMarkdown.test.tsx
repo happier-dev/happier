@@ -108,6 +108,23 @@ describe('MarkdownView (streaming markdown)', () => {
         expect(visibleText(screen)).toContain('Run command');
     }, 60_000);
 
+    it.each(['static', 'streaming'] as const)('renders continuation choices through the existing option controls in %s mode', async (streamingMode) => {
+        const onOptionPress = vi.fn();
+        const screen = await renderStreamingMarkdown([
+            '<option>Continue</option>',
+            '<option>Review first</option>',
+            '</options>',
+        ].join('\n'), { streamingMode, onOptionPress });
+
+        const buttons = screen.findAllByType('Pressable');
+        expect(buttons).toHaveLength(2);
+        expect(visibleText(screen)).not.toContain('</options>');
+        await act(async () => {
+            buttons[1]!.props.onPress();
+        });
+        expect(onOptionPress).toHaveBeenCalledWith({ title: 'Review first' });
+    }, 60_000);
+
     it('keeps option tap and long-press copy handling separate', async () => {
         const { MarkdownView } = await import('./MarkdownView');
         const onOptionPress = vi.fn();

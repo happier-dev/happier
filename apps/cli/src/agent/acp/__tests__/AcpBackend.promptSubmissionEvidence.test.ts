@@ -6,6 +6,8 @@ import {
   AcpPromptSubmissionPhaseError,
 } from '../AcpBackend';
 import { createAcpTestTransportHandler } from '../testkit/subprocessHarness';
+import type { AgentBackend } from '@/agent/core';
+import { AcpReplayCapture } from '../history/acpReplayCapture';
 
 function createBackend(agentName = 'test'): AcpBackend {
   return new AcpBackend({
@@ -58,6 +60,49 @@ async function readPromiseState(
 }
 
 describe('AcpBackend prompt submission evidence', () => {
+  it('observes live raw provider updates independently of transcript output and excludes replay, foreign and closed turns', async () => {
+    const backend = createBackend();
+    let observations = 0;
+    const unsubscribe = (backend as AgentBackend).onProviderTurnEvent?.(() => { observations += 1; });
+    let settlePrompt!: (response: PromptResponse) => void;
+    const promptResponse = new Promise<PromptResponse>((resolve) => { settlePrompt = resolve; });
+    const internals = backend as unknown as {
+      observeAcpTransportMessageWritten(message: unknown): void;
+      handleSessionUpdate(params: unknown): Promise<void>;
+      replayCapture: AcpReplayCapture | null;
+    };
+    installPromptPeer(backend, () => {
+      internals.observeAcpTransportMessageWritten({
+        jsonrpc: '2.0', id: 1, method: 'session/prompt', params: { sessionId: 'test-session', prompt: [] },
+      });
+      return promptResponse;
+    });
+    const update = { sessionUpdate: 'provider_extension_progress', progress: 1 };
+
+    try {
+      await internals.handleSessionUpdate({ sessionId: 'test-session', update });
+      expect(observations).toBe(0);
+      await backend.sendPromptWithEvidence('test-session', 'hello');
+      // The host's synthetic running status is not provider activity.
+      expect(observations).toBe(0);
+      await internals.handleSessionUpdate({ sessionId: 'foreign-session', update });
+      internals.replayCapture = new AcpReplayCapture();
+      await internals.handleSessionUpdate({ sessionId: 'test-session', update });
+      internals.replayCapture = null;
+      expect(observations).toBe(0);
+      await internals.handleSessionUpdate({ sessionId: 'test-session', update });
+      expect(observations).toBe(1);
+      settlePrompt({ stopReason: 'end_turn' });
+      await backend.waitForResponseComplete();
+      await internals.handleSessionUpdate({ sessionId: 'test-session', update });
+      expect(observations).toBe(1);
+      unsubscribe?.();
+    } finally {
+      settlePrompt({ stopReason: 'end_turn' });
+      await backend.dispose();
+    }
+  });
+
   it('types a local precondition failure as rejected before effect', async () => {
     const backend = createBackend();
 

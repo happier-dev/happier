@@ -10,6 +10,7 @@ import {
   UsageLimitCheckNowRateLimiter,
   USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
 } from '@/session/usageLimitRecoveryControls/usageLimitCheckNowRateLimiter';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
 import {
   recordConnectedServiceDaemonRestartDiagnostic,
   type ConnectedServiceDaemonRestartDiagnosticRecorder,
@@ -18,6 +19,7 @@ import { DurableBackoffRecoveryScheduler } from '../recoveryScheduler/DurableBac
 import type { DurableRecoveryGateResult } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import {
   hasSameUsageLimitRecoveryIdentity,
+  isPendingUsageLimitRecoveryStatus,
   mergeUsageLimitRecoveryIntent,
   mergeUsageLimitRecoveryRearm,
   mergeUsageLimitRecoverySchedule,
@@ -35,6 +37,12 @@ export type UsageLimitRecoveryIntent = SessionUsageLimitRecoveryV1;
 export type UsageLimitRecoverySchedulerRecoveryResult =
   | Readonly<{
       status: 'ready';
+      selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1;
+      recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1;
+    }>
+  | Readonly<{
+      /** The recovery owner already accepted continuation. */
+      status: 'resumed';
       selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1;
       recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1;
     }>
@@ -99,8 +107,14 @@ function readUsageLimitRecoveryGroupId(
   return selectedAuth.kind === 'group' ? selectedAuth.groupId : null;
 }
 
-function isPendingUsageLimitRecoveryStatus(status: UsageLimitRecoveryIntent['status']): boolean {
-  return status === 'armed' || status === 'waiting' || status === 'checking';
+function normalizeScheduledUsageLimitRecoveryIntent(intent: UsageLimitRecoveryIntent): UsageLimitRecoveryIntent {
+  if (!isPendingUsageLimitRecoveryStatus(intent.status)) return intent;
+  return {
+    ...intent,
+    status: intent.status === 'checking' ? 'waiting' : intent.status,
+    nextCheckAtMs: intent.nextCheckAtMs ?? intent.resetAtMs
+      ?? intent.armedAtMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+  };
 }
 
 function usageLimitRecoverySelectedAuthMatchesIdentity(input: Readonly<{
@@ -174,10 +188,11 @@ export class UsageLimitRecoveryScheduler {
       getTerminalPruneReferenceMs: resolveUsageLimitRecoveryPruneReferenceMs,
       exhaustOnMaxAttemptOutcome: false,
       gate: deps.gate,
-      markChecking: (intent, attemptCount) => ({
+      // Checking readiness is not a continuation attempt. Consume that budget
+      // only after the probe is ready, so transient probes cannot exhaust it.
+      markChecking: (intent) => ({
         ...intent,
         status: 'checking',
-        attemptCount,
       }),
       markWaiting: (intent, input) => ({
         ...intent,
@@ -199,11 +214,26 @@ export class UsageLimitRecoveryScheduler {
         const recovery = deps.recover
           ? await deps.recover(intent, { sessionId: context.sessionId, reason: context.reason })
           : { status: 'wait' as const, nextCheckAtMs: intent.nextCheckAtMs ?? intent.resetAtMs ?? deps.nowMs() };
-        if (recovery.status === 'ready') {
+        if (recovery.status === 'pause' || (recovery.status === 'ready' && !this.deps.resume)) {
+          const recoveryCredits = recovery.recoveryCredits ?? intent.recoveryCredits;
+          return {
+            status: 'success',
+            intent: {
+              ...intent,
+              status: 'paused',
+              nextCheckAtMs: null,
+              lastProbeError: null,
+              selectedAuth: recovery.selectedAuth ?? intent.selectedAuth,
+              ...(recoveryCredits ? { recoveryCredits } : {}),
+            },
+          };
+        }
+        if (recovery.status === 'ready' || recovery.status === 'resumed') {
           const recoveryCredits = recovery.recoveryCredits ?? intent.recoveryCredits;
           const succeeded: UsageLimitRecoveryIntent = {
             ...intent,
             status: 'cancelled',
+            attemptCount: intent.attemptCount + 1,
             selectedAuth: recovery.selectedAuth ?? intent.selectedAuth,
             ...(recoveryCredits ? { recoveryCredits } : {}),
           };
@@ -220,24 +250,18 @@ export class UsageLimitRecoveryScheduler {
             nowMs: this.deps.nowMs,
             recordRestartDiagnostic: this.deps.recordRestartDiagnostic,
           });
-          await this.deps.resume?.(succeeded);
+          try {
+            if (recovery.status === 'ready') await this.deps.resume?.(succeeded);
+          } catch (error) {
+            return {
+              status: 'wait',
+              intent: succeeded,
+              lastError: error instanceof Error ? error.message : String(error),
+            };
+          }
           return {
             status: 'success',
             intent: succeeded,
-          };
-        }
-        if (recovery.status === 'pause') {
-          const recoveryCredits = recovery.recoveryCredits ?? intent.recoveryCredits;
-          return {
-            status: 'success',
-            intent: {
-              ...intent,
-              status: 'paused',
-              nextCheckAtMs: null,
-              lastProbeError: null,
-              selectedAuth: recovery.selectedAuth ?? intent.selectedAuth,
-              ...(recoveryCredits ? { recoveryCredits } : {}),
-            },
           };
         }
         if (recovery.status === 'exhausted') {
@@ -253,14 +277,17 @@ export class UsageLimitRecoveryScheduler {
           };
         }
         const recoveryCredits = recovery.recoveryCredits ?? intent.recoveryCredits;
+        const nextCheckAtMs = recovery.nextCheckAtMs > this.deps.nowMs()
+          ? recovery.nextCheckAtMs
+          : this.deps.nowMs() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS;
         return {
           status: 'wait',
-          nextRetryAtMs: recovery.nextCheckAtMs,
+          nextRetryAtMs: nextCheckAtMs,
           lastError: recovery.lastProbeError ?? null,
           intent: {
             ...intent,
             status: 'waiting' as const,
-            nextCheckAtMs: recovery.nextCheckAtMs,
+            nextCheckAtMs,
             lastProbeError: recovery.lastProbeError ?? null,
             selectedAuth: recovery.selectedAuth ?? intent.selectedAuth,
             ...(recoveryCredits ? { recoveryCredits } : {}),
@@ -281,6 +308,10 @@ export class UsageLimitRecoveryScheduler {
   /** Reconstructs persisted recovery state for display/manual control without timers or effects. */
   hydratePassive(): ReadonlyArray<UsageLimitRecoveryIntent> {
     return this.scheduler.hydratePassive();
+  }
+
+  dispose(): void {
+    this.scheduler.dispose();
   }
 
   async enable(input: Readonly<{
@@ -323,7 +354,9 @@ export class UsageLimitRecoveryScheduler {
     const merged = await this.scheduler.upsertMerged({
       sessionId: input.sessionId,
       intent,
-      merge: mergeUsageLimitRecoveryRearm,
+      merge: (previous, next) => normalizeScheduledUsageLimitRecoveryIntent(
+        mergeUsageLimitRecoveryRearm(previous, next),
+      ),
     });
     return merged;
   }
@@ -343,7 +376,9 @@ export class UsageLimitRecoveryScheduler {
     return await this.scheduler.upsertMerged({
       sessionId: input.sessionId,
       intent: input.intent,
-      merge: mergeUsageLimitRecoverySchedule,
+      merge: (previous, next) => normalizeScheduledUsageLimitRecoveryIntent(
+        mergeUsageLimitRecoverySchedule(previous, next),
+      ),
     });
   }
 

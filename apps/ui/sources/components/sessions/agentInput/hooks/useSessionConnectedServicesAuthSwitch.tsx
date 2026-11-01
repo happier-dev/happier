@@ -21,6 +21,7 @@ import { resolveConnectedServicesAuthLabel, resolveConnectedServicesAuthWarningT
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import {
     resolveConnectedServiceUxDiagnosticPresentation,
+    resolveSessionConnectedServiceAuthSwitchErrorMessageKey,
     translateConnectedServiceUxDiagnosticBody,
     type ConnectedServiceUxDiagnosticPresentation,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
@@ -33,7 +34,6 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import {
     setSessionConnectedServiceAuthBinding,
-    type SessionConnectedServiceAuthSwitchErrorCode,
     type SessionConnectedServiceAuthSwitchResult as DaemonSessionConnectedServiceAuthSwitchResult,
 } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import {
@@ -47,7 +47,7 @@ import {
     resolveNewSessionConnectedServicesBindingsForAgent,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { useProfile } from '@/sync/store/hooks';
-import { t, type TranslationKey } from '@/text';
+import { t } from '@/text';
 import {
     createManualAuthSwitchRestartSignal,
     resolveSessionIntentionalRestartState,
@@ -186,37 +186,6 @@ type SetBindingForServiceOptions = Readonly<{
     /** Re-apply even when the target equals the current optimistic binding — used by Revert to reconverge a diverged live session. */
     forceReapply?: boolean;
 }>;
-
-function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
-    errorCode: SessionConnectedServiceAuthSwitchErrorCode | undefined,
-): TranslationKey {
-    switch (errorCode) {
-        case 'group_generation_conflict':
-            return 'connectedServices.authSwitch.errors.groupGenerationConflict';
-        case 'provider_state_sharing_unavailable':
-            return 'connectedServices.authSwitch.errors.providerStateSharingUnavailable';
-        case 'profile_disconnected':
-            return 'connectedServices.authSwitch.errors.profileDisconnected';
-        case 'profile_missing':
-            return 'connectedServices.authSwitch.errors.profileMissing';
-        case 'group_missing':
-            return 'connectedServices.authSwitch.errors.groupMissing';
-        case 'metadata_update_failed':
-            return 'connectedServices.authSwitch.errors.metadataUpdateFailed';
-        case 'restart_failed':
-            return 'connectedServices.authSwitch.errors.restartFailed';
-        case 'hot_apply_failed':
-            return 'connectedServices.authSwitch.errors.hotApplyFailed';
-        case 'agent_mismatch':
-            return 'connectedServices.authSwitch.errors.agentMismatch';
-        case 'session_not_found':
-            return 'connectedServices.authSwitch.errors.sessionNotFound';
-        case 'unsupported_service':
-            return 'connectedServices.authSwitch.errors.unsupportedService';
-        default:
-            return 'connectedServices.authSwitch.switchFailed';
-    }
-}
 
 function readRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)

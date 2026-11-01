@@ -1,4 +1,5 @@
-import { sanitizeBugReportUrl, sanitizeDoctorSnapshotUrls, type DoctorSnapshot } from '@happier-dev/protocol';
+import { sanitizeDoctorSnapshotUrls, type DoctorSnapshot } from '@happier-dev/protocol';
+import { createDiagnosticServerUrlKey as normalizeUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 
 export type DiagnosisFindingSeverity = 'info' | 'warning' | 'error';
 
@@ -49,11 +50,6 @@ export type DiagnosisReport = Readonly<{
   capturedAt: string;
   findings: DiagnosisFinding[];
 }>;
-
-function normalizeUrl(raw: string): string {
-  const sanitized = sanitizeBugReportUrl(raw) ?? raw;
-  return sanitized.replace(/\/+$/, '');
-}
 
 function pushFinding(findings: DiagnosisFinding[], finding: DiagnosisFinding): void {
   const key = `${finding.code}:${(finding.machineIds ?? []).join(',')}:${JSON.stringify(finding.details ?? {})}`;

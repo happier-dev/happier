@@ -162,7 +162,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
 
 export function formatAttachmentsBlock(uploaded: readonly UploadedAttachment[]): string {
     const lines: string[] = [
-        'Attachments: open and analyze these files before answering.',
+        'Attachments: open and analyze these files before answering. Relative paths are relative to the session working directory, not your home directory.',
         '[attachments]',
     ];
     for (const a of uploaded) {

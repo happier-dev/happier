@@ -338,6 +338,7 @@ describe('apiSocket reachability supervision', () => {
 
     it('stops claiming the endpoint is online after an intentional disconnect', async () => {
         const fakeSocket = createSocketStub();
+        const connectedListeners = new Set<() => void>();
 
         vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
             const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
@@ -364,11 +365,17 @@ describe('apiSocket reachability supervision', () => {
             createSyncSocketTransport: () => ({
                 socket: fakeSocket,
                 transport: {
-                    async connect() {},
-                    async disconnect() {},
+                    async connect() {
+                        fakeSocket.connected = true;
+                        connectedListeners.forEach((listener) => listener());
+                    },
+                    async disconnect() { fakeSocket.connected = false; },
                     async destroy() {},
-                    isConnected: () => false,
-                    onConnected: () => () => {},
+                    isConnected: () => fakeSocket.connected,
+                    onConnected: (listener: () => void) => {
+                        connectedListeners.add(listener);
+                        return () => connectedListeners.delete(listener);
+                    },
                     onDisconnected: () => () => {},
                     onError: () => () => {},
                 },

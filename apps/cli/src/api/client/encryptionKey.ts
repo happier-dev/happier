@@ -1,4 +1,5 @@
 import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials } from '@/persistence';
 
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { getRandomBytes } from '../encryption';
@@ -10,6 +11,7 @@ export type EncryptionContext = {
 };
 
 export function resolveSessionEncryptionContext(credential: Credentials): EncryptionContext {
+  requireEncryptionCredentials(credential);
   // Resolve encryption key
   let dataEncryptionKey: Uint8Array | null = null;
   let encryptionKey: Uint8Array;
@@ -35,6 +37,7 @@ export function resolveSessionEncryptionContext(credential: Credentials): Encryp
 }
 
 export function resolveMachineEncryptionContext(credential: Credentials): EncryptionContext {
+  requireEncryptionCredentials(credential);
   // Resolve encryption key
   let dataEncryptionKey: Uint8Array | null = null;
   let encryptionKey: Uint8Array;

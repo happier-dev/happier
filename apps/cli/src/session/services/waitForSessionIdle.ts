@@ -55,6 +55,7 @@ export async function waitForSessionIdle(params: Readonly<{
         encryptionMode: sessionTarget.mode,
         encryptionKey: sessionTarget.ctx.encryptionKey,
         encryptionVariant: sessionTarget.ctx.encryptionVariant,
+        sessionProjection: sessionTarget.rawSession,
         transcriptFetchTimeoutMs: remainingTimeoutMs(),
       });
     } catch {
@@ -77,11 +78,7 @@ export async function waitForSessionIdle(params: Readonly<{
   }
   const initialTurnActivityRequiresTranscriptIdleEvidence =
     initialTranscriptActivityUnavailable
-    || (
-      initialProjectedActivity !== null
-      && !initialProjectedActivity.turnInFlight
-      && initialTranscriptActivity?.turnInFlight === true
-    );
+    || initialTranscriptActivity?.turnInFlight === true;
   const initialProjectedPendingRequestCount = readSessionProjectedPendingRequestCount(sessionTarget.rawSession);
 
   try {
@@ -94,23 +91,14 @@ export async function waitForSessionIdle(params: Readonly<{
       initialTurnActivity,
       initialTurnActivityRequiresTranscriptIdleEvidence,
       recheckTurnActivity: async () =>
-        initialProjectedActivity
-          ? detectLatestSessionTurnActivity({
-            token: params.credentials.token,
-            sessionId: sessionTarget.sessionId,
-            encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx.encryptionKey,
-            encryptionVariant: sessionTarget.ctx.encryptionVariant,
-            transcriptFetchTimeoutMs: remainingTimeoutMs(),
-          })
-          : detectSessionTurnActivity({
-            token: params.credentials.token,
-            sessionId: sessionTarget.sessionId,
-            encryptionMode: sessionTarget.mode,
-            encryptionKey: sessionTarget.ctx.encryptionKey,
-            encryptionVariant: sessionTarget.ctx.encryptionVariant,
-            transcriptFetchTimeoutMs: remainingTimeoutMs(),
-          }),
+        detectLatestSessionTurnActivity({
+          token: params.credentials.token,
+          sessionId: sessionTarget.sessionId,
+          encryptionMode: sessionTarget.mode,
+          encryptionKey: sessionTarget.ctx.encryptionKey,
+          encryptionVariant: sessionTarget.ctx.encryptionVariant,
+          transcriptFetchTimeoutMs: remainingTimeoutMs(),
+        }),
       ...(initialProjectedPendingRequestCount !== null
         ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
         : {}),

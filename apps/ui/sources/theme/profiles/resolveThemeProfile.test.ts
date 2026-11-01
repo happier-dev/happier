@@ -51,6 +51,7 @@ describe('resolveThemeProfile', () => {
                 light: {
                     'background.canvas': '#fefefe',
                     'unknown.token': '#111111',
+                    'constructor': '#222222',
                     'surface.base': 'red',
                 },
                 dark: {},
@@ -97,6 +98,20 @@ describe('resolveThemeProfile', () => {
         expect(effective.colors.feed.card.background).not.toBe(darkTheme.colors.feed.card.background);
     });
 
+    it.each(['light', 'dark'] as const)('derives the %s glass composer fill from its themed surface', (mode) => {
+        const effective = resolveThemeProfile({
+            mode,
+            profile: profile({
+                light: { 'surface.base': '#EEEAF5', 'surface.elevated': '#DDD4EB' },
+                dark: { 'surface.base': '#171526', 'surface.elevated': '#28243B' },
+            }),
+        });
+
+        expect(effective.colors.glass.composerSurface).toBe(
+            mode === 'dark' ? effective.colors.surface.elevated : effective.colors.surface.base,
+        );
+    });
+
     it('derives connection status colors from public state overrides', () => {
         const effective = resolveThemeProfile({
             mode: 'light',
@@ -136,6 +151,8 @@ describe('resolveThemeProfile', () => {
         expect(effectiveDark.colors.button.primary.gradient.colors).toEqual(darkTheme.colors.button.primary.gradient.colors);
         expect(effectiveDark.colors.fab.gradient.colors).toEqual(darkTheme.colors.fab.gradient.colors);
         expect(effectiveDark.colors.status).toEqual(darkTheme.colors.status);
+        expect(effectiveLight.colors.glass).toEqual(lightTheme.colors.glass);
+        expect(effectiveDark.colors.glass).toEqual(darkTheme.colors.glass);
     });
 
     it('caches effective themes by mode, profile id, updated timestamp, and override hash', () => {

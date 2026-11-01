@@ -1,3 +1,4 @@
+import { createAccountContentPublicKeyBindingMessage } from '@happier-dev/protocol';
 import { authChallenge } from "./challenge";
 import { encodeBase64 } from "@/encryption/base64";
 import { Encryption } from "@/sync/encryption/encryption";
@@ -7,7 +8,6 @@ import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { AuthErrorCodeSchema, readServerEnabledBit } from '@happier-dev/protocol';
 
-const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
 export async function authGetToken(secret: Uint8Array) {
     const serverFeatures = await getReadyServerFeatures();
@@ -39,9 +39,7 @@ export async function authGetToken(secret: Uint8Array) {
         const contentPublicKey = encryption.contentDataKey;
 
         const signingKeyPair = sodium.crypto_sign_seed_keypair(secret);
-        const binding = new Uint8Array(CONTENT_KEY_BINDING_PREFIX.length + contentPublicKey.length);
-        binding.set(CONTENT_KEY_BINDING_PREFIX, 0);
-        binding.set(contentPublicKey, CONTENT_KEY_BINDING_PREFIX.length);
+        const binding = createAccountContentPublicKeyBindingMessage(contentPublicKey);
         const contentPublicKeySig = sodium.crypto_sign_detached(binding, signingKeyPair.privateKey);
 
         body.contentPublicKey = encodeBase64(contentPublicKey);

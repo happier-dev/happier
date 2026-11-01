@@ -10,13 +10,17 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useAllSessions, useSessionListViewDataByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
+import { useAllSessions, useProfile, useSessionListViewDataByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
-import { SESSION_ACTION_UNARCHIVE_ID } from '@/components/sessions/actions/sessionActionIds';
+import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessionActionAvailability';
+import type { SessionActionTarget } from '@/components/sessions/actions/sessionActionTypes';
+import { resolveSessionArchiveServerId } from '@/sync/domains/session/listing/sessionArchiveState';
+import { nowServerMs } from '@/sync/runtime/time';
+import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_UNARCHIVE_ID } from '@/components/sessions/actions/sessionActionIds';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { sync } from '@/sync/sync';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -100,8 +104,8 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     actionButton: {
-        width: 34,
-        height: 34,
+        width: 48,
+        height: 48,
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
@@ -119,11 +123,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
 }));
-
-function canManageArchive(session: ArchivedScreenSession): boolean {
-    // Owner sessions have no accessLevel set; shared sessions require admin.
-    return !session.accessLevel || session.accessLevel === 'admin';
-}
 
 function normalizeServerId(serverIdRaw: unknown): string | null {
     const serverId = typeof serverIdRaw === 'string' ? serverIdRaw.trim() : '';
@@ -151,6 +150,8 @@ export default function ArchivedSessionsScreen() {
     const sessionListViewDataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const pinnedSessionKeys = useSessionOrganizationPinnedSessionKeys();
+    const profile = useProfile();
+    const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
 
     React.useEffect(() => {
         void sync.fetchArchivedSessions().catch(() => undefined);
@@ -279,6 +280,16 @@ export default function ArchivedSessionsScreen() {
         });
     }, []);
 
+    const handleDelete = React.useCallback((target: SessionActionTarget) => {
+        fireAndForget(executeSessionAction({
+                actionId: SESSION_ACTION_DELETE_ID,
+                target,
+            }), {
+                tag: 'ArchivedSessions.delete',
+                onError: (error) => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('sessionInfo.failedToDeleteSession')),
+            });
+    }, []);
+
     const renderItem = React.useCallback(
         ({ item, index, section }: { item: ArchivedScreenSession; index: number; section: { key: 'archived' | 'hidden_inactive'; data: ArchivedScreenSession[] } }) => {
             const sessionName = getSessionName(item);
@@ -288,7 +299,16 @@ export default function ArchivedSessionsScreen() {
             const isFirst = index === 0;
             const isLast = index === section.data.length - 1;
             const isSingle = section.data.length === 1;
-            const canShowUnarchive = section.key === 'archived' && canManageArchive(item);
+            const actionTarget = section.key === 'archived'
+                ? createSessionActionTarget({
+                    session: item,
+                    serverId: resolveSessionArchiveServerId(normalizeServerId(item.serverId)),
+                    currentUserId,
+                    isConnected: getSessionStatus(item, nowServerMs()).isConnected,
+                })
+                : null;
+            const actionIds = actionTarget ? listVisibleSessionActionIds({ target: actionTarget, surface: 'rowMenu' }) : [];
+            const canShowUnarchive = actionIds.includes(SESSION_ACTION_UNARCHIVE_ID);
 
             return (
                 <Pressable
@@ -318,15 +338,24 @@ export default function ArchivedSessionsScreen() {
                             onPress={() => handleUnarchive(item)}
                             accessibilityRole="button"
                             accessibilityLabel={t('sessionInfo.unarchiveSession')}
-                            hitSlop={8}
                         >
                             <Icon name="arrow-arc-left" size={16} color={theme.colors.text.secondary} />
+                        </Pressable>
+                    ) : null}
+                    {actionTarget && actionIds.includes(SESSION_ACTION_DELETE_ID) ? (
+                        <Pressable
+                            style={styles.actionButton}
+                            onPress={() => handleDelete(actionTarget)}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('sessionInfo.deleteSession')}
+                        >
+                            <Icon name="trash" size={16} color={theme.colors.state.danger.foreground} />
                         </Pressable>
                     ) : null}
                 </Pressable>
             );
         },
-        [handleUnarchive, navigateToSession, theme.colors.text.secondary],
+        [currentUserId, handleDelete, handleUnarchive, navigateToSession, theme.colors.state.danger.foreground, theme.colors.text.secondary],
     );
 
     const renderSectionHeader = React.useCallback(

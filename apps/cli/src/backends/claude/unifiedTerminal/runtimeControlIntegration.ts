@@ -12,7 +12,7 @@ import {
 } from '@/backends/claude/utils/claudeEffort';
 
 import type { EnhancedMode } from '../loop';
-import { controlResultToChangeOutcome } from './tuiControls/outcome';
+import { controlResultToChangeOutcome, isRuntimeConfigChangePromptBlocking } from './tuiControls/outcome';
 import type {
   ClaudeDesiredRuntimeConfig,
   ClaudePromptSubmitMetadata,
@@ -206,6 +206,7 @@ function sameAgentModeId(a: string | null | undefined, b: string | null | undefi
 function computeDesiredDelta(
   desired: ClaudeDesiredRuntimeConfig,
   baseline: ClaudeDesiredRuntimeConfig,
+  pending: ClaudeDesiredRuntimeConfig = {},
 ): ClaudeDesiredRuntimeConfig {
   const delta: {
     model?: string;
@@ -215,21 +216,25 @@ function computeDesiredDelta(
     maxThinkingTokens?: number;
     ultracode?: boolean;
   } = {};
-  if (desired.model !== baseline.model && desired.model !== undefined) delta.model = desired.model;
-  if (desired.reasoningEffort !== baseline.reasoningEffort && desired.reasoningEffort !== undefined) {
+  if ((desired.model !== baseline.model || pending.model !== undefined) && desired.model !== undefined) delta.model = desired.model;
+  if ((desired.reasoningEffort !== baseline.reasoningEffort || pending.reasoningEffort !== undefined || pending.model !== undefined)
+    && desired.reasoningEffort !== undefined) {
     delta.reasoningEffort = desired.reasoningEffort;
   }
-  if (desired.ultracode !== baseline.ultracode && desired.ultracode !== undefined) {
+  if ((desired.ultracode !== baseline.ultracode || pending.ultracode !== undefined || pending.model !== undefined)
+    && desired.ultracode !== undefined) {
     delta.ultracode = desired.ultracode;
   }
   const modeChanged =
     desired.permissionMode !== baseline.permissionMode
-    || !sameAgentModeId(desired.agentModeId, baseline.agentModeId);
+    || !sameAgentModeId(desired.agentModeId, baseline.agentModeId)
+    || pending.permissionMode !== undefined || pending.agentModeId !== undefined;
   if (modeChanged) {
     if (desired.permissionMode !== undefined) delta.permissionMode = desired.permissionMode;
     if (desired.agentModeId !== undefined) delta.agentModeId = desired.agentModeId;
   }
-  if (desired.maxThinkingTokens !== baseline.maxThinkingTokens && desired.maxThinkingTokens !== undefined) {
+  if ((desired.maxThinkingTokens !== baseline.maxThinkingTokens || pending.maxThinkingTokens !== undefined)
+    && desired.maxThinkingTokens !== undefined) {
     delta.maxThinkingTokens = desired.maxThinkingTokens;
   }
   return delta;
@@ -553,13 +558,7 @@ export function createClaudeUnifiedRuntimeControlBridge(
 
   function resolveBlockedApplyReason(outcome: RuntimeConfigApplyOutcome): string | undefined {
     if (outcome.promptMayProceed) return undefined;
-    const blockedChange = outcome.changes.find((change) =>
-      change.status === 'failed'
-      || change.status === 'requires_interactive_control'
-      || change.timing === 'scheduled_for_next_prompt'
-      || change.timing === 'queued_until_safe_window'
-      || change.timing === 'next_idle'
-    );
+    const blockedChange = outcome.changes.find(isRuntimeConfigChangePromptBlocking);
     const reason = blockedChange?.reason;
     if (typeof reason !== 'string') return undefined;
     const trimmed = reason.trim();
@@ -572,7 +571,9 @@ export function createClaudeUnifiedRuntimeControlBridge(
     reason: 'before_prompt' | 'out_of_band',
   ): Promise<ClaudeUnifiedRuntimeControlApplyResult> {
     const desired = mapEnhancedModeToDesiredRuntimeConfig(mode);
-    const delta = computeDesiredDelta(desired, committed);
+    // Before a prompt, current intent supersedes a previously submitted but unverified control.
+    const delta = computeDesiredDelta(desired, committed,
+      reason === 'before_prompt' ? controller.getPendingRuntimeConfig() : undefined);
     if (isEmptyDesired(delta)) {
       return { promptMayProceed: true, attempted: false };
     }

@@ -2384,11 +2384,11 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('does not use stale terminal pending requests as waiting activity', async () => {
+    it('keeps a pending request left after a completed turn as waiting activity until its runtime goes offline', async () => {
         vi.mocked(Date.now).mockReturnValue(130_000);
         const previousState = storage.getState();
         const session = createSessionFixture({
-            id: 'stale-terminal-request-session',
+            id: 'terminal-turn-request-session',
             active: true,
             presence: 'online',
             seq: 1,
@@ -2416,6 +2416,33 @@ describe('usePetCompanionActivityModel', () => {
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'waiting',
+                reason: 'waiting',
+                sessionId: session.id,
+                trayItems: [
+                    expect.objectContaining({
+                        sessionId: session.id,
+                        status: 'waiting',
+                    }),
+                ],
+            });
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: {
+                        ...state.sessions,
+                        [session.id]: {
+                            ...session,
+                            presence: 129_500,
+                        },
+                    },
+                }));
+            });
+            await flushHookEffects({ cycles: 1, turns: 4 });
+            await hook.rerender();
 
             expect(hook.getCurrent()).toMatchObject({
                 state: 'idle',

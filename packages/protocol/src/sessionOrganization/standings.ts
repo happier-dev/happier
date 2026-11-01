@@ -1,20 +1,21 @@
 import { z } from 'zod';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
+import { lazySchema } from '../lazySchema.js';
 
-const SessionOrganizationSessionIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
+const SessionOrganizationSessionIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
 
-export const SessionAttentionStandingSchema = z
+export const SessionAttentionStandingSchema = lazySchema(() => z
   .object({
     sessionId: SessionOrganizationSessionIdSchema,
     standing: z.boolean(),
     remindAt: z.number().int().nonnegative().optional(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type SessionAttentionStanding = z.infer<typeof SessionAttentionStandingSchema>;
 
-export const SetSessionAttentionStandingRequestSchema = z
+export const SetSessionAttentionStandingRequestSchema = lazySchema(() => z
   .object({
     standing: z.boolean().nullable().optional(),
     remindAt: z.number().int().nonnegative().nullable().optional(),
@@ -22,12 +23,12 @@ export const SetSessionAttentionStandingRequestSchema = z
   .refine((value) => (value.standing === undefined) !== (value.remindAt === undefined), {
     message: 'Change exactly one attention field',
   })
-  .strict();
+  .strict());
 export type SetSessionAttentionStandingRequest = z.infer<typeof SetSessionAttentionStandingRequestSchema>;
 
-export const SetSessionAttentionStandingResponseSchema = z
+export const SetSessionAttentionStandingResponseSchema = lazySchema(() => z
   .object({
     standing: SessionAttentionStandingSchema.nullable(),
   })
-  .strict();
+  .strict());
 export type SetSessionAttentionStandingResponse = z.infer<typeof SetSessionAttentionStandingResponseSchema>;

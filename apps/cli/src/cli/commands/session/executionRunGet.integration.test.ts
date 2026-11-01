@@ -119,7 +119,7 @@ describe('happier session execution-run-get (integration)', () => {
 
         const resultPayload = {
           run: { runId: 'run_1', state: 'completed', intent: 'review' },
-          structuredMeta: { kind: 'review_findings.v1', findings: [{ id: 'f1', title: 't', severity: 'warning' }] },
+          structuredMeta: { kind: 'review_findings.v1', payload: { findings: [{ id: 'f1', title: 't', severity: 'warning' }] } },
         };
         const encryptedResult = encodeBase64Rpc(encrypt(dek, 'dataKey', resultPayload), 'base64');
         cb?.({ ok: true, result: encryptedResult });
@@ -203,7 +203,7 @@ describe('happier session execution-run-get (integration)', () => {
             startedAtMs: 1,
             finishedAtMs: 2,
           },
-          structuredMeta: { kind: 'review_findings.v1', findings: [{ id: 'f1', title: 't', severity: 'warning' }] },
+          structuredMeta: { kind: 'review_findings.v1', payload: { findings: [{ id: 'f1', title: 't', severity: 'warning' }] } },
         };
         const encryptedResult = encodeBase64Rpc(encrypt(new Uint8Array(32).fill(3), 'dataKey', resultPayload), 'base64');
         cb?.({ ok: true, result: encryptedResult });
@@ -231,7 +231,10 @@ describe('happier session execution-run-get (integration)', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_get');
       expect(parsed.data?.sessionId).toBe('sess_integration_ctrl_123');
-      expect(parsed.data?.structuredMeta?.kind).toBe('review_findings.v1');
+      expect(parsed.data?.structuredMeta).toEqual({
+        kind: 'review_findings.v1',
+        payload: { findings: [{ id: 'f1', title: 't', severity: 'warning' }] },
+      });
     } finally {
       output.restore();
     }

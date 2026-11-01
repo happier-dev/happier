@@ -15,6 +15,8 @@ import { McpValueRefMapEditor } from '@/components/settings/mcpServers/McpValueR
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { Switch } from '@/components/ui/forms/Switch';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -245,6 +247,21 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                 </ItemGroup>
 
                 <ItemGroup title={t('settings.acpCatalogCapabilities')}>
+                    <Item
+                        title={t('settings.acpCatalogSupportsLoadSession')}
+                        icon={<Icon name="clock-counter-clockwise" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={(
+                            <Switch
+                                testID="settings.acpCatalog.backendEditor.supportsLoadSession"
+                                accessibilityLabel={t('settings.acpCatalogSupportsLoadSession')}
+                                value={draft.capabilities.supportsLoadSession}
+                                onValueChange={(value) => updateDraft((current) => withUpdatedAt({
+                                    ...current,
+                                    capabilities: { ...current.capabilities, supportsLoadSession: value },
+                                }))}
+                            />
+                        )}
+                    />
                     <DropdownMenu
                         open={supportsModesMenuOpen}
                         onOpenChange={setSupportsModesMenuOpen}

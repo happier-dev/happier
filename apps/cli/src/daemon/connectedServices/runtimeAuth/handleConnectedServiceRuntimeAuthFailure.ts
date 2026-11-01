@@ -213,7 +213,7 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
     serviceId: input.selection.serviceId,
     groupId: input.selection.groupId,
     reason: input.classification.kind,
-    observedProfileId: input.classification.profileId ?? input.selection.activeProfileId,
+    observedProfileId: input.classification.profileId,
     retryAfterMs: input.classification.retryAfterMs,
     resetsAtMs: input.classification.resetsAtMs,
     limitCategory: input.classification.limitCategory,

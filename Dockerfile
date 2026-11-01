@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 ARG BUILDPLATFORM
 
 # Shared deps (alpine) for website/docs/webapp builds
@@ -87,22 +87,13 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
- COPY apps/ui/package.json apps/ui/
+RUN mkdir -p apps/server packages/agents packages/cli-common packages/privacy-kit packages/protocol packages/release-runtime scripts/pipeline/expo
  COPY apps/server/package.json apps/server/
- COPY apps/cli/package.json apps/cli/
- COPY apps/website/package.json apps/website/
- COPY apps/docs/package.json apps/docs/
  COPY packages/agents/package.json packages/agents/
  COPY packages/cli-common/package.json packages/cli-common/
- COPY packages/connection-supervisor/package.json packages/connection-supervisor/
  COPY packages/privacy-kit/package.json packages/privacy-kit/
  COPY packages/protocol/package.json packages/protocol/
  COPY packages/release-runtime/package.json packages/release-runtime/
- COPY packages/transfers/package.json packages/transfers/
- COPY packages/audio-stream-native/package.json packages/audio-stream-native/
- COPY packages/sherpa-native/package.json packages/sherpa-native/
-COPY apps/ui/tools/postinstall ./apps/ui/tools/postinstall
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 
 COPY scripts/ci/yarn-install-with-retry.sh /usr/local/bin/yarn-install-with-retry
@@ -295,8 +286,12 @@ COPY packages/release-runtime ./packages/release-runtime
 RUN yarn workspace privacy-kit build
 RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
 RUN yarn workspace @happier-dev/release-runtime postinstall:real
+RUN yarn workspace @happier-dev/cli-common postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
+# Preserve generated/native outputs while dropping build and validation-only dependencies.
+RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
+    yarn-install-with-retry --production=true --ignore-scripts --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo

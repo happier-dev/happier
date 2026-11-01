@@ -293,7 +293,7 @@ describe('resolveSessionListInstruction', () => {
         });
     });
 
-    it('blocks direct sessions before resolving a target', () => {
+    it('nests direct sessions in the same workspace folder tree', () => {
         const items = [
             projectHeader('project-a', workspaceA),
             sessionItem({
@@ -322,8 +322,8 @@ describe('resolveSessionListInstruction', () => {
             foldersFeatureEnabled: true,
         });
 
-        expect(result.instruction.kind).toBe('blocked');
-        expect(result.sessionListBlockReason).toBe('direct-session');
+        expect(result.instruction).toMatchObject({ kind: 'nest-into', targetId: treeRowId.folder('folder-a') });
+        expect(result.sessionListBlockReason).toBeUndefined();
     });
 
     it('blocks all folder moves when the sessions.folders feature is disabled', () => {

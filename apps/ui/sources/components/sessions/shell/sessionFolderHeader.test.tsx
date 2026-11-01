@@ -149,6 +149,8 @@ describe('FolderGroupHeader', () => {
 
     it('exposes move menu and accessibility actions for keyboard and assistive input', async () => {
         const onMove = vi.fn();
+        const onMoveUp = vi.fn();
+        const onMoveDown = vi.fn();
         const onMoveToWorkspaceRoot = vi.fn();
         const screen = await renderScreen(
             <FolderGroupHeader
@@ -170,6 +172,8 @@ describe('FolderGroupHeader', () => {
                 onRename={vi.fn()}
                 onDelete={vi.fn()}
                 onMove={onMove}
+                onMoveUp={onMoveUp}
+                onMoveDown={onMoveDown}
                 onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
             />,
         );
@@ -182,6 +186,16 @@ describe('FolderGroupHeader', () => {
             menu.props.onSelect('move');
         });
         expect(onMove).toHaveBeenCalledTimes(1);
+        expect(menu.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'move-up', disabled: undefined }),
+            expect.objectContaining({ id: 'move-down', disabled: undefined }),
+        ]));
+        await act(async () => {
+            await menu.props.onSelect('move-up');
+            await menu.props.onSelect('move-down');
+        });
+        expect(onMoveUp).toHaveBeenCalledOnce();
+        expect(onMoveDown).toHaveBeenCalledOnce();
 
         const header = screen.findByTestId('session-folder-header-folder-a');
         expect(header?.props.accessibilityActions).toEqual(expect.arrayContaining([

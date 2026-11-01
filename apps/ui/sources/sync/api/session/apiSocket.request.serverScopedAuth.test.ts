@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 
@@ -201,12 +202,48 @@ describe('apiSocket.request server-scoped credentials', () => {
         await expect(b.json()).resolves.toEqual({ ok: true });
     });
 
+    it.each(['headers', 'body'] as const)('releases shared %s reads on Retry so the next caller dispatches afresh', async (phase) => {
+        let reads = 0;
+        let release: (() => void) | undefined;
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (getServerFetchUrl(input).pathname !== '/v1/held-read-705') return new Response('ok');
+            if (++reads > 1) return Response.json({ fresh: true });
+            if (phase === 'headers') return await new Promise<Response>((_resolve, reject) => {
+                release = () => reject(new DOMException('Aborted', 'AbortError'));
+                init?.signal?.addEventListener('abort', release, { once: true });
+            });
+            return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+                release = () => controller.error(new DOMException('Aborted', 'AbortError'));
+                init?.signal?.addEventListener('abort', release, { once: true });
+            } }));
+        }));
+        tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue({ token: 'scoped-token', secret: 's' });
+        const { apiSocket } = await import('./apiSocket');
+        const { abortServerFetches } = await import('@/sync/http/client');
+        Reflect.set(apiSocket, 'config', { endpoint: 'https://stack.example.test', token: 'unused' });
+        const held = [apiSocket.request('/v1/held-read-705'), apiSocket.request('/v1/held-read-705')]
+            .map(promise => promise.then(() => null, (error: unknown) => error));
+        try {
+            await vi.waitFor(() => expect(reads).toBe(1));
+            abortServerFetches('manual-retry', { readOnly: true });
+            expect(await Promise.all(held)).toEqual([
+                expect.objectContaining({ name: 'ServerFetchReadSupersededError' }),
+                expect.objectContaining({ name: 'ServerFetchReadSupersededError' }),
+            ]);
+            await expect((await apiSocket.request('/v1/held-read-705')).json()).resolves.toEqual({ fresh: true });
+            expect(reads).toBe(2);
+        } finally {
+            release?.();
+            await Promise.all(held);
+        }
+    });
+
     it('reads current state for no-store requests while an older GET is outstanding', async () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         let reads = 0;
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-            if (!String(input).endsWith('/v1/ping')) return new Response('ok');
+            if (getServerFetchUrl(input).pathname !== '/v1/ping') return new Response('ok');
             if (++reads === 1) {
                 await gate;
                 return Response.json({ state: 'delivering' });
@@ -232,7 +269,7 @@ describe('apiSocket.request server-scoped credentials', () => {
         const pingPromise = new Promise<Response>((resolve) => { resolvePing = resolve; });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-            const url = typeof input === 'string' ? input : String(input);
+            const url = getServerFetchUrl(input).pathname;
             if (url.endsWith('/health')) {
                 return new Response('ok', { status: 200, headers: new Headers() });
             }
@@ -352,7 +389,7 @@ describe('apiSocket.request server-scoped credentials', () => {
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
-            const url = typeof input === 'string' ? input : String(input);
+            const url = getServerFetchUrl(input).pathname;
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 throw new TypeError('Network request failed');
             }

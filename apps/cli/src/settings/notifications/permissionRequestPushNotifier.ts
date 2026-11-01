@@ -12,6 +12,7 @@ import {
 import { shouldSendPermissionRequestPushNotification, shouldSendUserActionRequestPushNotification } from './notificationsPolicy';
 
 type Entry = {
+  occurrenceId?: string;
   state: 'idle' | 'sending' | 'retrying' | 'sent';
   kind: AgentRequestKind;
   toolName: string;
@@ -33,7 +34,7 @@ export class PermissionRequestPushNotifier {
   private readonly maxRetryMs: number;
   private readonly maxEntries: number;
   private readonly nowMs: () => number;
-  private readonly onNotifiedAt: (permissionId: string, notifiedAtMs: number) => void;
+  private readonly onNotifiedAt: (permissionId: string, notifiedAtMs: number, occurrenceId?: string) => void;
 
   private readonly entries = new Map<string, Entry>();
 
@@ -49,7 +50,7 @@ export class PermissionRequestPushNotifier {
     maxRetryMs?: number;
     maxEntries?: number;
     nowMs?: () => number;
-    onNotifiedAt?: (permissionId: string, notifiedAtMs: number) => void;
+    onNotifiedAt?: (permissionId: string, notifiedAtMs: number, occurrenceId?: string) => void;
   }) {
     this.pushSender = params.pushSender;
     this.getSettings = params.getSettings;
@@ -90,13 +91,18 @@ export class PermissionRequestPushNotifier {
     setBoundedMap(this.entries, permissionId, next, this.maxEntries);
   }
 
-  notify(params: { permissionId: string; toolName: string; toolInput?: unknown; requestKind?: AgentRequestKind; createdAtMs?: number }): void {
+  notify(params: { permissionId: string; occurrenceId?: string; toolName: string; toolInput?: unknown; requestKind?: AgentRequestKind; createdAtMs?: number }): void {
     const now = this.nowMs();
     const createdAtMs = typeof params.createdAtMs === 'number' ? params.createdAtMs : now;
     const kind = params.requestKind ?? resolveAgentRequestKind(params.toolName);
     const toolDetails = summarizeToolInputForNotification(params.toolName, params.toolInput);
 
-    const existing = this.entries.get(params.permissionId) ?? null;
+    let existing = this.entries.get(params.permissionId) ?? null;
+    if (existing && existing.occurrenceId !== params.occurrenceId) {
+      if (existing.timer) clearTimeout(existing.timer);
+      this.entries.delete(params.permissionId);
+      existing = null;
+    }
     if (existing) {
       // Keep the latest tool name for logging/payload readability.
       if (existing.toolName !== params.toolName || existing.kind !== kind || existing.toolDetails !== toolDetails) {
@@ -117,6 +123,7 @@ export class PermissionRequestPushNotifier {
     }
 
     const base: Entry = existing ?? {
+      occurrenceId: params.occurrenceId,
       state: 'idle',
       kind,
       toolName: params.toolName,
@@ -171,6 +178,7 @@ export class PermissionRequestPushNotifier {
       sessionTitle: this.readSessionTitle(),
       agentDisplayName: this.readAgentDisplayName(),
       requestId: permissionId,
+      occurrenceId: entry.occurrenceId,
       toolName: entry.toolName,
       kind: entry.kind,
       settings,
@@ -180,11 +188,12 @@ export class PermissionRequestPushNotifier {
 
     const after = this.entries.get(permissionId) ?? null;
     if (!after) return;
+    if (after.occurrenceId !== entry.occurrenceId) return;
 
     if (ok) {
       setBoundedMap(this.entries, permissionId, { ...after, state: 'sent', timer: null }, this.maxEntries);
       try {
-        this.onNotifiedAt(permissionId, now);
+        this.onNotifiedAt(permissionId, now, entry.occurrenceId);
       } catch {
         // ignore
       }

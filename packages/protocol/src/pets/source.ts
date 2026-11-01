@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const PetPackageSourceV1Schema = z.discriminatedUnion('kind', [
+export const PetPackageSourceV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('builtIn'),
@@ -30,38 +31,38 @@ export const PetPackageSourceV1Schema = z.discriminatedUnion('kind', [
       sourceKey: z.string().min(1).max(500),
     })
     .passthrough(),
-]);
+]));
 
 export type PetPackageSourceV1 = z.infer<typeof PetPackageSourceV1Schema>;
 
-export const PetPackageSelectionV1Schema = z
+export const PetPackageSelectionV1Schema = lazySchema(() => z
   .object({
     source: PetPackageSourceV1Schema,
     selectedAtMs: z.number().int().min(0),
   })
-  .passthrough();
+  .passthrough());
 
 export type PetPackageSelectionV1 = z.infer<typeof PetPackageSelectionV1Schema>;
 
-export const PetSourceUiKindV1Schema = z.enum([
+export const PetSourceUiKindV1Schema = lazySchema(() => z.enum([
   'builtIn',
   'detectedCodexHome',
   'happierManagedLocal',
   'accountPet',
-]);
+]));
 
 export type PetSourceUiKindV1 = z.infer<typeof PetSourceUiKindV1Schema>;
 
-export const PetSourcePreviewHandleV1Schema = z
+export const PetSourcePreviewHandleV1Schema = lazySchema(() => z
   .object({
     kind: z.literal('daemonSourceKey'),
     sourceKey: z.string().min(1).max(500),
   })
-  .strict();
+  .strict());
 
 export type PetSourcePreviewHandleV1 = z.infer<typeof PetSourcePreviewHandleV1Schema>;
 
-export const PetSourceUiDtoV1Schema = z
+export const PetSourceUiDtoV1Schema = lazySchema(() => z
   .object({
     sourceKey: z.string().min(1).max(500),
     kind: PetSourceUiKindV1Schema,
@@ -71,6 +72,6 @@ export const PetSourceUiDtoV1Schema = z
     originLabel: z.string().min(1).max(200),
     previewHandle: PetSourcePreviewHandleV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
 export type PetSourceUiDtoV1 = z.infer<typeof PetSourceUiDtoV1Schema>;

@@ -69,6 +69,120 @@ describe('repairClaudeTranscriptAfterInterrupt', () => {
         expect(updated).toContain('Interrupted');
     });
 
+    it('batches missing tool results into one resumable entry and does not repair them twice', async () => {
+        vi.resetModules();
+        const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-repair-chained-'));
+        const claudeConfigDir = join(baseDir, 'claude-config');
+        const workDir = join(baseDir, 'work');
+        await mkdir(claudeConfigDir, { recursive: true });
+        await mkdir(workDir, { recursive: true });
+        const projectDir = getProjectPath(workDir, claudeConfigDir);
+        await mkdir(projectDir, { recursive: true });
+        const transcriptPath = join(projectDir, 'sess_1.jsonl');
+
+        const original = [
+            {
+                parentUuid: 'user_0',
+                type: 'assistant',
+                uuid: 'asst_1',
+                isSidechain: false,
+                sessionId: 'sess_1',
+                cwd: workDir,
+                timestamp: '2026-10-19T12:00:00.000Z',
+                message: {
+                    id: 'msg_1',
+                    role: 'assistant',
+                    content: [
+                        { type: 'tool_use', id: 'toolu_completed', name: 'Bash', input: { command: 'pwd' } },
+                        { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'sleep 1000' } },
+                        { type: 'tool_use', id: 'toolu_2', name: 'Bash', input: { command: 'sleep 2000' } },
+                    ],
+                },
+            },
+            {
+                parentUuid: 'asst_1',
+                type: 'user',
+                uuid: 'user_1',
+                isSidechain: false,
+                sessionId: 'sess_1',
+                cwd: workDir,
+                timestamp: '2026-10-19T12:00:01.000Z',
+                message: {
+                    role: 'user',
+                    content: [{ type: 'tool_result', tool_use_id: 'toolu_completed', content: workDir, is_error: false }],
+                },
+            },
+        ].map((entry) => `${JSON.stringify(entry)}\n`).join('');
+        await writeFile(transcriptPath, original, 'utf8');
+
+        const { repairClaudeTranscriptAfterInterrupt } = await import('./repairClaudeTranscriptAfterInterrupt');
+        await repairClaudeTranscriptAfterInterrupt({ sessionId: 'sess_1', transcriptPath, workDir, claudeConfigDir });
+
+        const repaired = await readFile(transcriptPath, 'utf8');
+        expect(repaired.startsWith(original)).toBe(true);
+        const lines = repaired.split('\n').filter(Boolean);
+        expect(lines).toHaveLength(3);
+        const appended = JSON.parse(lines[2] as string);
+        // Claude Code rejects the whole transcript ("No conversation found") when an entry is not
+        // linked into the conversation chain with its session identity.
+        expect(appended).toMatchObject({
+            type: 'user',
+            parentUuid: 'asst_1',
+            isSidechain: false,
+            sessionId: 'sess_1',
+            cwd: workDir,
+            message: {
+                role: 'user',
+                content: [
+                    { type: 'tool_result', tool_use_id: 'toolu_1', content: 'Interrupted', is_error: true },
+                    { type: 'tool_result', tool_use_id: 'toolu_2', content: 'Interrupted', is_error: true },
+                ],
+            },
+        });
+        expect(appended.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+        expect(Number.isNaN(Date.parse(appended.timestamp))).toBe(false);
+
+        await repairClaudeTranscriptAfterInterrupt({ sessionId: 'sess_1', transcriptPath, workDir, claudeConfigDir });
+        expect(await readFile(transcriptPath, 'utf8')).toBe(repaired);
+    });
+
+    it('ignores tool_use blocks echoed by non-conversation entries such as api-request-blob', async () => {
+        vi.resetModules();
+        const baseDir = await mkdtemp(join(tmpdir(), 'happier-claude-repair-request-blob-'));
+        const claudeConfigDir = join(baseDir, 'claude-config');
+        const workDir = join(baseDir, 'work');
+        await mkdir(claudeConfigDir, { recursive: true });
+        await mkdir(workDir, { recursive: true });
+        const projectDir = getProjectPath(workDir, claudeConfigDir);
+        await mkdir(projectDir, { recursive: true });
+        const transcriptPath = join(projectDir, 'sess_1.jsonl');
+
+        const toolUse = { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } };
+        // Shape observed in Claude Code 2.1.303 transcripts: the completed tool turn is followed by an
+        // api-request-blob that re-records the earlier assistant message for the next API request.
+        const original = [
+            { parentUuid: 'user_0', type: 'assistant', uuid: 'asst_1', isSidechain: false, sessionId: 'sess_1', message: { role: 'assistant', content: [toolUse] } },
+            {
+                parentUuid: 'asst_1',
+                type: 'user',
+                uuid: 'user_1',
+                isSidechain: false,
+                sessionId: 'sess_1',
+                message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok', is_error: false }] },
+            },
+            { type: 'api-request-blob', hash: 'h1', sessionId: 'sess_1', message: { role: 'assistant', content: [toolUse] } },
+            { parentUuid: 'user_1', type: 'assistant', uuid: 'asst_2', isSidechain: false, sessionId: 'sess_1', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+        ]
+            .map((entry) => `${JSON.stringify(entry)}\n`)
+            .join('');
+        await writeFile(transcriptPath, original, 'utf8');
+
+        const { repairClaudeTranscriptAfterInterrupt } = await import('./repairClaudeTranscriptAfterInterrupt');
+        await repairClaudeTranscriptAfterInterrupt({ sessionId: 'sess_1', transcriptPath, workDir, claudeConfigDir });
+
+        expect(await readFile(transcriptPath, 'utf8')).toBe(original);
+    });
+
     it('waits briefly for an in-flight tool_result to land and avoids appending a duplicate interrupted tool_result', async () => {
         const previousTimeout = process.env.HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_TIMEOUT_MS;
         const previousPoll = process.env.HAPPIER_CLAUDE_TRANSCRIPT_REPAIR_WAIT_TOOL_USE_IDS_POLL_INTERVAL_MS;

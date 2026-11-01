@@ -1,0 +1,25 @@
+  Naming, Root servers. Each asks Which synthetic
+  choice? with its header included in the question
+  so all four question texts differ. Each has
+  options Alpha and Beta with short descriptions
+  and multiSelect false. No other tools. After
+  answers say only FOUR_TAB_DONE.
+
+  Called happier
+────────────────────────────────────────────────────
+←  ☐ Containment  ☐ Se…  ☐ Na…  ☐ Ro…  ✔ Submit  →
+
+Containment: Which synthetic choice?
+
+❯ 1. Alpha
+     First synthetic option for the Containment
+     question
+  2. Beta
+     Second synthetic option for the Containment
+     question
+  3. Type something.
+────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc
+to cancel

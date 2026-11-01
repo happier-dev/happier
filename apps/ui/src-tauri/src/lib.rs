@@ -31,8 +31,17 @@ mod startup;
 #[cfg(desktop)]
 mod shutdown;
 
+#[cfg(target_os = "linux")]
+mod linux_webkit_env;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// The main-thread native test harness reuses these modules with its own isolated setup.
+// Embed the product Info.plist only in the product entrypoint, not in that test executable.
+#[cfg(not(test))]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_webkit_env::apply_before_gtk_init();
+
     let mut builder = tauri::Builder::default();
 
     // First, as the plugin requires: a second launch hands its arguments to this process and exits
@@ -99,6 +108,7 @@ pub fn run() {
                 system_tasks::system_tasks_open_log_path,
                 system_tasks::respond_system_task_prompt,
                 window_chrome::desktop_get_window_chrome_policy,
+                window_chrome::desktop_set_native_title_bar,
                 window_chrome::desktop_get_window_state,
                 window_chrome::desktop_minimize_window,
                 window_chrome::desktop_toggle_window_maximize,

@@ -161,6 +161,7 @@ describe('createNodePtyProvider', () => {
   });
 
   it('prefers node-pty on Windows because the homebridge package does not ship Windows conpty prebuilds', async () => {
+    vi.stubGlobal('Bun', {});
     const pty = createFakeProcess();
     const nodePty = { spawn: vi.fn(() => pty) };
     const homebridge = { spawn: vi.fn(() => pty) };
@@ -264,15 +265,15 @@ describe('createNodePtyProvider', () => {
     expect(homebridge.spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('uses the existing external fallback on POSIX Bun instead of the non-writable Homebridge backend', async () => {
+  it.each(['darwin', 'linux'] as const)('uses the existing external fallback on %s Bun even when native spawn succeeds', async (platform) => {
     vi.stubGlobal('Bun', {});
     const externalPty = createFakeProcess();
     const homebridgePty = createFakeProcess();
     const { provider } = await loadProviderWithModules({
-      'node-pty': { spawn: () => { throw new Error('native unavailable'); } },
+      'node-pty': { spawn: () => createFakeProcess() },
       '@homebridge/node-pty-prebuilt-multiarch': { spawn: () => homebridgePty },
     }, {
-      platform: 'linux',
+      platform,
       fallbackProvider: { spawn: () => externalPty },
       fallbackBackendName: 'python-relay',
     });

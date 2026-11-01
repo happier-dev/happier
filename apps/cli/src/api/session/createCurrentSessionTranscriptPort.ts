@@ -1,9 +1,10 @@
 import type { ACPMessageData, ACPProvider } from './sessionMessageTypes';
 import type { EphemeralSendResult } from './ephemeralSendOutcome';
 import { createUnavailableEphemeralSendOutcome } from './ephemeralSendOutcome';
-import type { StreamedTranscriptCommitOptions, StreamedTranscriptEnqueueOptions } from './streamedTranscriptWriter/types';
+import type { StreamedTranscriptCommitOptions, StreamedTranscriptEnqueueOptions, StreamedTranscriptWriterSession } from './streamedTranscriptWriter/types';
 
 type TranscriptPortSession = Readonly<{
+  subscribeToSessionConnectionState?: StreamedTranscriptWriterSession['subscribeToSessionConnectionState'];
   sendAgentMessage?: (
     provider: ACPProvider,
     body: ACPMessageData,
@@ -61,6 +62,10 @@ export function createCurrentSessionTranscriptPort(
   };
 
   return {
+    get subscribeToSessionConnectionState() {
+      const session = getSession();
+      return session.subscribeToSessionConnectionState?.bind(session);
+    },
     sendAgentMessage: (provider, body, opts) => getSession().sendAgentMessage?.(provider, body, opts),
     sendAgentMessageCommitted: (provider, body, opts) => getSession().sendAgentMessageCommitted(provider, body, opts),
     get enqueueAgentMessageCommitted() {

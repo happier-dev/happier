@@ -18,21 +18,21 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 78 features in the catalog. 22 of them have a switch you can
-reach; the other 56 are decided before you get there.
+There are 79 features in the catalog. 22 of them have a switch you can
+reach; the other 57 are decided before you get there.
 
 ## Features you can turn on yourself
 
-These appear in **Settings → Features**. 15 of the 22 are marked experimental.
+These appear in **Settings → Features**. 9 of the 22 are marked experimental.
 
 | Feature | Id | Kind | Default |
 | --- | --- | --- | --- |
-| **Attachment uploads** | `attachments.uploads` | Experimental | Off |
-| **Automations** | `automations` | Experimental | On |
+| **Attachment uploads** | `attachments.uploads` | Standard | On |
+| **Automations** | `automations` | Standard | On |
 | **Channel bridges** | `channelBridges` | Experimental | Off |
-| **Connected services** | `connectedServices` | Experimental | Off |
-| **Connected services quotas** | `connectedServices.quotas` | Experimental | Off |
-| **Subagents** | `execution.runs` | Experimental | Off |
+| **Connected services** | `connectedServices` | Standard | On |
+| **Connected services quotas** | `connectedServices.quotas` | Standard | On |
+| **Subagents** | `execution.runs` | Standard | On |
 | **Diff syntax highlighting** | `files.diffSyntaxHighlighting` | Standard | On |
 | **Embedded file editor** | `files.editor` | Standard | On |
 | **Rich markdown editor** | `files.markdownRichEditor` | Experimental | Off |
@@ -44,7 +44,7 @@ These appear in **Settings → Features**. 15 of the 22 are marked experimental.
 | **Direct sessions** | `sessions.direct` | Standard | On |
 | **Session folders** | `sessions.folders` | Standard | On |
 | **Friends** | `social.friends` | Experimental | Off |
-| **Embedded terminal** | `terminal.embeddedPty` | Experimental | Off |
+| **Embedded terminal** | `terminal.embeddedPty` | Standard | On |
 | **Usage reporting** | `usage.reporting` | Experimental | On |
 | **Voice** | `voice` | Experimental | Off |
 | **Voice agent** | `voice.agent` | Experimental | Off |
@@ -92,6 +92,7 @@ behaviour but still needs the server to advertise the capability.
 | `connectedServices.subscription` | Provider-optional subscription observations with independently fresh account-usage transport. | server | `connectedServices` |
 | `e2ee.keylessAccounts` | Keyless account support (accounts may omit E2EE signing keys). | server | — |
 | `encryption.accountOptOut` | Per-account encryption opt-out toggle support. | server | `encryption.plaintextStorage` |
+| `encryption.plaintextMachine` | Typed plain Machine metadata, daemon state, and RPC support. | server | `encryption.plaintextStorage` |
 | `encryption.plaintextStorage` | Plaintext session storage support (no E2EE at rest). | server | — |
 | `inbox.global` | Global inbox aggregation surfaces (approvals, permissions, social, updates). | client | — |
 | `machines` | Machine control-plane transport capabilities. | client | — |

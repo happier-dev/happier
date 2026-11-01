@@ -101,10 +101,15 @@ export function resolveWorkspaceBundlesFromPackageJson({ repoRoot, hostPackageDi
   for (const name of bundled) {
     if (typeof name !== 'string' || !name.startsWith('@happier-dev/')) continue;
     const short = name.slice('@happier-dev/'.length);
+    const srcDir = resolve(repoRoot, 'packages', short);
+    const workspacePackageJson = readJson(resolve(srcDir, 'package.json'));
     bundles.push({
       packageName: name,
-      srcDir: resolve(repoRoot, 'packages', short),
+      srcDir,
       destDir: resolve(hostPackageDir, 'node_modules', '@happier-dev', short),
+      includeFiles: Array.isArray(workspacePackageJson.happierWorkspaceBundleFiles)
+        ? workspacePackageJson.happierWorkspaceBundleFiles
+        : [],
     });
   }
   return bundles;
@@ -127,6 +132,13 @@ export function bundleWorkspacePackages({ bundles }) {
     for (const relativePath of collectPackageJsonRelativeFileTargets(pkgJson.exports)) {
       const sourcePath = resolve(b.srcDir, relativePath);
       if (existsSync(sourcePath) && !relativePath.startsWith('dist/')) {
+        cpSync(sourcePath, resolve(b.destDir, relativePath));
+      }
+    }
+    for (const relativePath of b.includeFiles ?? []) {
+      const sourcePath = resolve(b.srcDir, relativePath);
+      if (existsSync(sourcePath)) {
+        mkdirSync(dirname(resolve(b.destDir, relativePath)), { recursive: true });
         cpSync(sourcePath, resolve(b.destDir, relativePath));
       }
     }
@@ -335,8 +347,11 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
       types: './dist/index.d.ts',
       exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
       scripts: { postinstall: 'echo should-not-run' },
+      happierWorkspaceBundleFiles: ['native/windows/bin/windows-x64/happier-service-launcher.exe'],
     });
     writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+    mkdirSync(resolve(cliCommonDir, 'native', 'windows', 'bin', 'windows-x64'), { recursive: true });
+    writeFileSync(resolve(cliCommonDir, 'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe'), 'synthetic launcher bytes');
 
     await bundleWorkspaceDeps({ repoRoot, stackDir });
 
@@ -349,6 +364,17 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
 
     const bundledDistPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
     assert.ok(existsSync(bundledDistPath), 'dist/index.js should be copied to bundled location');
+    assert.ok(existsSync(resolve(
+      stackDir,
+      'node_modules',
+      '@happier-dev',
+      'cli-common',
+      'native',
+      'windows',
+      'bin',
+      'windows-x64',
+      'happier-service-launcher.exe',
+    )), 'Windows service launcher should be copied to bundled location');
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -530,6 +556,40 @@ test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled 
         ),
       ).name,
       'dep-b',
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps stays fresh while a declared bundle file is not built, and refreshes once it is', async () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-optional-include-');
+  try {
+    const launcherRelativePath = 'native/windows/bin/windows-x64/happier-service-launcher.exe';
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': { default: './dist/index.js' } },
+      happierWorkspaceBundleFiles: [launcherRelativePath],
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+    const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const firstMtimeMs = statSync(manifestPath).mtimeMs;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+    assert.equal(statSync(manifestPath).mtimeMs, firstMtimeMs, 'an unbuilt optional bundle file must not force a rebundle');
+
+    mkdirSync(resolve(cliCommonDir, 'native', 'windows', 'bin', 'windows-x64'), { recursive: true });
+    writeFileSync(resolve(cliCommonDir, launcherRelativePath), 'built launcher');
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+    assert.equal(
+      readFileSync(resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', launcherRelativePath), 'utf8'),
+      'built launcher',
     );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });

@@ -17,9 +17,10 @@ type SessionContentEncryption = Readonly<{
     decryptRaw(ciphertext: string): Promise<unknown | null>;
 }>;
 
-type SessionDraftCipherOptions = Readonly<{
-    accountMode: 'plain' | 'e2ee';
-    accountCryptoMaterial: AccountScopedCryptoMaterial;
+type SessionDraftCipherOptions = (
+    | Readonly<{ accountMode: 'plain'; accountCryptoMaterial: null }>
+    | Readonly<{ accountMode: 'e2ee'; accountCryptoMaterial: AccountScopedCryptoMaterial }>
+) & Readonly<{
     getSessionContext(sessionId: string):
         | Readonly<{ mode: 'plain' }>
         | Readonly<{ mode: 'e2ee'; encryption: SessionContentEncryption | null }>

@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
+import { CLAUDE_PEER_TRAILER, claudeHandbackQueuedAttachment, claudeHandbackUserRow } from '../attachments/claudePeerMessage.testkit';
 import { parseRawJsonLinesLine, parseRawJsonLinesObject } from './parseRawJsonLines';
 
 describe('parseRawJsonLines', () => {
+  it('projects native peer string input through the shared parser without repeating its sender on replay', () => {
+    const native = { type: 'user', uuid: 'plain-peer', origin: { kind: 'peer', from: 'a1', name: 'Sender' },
+      message: { role: 'user', content: 'Delivered' } };
+    const parsed = parseRawJsonLinesObject(native);
+    expect(parsed).toMatchObject({ origin: native.origin, message: { content: 'From Sender:\n\nDelivered' } });
+    expect(parseRawJsonLinesObject(parsed)).toEqual(parsed);
+  });
+
   it.each(['completed', 'failed', 'stopped'] as const)('retains released native task %s findings while normalizing its error status', status => {
     // cli-v0.2.16@b8d1c449c46ab4dfa8637db36b66f643d149e66d sessionScanner:452–472.
     const content = [{ type: 'text', text: 'Historical background findings' }];
@@ -48,6 +57,7 @@ describe('parseRawJsonLines', () => {
       prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender">copied queued text</cross-session-message>' } },
     { type: 'attachment', attachment: { type: 'queued_command', prompt: '<cross-session-message from="uds:/tmp/sender.sock">unterminated' } },
     { type: 'user', uuid: 'copied-peer', message: { content: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender">copied text</cross-session-message>' } },
+    { type: 'user', uuid: 'copied-agent-message', message: { content: '<agent-message from="a1">copied text</agent-message>' } },
   ])('does not infer peer delivery from non-native or incomplete content', value => {
     expect(parseRawJsonLinesObject(value)?.origin).toBeUndefined();
   });
@@ -64,6 +74,28 @@ describe('parseRawJsonLines', () => {
       prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="<Sender>" from-mode="prompting">First line\n\n<code>body</code></cross-session-message>' } });
     expect(parsed).toMatchObject({ origin: { kind: 'peer', name: '<Sender>' },
       message: { content: 'From <Sender>:\n\nFirst line\n\n<code>body</code>' } });
+  });
+
+  it.each([
+    ['user row with native report text', claudeHandbackUserRow({ withReportText: true })],
+    ['user row without native report text', claudeHandbackUserRow({ withReportText: false })],
+    ['queued attachment', claudeHandbackQueuedAttachment()],
+  ])('projects a native subagent hand-back as its clean report (%s)', (_label, value) => {
+    const parsed = parseRawJsonLinesObject(value);
+    expect(parsed).toMatchObject({ type: 'user', uuid: 'handback',
+      message: { role: 'user', content: 'From general-purpose:\n\n**Verdict:** fixed.\n\n- detail' } });
+    expect(parsed?.origin).toEqual({ kind: 'peer', from: 'a1', senderTaskId: 'a1', name: 'general-purpose', handback: true });
+    expect(parsed?.isMeta).toBeUndefined();
+    expect(parseRawJsonLinesObject(parsed)).toEqual(parsed);
+  });
+
+  it('projects a native teammate message without its delivery wrapper or harness trailer', () => {
+    const parsed = parseRawJsonLinesObject({ type: 'user', uuid: 'teammate', isMeta: true,
+      origin: { kind: 'peer', from: 'pr4', senderTaskId: 'pr4', name: 'pr4', body: 'Tests are blocked.' },
+      message: { role: 'user', content: `Another Claude session sent a message:\n<agent-message from="pr4">\nTests are blocked.\n</agent-message>${CLAUDE_PEER_TRAILER}` } });
+    expect(parsed).toMatchObject({ origin: { kind: 'peer', from: 'pr4', name: 'pr4' },
+      message: { content: 'From pr4:\n\nTests are blocked.' } });
+    expect(parseRawJsonLinesObject(parsed)).toEqual(parsed);
   });
 
   it('returns null for empty lines', () => {

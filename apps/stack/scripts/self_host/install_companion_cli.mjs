@@ -18,7 +18,7 @@ import { findExtractedExecutableByName } from './findExtractedExecutableByName.m
 
 function commandExists(name) {
   if (process.platform === 'win32') {
-    return (spawnSync('where', [name], { stdio: 'ignore' }).status ?? 1) === 0;
+    return (spawnSync('where', [name], { stdio: 'ignore', windowsHide: true }).status ?? 1) === 0;
   }
   return (spawnSync('sh', ['-lc', `command -v ${name} >/dev/null 2>&1`], { stdio: 'ignore' }).status ?? 1) === 0;
 }

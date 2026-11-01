@@ -184,7 +184,7 @@ describe('FaviconPermissionIndicator', () => {
         expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
     });
 
-    it('does not signal stale projected permissions without runtime freshness', async () => {
+    it('does not signal projected permissions once their runtime is offline', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000_000));
         setGlobalWindow({});
@@ -194,7 +194,7 @@ describe('FaviconPermissionIndicator', () => {
             sessions: {
                 s1: {
                     id: 's1',
-                    presence: 'online',
+                    presence: 900_000,
                     active: true,
                     activeAt: 0,
                     thinking: false,
@@ -221,7 +221,7 @@ describe('FaviconPermissionIndicator', () => {
         expect(resetFavicon).toHaveBeenCalled();
     });
 
-    it('resets when projected permission freshness expires without a storage update', async () => {
+    it('keeps signalling a projected permission past the runtime staleness window while the runtime is live', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000));
         setGlobalWindow({});
@@ -261,6 +261,6 @@ describe('FaviconPermissionIndicator', () => {
             await vi.advanceTimersByTimeAsync(SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1);
         });
 
-        expect(resetFavicon).toHaveBeenCalled();
+        expect(resetFavicon).not.toHaveBeenCalled();
     });
 });

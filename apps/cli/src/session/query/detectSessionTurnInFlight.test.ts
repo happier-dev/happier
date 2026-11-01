@@ -24,6 +24,7 @@ describe('detectSessionTurnActivity', () => {
             encryptionVariant: 'dataKey',
             sessionProjection: {
                 latestTurnStatus: 'in_progress',
+                pendingCount: 0,
                 pendingPermissionRequestCount: 0,
                 pendingUserActionRequestCount: 0,
             },
@@ -56,6 +57,7 @@ describe('detectSessionTurnActivity', () => {
             encryptionVariant: 'dataKey',
             sessionProjection: {
                 latestTurnStatus: 'completed',
+                pendingCount: 0,
                 pendingPermissionRequestCount: 1,
                 pendingUserActionRequestCount: 0,
             },
@@ -75,6 +77,7 @@ describe('detectSessionTurnActivity', () => {
         const { detectSessionTurnActivity, detectSessionTurnInFlight } = await import('./detectSessionTurnInFlight');
         const sessionProjection = {
             latestTurnStatus: 'completed',
+            pendingCount: 0,
             pendingPermissionRequestCount: 0,
             pendingUserActionRequestCount: 0,
             runtimeActivityState: 'active',

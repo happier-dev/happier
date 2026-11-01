@@ -39,6 +39,12 @@ Auth flows:
 - `POST /v1/auth/account/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
 
+- `POST /v1/auth/external/:provider/token-exchange`
+  - Body: `{ accessToken }`: a JWT access token the caller obtained from the provider itself.
+  - Off unless the provider's config has `tokenExchange.allowedClientIds` and keyless login is enabled for the provider.
+  - The provider owns the token check (`OAuthFlowProvider.verifyExternalAccessToken`; OIDC: allowlisted client claim, then `/userinfo` with the token's subject claim as the expected `sub`). The route only signs in to an account already linked to that identity, refuses E2EE accounts (`409 restore-required`), and applies `enforceLoginEligibility`.
+  - Response: `{ success, token }`.
+
 ## Endpoint catalog
 ### Sessions
 - `GET /v1/sessions`
@@ -47,6 +53,34 @@ Auth flows:
 - `POST /v1/sessions` (create or load by `tag`)
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
+
+Development CLI display-only notices (`session send --kind notice`, also spelled
+`--no-deliver`) reuse the existing committed-message endpoint and informational
+Session event envelope (`role: 'agent'`, `content.type: 'event'`,
+`data.type: 'message'`). `--from` prefixes the informational prose; it grants no
+sender authority. Notice sends resolve the existing Session storage mode and
+seal E2EE content with its canonical encryption helper. They never enter Pending
+input admission, wake or resume a runtime, or inject context on the next turn.
+No new relay route or event discriminator is introduced. Explicit local IDs use
+the existing commit identity/reconciliation contract, including byte-stable E2EE
+retries. Other 0.2 Action surfaces reject notice intent rather than silently
+submitting it as user input.
+
+In development, the initial `GET /v2/sessions` request also accepts
+`requiredSessionIds`, a URL-encoded JSON array of session IDs. Accessible requested
+rows, including archived rows, join the existing pinned, attention, active and
+ordinary page families without changing `nextCursor` or `hasNext`. Each session
+appears once; the existing families retain their precedence. Cursor continuation
+pages remain ordinary pagination.
+
+For additional ID chunks, `requiredOnly=true` returns only accessible requested
+rows, with `nextCursor: null` and `hasNext: false`. It skips the ordinary page and
+the pinned, attention and active families, and ignores a supplied cursor.
+Missing rows do not distinguish missing sessions from denied access and are never
+deletion evidence. Clients verify returned IDs and retain exact-read fallback for
+older servers that ignore these optional parameters. Explicit HTTP failures
+stay failed, except that a recognized missing legacy detail route can use the
+existing list scan.
 
 ### Machines
 - `POST /v1/machines` (create or load by id)
@@ -96,6 +130,7 @@ and [encryption](encryption.md) for the owning wire and privacy boundaries.
 ### Connect (OAuth providers + vendor tokens)
 - `GET /v1/auth/external/:provider/params`
 - `POST /v1/auth/external/:provider/finalize`
+- `POST /v1/auth/external/:provider/token-exchange`
 - `DELETE /v1/auth/external/:provider/pending/:pending`
 - `GET /v1/connect/external/:provider/params`
 - `POST /v1/connect/external/:provider/finalize`

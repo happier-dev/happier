@@ -9,27 +9,28 @@ import {
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceUxDiagnosticV1,
 } from './connect/connectedServiceUxDiagnostics.js';
+import { lazySchema } from './lazySchema.js';
 
 // Integrated terminals are UI authoring choices, not daemon process launch modes.
-export const SpawnSessionTerminalSchema = SessionAuthoringTerminalV1Schema.extend({
+export const SpawnSessionTerminalSchema = lazySchema(() => SessionAuthoringTerminalV1Schema.extend({
   mode: SessionAuthoringTerminalV1Schema.shape.mode.unwrap().exclude(['integrated']).optional(),
-}).strip();
+}).strip());
 
 /** Fresh execution authority is bound to an exact user request and, when present, its durable revision. */
-export const SpawnSessionExecutionAuthorizationSchema = z.object({
+export const SpawnSessionExecutionAuthorizationSchema = lazySchema(() => z.object({
   provenance: z.literal('user_request'),
   requestId: z.string().refine((value) => value.trim().length > 0, {
     message: 'Execution authorization request id must not be blank',
   }),
   requestedAt: z.number().int().nonnegative().optional(),
-}).strict();
+}).strict());
 export type SpawnSessionExecutionAuthorization = z.infer<typeof SpawnSessionExecutionAuthorizationSchema>;
 
 /**
  * One-shot first user input carried by a fresh-session spawn until the runner can commit it to
  * Pending. The opaque local id is the cross-boundary de-duplication identity.
  */
-export const PendingFirstInputV1Schema = z.object({
+export const PendingFirstInputV1Schema = lazySchema(() => z.object({
   text: z.string().refine((value) => value.trim().length > 0, {
     message: 'Pending first input text must not be blank',
   }),
@@ -37,7 +38,7 @@ export const PendingFirstInputV1Schema = z.object({
     message: 'Pending first input local id must not be blank',
   }),
   meta: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).strict());
 export type PendingFirstInputV1 = z.infer<typeof PendingFirstInputV1Schema>;
 
 export const SPAWN_SESSION_ERROR_CODES = {
@@ -49,6 +50,7 @@ export const SPAWN_SESSION_ERROR_CODES = {
   RESUME_UNSUPPORTED_ENCRYPTION_VARIANT: 'RESUME_UNSUPPORTED_ENCRYPTION_VARIANT',
   DIRECTORY_CREATE_FAILED: 'DIRECTORY_CREATE_FAILED',
   SPAWN_VALIDATION_FAILED: 'SPAWN_VALIDATION_FAILED',
+  BACKEND_DISABLED: 'BACKEND_DISABLED',
   EXISTING_SESSION_STATE_UNAVAILABLE: 'existing_session_state_unavailable',
   SPAWN_NO_PID: 'SPAWN_NO_PID',
   CHILD_EXITED_BEFORE_WEBHOOK: 'CHILD_EXITED_BEFORE_WEBHOOK',
@@ -116,11 +118,11 @@ export type ConnectedServiceUxDiagnosticSpawnErrorDetail = Readonly<{
   uxDiagnostic: ConnectedServiceUxDiagnosticV1;
 }>;
 
-export const TerminalHostUnavailableSpawnErrorDetailSchema = z.object({
+export const TerminalHostUnavailableSpawnErrorDetailSchema = lazySchema(() => z.object({
   kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.TERMINAL_HOST_UNAVAILABLE),
   host: z.enum(['herdr', 'zellij']),
   reason: z.enum(['installation_unavailable', 'server_version_unsupported']),
-}).strict();
+}).strict());
 export type TerminalHostUnavailableSpawnErrorDetail = z.infer<typeof TerminalHostUnavailableSpawnErrorDetailSchema>;
 
 export type SpawnSessionErrorDetail =

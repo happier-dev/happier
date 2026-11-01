@@ -1,3 +1,4 @@
+import { getOrCreateSessionPermissionRpcRouter, type SessionPermissionRpcRouter } from '@/agent/permissions/sessionPermissionRpcRouter';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState } from '@/api/types';
 import type { PermissionResponse } from '@/agent/permissions/BasePermissionHandler';
@@ -24,6 +25,10 @@ export class FakePermissionRpcHandlerManager {
 export class FakePermissionSession {
   readonly sessionId = 'session-test';
   readonly rpcHandlerManager = new FakePermissionRpcHandlerManager();
+  getOrCreatePermissionRpcRouter(): SessionPermissionRpcRouter {
+    return getOrCreateSessionPermissionRpcRouter(this.rpcHandlerManager);
+  }
+
   private agentState: AgentState = { requests: {}, completedRequests: {} };
 
   asApiSessionClient(): ApiSessionClient {
@@ -33,6 +38,13 @@ export class FakePermissionSession {
   getAgentStateSnapshot(): AgentState {
     return this.agentState;
   }
+
+  async updateAgentStateRequestSettlement(updater: Parameters<FakePermissionSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
 
   updateAgentState(updater: (state: AgentState) => AgentState): AgentState {
     this.agentState = updater(this.agentState);

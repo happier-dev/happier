@@ -278,21 +278,25 @@ function getRecoveryKeyReminderDismissedKeySync(): string | null {
 const credentialsCacheByKey = new Map<string, string>();
 const recoveryKeyReminderDismissedCacheByKey = new Map<string, string>();
 
-export type AuthCredentials =
-    | Readonly<{
-        token: string;
-        secret: string;
-    }>
-    | Readonly<{
-        token: string;
-        encryption: Readonly<{
-            publicKey: string;
-            machineKey: string;
-        }>;
-    }>;
+export type TokenOnlyAuthCredentials = Readonly<{ token: string; secret?: never; encryption?: never }>;
+export type LegacyAuthCredentials = Readonly<{ token: string; secret: string; encryption?: never }>;
+export type DataKeyAuthCredentials = Readonly<{
+    token: string;
+    secret?: never;
+    encryption: Readonly<{ publicKey: string; machineKey: string }>;
+}>;
+export type AuthCredentials = TokenOnlyAuthCredentials | LegacyAuthCredentials | DataKeyAuthCredentials;
 
-export function isLegacyAuthCredentials(credentials: AuthCredentials): credentials is Extract<AuthCredentials, { secret: string }> {
-    return typeof (credentials as any)?.secret === 'string' && (credentials as any).secret.trim().length > 0;
+export function isLegacyAuthCredentials(credentials: AuthCredentials): credentials is LegacyAuthCredentials {
+    return 'secret' in credentials && typeof credentials.secret === 'string' && credentials.secret.trim().length > 0;
+}
+
+export function isDataKeyAuthCredentials(credentials: AuthCredentials): credentials is DataKeyAuthCredentials {
+    return 'encryption' in credentials && credentials.encryption !== undefined;
+}
+
+export function isTokenOnlyAuthCredentials(credentials: AuthCredentials): credentials is TokenOnlyAuthCredentials {
+    return !isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials);
 }
 
 export interface PendingExternalAuth {
@@ -528,9 +532,6 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
         const maybe = parsed as Record<string, unknown>;
         if (!isNonEmptyString(maybe.token)) return null;
 
-        // Credentials must include a restore mechanism:
-        // - legacy secret (stack dev auth), OR
-        // - encryption keypair (dataKey)
         const hasLegacySecret = isNonEmptyString(maybe.secret);
         const hasEncryption =
             !!maybe.encryption &&
@@ -538,8 +539,15 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
             isNonEmptyString((maybe.encryption as Record<string, unknown>).publicKey) &&
             isNonEmptyString((maybe.encryption as Record<string, unknown>).machineKey);
 
-        if (!hasLegacySecret && !hasEncryption) return null;
-        return parsed as AuthCredentials;
+        if ('secret' in maybe && !hasLegacySecret) return null;
+        if ('encryption' in maybe && !hasEncryption) return null;
+        if (hasLegacySecret && hasEncryption) return null;
+        if (hasLegacySecret) return { token: maybe.token, secret: String(maybe.secret) };
+        if (hasEncryption) {
+            const encryption = maybe.encryption as Record<string, unknown>;
+            return { token: maybe.token, encryption: { publicKey: String(encryption.publicKey), machineKey: String(encryption.machineKey) } };
+        }
+        return { token: maybe.token };
     } catch {
         return null;
     }

@@ -1,4 +1,6 @@
 import type { ConnectedServiceSessionAuthSwitchReason } from '../../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { logger } from '@/ui/logger';
+import { hasConnectedServiceAccountApplicationProof, readConnectedServiceAccountApplicationCredentialError } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import type {
   ConnectedServiceCredentialRevisionV1,
   ConnectedServiceId,
@@ -44,6 +46,7 @@ type RecipientResult = Readonly<{
   disposition: 'applied_hot' | 'restart_requested' | 'failed' | 'unavailable';
   reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
   errorCode: string | null;
+  providerAdoptedTarget?: ConnectedServiceProviderAdoptedGenerationTarget;
 }>;
 
 export type ConnectedServiceAuthGroupGenerationConsumptionResult = ApplyAuthGroupGenerationToSessionsResult & Readonly<{
@@ -351,32 +354,40 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
               : 'failed',
       };
     }
-    const availableCredentialRevision = input.committedGeneration.decisionCommittedTarget.credentialRevision;
     for (const target of liveTargets) {
       if (target.isCurrent?.() === false) continue;
       const current = resultsBySessionId[target.sessionId];
       if (current?.reconciliationDisposition !== 'converged') continue;
-      if (availableCredentialRevision === null) {
+      // Fanout can settle a newer authoritative selection than the original committed input.
+      const adopted = fanout.resultsBySessionId?.[target.sessionId]?.providerAdoptedTarget ?? null;
+      const application = { target: adopted ?? input.committedGeneration.decisionCommittedTarget, adopted };
+      if (!hasConnectedServiceAccountApplicationProof(application)) {
         resultsBySessionId[target.sessionId] = {
-          disposition: 'failed',
-          reconciliationDisposition: 'failed',
-          errorCode: 'credential_revision_missing',
+          disposition: 'failed', reconciliationDisposition: 'failed',
+          errorCode: application.adopted
+            ? readConnectedServiceAccountApplicationCredentialError(application.adopted) ?? 'provider_adoption_unproven'
+            : 'provider_adoption_unproven',
         };
         continue;
       }
       const notification = await this.deps.notifyCurrentGroupTruth({
         sessionId: target.sessionId,
-        serviceId: input.committedGeneration.decisionCommittedTarget.serviceId,
+        serviceId: application.adopted.serviceId,
         applicationOwnerId: target.applicationOwnerId,
         applicationSettled: true,
         ...(target.isCurrent ? { isCurrent: target.isCurrent } : {}),
         currentTruth: {
           kind: 'current_auth_group_available',
-          groupId: input.committedGeneration.decisionCommittedTarget.groupId,
-          generation: input.committedGeneration.decisionCommittedTarget.generation,
-          credentialRevision: availableCredentialRevision,
+          groupId: application.adopted.groupId,
+          generation: application.adopted.generation,
+          credentialRevision: application.adopted.credentialRevision,
         },
-      }).catch(() => ({ ok: false as const, errorCode: 'current_group_truth_notification_failed' }));
+      }).catch(() => {
+        logger.warn('[ConnectedServices] Current group truth notification failed', {
+          sessionId: target.sessionId, errorCode: 'current_group_truth_notification_failed',
+        });
+        return { ok: false as const, errorCode: 'current_group_truth_notification_failed' };
+      });
       if (target.isCurrent?.() === false) {
         delete resultsBySessionId[target.sessionId];
         continue;

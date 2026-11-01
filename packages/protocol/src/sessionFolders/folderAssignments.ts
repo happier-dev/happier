@@ -14,12 +14,13 @@ import {
   SetSessionFolderAssignmentResponseSchema as CanonicalSetSessionFolderAssignmentResponseSchema,
 } from '../sessionOrganization/mutations.js';
 import { SESSION_FOLDER_MAX_ID_LENGTH } from './folderSettings.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_FOLDER_IDS = 100;
 export const SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS = 500;
 export const SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_LIMIT = 200;
 
-const SessionFolderIdSchema = z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH);
+const SessionFolderIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_FOLDER_MAX_ID_LENGTH));
 
 export const SessionFolderAssignmentSchema = CanonicalSessionFolderAssignmentSchema;
 export type SessionFolderAssignment = z.infer<typeof SessionFolderAssignmentSchema>;
@@ -39,14 +40,14 @@ export type SetSessionFolderAssignmentRequest = z.infer<typeof SetSessionFolderA
 export const SetSessionFolderAssignmentResponseSchema = CanonicalSetSessionFolderAssignmentResponseSchema;
 export type SetSessionFolderAssignmentResponse = z.infer<typeof SetSessionFolderAssignmentResponseSchema>;
 
-export const QuerySessionFolderSessionsRequestSchema = z
+export const QuerySessionFolderSessionsRequestSchema = lazySchema(() => z
   .object({
     folderIds: z.array(SessionFolderIdSchema).min(1).max(SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_FOLDER_IDS),
     cursor: z.string().trim().min(1).nullable().optional(),
     limit: z.number().int().min(1).max(SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_LIMIT).optional(),
     archived: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type QuerySessionFolderSessionsRequest = z.infer<typeof QuerySessionFolderSessionsRequestSchema>;
 
 export const QuerySessionFolderSessionsResponseSchema = V2SessionListResponseSchema;

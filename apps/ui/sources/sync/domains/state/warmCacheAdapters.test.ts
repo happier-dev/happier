@@ -8,10 +8,27 @@ import {
     SESSION_LIST_WARM_CACHE_MAX_ENTRIES,
 } from './warmCacheAdapters';
 import { SessionListCacheEntryV1Schema } from './warmCachePersistence';
-import { resolveSessionListRenderableAttentionPromotionPlacement } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListRenderableFromSession, resolveSessionListRenderableAttentionPromotionPlacement } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionFixture } from '@/dev/testkit';
 
 describe('warmCacheAdapters', () => {
+    it('persists resolved runtime identity through compact projection and JSON cache hydration', () => {
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            metadata: {
+                path: '/repo',
+                host: 'host',
+                flavor: 'claude',
+                agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'mcp' } },
+            },
+        }));
+        const entry = buildSessionListCacheEntryFromRenderable(renderable);
+        const persisted = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+
+        expect(buildSessionListRenderableFromCacheEntry(persisted).metadata?.flavor).toBe('codex');
+        expect(buildSessionListCacheEntryFromRenderable(buildSessionListRenderableFromCacheEntry(persisted), persisted)).toBe(persisted);
+    });
+
     it('preserves previous session cache metadata and agent-state flags while a replacement renderable is still stale', () => {
         const previousEntry = {
             sessionId: 's1',

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/session/listing/sessionListIndex';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
@@ -111,6 +111,43 @@ function snapshotFor(sourceSessionId: string) {
 }
 
 describe('resolveSessionListDragPointer', () => {
+    it('identifies the effective insertion slot across neighboring before/after targets', () => {
+        const snapshot = snapshotFor('row-0');
+        const resolveAt = (y: number) => resolveSessionListDragPointer({
+            snapshot,
+            registry: liveRegistry(contentRows()),
+            pointer: { x: 160, y },
+            viewport: { viewportWindowY: 0, viewportWindowX: 0, scrollOffsetY: 0, viewportHeight: 600 },
+        });
+        const afterRow1 = resolveAt(115);
+        const beforeRow2 = resolveAt(125);
+        const afterRow2 = resolveAt(155);
+        expect(afterRow1.destinationKey).toBeTypeOf('string');
+        expect(afterRow1.destinationKey).toBe(beforeRow2.destinationKey);
+        expect(afterRow2.destinationKey).not.toBe(beforeRow2.destinationKey);
+        expect(resolveAt(195).destinationKey).toBe(resolveAt(205).destinationKey);
+    });
+
+    it('reuses frozen sibling positions without scanning metadata on pointer updates', () => {
+        const original = snapshotFor('row-0');
+        // Row-hit fixture: implicit gap-zone subtree geometry has its own existing
+        // metadata traversal, independent of insertion identity projection.
+        const snapshot = { ...original, topology: { ...original.topology, dropZones: [] } };
+        const iteration = vi.spyOn(snapshot.topology.rowMetadataById, 'values').mockImplementation(() => {
+            throw new Error('Unexpected per-pointer metadata scan');
+        });
+        try {
+            for (const y of [115, 116, 125]) {
+                const resolved = resolveSessionListDragPointer({
+                    snapshot, registry: liveRegistry(contentRows()), pointer: { x: 160, y },
+                    viewport: { viewportWindowY: 0, viewportWindowX: 0, scrollOffsetY: 0, viewportHeight: 600 },
+                });
+                expect(resolved.destinationKey).toBeTypeOf('string');
+            }
+        } finally {
+            iteration.mockRestore();
+        }
+    });
     it('resolves the target near the pointer AFTER scrolling, not several rows away (wrong-line fix)', () => {
         const snapshot = snapshotFor('row-0');
         const registry = liveRegistry(contentRows());
@@ -432,6 +469,39 @@ function folderContentRows(): TreeContentRow[] {
 }
 
 describe('resolveSessionListDragPointer — folder topology', () => {
+    it('identifies nesting and reordering after the last child as the same insertion', () => {
+        const [header, folder, root] = folderIndexItems();
+        const snapshot = buildSessionListDragSnapshot({
+            items: [header, folder, folderSessionItem('inside', 'folder-a'), root],
+            viewItems: [], sessionDragKey: 'server-a:root-a', folderSortMode: 'mixed', foldersFeatureEnabled: true,
+        });
+        const rows = folderContentRows().map((row) => row.kind === 'leaf' ? { ...row, bounds: { ...row.bounds, y: 120 } } : row);
+        rows.push({ id: treeRowId.session('server-a', 'inside'), kind: 'leaf', parentId: treeRowId.folder('folder-a'),
+            containerId: treeRowId.folder('folder-a'), depth: 1, bounds: { x: 0, y: 80, width: 320, height: 40 } });
+        const resolveAt = (y: number) => resolveSessionListDragPointer({
+            snapshot, registry: liveRegistry(rows), pointer: { x: 160, y },
+            viewport: { viewportWindowY: 0, viewportWindowX: 0, scrollOffsetY: 0, viewportHeight: 600 },
+        });
+        expect(resolveAt(60).result.instruction.kind).toBe('nest-into');
+        expect(resolveAt(115).result.instruction.kind).toBe('reorder-after');
+        expect(resolveAt(60).destinationKey).toBe(resolveAt(115).destinationKey);
+    });
+    it('distinguishes insertions into different containers at the same sibling index', () => {
+        const snapshot = buildSessionListDragSnapshot({
+            items: folderIndexItems(), viewItems: folderViewItems(), sessionDragKey: 'server-a:root-a',
+            folderSortMode: 'mixed', foldersFeatureEnabled: true,
+        });
+        const resolveAt = (y: number) => resolveSessionListDragPointer({
+            snapshot, registry: liveRegistry(folderContentRows()), pointer: { x: 160, y },
+            viewport: { viewportWindowY: 0, viewportWindowX: 0, scrollOffsetY: 0, viewportHeight: 600 },
+        });
+        const nested = resolveAt(60);
+        const root = resolveAt(45);
+        expect(nested.result.instruction.kind).toBe('nest-into');
+        expect(root.result.instruction.kind).toBe('reorder-before');
+        expect(nested.destinationKey).toBeTypeOf('string');
+        expect(nested.destinationKey).not.toBe(root.destinationKey);
+    });
     it('nests into a folder when the pointer hits the folder-header middle third', () => {
         const snapshot = buildSessionListDragSnapshot({
             items: folderIndexItems(),

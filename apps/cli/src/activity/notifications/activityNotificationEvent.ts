@@ -12,6 +12,7 @@ export type ActivityNotificationEvent =
     sessionTitle?: string | null;
     agentDisplayName?: string | null;
     requestId: string;
+    occurrenceId?: string;
     toolName: string;
     toolInput?: unknown;
     toolDetails?: string | null;
@@ -22,6 +23,7 @@ export type ActivityNotificationEvent =
     sessionTitle?: string | null;
     agentDisplayName?: string | null;
     requestId: string;
+    occurrenceId?: string;
     toolName: string;
     toolInput?: unknown;
     toolDetails?: string | null;

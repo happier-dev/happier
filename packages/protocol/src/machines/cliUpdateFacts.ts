@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-const NonEmptyString = z.string().trim().min(1);
+const NonEmptyString = lazySchema(() => z.string().trim().min(1));
 
 /**
  * How the last first-party CLI update on a machine ended (plan R13 f / wave contract K5).
@@ -14,7 +15,7 @@ const NonEmptyString = z.string().trim().min(1);
  * - `pendingReconnect`: the new version is active and the service is being restarted onto it; the
  *   updater has not reported the end yet. A machine that reconnects on `targetVersion` updated.
  */
-export const CliUpdateOutcomeSchema = z.enum(['succeeded', 'rolledBack', 'failed', 'pendingReconnect']);
+export const CliUpdateOutcomeSchema = lazySchema(() => z.enum(['succeeded', 'rolledBack', 'failed', 'pendingReconnect']));
 export type CliUpdateOutcome = z.infer<typeof CliUpdateOutcomeSchema>;
 
 /**
@@ -27,7 +28,7 @@ const CliUpdateLastResultFields = {
   at: z.number().int().nonnegative(),
   message: z.string().nullable(),
 };
-export const CliUpdateLastResultSchema = z.union([
+export const CliUpdateLastResultSchema = lazySchema(() => z.union([
   z.object({
     targetVersion: NonEmptyString,
     outcome: z.enum(['succeeded', 'rolledBack', 'pendingReconnect']),
@@ -38,7 +39,7 @@ export const CliUpdateLastResultSchema = z.union([
     outcome: z.literal('failed'),
     ...CliUpdateLastResultFields,
   }),
-]);
+]));
 export type CliUpdateLastResult = z.infer<typeof CliUpdateLastResultSchema>;
 
 /**
@@ -47,7 +48,7 @@ export type CliUpdateLastResult = z.infer<typeof CliUpdateLastResultSchema>;
  * that package manager (`updateCommand` names it); `other` is anything else (a repo checkout, a
  * copied binary) and has no update command.
  */
-export const CliInstallSourceSchema = z.enum(['managed', 'npm', 'brew', 'other']);
+export const CliInstallSourceSchema = lazySchema(() => z.enum(['managed', 'npm', 'brew', 'other']));
 export type CliInstallSource = z.infer<typeof CliInstallSourceSchema>;
 
 /**
@@ -59,7 +60,7 @@ export type CliInstallSource = z.infer<typeof CliInstallSourceSchema>;
  * `daemon status --json` as the extension of `cliUpdate`. Absent from CLIs that predate it; a reader
  * then shows the version it already has and the update command.
  */
-export const CliUpdateFactsSchema = z.object({
+export const CliUpdateFactsSchema = lazySchema(() => z.object({
   currentVersion: NonEmptyString,
   /** `null` when no check cached a result for this ring yet — never guessed. */
   latestVersion: NonEmptyString.nullable(),
@@ -74,5 +75,5 @@ export const CliUpdateFactsSchema = z.object({
    */
   canUpdateRemotely: z.boolean(),
   lastUpdate: CliUpdateLastResultSchema.nullable(),
-});
+}));
 export type CliUpdateFacts = z.infer<typeof CliUpdateFactsSchema>;

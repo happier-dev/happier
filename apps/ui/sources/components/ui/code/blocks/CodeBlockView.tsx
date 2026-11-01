@@ -51,6 +51,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 <View key={index} style={{ minHeight: 20 }}>
                     {shouldHighlight ? (
                         <SimpleSyntaxHighlighter
+                            wrap={wrap}
                             code={line}
                             language={syntax.language}
                             selectable={selectable}

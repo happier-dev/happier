@@ -1,13 +1,14 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const PROVIDER_ACCOUNT_SUBSCRIPTION_ACCEPT = 'application/json; happier-account-subscription=1';
 
-export const SealedProviderAccountSubscriptionV1Schema = z.object({
+export const SealedProviderAccountSubscriptionV1Schema = lazySchema(() => z.object({
   ciphertext: z.string().min(1),
   observedAtMs: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const ProviderAccountSubscriptionV1Schema = z.object({
+export const ProviderAccountSubscriptionV1Schema = lazySchema(() => z.object({
   status: z.enum(['subscribed', 'none', 'unavailable']),
   renewal: z.enum(['on', 'off', 'unknown']),
   observedAtMs: z.number().int().nonnegative(),
@@ -19,7 +20,7 @@ export const ProviderAccountSubscriptionV1Schema = z.object({
     code: z.enum(['network', 'malformed', 'provider_backoff', 'auth_failure', 'missing_auth']),
     status: z.number().int().min(100).max(599).optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 export type ProviderAccountSubscriptionV1 = z.infer<typeof ProviderAccountSubscriptionV1Schema>;
 

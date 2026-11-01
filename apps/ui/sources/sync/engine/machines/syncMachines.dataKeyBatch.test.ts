@@ -1,6 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { MachineDataKeyCacheEntry } from './syncMachines';
+import { fetchAndApplyMachines, type MachineDataKeyCacheEntry } from './syncMachines';
+import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { createMachineFixture } from '@/dev/testkit';
 
 vi.mock('@/log', () => ({ log: { log: vi.fn() } }));
 
@@ -70,16 +74,53 @@ afterEach(() => {
     vi.clearAllMocks();
 });
 
-beforeEach(() => {
-    vi.resetModules();
-});
-
 async function loadFetchAndApplyMachines() {
-    const mod = await import('./syncMachines');
-    return mod.fetchAndApplyMachines;
+    return fetchAndApplyMachines;
 }
 
 describe('fetchAndApplyMachines machine data-key unwrapping', () => {
+    it('hydrates explicitly plain rows and evicts their prior encrypted key without opening the marker', async () => {
+        const encryption = Encryption.createWithoutKeyMaterial();
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>([
+            ['plain', { envelope: 'old-envelope', dataKey: new Uint8Array(32).fill(2) }],
+        ]);
+        const plainMetadata = { ...createMachineFixture().metadata, host: 'plain-host', displayName: 'Développement 🦋' };
+        const plainState = { status: 'running' };
+        const typedContent = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })), 'base64');
+        const machines: Machine[] = [];
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption, machineDataKeys,
+            request: async (path) => path === '/v1/account/encryption' ? jsonResponse({ mode: 'plain', updatedAt: 1 }) : jsonResponse([machineRow('legacy', null), machineRow('unreadable', 'invalid-envelope'), {
+                ...machineRow('plain', typedContent(null)), metadata: typedContent(plainMetadata),
+                daemonState: typedContent(plainState), daemonStateVersion: 1,
+            }]), applyMachines: (rows) => machines.push(...rows),
+        });
+        expect(machines.find((machine) => machine.id === 'plain')).toMatchObject({ metadata: plainMetadata, daemonState: plainState });
+        expect(machineDataKeys.has('plain')).toBe(false);
+    });
+
+    it('rejects a plain marker when the account mode is E2EE', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        const typedContent = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })), 'base64');
+        const machines: Machine[] = [];
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption, machineDataKeys: new Map(),
+            request: async (path) => path === '/v1/account/encryption' ? jsonResponse({ mode: 'e2ee', updatedAt: 1 }) : jsonResponse([{
+                ...machineRow('plain', typedContent(null)), metadata: typedContent({ ...createMachineFixture().metadata, host: 'unexpected-plain' }),
+            }]), applyMachines: (rows) => machines.push(...rows),
+        });
+        expect(machines.find((machine) => machine.id === 'plain')?.metadata).toBeNull();
+        expect(encryption.getMachineEncryption('plain')).toBeNull();
+    });
+
+    it('rejects a present empty machine key rather than retaining a legacy cipher', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['m1', null]]));
+        await fetchAndApplyMachines({ credentials: { token: 't', secret: 's' }, encryption,
+            machineDataKeys: new Map(), request: async () => jsonResponse([machineRow('m1', '')]), applyMachines: () => {},
+        });
+        expect(encryption.getMachineEncryption('m1')).toBeNull();
+    });
+
     it('opens every machine envelope in one batch instead of one call per machine', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
         const request = vi.fn(async () => jsonResponse([
@@ -132,7 +173,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
 
         expect(machineDataKeys.has('m1')).toBe(false);
         expect(machineDataKeys.get('m2')?.dataKey).toEqual(new Uint8Array([9]));
-        expect(initializedKeys[0]?.get('m1')).toBe(null);
+        expect(initializedKeys[0]?.has('m1')).toBe(false);
         expect(initializedKeys[0]?.get('m2')).toEqual(new Uint8Array([9]));
     });
 
@@ -234,9 +275,8 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
         rotated = true;
         await call();
 
-        // A stale key must never survive a failed re-open: the machine falls back to the
-        // legacy encryptor exactly as it does on a first-fetch failure.
+        // Failed encrypted key opens never authorize the historical no-envelope legacy path.
         expect(machineDataKeys.has('m1')).toBe(false);
-        expect(initializedKeys[1]?.get('m1')).toBe(null);
+        expect(initializedKeys[1]?.has('m1')).toBe(false);
     });
 });

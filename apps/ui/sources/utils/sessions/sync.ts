@@ -1,4 +1,4 @@
-import { createBackoff, delay, linearBackoffDelay } from "@/utils/timing/time";
+import { createBackoff, delay, linearBackoffDelay, SupersededOperationError } from "@/utils/timing/time";
 import type { PauseController } from "@/utils/timing/pauseController";
 
 type InvalidateSyncCycleOutcome =
@@ -15,6 +15,8 @@ export type SyncQueueWaitOutcome =
     | Readonly<{ status: 'stopped' }>;
 
 type SyncQueuePending = (outcome: SyncQueueWaitOutcome) => void;
+
+type SyncQueueWaitOptions = { timeoutMs?: number; signal?: AbortSignal };
 
 const SYNC_QUEUE_COMPLETED: SyncQueueWaitOutcome = { status: 'completed' };
 const SYNC_QUEUE_STOPPED: SyncQueueWaitOutcome = { status: 'stopped' };
@@ -112,7 +114,10 @@ export class InvalidateSync {
         this._doSync();
     }
 
-    async invalidateAndAwait() {
+    async invalidateAndAwait(): Promise<void>;
+    async invalidateAndAwait(opts: SyncQueueWaitOptions): Promise<SyncQueueWaitOutcome>;
+    async invalidateAndAwait(opts?: SyncQueueWaitOptions): Promise<void | SyncQueueWaitOutcome> {
+        if (opts) return this._invalidateAndAwaitQueue(opts);
         if (this._stopped) {
             return;
         }
@@ -133,7 +138,33 @@ export class InvalidateSync {
         });
     }
 
-    async awaitQueue(opts?: { timeoutMs?: number }) {
+    private async _invalidateAndAwaitQueue(opts: SyncQueueWaitOptions): Promise<SyncQueueWaitOutcome> {
+        if (opts.signal?.aborted) throw new SupersededOperationError();
+        if (this._stopped) return SYNC_QUEUE_STOPPED;
+        let pending!: InvalidateSyncCyclePending;
+        const cycle = new Promise<InvalidateSyncCycleOutcome>((resolve) => {
+            pending = resolve;
+            if (this._invalidated && this._hasStartedCommandThisCycle) {
+                this._nextCyclePendings.push(pending);
+            } else {
+                this._cyclePendings.push(pending);
+            }
+        });
+        this.invalidate();
+        try {
+            const queue = await this.awaitQueue(opts);
+            if (queue.status !== 'completed') return queue;
+            const outcome = await cycle;
+            if (!outcome.ok) throw outcome.error;
+            return queue;
+        } finally {
+            this._cyclePendings = this._cyclePendings.filter((entry) => entry !== pending);
+            this._nextCyclePendings = this._nextCyclePendings.filter((entry) => entry !== pending);
+        }
+    }
+
+    async awaitQueue(opts?: SyncQueueWaitOptions) {
+        if (opts?.signal?.aborted) throw new SupersededOperationError();
         if (this._stopped) {
             return SYNC_QUEUE_STOPPED;
         }
@@ -141,29 +172,38 @@ export class InvalidateSync {
             return SYNC_QUEUE_COMPLETED;
         }
         const timeoutMs = opts?.timeoutMs;
-        if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        if (!opts?.signal && (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
             return await new Promise<SyncQueueWaitOutcome>(resolve => {
                 this._queuePendings.push(resolve);
             });
         }
 
-        return await new Promise<SyncQueueWaitOutcome>((resolve) => {
+        return await new Promise<SyncQueueWaitOutcome>((resolve, reject) => {
             let settled = false;
-            let timer: ReturnType<typeof setTimeout>;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const cleanup = () => {
+                clearTimeout(timer);
+                opts?.signal?.removeEventListener('abort', cancel);
+                this._queuePendings = this._queuePendings.filter((entry) => entry !== pending);
+            };
             const pending: SyncQueuePending = (outcome) => {
                 if (settled) return;
                 settled = true;
-                clearTimeout(timer);
+                cleanup();
                 resolve(outcome);
+            };
+            const cancel = () => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new SupersededOperationError());
             };
 
             this._queuePendings.push(pending);
-            timer = setTimeout(() => {
-                if (settled) return;
-                settled = true;
-                this._queuePendings = this._queuePendings.filter((entry) => entry !== pending);
-                resolve({ status: 'wait_budget_expired' });
-            }, timeoutMs);
+            opts?.signal?.addEventListener('abort', cancel, { once: true });
+            if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+                timer = setTimeout(() => pending({ status: 'wait_budget_expired' }), timeoutMs);
+            }
         });
     }
 
@@ -227,6 +267,7 @@ export class InvalidateSync {
                 await this._command();
                 return;
             } catch (e) {
+                if (e instanceof SupersededOperationError) continue;
                 failuresCount += 1;
 
                 if (!this._shouldRetry(e, failuresCount)) {

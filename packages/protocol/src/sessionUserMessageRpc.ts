@@ -7,6 +7,7 @@ import {
 } from './mentionRefV1.js';
 import { PendingLocalIdSchema } from './sessionMessages/pendingLocalId.js';
 import { ExecutionRunCompletionV1Schema } from './structuredMessages/executionRunCompletionV1.js';
+import { lazySchema } from './lazySchema.js';
 
 export const SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND = 'sessionAttachmentUpload';
 
@@ -133,7 +134,7 @@ function sanitizeStructuredAttachments(
   return attachments;
 }
 
-export const HappierStructuredInputV1EnvelopeSchema = z.object({
+export const HappierStructuredInputV1EnvelopeSchema = lazySchema(() => z.object({
   v: z.literal(1).default(1),
   /**
    * The open, additive reference list (R-4). It carries every composer reference kind, so a
@@ -146,7 +147,7 @@ export const HappierStructuredInputV1EnvelopeSchema = z.object({
   imageInputs: z.array(z.record(z.string(), z.unknown())).optional(),
   attachments: z.array(z.record(z.string(), z.unknown())).optional(),
   executionRunCompletion: ExecutionRunCompletionV1Schema.optional(),
-}).passthrough();
+}).passthrough());
 export type HappierStructuredInputV1Envelope = z.infer<typeof HappierStructuredInputV1EnvelopeSchema>;
 
 export function sanitizeHappierStructuredInputV1(
@@ -334,31 +335,31 @@ export function sanitizeSessionUserMessageSendMeta(
   return meta;
 }
 
-export const SessionUserMessageSendMetaSchema = z
+export const SessionUserMessageSendMetaSchema = lazySchema(() => z
   .record(z.string(), z.unknown())
-  .transform((value) => sanitizeSessionUserMessageSendMeta(value));
+  .transform((value) => sanitizeSessionUserMessageSendMeta(value)));
 export type SessionUserMessageSendMeta = z.infer<typeof SessionUserMessageSendMetaSchema>;
 
-export const SessionUserMessageSendRequestSchema = z.object({
+export const SessionUserMessageSendRequestSchema = lazySchema(() => z.object({
   text: z.string().min(1),
   localId: PendingLocalIdSchema.optional(),
   meta: SessionUserMessageSendMetaSchema.default({}),
-}).passthrough();
+}).passthrough());
 export type SessionUserMessageSendRequest = z.infer<typeof SessionUserMessageSendRequestSchema>;
 
-const SessionUserMessageSendSuccessResponseSchema = z.object({
+const SessionUserMessageSendSuccessResponseSchema = lazySchema(() => z.object({
   ok: z.literal(true),
   providerAcceptancePending: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionUserMessageSendErrorResponseSchema = z.object({
+const SessionUserMessageSendErrorResponseSchema = lazySchema(() => z.object({
   ok: z.literal(false),
   error: z.string().min(1),
   errorCode: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-export const SessionUserMessageSendResponseSchema = z.union([
+export const SessionUserMessageSendResponseSchema = lazySchema(() => z.union([
   SessionUserMessageSendSuccessResponseSchema,
   SessionUserMessageSendErrorResponseSchema,
-]);
+]));
 export type SessionUserMessageSendResponse = z.infer<typeof SessionUserMessageSendResponseSchema>;

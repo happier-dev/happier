@@ -157,7 +157,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Capture trusted server release policy
         run: |
@@ -349,9 +349,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn

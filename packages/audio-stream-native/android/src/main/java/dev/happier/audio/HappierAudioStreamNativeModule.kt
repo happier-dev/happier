@@ -14,12 +14,14 @@ class HappierAudioStreamNativeModule : Module() {
   private var activeStreamId: String? = null
   private var record: AudioRecord? = null
   private var thread: Thread? = null
-  private var stopFlag = AtomicBoolean(false)
+  // Each capture thread owns its flag, so a thread still draining after a restart never sees the new
+  // stream's flag and cannot report errors under a stream that has ended.
+  private var stopFlag = AtomicBoolean(true)
 
   override fun definition() = ModuleDefinition {
     Name("HappierAudioStreamNative")
 
-    Events("audioFrame")
+    Events("audioFrame", "audioError")
 
     AsyncFunction("start") { params: Map<String, Any> ->
       val sampleRate = (params["sampleRate"] as? Number)?.toInt() ?: 16000
@@ -56,7 +58,8 @@ class HappierAudioStreamNativeModule : Module() {
         throw IllegalStateException("audio_record_not_initialized")
       }
 
-      stopFlag.set(false)
+      val threadStopFlag = AtomicBoolean(false)
+      stopFlag = threadStopFlag
       audioRecord.startRecording()
 
       val readBuffer = ByteArray(bufferSize)
@@ -64,9 +67,20 @@ class HappierAudioStreamNativeModule : Module() {
 
       val t = Thread {
         try {
-          while (!stopFlag.get()) {
+          while (!threadStopFlag.get()) {
             val read = audioRecord.read(readBuffer, 0, readBuffer.size)
-            if (read <= 0) continue
+            if (read == 0) continue
+            if (read < 0) {
+              // ERROR_DEAD_OBJECT / ERROR_INVALID_OPERATION / ERROR_BAD_VALUE never recover on this
+              // AudioRecord, so retrying would spin a core forever while the session hears silence.
+              if (!threadStopFlag.get()) {
+                sendEvent(
+                  "audioError",
+                  mapOf("streamId" to streamId, "code" to "read_failed", "message" to "AudioRecord.read returned $read")
+                )
+              }
+              break
+            }
             accumulator.write(readBuffer, 0, read)
 
             while (accumulator.size() >= frameBytes && frameBytes > 0) {
@@ -88,8 +102,12 @@ class HappierAudioStreamNativeModule : Module() {
               )
             }
           }
-        } catch (_: Throwable) {
-          // best-effort
+        } catch (e: Throwable) {
+          // A deliberate stop can release the recorder under a read; only unexpected failures are reported.
+          if (!threadStopFlag.get()) sendEvent(
+            "audioError",
+            mapOf("streamId" to streamId, "code" to "capture_failed", "message" to (e.message ?: e.toString()))
+          )
         }
       }
       t.name = "HappierAudioStreamNative"

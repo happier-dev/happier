@@ -27,7 +27,7 @@ import {
     RPC_ERROR_MESSAGES,
     isDelegatedSessionApprovalRpcMethod,
 } from '@happier-dev/protocol/rpc';
-import { isPublicRpcHandlerError, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
+import { isPublicRpcHandlerError, readRpcErrorCode, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
 
 export type RpcHandlerRegistrationReadiness =
     | Readonly<{ status: 'ready' }>
@@ -52,8 +52,8 @@ type TransportAwareRpcHandler = (
 export class RpcHandlerManager {
     private handlers: RpcHandlerMap = new Map();
     private readonly scopePrefix: string;
-    private readonly encryptionKey: Uint8Array;
-    private readonly encryptionVariant: 'legacy' | 'dataKey';
+    private readonly encryptionKey: Uint8Array | null;
+    private readonly encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     private readonly encryptionMode: 'e2ee' | 'plain';
     private readonly logger: (message: string, data?: any) => void;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
@@ -78,7 +78,7 @@ export class RpcHandlerManager {
         this.scopePrefix = config.scopePrefix;
         this.encryptionKey = config.encryptionKey;
         this.encryptionVariant = config.encryptionVariant;
-        this.encryptionMode = config.encryptionMode ?? 'e2ee';
+        this.encryptionMode = config.encryptionMode ?? (config.encryptionVariant === 'plain' ? 'plain' : 'e2ee');
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
         this.onRegistrationError = config.onRegistrationError;
         this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
@@ -89,6 +89,7 @@ export class RpcHandlerManager {
 
     private encodeResponse(response: unknown): unknown {
         if (this.encryptionMode === 'plain') return response;
+        if (!this.encryptionKey || this.encryptionVariant === 'plain') throw new Error('Missing RPC encryption material');
         return encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, response));
     }
 
@@ -155,10 +156,15 @@ export class RpcHandlerManager {
             // Decrypt the incoming params (unless session is plaintext).
             const decryptedParams = this.encryptionMode === 'plain'
               ? request.params
-              : typeof request.params === 'string'
+              : typeof request.params === 'string' && this.encryptionKey && this.encryptionVariant !== 'plain'
                 ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(request.params))
                 : null;
             if (this.encryptionMode !== 'plain' && decryptedParams === null) {
+              defaultLogger.infoFile('[RPC] Unable to decrypt request params; check that the caller and target use matching keys', {
+                reason: 'rpc_params_decryption_failed',
+                method: this.readUnprefixedMethod(request.method),
+                encryptionVariant: this.encryptionVariant,
+              });
               const errorResponse = {
                 error: 'Invalid RPC params',
               };
@@ -208,9 +214,13 @@ export class RpcHandlerManager {
             return response;
         } catch (error) {
             this.logger('[RPC] [ERROR] Error handling request', { error });
-            const errorResponse = {
-                error: error instanceof Error ? error.message : 'Unknown error'
-            };
+            const errorCode = readRpcErrorCode(error);
+            const errorResponse = isPublicRpcHandlerError(error)
+                ? toSocketRpcTargetFailureV1(error)
+                : {
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    ...(errorCode ? { errorCode } : {}),
+                };
             return this.encodeTransportResponse(request, errorResponse);
         } finally {
             if (handlerExecutionId !== null) {

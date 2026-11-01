@@ -327,6 +327,11 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 async *[Symbol.asyncIterator]() {
                     expect(onEffectiveModel).not.toHaveBeenCalled();
                     yield { type: 'system', subtype: 'init', model: runtimeModel, session_id: 'effort-init' } as any;
+                    expect(onEffectiveModel).not.toHaveBeenCalled();
+                    yield { type: 'assistant', message: { role: 'assistant', model: runtimeModel,
+                        content: [{ type: 'text', text: 'Response' }] } };
+                    yield { type: 'assistant', message: { role: 'assistant', model: 'claude-next',
+                        content: [{ type: 'text', text: 'Next response' }] } };
                     yield { type: 'result' } as any;
                 },
                 close: vi.fn(),
@@ -368,6 +373,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.model).toBe(requestedModel);
         expect(capturedOptions.effort).toBe(effort);
         expect(onEffectiveModel).toHaveBeenCalledWith({ modelId: runtimeModel, reasoningEffort: effort });
+        expect(onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'claude-next' });
     });
 
     it('passes ultracode through the --settings extraArg for xhigh-capable models', async () => {
@@ -513,6 +519,68 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.model).toBe('claude-sonnet-4-6[1m]');
         expect(capturedOptions.effort).toBe('low');
+    });
+
+    it('suppresses the requested interrupt error while the replacement prompt awaits its own result', async () => {
+        type CreateQuery = NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']>;
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => { finishInput = resolve; });
+        let releaseReplacementResult!: () => void;
+        const replacementResultReady = new Promise<void>((resolve) => { releaseReplacementResult = resolve; });
+        let reachedInterruptedResult = false;
+        const interrupt = vi.fn(async () => {});
+        // The SDK control response can acknowledge interrupt before its separate result frame.
+        // Keep the real runner, prompt settlement and input iterable beneath that SDK boundary.
+        const createQuery = (({ prompt }: Parameters<CreateQuery>[0]) => ({
+            async *[Symbol.asyncIterator]() {
+                const input = (prompt as AsyncIterable<import('@anthropic-ai/claude-agent-sdk').SDKUserMessage>)[Symbol.asyncIterator]();
+                const first = await input.next();
+                if (first.done) throw new Error('Expected initial prompt');
+                yield { type: 'system', subtype: 'init', session_id: 'interrupted-session' };
+                const replacement = await input.next();
+                if (replacement.done) throw new Error('Expected replacement prompt');
+                // This older result's queue snapshot predates the replacement's submission.
+                yield { type: 'result', subtype: 'error_during_execution', session_id: 'interrupted-session',
+                    errors: ['Interrupted by user'], user_message_uuid: first.value.uuid, queued_turn_count: 0 };
+                reachedInterruptedResult = true;
+                await replacementResultReady;
+                yield { type: 'result', subtype: 'success', session_id: 'interrupted-session',
+                    result: 'Replacement answered', user_message_uuid: replacement.value.uuid, queued_turn_count: 0 };
+                await inputFinished;
+            },
+            interrupt,
+            close() { finishInput(); },
+        })) as unknown as CreateQuery;
+        const onReady = vi.fn();
+        const onCompletionEvent = vi.fn();
+        const prompts = [
+            { message: 'first', mode: makeMode(), userMessageLocalIds: ['first'] },
+            { message: 'replacement', mode: makeMode(), userMessageLocalIds: ['replacement'], pendingProviderAction: 'interrupt_and_send' as const },
+        ];
+        const runner = claudeRemoteAgentSdk({
+            sessionId: null, transcriptPath: null, path: '/tmp', claudeArgs: [], claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            nextMessage: async () => {
+                const prompt = prompts.shift();
+                if (prompt) return prompt;
+                await inputFinished;
+                return null;
+            },
+            onReady, onCompletionEvent, onSessionFound: () => {}, onMessage: () => {}, createQuery,
+        });
+        void runner.catch(() => {});
+        try {
+            await vi.waitFor(() => { expect(reachedInterruptedResult).toBe(true); });
+            expect(interrupt).toHaveBeenCalledOnce();
+            expect(onReady).not.toHaveBeenCalled();
+            expect(onCompletionEvent.mock.calls.flat()).not.toContainEqual(expect.stringContaining('error_during_execution'));
+            releaseReplacementResult();
+            await vi.waitFor(() => { expect(onReady).toHaveBeenCalledOnce(); });
+        } finally {
+            releaseReplacementResult();
+            finishInput();
+            await runner;
+        }
     });
 
     it('exposes a turn interrupt handler that stops the active task via query.stopTask()', async () => {
@@ -2281,6 +2349,77 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             await runner;
         }
         expect(applyPermissionMode).toBeNull();
+    });
+
+    it('holds a refused model prompt without metadata retries and permits a later model change', async () => {
+        type PermissionApplier = (permissionMode: EnhancedMode['permissionMode']) => Promise<void>;
+        let applyPermission: PermissionApplier | null = null;
+        const delivered: string[] = [];
+        const controls: string[] = [];
+        let controlsAfterMetadata: string[] = [];
+        const onAccepted = vi.fn();
+        const onFailure = vi.fn();
+        const onCompletionEvent = vi.fn();
+        const warn = vi.spyOn(logger, 'warnFile');
+        const createQuery: NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']> = ({ prompt }) => ({
+            async *[Symbol.asyncIterator]() {
+                if (typeof prompt === 'string') throw new Error('Expected streaming input');
+                for await (const message of prompt) {
+                    delivered.push(JSON.stringify(message.message.content));
+                    yield message;
+                    yield { type: 'result' };
+                }
+            },
+            close() {},
+            async setPermissionMode() {},
+            async setModel(model: string) {
+                controls.push(model);
+                if (model === 'rejected-model') throw new Error('Model validation timed out');
+            },
+            async setMaxThinkingTokens() {},
+            async supportedCommands() { return []; },
+            async supportedModels() { return []; },
+        } as unknown as Query); // The external SDK boundary consumes and acknowledges real runner input.
+        let promptIndex = 0;
+        try {
+            await claudeRemoteAgentSdk({
+                sessionId: null, transcriptPath: null, path: '/tmp', claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+                nextMessage: async () => {
+                    promptIndex += 1;
+                    if (promptIndex === 1) return {
+                        message: 'initial prompt', mode: makeMode({ model: 'original-model' }), userMessageLocalIds: ['initial'],
+                    };
+                    if (promptIndex === 2) return {
+                        message: 'must remain pending', mode: makeMode({ model: 'rejected-model' }), userMessageLocalIds: ['rejected'],
+                    };
+                    if (promptIndex === 3) {
+                        // Metadata wakes must apply permissions without retrying the refused model.
+                        await applyPermission?.('acceptEdits');
+                        await applyPermission?.('acceptEdits');
+                        controlsAfterMetadata = [...controls];
+                        return {
+                            message: 'recovered prompt', mode: makeMode({ model: 'working-model' }), userMessageLocalIds: ['recovered'],
+                        };
+                    }
+                    return null;
+                },
+                setPermissionModeApplier: (apply) => { applyPermission = apply; },
+                onReady: () => {}, onSessionFound: () => {}, onMessage: () => {}, createQuery,
+                onPromptAcceptedByProvider: onAccepted, onPromptTransportFailure: onFailure, onCompletionEvent,
+            });
+            expect(controlsAfterMetadata).toEqual(['rejected-model']);
+            expect(delivered).toHaveLength(2);
+            expect(delivered.join(' ')).not.toContain('must remain pending');
+            expect(onAccepted.mock.calls.map(([outcome]) => outcome.userMessageLocalIds)).toEqual([['initial'], ['recovered']]);
+            expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ kind: 'rejected_before_effect', userMessageLocalIds: ['rejected'] }));
+            expect(controls).toEqual(['rejected-model', 'working-model']);
+            expect(onCompletionEvent.mock.calls.flat().join(' ')).toContain('Model validation timed out');
+            expect(onCompletionEvent.mock.calls.flat().join(' ')).toContain('original-model');
+            expect(warn).toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     it('applies live setModel, setPermissionMode, and setMaxThinkingTokens before the next queued message', async () => {

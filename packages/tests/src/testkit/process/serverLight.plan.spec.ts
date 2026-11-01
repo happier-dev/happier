@@ -97,7 +97,7 @@ describe("startServerLight planning helpers", () => {
       env: {},
       platform: "linux",
     });
-    expect(generated).toBe("file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
+    expect(generated).toBe("file:/tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
 
     const explicitDatabaseUrl = "file:/tmp/custom-happier.sqlite?mode=rw";
     expect(resolveServerLightSqliteDatabaseUrl({
@@ -113,7 +113,7 @@ describe("startServerLight planning helpers", () => {
       env: { DATABASE_URL: "postgresql://postgres@127.0.0.1:5432/happier" },
       platform: "linux",
       inheritDatabaseUrl: false,
-    })).toBe("file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
+    })).toBe("file:/tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
   });
 
   it("serializes shared deps builds across concurrent callers", async () => {

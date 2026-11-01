@@ -49,6 +49,10 @@ describe('PermissionHandler (ExitPlanMode)', () => {
 
   it('allows ExitPlanMode when approved', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
+    client.metadata = {
+      sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+    };
 
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
@@ -64,10 +68,16 @@ describe('PermissionHandler (ExitPlanMode)', () => {
 
     await permissionRpc?.({ id: 'toolu_1', approved: true });
     await expect(resultPromise).resolves.toEqual({ behavior: 'allow', updatedInput: { plan: 'p1' } });
+    expect(client.metadata).toMatchObject({ sessionModeOverrideV1: { modeId: null }, acpSessionModeOverrideV1: { modeId: null } });
   });
 
   it('denies ExitPlanMode with the provided reason, and does not abort the remote loop', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
+    const metadata = {
+      sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+    };
+    client.metadata = metadata;
 
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
@@ -85,6 +95,7 @@ describe('PermissionHandler (ExitPlanMode)', () => {
     await expect(resultPromise).resolves.toMatchObject({ behavior: 'deny', message: 'Please change step 2' });
 
     expect(handler.isAborted('toolu_1')).toBe(false);
+    expect(client.metadata).toEqual(metadata);
   });
 
   it('resolves duplicate ExitPlanMode waiters for the same toolUseId from one approval', async () => {

@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -33,7 +34,7 @@ describe('apiAccountEncryptionMode', () => {
   it('fails closed to e2ee when the server does not implement /v1/account/encryption', async () => {
     mockServerConfig();
     vi.stubGlobal('fetch', (vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url = getServerFetchUrl(input).pathname;
       if (url.endsWith('/health')) {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }

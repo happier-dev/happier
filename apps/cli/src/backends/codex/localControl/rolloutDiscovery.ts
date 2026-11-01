@@ -127,7 +127,6 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
-    const maxProbeBytes = 64 * 1024;
     const chunkBytes = 4 * 1024;
     try {
         const fh = await open(filePath, 'r');
@@ -135,37 +134,27 @@ async function readFirstLine(filePath: string): Promise<string | null> {
             const decoder = new StringDecoder('utf8');
             const chunk = Buffer.allocUnsafe(chunkBytes);
             let readOffset = 0;
-            let text = '';
-            let sawEof = false;
+            const parts: string[] = [];
 
-            while (readOffset < maxProbeBytes) {
-                const bytesToRead = Math.min(chunk.byteLength, maxProbeBytes - readOffset);
-                const res = await fh.read(chunk, 0, bytesToRead, readOffset);
-                if (res.bytesRead <= 0) {
-                    sawEof = true;
-                    break;
-                }
+            // session_meta includes full base instructions; its first record has no vendor size cap.
+            // Stop at its newline so even a large transcript only needs its metadata head.
+            while (true) {
+                const res = await fh.read(chunk, 0, chunk.byteLength, readOffset);
+                if (res.bytesRead <= 0) break;
                 readOffset += res.bytesRead;
-                text += decoder.write(chunk.subarray(0, res.bytesRead));
+                const text = decoder.write(chunk.subarray(0, res.bytesRead));
                 const idx = text.indexOf('\n');
                 if (idx !== -1) {
-                    const line = text.slice(0, idx).trim();
+                    parts.push(text.slice(0, idx));
+                    const line = parts.join('').trim();
                     return line.length > 0 ? line : null;
                 }
-                if (res.bytesRead < bytesToRead) {
-                    sawEof = true;
-                    break;
-                }
+                parts.push(text);
+                if (res.bytesRead < chunk.byteLength) break;
             }
 
-            text += decoder.end();
-            const idx = text.indexOf('\n');
-            if (idx !== -1) {
-                const line = text.slice(0, idx).trim();
-                return line.length > 0 ? line : null;
-            }
-            if (!sawEof && readOffset >= maxProbeBytes) return null;
-            const line = text.trim();
+            parts.push(decoder.end());
+            const line = parts.join('').trim();
             return line.length > 0 ? line : null;
         } finally {
             await fh.close();

@@ -1,9 +1,37 @@
 import { describe, it, expect } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
+import type { AgentMessage } from '../../core';
 
 describe('AcpBackend sendPrompt usage telemetry', () => {
-  it('emits a token-count message when ACP prompt response includes usage', async () => {
+  it('preserves fx 0.0.14 prompt usage without adding overlapping cache and reasoning counts', async () => {
+    const backend = new AcpBackend({ agentName: 'fx', cwd: process.cwd(), command: 'noop' });
+    const emitted: AgentMessage[] = [];
+    backend.onMessage((message) => emitted.push(message));
+    // The ACP peer is the external process boundary; keep sendPrompt and projection real.
+    Object.assign(backend, {
+      acpSessionId: 'sess_fx',
+      connection: {
+        peer: {
+          prompt: async () => ({
+            stopReason: 'end_turn',
+            // vercel-labs/fx 1a070af32cdf, src/acp/types.zig PromptResponseUsage.
+            usage: { inputTokens: 100, outputTokens: 40, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 15 },
+          }),
+        },
+      },
+    });
+
+    await backend.sendPrompt('sess_fx', 'hello');
+
+    expect(emitted.filter((message) => message.type === 'token-count')).toEqual([expect.objectContaining({
+      type: 'token-count',
+      source: 'acp-prompt-usage',
+      tokens: { total: 140, input: 100, output: 40, cache_read: 30, cache_creation: 10, thought: 15 },
+    })]);
+  });
+
+  it.each([10, null])('emits snake_case usage with explicit total %s or its additive fallback', async (explicitTotal) => {
     const backend = new AcpBackend({
       agentName: 'test',
       cwd: process.cwd(),
@@ -19,7 +47,7 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
         prompt: async () => ({
           stopReason: 'end_turn',
           usage: {
-            total_tokens: 10,
+            ...(explicitTotal === null ? {} : { total_tokens: explicitTotal }),
             input_tokens: 7,
             output_tokens: 3,
             cached_read_tokens: 2,
@@ -35,7 +63,7 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
     const tokenCount = emitted.find((m) => m?.type === 'token-count');
     expect(tokenCount).toBeTruthy();
     expect(tokenCount.tokens).toEqual({
-      total: 10,
+      total: explicitTotal ?? 17,
       input: 7,
       output: 3,
       cache_read: 2,

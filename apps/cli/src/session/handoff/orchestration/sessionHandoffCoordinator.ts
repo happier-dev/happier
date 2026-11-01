@@ -1,5 +1,6 @@
 import {
   readServerEnabledBit,
+  readSessionHandoffError,
   type FeaturesResponse,
   SessionHandoffCapabilityV2Schema,
   type SessionHandoffCapabilityV2,
@@ -18,6 +19,7 @@ import {
   type SessionHandoffWorkspaceTransfer,
 } from '@happier-dev/protocol';
 import { resolveMachineTransferRoute, SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR } from '@happier-dev/transfers';
+import { createRpcCallError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 export type SessionHandoffCoordinatorInput = Readonly<{
   sessionId: string;
@@ -196,9 +198,22 @@ function projectTargetStatusProgress(update: (value: OperationUpdate) => void, v
   phase(update, `workspace_${progress.checkpoint}`, label);
 }
 
-function readCapability(value: unknown): SessionHandoffCapabilityV2 | null {
-  const parsed = SessionHandoffCapabilityV2Schema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+export async function probeSessionHandoffCapability(probe: () => Promise<unknown>): Promise<SessionHandoffCapabilityV2 | null> {
+  try {
+    const value = await probe();
+    const refusal = readSessionHandoffError(value);
+    if (refusal) {
+      throw createRpcCallError({
+        error: refusal.errorMessage,
+        errorCode: refusal.errorCode,
+      });
+    }
+    const parsed = SessionHandoffCapabilityV2Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  } catch (error) {
+    if (isRpcMethodNotFoundError(error)) return null;
+    throw error;
+  }
 }
 
 export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorPort) {
@@ -207,7 +222,7 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
       throw new Error('Invalid session handoff operation input');
     }
     const sameMachine = input.sourceMachineId === input.targetMachineId;
-    const capability = readCapability(await port.probeTargetCapability(input));
+    const capability = await probeSessionHandoffCapability(() => port.probeTargetCapability(input));
     if (!capability) {
       throw new Error('Target daemon does not support safe atomic session handoff v2');
     }
@@ -215,7 +230,10 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
       if (input.workspaceTransfer?.enabled === true) {
         throw new Error('Existing session state requires workspace copying to be disabled');
       }
-      const sourceCapability = port.probeSourceCapability ? readCapability(await port.probeSourceCapability(input)) : null;
+      const probeSourceCapability = port.probeSourceCapability;
+      const sourceCapability = probeSourceCapability
+        ? await probeSessionHandoffCapability(() => probeSourceCapability(input))
+        : null;
       if (!capability.existingState || sourceCapability?.existingState !== true) {
         throw new Error('Both daemons must support existing session state handoff');
       }

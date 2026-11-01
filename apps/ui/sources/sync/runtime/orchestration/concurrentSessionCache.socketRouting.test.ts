@@ -136,12 +136,16 @@ describe('concurrent session cache socket routing', () => {
         vi.doMock('socket.io-client', () => ({
             io: (...args: unknown[]) => ioSpy(...args),
         }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-            },
-            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
-        }));
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    ...actual.TokenStorage,
+                    getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+                },
+            };
+        });
         vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
             const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
             return createServerProfilesModuleMock({
@@ -255,12 +259,16 @@ describe('concurrent session cache socket routing', () => {
         vi.doMock('socket.io-client', () => ({
             io: (...args: unknown[]) => ioSpy(...args),
         }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-            },
-            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
-        }));
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    ...actual.TokenStorage,
+                    getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+                },
+            };
+        });
         vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
             const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
             return createServerProfilesModuleMock({
@@ -410,12 +418,16 @@ describe('concurrent session cache socket routing', () => {
         vi.doMock('socket.io-client', () => ({
             io: (...args: unknown[]) => ioSpy(...args),
         }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-            },
-            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
-        }));
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    ...actual.TokenStorage,
+                    getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+                },
+            };
+        });
         vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
             const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
             return createServerProfilesModuleMock({
@@ -615,12 +627,16 @@ describe('concurrent session cache socket routing', () => {
         vi.doMock('socket.io-client', () => ({
             io: (...args: unknown[]) => ioSpy(...args),
         }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-            },
-            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
-        }));
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    ...actual.TokenStorage,
+                    getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+                },
+            };
+        });
         vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
             const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
             return createServerProfilesModuleMock({
@@ -803,13 +819,16 @@ describe('concurrent session cache socket routing', () => {
         vi.doMock('socket.io-client', () => ({
             io: (...args: unknown[]) => ioSpy(...args),
         }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
-            },
-            isLegacyAuthCredentials: (credentials: any) =>
-                Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
-        }));
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    ...actual.TokenStorage,
+                    getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+                },
+            };
+        });
         vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
             const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
             return createServerProfilesModuleMock({

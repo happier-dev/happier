@@ -7,6 +7,7 @@ import {
 
 import type { BackgroundServiceRepairPlan } from '@/diagnostics/backgroundServiceRepair';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
+import { semverLessThan } from './_shared';
 
 import type {
   AutomaticStartupDuplicateDefaultFollowing,
@@ -217,7 +218,7 @@ export function classifyAutomaticStartup(params: Readonly<{
     && e.ringId === params.currentCliRingId
     && e.running === true
     && e.runningCliVersion !== null
-    && e.runningCliVersion !== params.currentCliVersion,
+    && semverLessThan(e.runningCliVersion, params.currentCliVersion),
   );
   if (runningEntry && runningEntry.runningCliVersion !== null) {
     const versionStale: AutomaticStartupVersionStale = {

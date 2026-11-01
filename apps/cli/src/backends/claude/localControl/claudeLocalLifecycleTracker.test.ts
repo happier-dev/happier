@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLocalTurnLifecycleController, type LocalTurnLifecycleSnapshot } from '@/agent/localControl/turnLifecycle';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { TurnStallNotice } from '@/agent/runtime/session/turn/stallWatch';
 import { GENERIC_CONTINUATION_RESUME_PROMPT } from '@/daemon/connectedServices/continuation/continuationResumePrompt';
 import type {
   SessionRuntimeActivityContribution,
@@ -13,6 +15,48 @@ import type { RawJSONLines } from '../types';
 import { createClaudeLocalLifecycleTracker } from './claudeLocalLifecycleTracker';
 
 describe('createClaudeLocalLifecycleTracker', () => {
+  it('uses live raw rows and main hooks for silence without counting presentation replay or foreign rows', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const notices: TurnStallNotice[] = [];
+    const turn = createSessionTurnLifecycle({
+      sessionId: 'happier-session', enqueueSessionTurn: async () => {},
+      turnStallWarnMs: 100, onTurnStallNotice: notice => notices.push(notice),
+    });
+    const lifecycle = createLocalTurnLifecycleController({ completionQuiescenceMs: 0 });
+    const tracker = createClaudeLocalLifecycleTracker({
+      lifecycle, onProviderEvent: () => turn.observeProviderTurnEvent(),
+      readProviderSessionId: () => 'native-main',
+    });
+    try {
+      await turn.beginTurn({ provider: 'claude' });
+      await vi.advanceTimersByTimeAsync(75);
+      tracker.observeLiveProviderActivityRow({ type: 'attachment', sessionId: 'native-main' }, 'native-main');
+      await vi.advanceTimersByTimeAsync(75);
+      tracker.observeHook({ hook_event_name: 'PostToolUse', session_id: 'native-main', tool_name: 'Bash' });
+      await vi.advanceTimersByTimeAsync(75);
+      tracker.observeTranscript({ type: 'assistant', uuid: 'old', sessionId: 'native-main', message: { content: [] } });
+      tracker.observeLiveProviderActivityRow({ type: 'attachment', sessionId: 'foreign' }, 'native-main');
+      tracker.observeLiveProviderActivityRow({ type: 'attachment', sessionId: 'native-main', isReplay: true }, 'native-main');
+      tracker.observeLiveProviderActivityRow({ type: 'attachment', sessionId: 'native-main', isSidechain: true }, 'native-main');
+      tracker.observeLiveProviderActivityRow({ type: 'attachment', sessionId: 'native-main', parent_tool_use_id: 'child' }, 'native-main');
+      tracker.observeHook({ hook_event_name: 'PostToolUse', session_id: 'native-main', agent_id: 'child', tool_name: 'Bash' });
+      tracker.observeHook({ hook_event_name: 'PermissionRequestCompleted', session_id: 'native-main' });
+      tracker.observeHook({ hook_event_name: 'PostToolUse', session_id: 'stale-native-session' });
+      await vi.advanceTimersByTimeAsync(24);
+      expect(notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(notices).toMatchObject([{ lastEventAgeMs: 100 }]);
+      tracker.observeHook({ hook_event_name: 'SessionStart', source: 'compact', session_id: 'native-next' });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(notices).toHaveLength(2);
+    } finally {
+      await turn.completeTurn({ provider: 'claude' });
+      lifecycle.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it('retains task custody when only the local wrapper exit was observed', async () => {
     const lifecycle = createLocalTurnLifecycleController({ completionQuiescenceMs: 0 });
     const ledger = createClaudeProviderActivityLedger();

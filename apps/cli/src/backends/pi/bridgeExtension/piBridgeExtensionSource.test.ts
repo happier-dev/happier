@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { resolveHappyToolsBridgeBackendOptions } from './resolveHappyToolsBridgeBackendOptions';
 import {
   buildPiBridgeExtensionSource,
   PI_BRIDGE_EXTENSION_VERSION,
@@ -94,8 +96,85 @@ describe('buildPiBridgeExtensionSource', () => {
 });
 
 describe('pi bridge extension behavior', () => {
+  it('reports each extension input submission without reporting RPC inputs or image-only inputs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-input-'));
+    const notify = vi.fn<(message: string) => void>();
+    const ctx = { ui: { notify } };
+    try {
+      const configPath = join(dir, 'config.json');
+      writeFileSync(configPath, JSON.stringify({
+        v: 1,
+        sessionId: 'sess-input',
+        directTools: [],
+        promptAddition: '',
+        launch: { filePath: process.execPath, argPrefix: [], env: {} },
+      }));
+      const factory = await loadExtensionFactory();
+      const harness = createFakePi({ [PI_BRIDGE_CONFIG_PATH_FLAG]: configPath });
+      factory(harness.pi);
+      await harness.emit('session_start', {});
+
+      await harness.emit('input', { source: 'rpc', text: '/review concurrency' }, ctx);
+      await harness.emit('input', { source: 'rpc', text: 'handled by another extension' }, ctx);
+      await harness.emit('input', { source: 'interactive', text: 'native input' }, ctx);
+      await harness.emit('input', { source: 'extension', text: '', images: [{ type: 'image' }] }, ctx);
+      expect(notify).not.toHaveBeenCalled();
+
+      const text = 'handled by another extension\nrepeat';
+      await expect(harness.emit('input', { source: 'extension', text }, ctx)).resolves.toBeUndefined();
+      await harness.emit('input', { source: 'extension', text }, ctx);
+      expect(notify.mock.calls.map(([message]) => JSON.parse(String(message)))).toEqual([
+        { type: 'happy-pi-user-input', text },
+        { type: 'happy-pi-user-input', text },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('registers host-generated JSON schemas without Zod runtime metadata', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-schemas-'));
+    try {
+      const resolved = await resolveHappyToolsBridgeBackendOptions({
+        agentDir: dir,
+        sessionId: 'sess-schemas',
+        settings: null,
+        memoryRecallGuidanceEnabled: true,
+        memoryMachineId: 'machine-1',
+      });
+      expect(resolved).not.toBeNull();
+      const configPath = join(dir, 'config.json');
+      writeFileSync(configPath, JSON.stringify(resolved!.sessionConfig));
+      const factory = await loadExtensionFactory();
+      const harness = createFakePi({ [PI_BRIDGE_CONFIG_PATH_FLAG]: configPath });
+      factory(harness.pi);
+      await harness.emit('session_start', {});
+
+      expect(harness.tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(['change_title', 'action_execute', 'memory_search']),
+      );
+      for (const tool of harness.tools) {
+        expect(tool.parameters, tool.name).not.toHaveProperty('~standard');
+        expect(tool.parameters, tool.name).toMatchObject({ type: 'object' });
+      }
+      expect(harness.tools.find((tool) => tool.name === 'change_title')?.parameters).toMatchObject({
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+      });
+      const memorySchema = harness.tools.find((tool) => tool.name === 'memory_search')?.parameters;
+      expect(memorySchema).toMatchObject({ properties: { machineId: { type: 'string' } } });
+      expect(memorySchema).not.toHaveProperty('required', expect.arrayContaining(['machineId']));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('executes host-resolved tools through the Agent bridge with bounded typed results', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-execute-'));
+    // The generated extension imports native ESM directly, outside Vitest's module graph.
+    const nativeChildProcess = createRequire(import.meta.url)('node:child_process') as typeof import('node:child_process');
+    const spawnBoundary = vi.spyOn(nativeChildProcess, 'spawn');
+    syncBuiltinESMExports();
     try {
       const argvPath = join(dir, 'argv.json');
       const overflowPidPath = join(dir, 'overflow-pid.txt');
@@ -215,6 +294,7 @@ if (args.input.value === 'fail') {
       } finally {
         clearTimeout(overflowAbortTimer);
       }
+      expect(spawnBoundary.mock.calls[0]?.[2]?.windowsHide).toBe(true);
       const overflowPid = Number(readFileSync(overflowPidPath, 'utf8'));
       await expect.poll(() => {
         try {
@@ -247,6 +327,8 @@ if (args.input.value === 'fail') {
       setTimeout(() => controller.abort(), 25);
       await expect(waitingCall).rejects.toThrow('bridge_cancelled');
     } finally {
+      spawnBoundary.mockRestore();
+      syncBuiltinESMExports();
       rmSync(dir, { recursive: true, force: true });
     }
   });

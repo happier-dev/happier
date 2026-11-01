@@ -26,10 +26,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
-import {
-    getSessionDraftSnapshot,
-    subscribeSessionDraft,
-} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { useExistingSessionDraftSemanticValue } from '@/hooks/session/useExistingSessionDraftSemanticValue';
 import type {
     SessionArmedAgentContinuation,
     SessionArmedAgentContinuationSubmission,
@@ -384,22 +381,16 @@ export function useInSessionAgentPickerControls(
     const featureDefinitelyDisabled = params.featureDecision?.state === 'disabled';
     const accountScopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'local';
     const draftSessionId = sessionId.trim().length > 0 ? sessionId.trim() : null;
-    const subscribeToDraft = React.useCallback((listener: () => void) => {
-        if (!accountScope || !draftSessionId) return () => undefined;
-        return subscribeSessionDraft(accountScope, { kind: 'session', sessionId: draftSessionId }, listener);
-    }, [accountScope, draftSessionId]);
-    const readDraftSnapshot = React.useCallback(() => {
-        if (!accountScope || !draftSessionId) return null;
-        return getSessionDraftSnapshot(accountScope, { kind: 'session', sessionId: draftSessionId });
-    }, [accountScope, draftSessionId]);
-    const draftSnapshot = React.useSyncExternalStore(subscribeToDraft, readDraftSnapshot, readDraftSnapshot);
+    // Only the persisted arm is read from the draft; text keystrokes must not render this owner.
+    const persistedArmedContinuation = useExistingSessionDraftSemanticValue(
+        accountScope,
+        draftSessionId,
+        'routing.agentContinuation',
+    );
 
     const currentAgentAppliedStatus = resolveAppliedRuntimeStatus(params.currentAgentSessionActive);
 
     const [armed, setArmed] = React.useState<ArmedAgentContinuation | null>(null);
-    const persistedArmedContinuation = draftSessionId === null
-        ? undefined
-        : readPersistedArmedContinuation(accountScope, draftSessionId);
     // A submitted input remains custody even after the arm that promised a
     // next-message transition loses eligibility. It remains in the one existing
     // draft record until SessionView has reconciled canonical custody.
@@ -752,10 +743,10 @@ export function useInSessionAgentPickerControls(
         armScopeKey,
         armed,
         currentAgentId,
-        draftSnapshot,
         draftSessionId,
         featureEnabled,
         featureDefinitelyDisabled,
+        persistedArmedContinuation,
         railDecisionSettled,
         targetEntries,
         targetRows,

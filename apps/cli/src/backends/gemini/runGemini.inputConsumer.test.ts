@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import type { AcpTurnOutcome } from '@/agent/acp/backend/turn/_types';
 import type {
@@ -7,11 +7,16 @@ import type {
   MessageBatch,
 } from '@/agent/runtime/sessionInput/types';
 import type { SessionProviderInputConsumerOptions } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
+import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
 import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import type { Credentials } from '@/persistence';
+import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 
 import type { GeminiMode } from './types';
+
+type PermissionHandlerFactory = typeof import('@/agent/permissions/createProviderEnforcedPermissionHandler').createProviderEnforcedPermissionHandler;
+type PermissionHandlerFixture = Pick<ReturnType<PermissionHandlerFactory>, 'updateSession' | 'abortPendingRequestsAndFlush' | 'setPermissionMode' | 'reset'>;
 
 type GeminiInputConsumer = {
   waitForNextInput: (opts: { abortSignal: AbortSignal }) => Promise<MessageBatch<GeminiMode, string> | null>;
@@ -80,6 +85,8 @@ const {
     onMessage: vi.fn(),
     startSession: vi.fn(async () => ({ sessionId: 'gemini-acp-session-1' })),
     cancel: vi.fn(async () => undefined),
+    sendPromptWithEvidence: vi.fn(async () => ({ kind: 'accepted_without_exact_final_response' as const })),
+    waitForResponseComplete: vi.fn<() => Promise<AcpTurnOutcome>>(),
     dispose: vi.fn(async () => undefined),
   };
 
@@ -90,13 +97,13 @@ const {
       model: 'gemini-2.5-pro',
       modelSource: 'explicit',
     })),
-    createGeminiTerminalUiMock: vi.fn(() => ({
+    createGeminiTerminalUiMock: vi.fn((_opts: Parameters<typeof import('./runtime/createGeminiTerminalUi').createGeminiTerminalUi>[0]) => ({
       mount: vi.fn(),
       unmount: vi.fn(async () => undefined),
       updateDisplayedModel: vi.fn(),
       getDisplayedModel: vi.fn(() => 'gemini-2.5-pro'),
     })),
-    createProviderEnforcedPermissionHandlerMock: vi.fn(() => ({
+    createProviderEnforcedPermissionHandlerMock: vi.fn<(...params: Parameters<PermissionHandlerFactory>) => PermissionHandlerFixture>(() => ({
       updateSession: vi.fn(),
       abortPendingRequestsAndFlush: vi.fn(async () => undefined),
       setPermissionMode: vi.fn(),
@@ -105,7 +112,10 @@ const {
     createSessionProviderInputConsumerMock: vi.fn<
       (opts: SessionProviderInputConsumerOptions<GeminiMode, string>) => GeminiInputConsumer
     >(),
-    createStreamedTranscriptWriterMock: vi.fn(() => ({
+    createStreamedTranscriptWriterMock: vi.fn((_opts: Parameters<typeof import('@/api/session/streamedTranscriptWriter').createStreamedTranscriptWriter>[0]): {
+      flushAll: (opts: { reason: 'tool-call-boundary' | 'turn-end' | 'abort'; interruptedReason?: string }) => Promise<unknown>;
+      setCommitProvenance: ReturnType<typeof import('@/api/session/streamedTranscriptWriter').createStreamedTranscriptWriter>['setCommitProvenance'];
+    } => ({
       flushAll: vi.fn(async () => undefined),
       setCommitProvenance: vi.fn(),
     })),
@@ -140,12 +150,7 @@ const {
     })),
     resolveGeminiSystemPromptTextMock: vi.fn(async () => 'fresh system prompt'),
     sendGeminiPromptWithRetryMock: vi.fn<
-      (opts: {
-        prompt: string;
-        onProviderPromptAccepted?: () => void;
-        onProviderPromptAttemptStarted?: () => void;
-        onProviderPromptEffectMayHaveOccurred?: () => void;
-      }) => Promise<AcpTurnOutcome>
+      (opts: Parameters<typeof import('./runtime/sendGeminiPromptWithRetry').sendGeminiPromptWithRetry>[0]) => Promise<AcpTurnOutcome | void>
     >(async () => ({
       kind: 'completed',
       stopReason: 'end_turn',
@@ -223,6 +228,7 @@ vi.mock('@/configuration', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
+    infoFile: vi.fn(),
     debugLargeJson: vi.fn(),
     warn: vi.fn(),
     infoDeveloper: vi.fn(),
@@ -299,7 +305,8 @@ vi.mock('@/api/session/streamedTranscriptWriter', () => ({
   createStreamedTranscriptWriter: createStreamedTranscriptWriterMock,
 }));
 
-vi.mock('@/api/session/sessionWritesBestEffort', () => ({
+vi.mock('@/api/session/sessionWritesBestEffort', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/session/sessionWritesBestEffort')>(),
   updateMetadataBestEffort: vi.fn(async () => undefined),
 }));
 
@@ -508,7 +515,9 @@ describe('runGemini input consumer migration', () => {
       type: 'message',
       message: 'Connected-service account already updated; the old turn was interrupted.',
     });
-    expect(surfacePrimarySessionRuntimeIssueMock).not.toHaveBeenCalled();
+    expect(surfacePrimarySessionRuntimeIssueMock).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'gemini', cause: 'status_error', error: expect.objectContaining({ runtimeAuthClassification: expect.objectContaining({ kind: 'usage_limit' }) }),
+    }));
   });
 
   it('uses a slower heartbeat cadence while idle and the foreground cadence during an active turn', async () => {
@@ -860,6 +869,177 @@ describe('runGemini input consumer migration', () => {
       localId: 'local-runtime-unavailable',
       reason: 'runtime_disposed_before_delivery',
     });
+  });
+
+  it('stops the active Gemini provider and controller when cancellation journal admission fails', async () => {
+    let state: import('@/api/types').AgentState = { requests: {}, completedRequests: {} };
+    const session = Object.assign(createFakeSession(), {
+      getAgentStateSnapshot: () => state,
+      updateAgentState: async (updater: (current: import('@/api/types').AgentState) => import('@/api/types').AgentState) => { state = updater(state); },
+      updateAgentStateRequestSettlement: async () => { throw Object.assign(new Error('journal disk full'), { code: 'ENOSPC' }); },
+    });
+    setFakeSession(session);
+    const actualFactory = await vi.importActual<{ createProviderEnforcedPermissionHandler: PermissionHandlerFactory }>('@/agent/permissions/createProviderEnforcedPermissionHandler');
+    let handler: ReturnType<PermissionHandlerFactory> | undefined;
+    createProviderEnforcedPermissionHandlerMock.mockImplementationOnce((params) => {
+      handler = actualFactory.createProviderEnforcedPermissionHandler(params);
+      return handler;
+    });
+    let stoppedSignal: AbortSignal | undefined;
+    sendGeminiPromptWithRetryMock.mockImplementationOnce(async () => {
+      if (!handler) throw new Error('Expected real Gemini permission handler');
+      const consumer = createSessionProviderInputConsumerMock.mock.results[0]!.value;
+      stoppedSignal = vi.mocked(consumer.runProviderInputDispatch).mock.calls.at(-1)?.[0].abortSignal;
+      const pending = handler.handleToolCall('gemini-stop', 'AskUserQuestion', {
+        questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }],
+      });
+      const rejected = expect(pending).rejects.toThrow('Aborted by user');
+      const abort = session.rpcHandlerManager.registerHandler.mock.calls.find(([name]) => name === 'abort')?.[1] as (() => Promise<void>) | undefined;
+      if (!abort) throw new Error('Expected Gemini Stop RPC');
+      await abort();
+      await rejected;
+      return { kind: 'aborted', stopReason: 'cancelled' };
+    });
+    const { runGemini } = await import('./runGemini');
+    await runGemini({ credentials });
+    expect(stoppedSignal?.aborted).toBe(true);
+    expect(fakeBackend.cancel).toHaveBeenCalledWith('gemini-acp-session-1');
+    expect(state.requests?.['gemini-stop']).toBeDefined();
+    expect(state.completedRequests?.['gemini-stop']).toBeUndefined();
+  });
+
+  it.each([
+    { cancelOutcome: 'completed', overlapping: false, shutdown: false, transportFails: false },
+    { cancelOutcome: 'completed', overlapping: true, shutdown: false, transportFails: false },
+    { cancelOutcome: 'failed', overlapping: true, shutdown: false, transportFails: false },
+    { cancelOutcome: 'completed', overlapping: true, shutdown: true, transportFails: false },
+    { cancelOutcome: 'completed', overlapping: true, shutdown: false, transportFails: true },
+  ] as const)('parks Gemini input until Stop cancellation has $cancelOutcome (overlapping: $overlapping, shutdown: $shutdown, transportFails: $transportFails)', async ({ cancelOutcome, overlapping, shutdown, transportFails }) => {
+    const actualConsumerModule = await vi.importActual<
+      typeof import('@/agent/runtime/sessionInput/SessionProviderInputConsumer')
+    >('@/agent/runtime/sessionInput/SessionProviderInputConsumer');
+    const actualPromptModule = await vi.importActual<typeof import('./runtime/sendGeminiPromptWithRetry')>(
+      './runtime/sendGeminiPromptWithRetry',
+    );
+    const actualPermissions = await vi.importActual<
+      typeof import('@/agent/permissions/createProviderEnforcedPermissionHandler')
+    >('@/agent/permissions/createProviderEnforcedPermissionHandler');
+    const actualTranscript = await vi.importActual<typeof import('@/api/session/streamedTranscriptWriter')>(
+      '@/api/session/streamedTranscriptWriter',
+    );
+    const actualTranscriptPort = await vi.importActual<typeof import('@/api/session/createCurrentSessionTranscriptPort')>(
+      '@/api/session/createCurrentSessionTranscriptPort',
+    );
+    const { createCurrentSessionTranscriptPort } = await import('@/api/session/createCurrentSessionTranscriptPort');
+    vi.mocked(createCurrentSessionTranscriptPort).mockImplementationOnce(actualTranscriptPort.createCurrentSessionTranscriptPort);
+    createProviderEnforcedPermissionHandlerMock.mockImplementationOnce(actualPermissions.createProviderEnforcedPermissionHandler);
+    let transcriptWriter!: ReturnType<typeof actualTranscript.createStreamedTranscriptWriter>;
+    createStreamedTranscriptWriterMock.mockImplementationOnce((options) => {
+      transcriptWriter = actualTranscript.createStreamedTranscriptWriter(options);
+      return transcriptWriter;
+    });
+    const permissionSession = new FakePermissionSession();
+    // Session state writes and transcript commits are the server transport boundary.
+    const session = Object.assign(getFakeSession(), {
+      getAgentStateSnapshot: permissionSession.getAgentStateSnapshot.bind(permissionSession),
+      updateAgentState: permissionSession.updateAgentState.bind(permissionSession),
+      sendAgentMessageCommitted: vi.fn(async () => undefined),
+    });
+    const mode: GeminiMode = {
+      permissionMode: 'safe-yolo',
+      model: 'gemini-2.5-pro',
+      originalUserMessage: 'active prompt',
+      appendSystemPrompt: null,
+      localId: 'local-stop-active',
+      replaySeedAllowed: true,
+    };
+    let consumerOptions!: SessionProviderInputConsumerOptions<GeminiMode, string>;
+    let inputWait!: MockInstance<SessionProviderInputConsumer<GeminiMode, string>['waitForNextInput']>;
+    let actualConsumer!: GeminiInputConsumer;
+    createSessionProviderInputConsumerMock.mockImplementationOnce((options) => {
+      consumerOptions = options;
+      const consumer = actualConsumerModule.createSessionProviderInputConsumer(options);
+      actualConsumer = consumer;
+      inputWait = vi.spyOn(consumer, 'waitForNextInput');
+      options.messageQueue.push('active prompt', mode);
+      return consumer;
+    });
+    sendGeminiPromptWithRetryMock.mockReset();
+    sendGeminiPromptWithRetryMock.mockImplementation(actualPromptModule.sendGeminiPromptWithRetry);
+
+    let finishResponse!: (outcome: AcpTurnOutcome) => void;
+    const response = new Promise<AcpTurnOutcome>((resolve) => { finishResponse = resolve; });
+    let responseStarted!: () => void;
+    const responseReady = new Promise<void>((resolve) => { responseStarted = resolve; });
+    fakeBackend.waitForResponseComplete.mockImplementationOnce(() => {
+        responseStarted();
+        return response;
+      });
+    if (!shutdown) fakeBackend.waitForResponseComplete.mockImplementationOnce(async () => {
+        void actualConsumer.closeProviderInputAdmissionAndWaitForDispatches();
+        return { kind: 'completed', stopReason: 'end_turn' };
+      });
+    let releaseCancel!: () => void;
+    const cancellation = new Promise<void>((resolve) => { releaseCancel = resolve; });
+    let cancelStarted!: () => void;
+    const cancellationStarted = new Promise<void>((resolve) => { cancelStarted = resolve; });
+    // ACP settles the active response before its external cancellation finishes.
+    fakeBackend.cancel.mockImplementationOnce(async () => {
+      finishResponse({ kind: 'aborted', stopReason: 'cancelled' });
+      cancelStarted();
+      await cancellation;
+      if (cancelOutcome === 'failed') throw new Error('cancel failed');
+    });
+
+    const { runGemini } = await import('./runGemini');
+    const runPromise = runGemini({ credentials });
+    await Promise.race([responseReady, runPromise]);
+    const abortHandler = session.rpcHandlerManager.registerHandler.mock.calls.find(
+      ([name]) => name === 'abort',
+    )?.[1] as () => Promise<boolean>;
+    if (transportFails) {
+      session.flush.mockRejectedValueOnce(new Error('session flush transport unavailable'));
+      session.sendAgentMessageCommitted.mockRejectedValue(new Error('transcript commit transport unavailable'));
+      transcriptWriter.appendThinkingDelta('thinking interrupted by Stop');
+    }
+    const firstStop = abortHandler();
+    const overlappingStop = overlapping ? abortHandler() : firstStop;
+    const exitRequest = shutdown ? createGeminiTerminalUiMock.mock.calls[0]?.[0].onExit() : undefined;
+    await cancellationStarted;
+    if (!shutdown) consumerOptions.messageQueue.push('follow-up prompt', { ...mode, localId: 'local-after-stop' });
+    // Let the response unwind without depending on timers, which the defective loop starves.
+    for (let microtask = 0; microtask < 200; microtask += 1) await Promise.resolve();
+    const inputWaitsDuringCancellation = inputWait.mock.calls.length - 1;
+    const sentBeforeCancellationSettled = fakeBackend.sendPromptWithEvidence.mock.calls.length;
+    const disposedBeforeCancellationSettled = fakeBackend.dispose.mock.calls.length;
+    releaseCancel();
+    const stopResults = await Promise.all([firstStop, overlappingStop]);
+    await exitRequest;
+    await runPromise;
+
+    expect(inputWaitsDuringCancellation).toBe(0);
+    expect(sentBeforeCancellationSettled).toBe(1);
+    expect(disposedBeforeCancellationSettled).toBe(0);
+    expect(stopResults).toEqual([cancelOutcome === 'completed', cancelOutcome === 'completed']);
+    expect(fakeBackend.cancel).toHaveBeenCalledTimes(1);
+    if (!shutdown) expect(fakeBackend.sendPromptWithEvidence).toHaveBeenLastCalledWith(
+      'gemini-acp-session-1', expect.stringContaining('follow-up prompt'),
+    );
+    expect(await abortHandler()).toBe(false);
+    expect(session.close).toHaveBeenCalled();
+    expect(fakeBackend.dispose).toHaveBeenCalled();
+    if (transportFails) {
+      expect(session.sendAgentMessageCommitted).toHaveBeenCalledWith(
+        'gemini', { type: 'thinking', text: 'thinking interrupted by Stop' },
+        expect.objectContaining({ meta: expect.objectContaining({
+          happierStreamSegmentV1: expect.objectContaining({ segmentKind: 'thinking', segmentState: 'interrupted' }),
+        }) }),
+      );
+      const { logger } = await import('@/ui/logger');
+      expect(logger.infoFile).toHaveBeenCalledWith(
+        expect.any(String), expect.objectContaining({ kind: 'thinking', state: 'interrupted', textLength: 28 }),
+      );
+    }
   });
 
   it('ignores stale abort requests after a cancelled Gemini turn so later pending input can run', async () => {

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
@@ -8,6 +8,10 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { useVisibleSessionListViewData as useReminderListViewData } from './useVisibleSessionListViewData';
+import { storage } from '@/sync/domains/state/storageStore';
+import { act } from 'react-test-renderer';
+import { setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { archiveSessionWithPendingState } from '@/components/sessions/sessionStopArchiveFlow';
 
 function makeRenderableSession(id: string, overrides: Partial<SessionListRenderableSession> = {}): SessionListRenderableSession {
     return {
@@ -39,6 +43,9 @@ function makeOrganizationProjection(
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         attentionStandingsBySessionId,
         labelsByLabelKey: {},
         orderEntriesByScopeKey: {},
@@ -68,6 +75,7 @@ const sourceData = vi.hoisted(() => ({
     hideInactiveSessions: false,
     sessionListAttentionPromotionMode: 'off' as 'off' | 'global' | 'withinGroups',
     sessionListAttentionStandingDefault: false,
+    backgroundWorkAttentionMode: 'keepWorking' as 'keepWorking' | 'keepWorkingUnread' | 'showUnread',
     sessionListWorkingPlacementMode: 'off' as 'off' | 'global' | 'withinGroups',
     sessionListOrderingModeV1: 'custom' as 'custom' | 'created' | 'updated',
     sessionListSectionModeV1: 'activity' as 'activity' | 'single',
@@ -115,6 +123,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 if (key === 'hideInactiveSessions') return sourceData.hideInactiveSessions;
                 if (key === 'sessionListAttentionPromotionModeV1') return sourceData.sessionListAttentionPromotionMode;
                 if (key === 'sessionListAttentionStandingDefaultV1') return sourceData.sessionListAttentionStandingDefault;
+                if (key === 'sessionListBackgroundWorkAttentionModeV1') return sourceData.backgroundWorkAttentionMode;
                 if (key === 'sessionListWorkingPlacementModeV1') return sourceData.sessionListWorkingPlacementMode;
                 if (key === 'sessionListOrderingModeV1') return sourceData.sessionListOrderingModeV1;
                 if (key === 'sessionListSectionModeV1') return sourceData.sessionListSectionModeV1;
@@ -140,26 +149,8 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     });
 });
 
-vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
-    useResolvedActiveServerSelection: () => ({
-        enabled: false,
-        activeServerId: 'server-a',
-        allowedServerIds: ['server-a'],
-        presentation: 'grouped',
-    }),
-}));
-
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => sourceData.sessionFoldersEnabled,
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => (
-        profile.serverIdentityId ?? profile.id
-    ),
-    getServerProfileById: (serverId: string) => serverId === 'server-a'
-        ? { id: 'server-a', serverUrl: 'https://server-a.test' }
-        : null,
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
@@ -193,11 +184,17 @@ vi.mock('@/sync/domains/session/listing/sessionListIndex', async (importOriginal
 });
 
 describe('useVisibleSessionListViewData', () => {
+    beforeEach(() => {
+        const profile = upsertServerProfile({ serverUrl: 'https://server-a' });
+        setActiveServerId(profile.id);
+        storage.setState(storage.getInitialState(), true);
+    });
     afterEach(async () => {
         sourceData.hideInactiveSessions = false;
         sourceData.sessionListAttentionPromotionMode = 'off';
         sourceData.sessionListAttentionStandingDefault = false;
         sourceData.sessionListWorkingPlacementMode = 'off';
+        sourceData.backgroundWorkAttentionMode = 'keepWorking';
         sourceData.sessionListOrderingModeV1 = 'custom';
         sourceData.sessionListSectionModeV1 = 'activity';
         sourceData.sessionListFolderSortModeV1 = 'foldersFirst';
@@ -250,6 +247,53 @@ describe('useVisibleSessionListViewData', () => {
 
         expect(second).toBe(first);
         await hook.unmount();
+    });
+
+    it('keeps only the correctly scoped inactive archive visible until its operation settles', async () => {
+        sourceData.hideInactiveSessions = true;
+        const row = sourceData.activeData.find((item) => item.type === 'session');
+        if (!row || row.type !== 'session') throw new Error('Expected a session row');
+        sourceData.activeData = [
+            ...sourceData.activeData,
+            { ...row, serverId: 'server-b' },
+        ];
+        storage.setState({ sessionArchiveOperations: {
+            'server-a': { 'session-a': { sessionId: 'session-a', serverId: 'server-a' } },
+        } });
+        const { useVisibleSessionListViewData } = await import('./useVisibleSessionListViewData');
+        const hook = await renderHook(() => useVisibleSessionListViewData());
+        try {
+            const visible = hook.getCurrent()?.filter((item) => item.type === 'session');
+            expect(visible?.map((item) => item.serverId)).toEqual(['server-a']);
+            expect(visible?.[0]?.session.archiving).toBe(true);
+            await act(async () => { storage.setState({ sessionArchiveOperations: {} }); });
+            await flushHookEffects();
+            expect(hook.getCurrent()?.filter((item) => item.type === 'session')).toEqual([]);
+        } finally {
+            storage.setState({ sessionArchiveOperations: {} });
+            await hook.unmount();
+        }
+    });
+
+    it('keeps cached archive progress visible when a feature response promotes the server identity', async () => {
+        sourceData.hideInactiveSessions = true;
+        storage.getState().applySessions([createSessionFixture({ id: 'session-a', active: false })]);
+        sourceData.activeData = storage.getState().sessionListViewData ?? [];
+        const archived = createDeferred<void>();
+        const archive = archiveSessionWithPendingState('session-a', () => archived.promise, 'server-a');
+        const hook = await renderHook(() => useReminderListViewData());
+        try {
+            expect(hook.getCurrent()?.filter((item) => item.type === 'session')).toHaveLength(1);
+            await act(async () => { setServerProfileIdentityForUrl('https://server-a', 'srv_visible_archive_promoted'); });
+            const visible = hook.getCurrent()?.filter((item) => item.type === 'session');
+            expect(visible).toHaveLength(1);
+            expect(visible?.[0]?.session.archiving).toBe(true);
+            await act(async () => { archived.resolve(); await archive; });
+            expect(hook.getCurrent()?.filter((item) => item.type === 'session')).toEqual([]);
+        } finally {
+            await act(async () => { archived.resolve(); await archive; });
+            await hook.unmount();
+        }
     });
 
     it('skips visible-row signature scans when recomputing to the same visible row references', async () => {
@@ -322,6 +366,9 @@ describe('useVisibleSessionListViewData', () => {
             folderAssignmentsBySessionId: {},
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
@@ -834,7 +881,7 @@ describe('useVisibleSessionListViewData', () => {
         await hook.unmount();
     });
 
-    it('does not fetch synced folder assignments for the Direct storage filter', async () => {
+    it('renders shared folders and refreshes assignments in the Direct storage filter', async () => {
         sourceData.sessionFoldersEnabled = true;
         sourceData.sessionFolderViewModeV1 = 'tree';
         sourceData.sessionFoldersV1 = {
@@ -883,10 +930,13 @@ describe('useVisibleSessionListViewData', () => {
                 },
             },
             folderAssignmentsBySessionId: {
-                'assigned-session': 'folder-a',
+                'direct-session': 'folder-a',
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
@@ -943,9 +993,29 @@ describe('useVisibleSessionListViewData', () => {
         expect(hook.getCurrent()?.filter((item) => item.type === 'session').map((item) => item.session.id))
             .toEqual(['direct-session']);
         expect(hook.getCurrent()?.some((item) => item.type === 'header' && item.headerKind === 'folder'))
-            .toBe(false);
-        expect(sourceData.fetchAndApplySessionFolderAssignments).not.toHaveBeenCalled();
+            .toBe(true);
+        expect(hook.getCurrent()?.find((item) => item.type === 'session' && item.session.id === 'direct-session'))
+            .toMatchObject({ folderId: 'folder-a', groupKind: 'folder' });
+        await vi.waitFor(() => {
+            expect(sourceData.fetchAndApplySessionFolderAssignments).toHaveBeenCalledWith(expect.objectContaining({
+                serverId: 'server-a', sessionIds: ['direct-session'], fetchPolicy: 'missing',
+            }));
+        });
         await hook.unmount();
+
+        const reloaded = await renderHook(() => useVisibleSessionListViewData('direct'));
+        expect(reloaded.getCurrent()?.find((item) => item.type === 'session' && item.session.id === 'direct-session'))
+            .toMatchObject({ folderId: 'folder-a', groupKind: 'folder' });
+        await reloaded.unmount();
+
+        // Successful import updates metadata on the same server session; organization stays keyed by its id.
+        sourceData.activeData = sourceData.activeData.map((item) => item.type === 'session' && item.session.id === 'direct-session'
+            ? { ...item, session: { ...item.session, metadataVersion: 2, metadata: { path: '/repo', host: 'machine-a' } } }
+            : item);
+        const imported = await renderHook(() => useVisibleSessionListViewData('persisted'));
+        expect(imported.getCurrent()?.find((item) => item.type === 'session' && item.session.id === 'direct-session'))
+            .toMatchObject({ folderId: 'folder-a', groupKind: 'folder' });
+        await imported.unmount();
     });
 
     it('refreshes visible folder assignments through the organization op', async () => {
@@ -985,7 +1055,7 @@ describe('useVisibleSessionListViewData', () => {
             expect(sourceData.fetchAndApplySessionFolderAssignments).toHaveBeenCalledWith(expect.objectContaining({
                 credentials: { token: 'token-a', secret: 'secret-a' },
                 serverId: 'server-a',
-                serverUrl: 'https://server-a.test',
+                serverUrl: 'https://server-a',
                 sessionIds: ['persisted-session'],
                 fetchPolicy: 'missing',
             }));
@@ -1233,6 +1303,9 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
@@ -1618,6 +1691,45 @@ describe('useVisibleSessionListViewData', () => {
             'session:shared-session:server-b:active:none',
         ]);
         await hook.unmount();
+    });
+
+    it.each([
+        ['global', 'global'], ['withinGroups', 'withinGroups'],
+        ['global', 'withinGroups'], ['withinGroups', 'global'],
+        ['off', 'global'], ['global', 'off'],
+        ['off', 'withinGroups'], ['withinGroups', 'off'],
+    ] as const)('reacts to background unread preference changes with attention %s and working %s', async (attentionMode, workingMode) => {
+        sourceData.sessionListAttentionPromotionMode = attentionMode;
+        sourceData.sessionListWorkingPlacementMode = workingMode;
+        sourceData.activeData = [{
+            type: 'session', serverId: 'server-a', section: 'active', groupKey: 'group-a', groupKind: 'active',
+            session: makeRenderableSession('background-unread', {
+                active: true, activeAt: Date.now(), presence: 'online', seq: 5, lastViewedSessionSeq: 1,
+                hasUnreadMessages: true, latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now(),
+                runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: Date.now(), runtimeActivityRevision: 1,
+            }),
+        }];
+        const hook = await renderHook(() => useReminderListViewData());
+        const sessionRow = () => hook.getCurrent()?.find((item) => item.type === 'session');
+        expect(sessionRow()?.workingPlacementReason).toBe(workingMode === 'off' ? undefined : 'working');
+        sourceData.backgroundWorkAttentionMode = 'keepWorkingUnread';
+        await hook.rerender();
+        expect(sessionRow()?.workingPlacementReason).toBe(workingMode === 'off' ? undefined : 'working');
+        sourceData.backgroundWorkAttentionMode = 'showUnread';
+        await hook.rerender();
+        expect(sessionRow()?.attentionPromotionReason).toBe(attentionMode === 'off' ? undefined : 'unread');
+        sourceData.backgroundWorkAttentionMode = 'keepWorking';
+        await hook.rerender();
+        expect(sessionRow()?.workingPlacementReason).toBe(workingMode === 'off' ? undefined : 'working');
+        expect(sessionRow()).toMatchObject({ session: { hasUnreadMessages: true } });
+        const retainedSessionListViewData = hook.getCurrent();
+        await hook.unmount();
+        sourceData.backgroundWorkAttentionMode = 'showUnread';
+        const remounted = await renderHook(() => useReminderListViewData('all', { retainedSessionListViewData }));
+        expect(remounted.getCurrent()?.find((item) => item.type === 'session')?.attentionPromotionReason)
+            .toBe(attentionMode === 'off' ? undefined : 'unread');
+        await remounted.unmount();
     });
 
     it('passes the within-groups attention placement setting into visible list derivation', async () => {
@@ -2303,6 +2415,9 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {
@@ -2414,6 +2529,9 @@ describe('useVisibleSessionListViewData', () => {
             },
             tagsById: {},
             tagAssignmentsBySessionId: {},
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {},
             labelsByLabelKey: {},
             orderEntriesByScopeKey: {

@@ -76,12 +76,19 @@ export function resolveSessionRowPresentation(input: Readonly<{
      * or the badge the way unread does.
      */
     standing?: boolean;
+    /**
+     * The row's group does not say whether the session is live (the Pinned band
+     * replaces the Active/Inactive header), and the session status has something
+     * worth saying — "last seen …", "disconnected", "resuming…". A live quiet
+     * session says nothing ("online" is `shouldShowStatus: false`), so on these
+     * rows an empty line is what reads as live.
+     */
+    statesUnseenLiveness?: boolean;
 }>): SessionRowPresentation {
+    // Classification owns whether background unread work presents as working or unread. Preserve
+    // that result here; legacy quiet inputs still show that background work continues.
     const backgroundActiveUsesWorkingIndicator = input.backgroundActive === true
-        && input.attentionState !== 'working'
-        && input.attentionState !== 'failed'
-        && input.attentionState !== 'permission_required'
-        && input.attentionState !== 'action_required';
+        && input.attentionState === 'quiet';
     const signalIndicator = backgroundActiveUsesWorkingIndicator
         ? 'working'
         : resolveAttentionIndicator(input.attentionState);
@@ -112,6 +119,10 @@ export function resolveSessionRowPresentation(input: Readonly<{
         return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.workingRetained' };
     }
 
+    if (input.attentionState === 'working' && input.backgroundActive === true) {
+        return { attentionIndicator, titleTone, secondaryLine: 'status', backgroundActivityStatusLine: true };
+    }
+
     if (
         input.attentionState === 'working'
         || input.attentionState === 'permission_required'
@@ -120,16 +131,20 @@ export function resolveSessionRowPresentation(input: Readonly<{
         return { attentionIndicator, titleTone, secondaryLine: 'status' };
     }
 
-    if (input.backgroundActive === true) {
-        return { attentionIndicator, titleTone, secondaryLine: 'status', backgroundActivityStatusLine: true };
-    }
-
     if (input.attentionState === 'ready') {
         return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.readyForReview' };
     }
 
+    if (input.backgroundActive === true) {
+        return { attentionIndicator, titleTone, secondaryLine: 'status', backgroundActivityStatusLine: true };
+    }
+
     if (presentsStanding) {
         return { attentionIndicator, titleTone, secondaryLine: 'status', statusTextKey: 'status.keptInAttention' };
+    }
+
+    if (input.statesUnseenLiveness === true) {
+        return { attentionIndicator, titleTone, secondaryLine: 'status' };
     }
 
     if (input.requestedSecondaryLineMode === 'path' && input.hasPathSubtitle) {

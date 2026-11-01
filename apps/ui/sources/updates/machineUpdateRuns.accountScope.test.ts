@@ -23,18 +23,18 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     },
 }));
 vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: async () => new Response(JSON.stringify([])),
+    runtimeFetchWithServerReachability: async () => new Response(JSON.stringify([{ id: 'studio', dataEncryptionKey: null }])),
 }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
     createEphemeralServerSocketClient: async ({ token }: { token: string }) => {
-        const emitWithAck = async (_event: string, payload: { method: string; params: string }) => {
+        const emitWithAck = async (_event: string, payload: { method: string; params: unknown }) => {
             if (payload.method.endsWith(':capabilities.detect')) {
-                return { ok: true, result: await boundary.encryption!.encryptRaw({ protocolVersion: 1, results: {} }) };
+                return { ok: true, result: await boundary.encryption!.encodeRpcPayload({ protocolVersion: 1, results: {} }) };
             }
             const { parseToken } = await import('@/utils/auth/parseToken');
-            const request = await boundary.encryption!.decryptRaw(payload.params) as CapabilitiesInvokeRequest;
+            const request = await boundary.encryption!.decodeRpcResult(payload.params) as CapabilitiesInvokeRequest;
             const result = await boundary.invoke(parseToken(token), request);
-            return { ok: true, result: await boundary.encryption!.encryptRaw(result) };
+            return { ok: true, result: await boundary.encryption!.encodeRpcPayload(result) };
         };
         return { timeout: () => ({ emitWithAck }), emitWithAck, emit: vi.fn(), disconnect: vi.fn() };
     },

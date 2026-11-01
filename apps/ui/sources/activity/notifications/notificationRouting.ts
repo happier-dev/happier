@@ -1,6 +1,6 @@
-import { isLoopbackHostname, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { isLoopbackHostname, PUSH_NOTIFICATION_ACTION_IDS, isNotificationQuestionAnswerAction, readNotificationQuestionAnswer } from '@happier-dev/protocol';
 
-import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
+import { canonicalizeServerUrl as normalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -31,15 +31,15 @@ function extractServerUrlFromNotificationData(data: unknown): string | null {
     return normalized ? normalized : null;
 }
 
-function toRoute(data: unknown): string | null {
-    if (!isRecord(data)) return null;
+function toRoute(data: unknown): Readonly<{ route: string | null; routeSessionId: string | null }> {
+    if (!isRecord(data)) return { route: null, routeSessionId: null };
     if (typeof data.url === 'string' && data.url.trim()) {
-        return coerceRelativeRoute(data.url);
+        return { route: coerceRelativeRoute(data.url), routeSessionId: null };
     }
     if (typeof data.sessionId === 'string' && data.sessionId.trim()) {
-        return `/session/${encodeURIComponent(data.sessionId)}`;
+        return { route: `/session/${encodeURIComponent(data.sessionId)}`, routeSessionId: data.sessionId };
     }
-    return null;
+    return { route: null, routeSessionId: null };
 }
 
 function readSessionIdFromNotificationData(data: unknown): string {
@@ -79,8 +79,15 @@ function readNotificationId(params: Readonly<{ response: unknown }>): string | n
 
 function readNotificationData(params: Readonly<{ response: unknown }>): unknown {
     if (!isRecord(params.response)) return null;
-    const notification = (params.response as any).notification;
-    return notification?.request?.content?.data;
+    const notification = params.response.notification;
+    if (!isRecord(notification) || !isRecord(notification.request) || !isRecord(notification.request.content)) return null;
+    const content = notification.request.content;
+    // SDK 54 task callbacks receive native content before the response listener's
+    // mapNotificationContent conversion. Receipts are still ignored by action ID.
+    if (typeof content.dataString === 'string') {
+        try { return JSON.parse(content.dataString); } catch { return null; }
+    }
+    return content.data;
 }
 
 export type ParsedNotificationTap = Readonly<{
@@ -89,9 +96,22 @@ export type ParsedNotificationTap = Readonly<{
     isDefaultTap: boolean;
     isOpenAction: boolean;
     route: string | null;
+    /** Present only when the route was generated from sessionId, never an explicit URL. */
+    routeSessionId: string | null;
     serverUrl: string | null;
-    permissionAction: Readonly<{ action: 'allow' | 'deny'; sessionId: string; requestId: string }> | null;
+    accountId?: string | null;
+    permissionAction: Readonly<{ action: 'allow' | 'deny'; sessionId: string; requestId: string; occurrenceId?: string }> | null;
+    questionAction?: Readonly<{ sessionId: string; requestId: string; occurrenceId: string; answers: Readonly<Record<string, readonly string[]>> }> | null;
 }>;
+
+export function isNotificationPermissionAction(parsed: ParsedNotificationTap): boolean {
+    return parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1
+        || parsed.actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1;
+}
+
+export function isNotificationExecutionAction(parsed: ParsedNotificationTap): boolean {
+    return isNotificationPermissionAction(parsed) || parsed.questionAction != null;
+}
 
 export function parseNotificationTap(params: Readonly<{
     response: unknown;
@@ -106,19 +126,29 @@ export function parseNotificationTap(params: Readonly<{
                 ? ('deny' as const)
                 : null;
 
-    const isOpenAction = isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
-    const isKnownActionIdentifier = isOpenAction || permissionAction !== null;
+    const isQuestionAction = isNotificationQuestionAnswerAction(actionIdentifier);
+    let isOpenAction = isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
+    const isKnownActionIdentifier = isOpenAction || permissionAction !== null || isQuestionAction;
     if (!isKnownActionIdentifier) return null;
 
     const data = readNotificationData({ response: params.response });
-    const route = toRoute(data);
+    const { route, routeSessionId } = toRoute(data);
     const serverUrl = extractServerUrlFromNotificationData(data);
 
     const sessionId = readSessionIdFromNotificationData(data);
     const requestId = readRequestIdFromNotificationData(data);
+    const occurrenceId = isRecord(data) && typeof data.occurrenceId === 'string' ? data.occurrenceId.trim() : '';
+    const accountId = isRecord(data) && typeof data.accountId === 'string' ? data.accountId.trim() : null;
+    const answers = isQuestionAction && isRecord(data)
+        ? readNotificationQuestionAnswer(data.questionAnswerV1, actionIdentifier, isRecord(params.response) ? params.response.userText : undefined)
+        : null;
+    const questionAction = answers && sessionId && requestId && occurrenceId && accountId
+        ? { sessionId, requestId, occurrenceId, answers } : null;
+    // Unsupported or incomplete question payloads retain the existing open-session path.
+    if (isQuestionAction && !questionAction) isOpenAction = true;
     const resolvedPermissionAction =
         permissionAction && sessionId && requestId
-            ? { action: permissionAction, sessionId, requestId }
+            ? { action: permissionAction, sessionId, requestId, ...(occurrenceId ? { occurrenceId } : {}) }
             : null;
 
     const notificationId = readNotificationId({ response: params.response });
@@ -130,7 +160,10 @@ export function parseNotificationTap(params: Readonly<{
         isDefaultTap,
         isOpenAction,
         route,
+        routeSessionId,
         serverUrl,
+        accountId,
         permissionAction: resolvedPermissionAction,
+        ...(isQuestionAction ? { questionAction } : {}),
     };
 }

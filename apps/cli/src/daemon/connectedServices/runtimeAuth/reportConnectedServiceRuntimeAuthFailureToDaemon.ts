@@ -129,6 +129,8 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   nowMs?: () => number;
   createReportId?: () => string;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
+  // Provider-started turns can lack request-local account attribution. Only daemon
+  // source authorization can determine whether this session has a binding to recover.
   const notify = input.notify ?? notifyDaemonConnectedServiceRuntimeAuthFailure;
   const logger = input.logger ?? defaultLogger;
   const logPrefix = input.logPrefix ?? '[connected-services]';

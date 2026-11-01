@@ -112,6 +112,7 @@ export async function claudeLocal(opts: {
     /** Effective session prompt text for new sessions; falls back to Claude-specific provider behavior blocks. */
     systemPromptText?: string | null,
 }): Promise<string | null> {
+    if (opts.abort.aborted) return opts.sessionId;
 
     const processEnv = withCurrentHappierSessionId(process.env, opts.happierSessionId ?? '');
     const claudeConfigDir = resolveClaudeConfigDirOverride(processEnv);
@@ -469,6 +470,11 @@ export async function claudeLocal(opts: {
                 ? { command: nodeExecutable!, args: [claudeCliPath, ...args] }
                 : resolveWindowsCommandInvocation({ command: resolvedClaudeCliPath, args, env });
 
+            // Runtime discovery and MCP materialization above can yield after cancellation.
+            if (opts.abort.aborted) {
+                r();
+                return;
+            }
             const child = spawn(invocation.command, invocation.args, {
                 stdio: shouldUseNodeLauncher ? ['inherit', 'inherit', 'inherit', 'pipe', 'ipc'] : ['inherit', 'inherit', 'inherit', 'ignore'],
                 cwd: opts.path,

@@ -29,7 +29,7 @@ describe('runTmuxAttach', () => {
 
     expect(spawnTmuxFn.mock.calls.map(([call]) => call)).toEqual([
       {
-        args: ['select-window', '-t', 'happy:window-1'],
+        args: ['select-window', '-t', '=happy:window-1'],
         env: expect.any(Object),
         stdio: 'ignore',
       },
@@ -47,7 +47,7 @@ describe('runTmuxAttach', () => {
         stdio: 'ignore',
       },
       {
-        args: ['link-window', '-s', 'happy:window-1', '-t', 'happy-attach-sid-1-1234-5678:'],
+        args: ['link-window', '-s', '=happy:window-1', '-t', 'happy-attach-sid-1-1234-5678:'],
         env: expect.any(Object),
         stdio: 'ignore',
       },

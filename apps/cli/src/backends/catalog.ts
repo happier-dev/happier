@@ -77,8 +77,12 @@ export const AGENTS: Partial<Record<CatalogAgentId, AgentCatalogEntry>> = {
   agy,
 };
 
-export function requireCatalogEntry(agentId: CatalogAgentId): AgentCatalogEntry {
-  const entry = AGENTS[agentId];
+function isCatalogAgentId(agentId: string): agentId is CatalogAgentId {
+  return Object.prototype.hasOwnProperty.call(AGENTS, agentId);
+}
+
+export function requireCatalogEntry(agentId: string): AgentCatalogEntry {
+  const entry = isCatalogAgentId(agentId) ? AGENTS[agentId] : undefined;
   if (!entry) throw new Error(`Missing catalog agent entry for ${agentId}`);
   return entry;
 }
@@ -376,7 +380,7 @@ export function resolveConnectedServiceCandidatePersistedSessionFile(
  */
 export async function resolveAgentNativeSessionLogPathThroughCatalog(
   agentId: AgentId | null | undefined,
-  input: Readonly<{ vendorResumeId: string }>,
+  input: Readonly<{ vendorResumeId: string; metadata?: Record<string, unknown> }>,
 ): Promise<string | null> {
   const catalogId = resolveCatalogAgentId(agentId);
   const entry = AGENTS[catalogId];

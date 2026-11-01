@@ -22,6 +22,55 @@ function createDeferred<T>(): {
 }
 
 describe('fetchAndApplySessionById', () => {
+  it.each([
+    { status: 500, body: 'json' }, { status: 409, body: 'session' },
+    { status: 404, body: 'json' }, { status: 404, body: 'html' }, { status: 404, body: 'empty' },
+  ])('preserves an explicit HTTP $status $body failure even when the list can return the session', async ({ status, body }) => {
+    const row = {
+      id: 's_explicit_error',
+      createdAt: 1,
+      updatedAt: 2,
+      seq: 3,
+      active: true,
+      activeAt: 2,
+      encryptionMode: 'plain',
+      dataEncryptionKey: null,
+      metadataVersion: 1,
+      metadata: JSON.stringify({ path: '/repo', host: 'host' }),
+      agentStateVersion: 0,
+      agentState: null,
+      share: null,
+    };
+    const requestedPaths: string[] = [];
+    const applySessions = vi.fn();
+    const result = await fetchAndApplySessionById({
+      sessionId: row.id,
+      credentials: { token: 'token', secret: 'secret' },
+      clientEncryptionRequirement: 'follow_account',
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map(),
+      request: async (path) => {
+        requestedPaths.push(path);
+        if (path === `/v2/sessions/${row.id}`) {
+          return new Response(body === 'html' ? '<html>Not Found</html>' : body === 'empty' ? null
+            : JSON.stringify(body === 'session' ? { session: row } : { error: 'unavailable' }), { status });
+        }
+        return new Response(JSON.stringify({ sessions: [row], nextCursor: null, hasNext: false }), { status: 200 });
+      },
+      applySessions,
+      includeTurnsProjection: false,
+      log: { log: () => {} },
+    });
+
+    expect(result).toMatchObject({ ok: false, session: null, errorCode: 'http_error', httpStatus: status });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(requestedPaths).toEqual([`/v2/sessions/${row.id}`]);
+  });
+
   it('refuses a plaintext session before parsing or applying it when this client requires E2EE', async () => {
     const applySessions = vi.fn();
     const request = vi.fn(async () => new Response(JSON.stringify({

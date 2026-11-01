@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { randomBytes, createHash } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
+import { sealTerminalProvisioningV2TokenOnlyPayload } from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -132,7 +133,7 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       const result = await authAndSetupMachineIfNeeded();
 
       expect(result.credentials.token).toBe('token-1');
-      expect(result.credentials.encryption.type).toBe('legacy');
+      expect(result.credentials.encryption?.type).toBe('legacy');
     } finally {
       output.restore();
       restoreAxios();
@@ -198,6 +199,38 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       await app.close().catch(() => {});
     }
   }, 15_000);
+
+  it('completes web auth with token-only credentials from a negotiated response', async () => {
+    const app = fastify({ logger: false });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'token-only-account' })).toString('base64url')}.sig`;
+    let response = '';
+    app.post('/v1/auth/request', async (req) => {
+      expect(req.body).toMatchObject({ supportsV2: true, supportsTokenOnly: true });
+      const request = parseAuthRequestBody(req.body);
+      if (!request) throw new Error('Missing claim-gated auth request');
+      response = Buffer.from(sealTerminalProvisioningV2TokenOnlyPayload({
+        recipientPublicKey: Buffer.from(request.publicKey, 'base64'),
+        randomBytes: (length) => new Uint8Array(length).fill(length),
+      })).toString('base64');
+      return { state: 'requested' };
+    });
+    app.get('/v1/auth/request/status', async () => ({ status: 'authorized' }));
+    app.post('/v1/auth/request/claim', async () => ({ state: 'authorized', token, response }));
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+    vi.resetModules();
+    const { doAuth } = await import('./auth');
+    const output = captureConsoleLogAndMuteStdout();
+    try {
+      expect(await doAuth()).toEqual({ token, encryption: null });
+      const { readCredentials } = await import('@/persistence');
+      expect(await readCredentials()).toEqual({ token, encryption: null });
+    } finally {
+      output.restore();
+      restoreAxios();
+      await app.close();
+    }
+  });
 
   it('stores dataKey credentials using the private key from the v2 response', async () => {
     const requests = new Map<string, ClaimRequestRow>();
@@ -267,8 +300,8 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       const expectedPublic = tweetnacl.box.keyPair.fromSecretKey(privateKey).publicKey;
 
       expect(result.credentials.token).toBe('token-1');
-      expect(result.credentials.encryption.type).toBe('dataKey');
-      if (result.credentials.encryption.type !== 'dataKey') {
+      expect(result.credentials.encryption?.type).toBe('dataKey');
+      if (result.credentials.encryption?.type !== 'dataKey') {
         throw new Error('Expected dataKey credentials');
       }
       expect(result.credentials.encryption.machineKey).toEqual(privateKey);

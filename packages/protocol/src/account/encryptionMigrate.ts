@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MachineKeyBasisV1Schema } from '../machines/machineContentKeyTransitionV1.js';
 
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 import {
@@ -9,11 +10,12 @@ import {
 } from '../connect/connectedServiceSchemas.js';
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/index.js';
 import { SessionDraftRecordV1Schema, SessionDraftStoredContentEnvelopeV1Schema } from '../drafts/sessionDrafts.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const AccountEncryptionMigrateToModeSchema = AccountEncryptionModeSchema;
 export type AccountEncryptionMigrateToMode = z.infer<typeof AccountEncryptionMigrateToModeSchema>;
 
-export const AccountEncryptionMigrateKeyProofSchema = z
+export const AccountEncryptionMigrateKeyProofSchema = lazySchema(() => z
   .object({
     publicKey: z.string().min(1).max(4096),
     challenge: z.string().min(1).max(4096),
@@ -31,19 +33,19 @@ export const AccountEncryptionMigrateKeyProofSchema = z
         message: 'contentPublicKey and contentPublicKeySig must be provided together',
       });
     }
-  });
+  }));
 export type AccountEncryptionMigrateKeyProof = z.infer<typeof AccountEncryptionMigrateKeyProofSchema>;
 
-const ConnectedServiceCredentialMetadataSchema = z
+const ConnectedServiceCredentialMetadataSchema = lazySchema(() => z
   .object({
     kind: z.enum(['oauth', 'token']),
     providerEmail: z.string().min(1).nullable().optional(),
     providerAccountId: z.string().min(1).nullable().optional(),
     expiresAt: z.number().int().nonnegative().nullable().optional(),
   })
-  .strict();
+  .strict());
 
-const ConnectedServiceCredentialMigrationItemSchema = z
+const ConnectedServiceCredentialMigrationItemSchema = lazySchema(() => z
   .object({
     serviceId: ConnectedServiceIdSchema,
     profileId: ConnectedServiceProfileIdSchema,
@@ -69,9 +71,9 @@ const ConnectedServiceCredentialMigrationItemSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'record must not be provided for sealed migrations' });
       }
     }
-  });
+  }));
 
-export const AccountEncryptionMigrateConnectedServicesDirectiveSchema = z.discriminatedUnion('action', [
+export const AccountEncryptionMigrateConnectedServicesDirectiveSchema = lazySchema(() => z.discriminatedUnion('action', [
   z.object({ action: z.literal('assert_empty') }).strict(),
   z.object({ action: z.literal('clear') }).strict(),
   z
@@ -80,19 +82,19 @@ export const AccountEncryptionMigrateConnectedServicesDirectiveSchema = z.discri
       credentials: z.array(ConnectedServiceCredentialMigrationItemSchema).max(500),
     })
     .strict(),
-]);
+]));
 export type AccountEncryptionMigrateConnectedServicesDirective = z.infer<
   typeof AccountEncryptionMigrateConnectedServicesDirectiveSchema
 >;
 
-const AutomationsMigrationItemSchema = z
+const AutomationsMigrationItemSchema = lazySchema(() => z
   .object({
     automationId: z.string().min(1),
     templateCiphertext: z.string().min(1),
   })
-  .strict();
+  .strict());
 
-export const AccountEncryptionMigrateAutomationsDirectiveSchema = z.discriminatedUnion('action', [
+export const AccountEncryptionMigrateAutomationsDirectiveSchema = lazySchema(() => z.discriminatedUnion('action', [
   z.object({ action: z.literal('assert_empty') }).strict(),
   z.object({ action: z.literal('clear') }).strict(),
   z
@@ -101,21 +103,38 @@ export const AccountEncryptionMigrateAutomationsDirectiveSchema = z.discriminate
       templates: z.array(AutomationsMigrationItemSchema).max(500),
     })
     .strict(),
-]);
+]));
 export type AccountEncryptionMigrateAutomationsDirective = z.infer<typeof AccountEncryptionMigrateAutomationsDirectiveSchema>;
 
-export const AccountEncryptionMigrateSessionDraftItemSchema = z.object({
+export const AccountEncryptionMigrateSessionDraftItemSchema = lazySchema(() => z.object({
   address: z.object({ kind: z.literal('newSession'), draftId: z.string().uuid() }).strict(),
   expectedRevision: z.number().int().nonnegative(),
   content: SessionDraftStoredContentEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type AccountEncryptionMigrateSessionDraftItem = z.infer<typeof AccountEncryptionMigrateSessionDraftItemSchema>;
-export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = z.object({
+export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = lazySchema(() => z.object({
   items: z.array(AccountEncryptionMigrateSessionDraftItemSchema).max(500),
-}).strict();
+}).strict());
 export type AccountEncryptionMigrateSessionDraftsDirective = z.infer<typeof AccountEncryptionMigrateSessionDraftsDirectiveSchema>;
 
-export const AccountEncryptionMigrateRequestSchema = z
+export const AccountEncryptionMigrateMachinesDirectiveSchema = lazySchema(() => z.discriminatedUnion('action', [
+  z.object({ action: z.literal('assert_empty') }).strict(),
+  z.object({
+    action: z.literal('migrate'),
+    items: z.array(z.object({
+      machineId: z.string().min(1),
+      expected: MachineKeyBasisV1Schema,
+      next: z.object({
+        dataEncryptionKey: z.string().min(1).nullable(),
+        metadata: z.string(),
+        daemonState: z.string().nullable(),
+      }).strict(),
+    }).strict()),
+  }).strict(),
+]));
+export type AccountEncryptionMigrateMachinesDirective = z.infer<typeof AccountEncryptionMigrateMachinesDirectiveSchema>;
+
+export const AccountEncryptionMigrateRequestSchema = lazySchema(() => z
   .object({
     toMode: AccountEncryptionMigrateToModeSchema,
     expectedSettingsVersion: z.number().int().min(0),
@@ -123,25 +142,26 @@ export const AccountEncryptionMigrateRequestSchema = z
     connectedServices: AccountEncryptionMigrateConnectedServicesDirectiveSchema,
     automations: AccountEncryptionMigrateAutomationsDirectiveSchema,
     sessionDrafts: AccountEncryptionMigrateSessionDraftsDirectiveSchema.optional(),
+    machines: AccountEncryptionMigrateMachinesDirectiveSchema.optional(),
     keyProof: AccountEncryptionMigrateKeyProofSchema.optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateRequest = z.infer<typeof AccountEncryptionMigrateRequestSchema>;
 
-export const AccountEncryptionMigrateSuccessResponseSchema = z
+export const AccountEncryptionMigrateSuccessResponseSchema = lazySchema(() => z
   .object({
     success: z.literal(true),
     mode: AccountEncryptionMigrateToModeSchema,
     settingsVersion: z.number().int().min(0),
     sessionDrafts: z.object({ records: z.array(SessionDraftRecordV1Schema) }).strict().optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateSuccessResponse = z.infer<typeof AccountEncryptionMigrateSuccessResponseSchema>;
 
-export const AccountEncryptionMigrateInvalidParamsReasonSchema = z.enum(['restore_required', 'key_proof_required']);
+export const AccountEncryptionMigrateInvalidParamsReasonSchema = lazySchema(() => z.enum(['restore_required', 'key_proof_required']));
 export type AccountEncryptionMigrateInvalidParamsReason = z.infer<typeof AccountEncryptionMigrateInvalidParamsReasonSchema>;
 
-export const AccountEncryptionMigrateBadRequestResponseSchema = z.discriminatedUnion('error', [
+export const AccountEncryptionMigrateBadRequestResponseSchema = lazySchema(() => z.discriminatedUnion('error', [
   z
     .object({
       error: z.literal('invalid-params'),
@@ -151,36 +171,38 @@ export const AccountEncryptionMigrateBadRequestResponseSchema = z.discriminatedU
   z.object({ error: z.literal('connected_services_not_empty') }).strict(),
   z.object({ error: z.literal('automations_not_empty') }).strict(),
   z.object({ error: z.literal('session_drafts_require_upgrade') }).strict(),
+  z.object({ error: z.literal('machines_require_upgrade') }).strict(),
+  z.object({ error: z.literal('machines_migration_incomplete') }).strict(),
   z.object({ error: z.literal('session_drafts_migration_incomplete') }).strict(),
-]);
+]));
 export type AccountEncryptionMigrateBadRequestResponse = z.infer<typeof AccountEncryptionMigrateBadRequestResponseSchema>;
 
-export const AccountEncryptionMigrateForbiddenResponseSchema = z
+export const AccountEncryptionMigrateForbiddenResponseSchema = lazySchema(() => z
   .object({ error: z.enum(['e2ee-required', 'plaintext-only']) })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateForbiddenResponse = z.infer<typeof AccountEncryptionMigrateForbiddenResponseSchema>;
 
-export const AccountEncryptionMigrateNotFoundResponseSchema = z.object({ error: z.literal('not_found') }).strict();
+export const AccountEncryptionMigrateNotFoundResponseSchema = lazySchema(() => z.object({ error: z.literal('not_found') }).strict());
 export type AccountEncryptionMigrateNotFoundResponse = z.infer<typeof AccountEncryptionMigrateNotFoundResponseSchema>;
 
-export const AccountEncryptionMigrateConflictResponseSchema = z.discriminatedUnion('error', [
+export const AccountEncryptionMigrateConflictResponseSchema = lazySchema(() => z.discriminatedUnion('error', [
   z.object({ error: z.literal('version-mismatch'), currentVersion: z.number().int().min(0) }).strict(),
   z.object({
     error: z.literal('session_drafts_version_mismatch'),
     address: z.object({ kind: z.literal('newSession'), draftId: z.string().uuid() }).strict(),
     currentRevision: z.number().int().nonnegative(),
   }).strict(),
-]);
+]));
 export type AccountEncryptionMigrateConflictResponse = z.infer<typeof AccountEncryptionMigrateConflictResponseSchema>;
 
-export const AccountEncryptionMigrateInternalResponseSchema = z.object({ error: z.literal('internal') }).strict();
+export const AccountEncryptionMigrateInternalResponseSchema = lazySchema(() => z.object({ error: z.literal('internal') }).strict());
 export type AccountEncryptionMigrateInternalResponse = z.infer<typeof AccountEncryptionMigrateInternalResponseSchema>;
 
-export const AccountEncryptionMigrateAnyErrorResponseSchema = z.union([
+export const AccountEncryptionMigrateAnyErrorResponseSchema = lazySchema(() => z.union([
   AccountEncryptionMigrateBadRequestResponseSchema,
   AccountEncryptionMigrateForbiddenResponseSchema,
   AccountEncryptionMigrateNotFoundResponseSchema,
   AccountEncryptionMigrateConflictResponseSchema,
   AccountEncryptionMigrateInternalResponseSchema,
-]);
+]));
 export type AccountEncryptionMigrateAnyErrorResponse = z.infer<typeof AccountEncryptionMigrateAnyErrorResponseSchema>;

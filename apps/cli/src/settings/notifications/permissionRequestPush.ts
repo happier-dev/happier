@@ -22,6 +22,7 @@ export function buildAgentRequestPushNotification(params: Readonly<{
   sessionTitle?: string | null;
   agentDisplayName?: string | null;
   requestId: string;
+  occurrenceId?: string;
   toolName: string;
   toolDetails?: string | null;
 }>): Readonly<{ title: string; body: string; data: Record<string, unknown> }> {
@@ -51,6 +52,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
   sessionTitle?: string | null;
   agentDisplayName?: string | null;
   requestId: string;
+  occurrenceId?: string;
   toolName: string;
   kind: AgentRequestKind;
   settings: AccountSettings | null;
@@ -77,6 +79,7 @@ export async function sendAgentRequestPushNotificationAsync(params: Readonly<{
         sessionTitle: params.sessionTitle,
         agentDisplayName: params.agentDisplayName,
         requestId: params.requestId,
+        occurrenceId: params.occurrenceId,
         toolName: params.toolName,
         toolInput: params.toolInput,
         toolDetails: details,

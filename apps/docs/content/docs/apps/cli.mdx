@@ -499,6 +499,8 @@ Wait for an agent response (useful for scripts; can time out if the agent is bus
 happier session send <session-id> "ping" --wait --timeout 60
 ```
 
+Development source also supports `--kind notice --from hub` (or `--no-deliver`) for persistent informational messages that do not start an Agent turn. See [display-only notices](/apps/cli-sessions#display-only-notices-development) for semantics and availability.
+
 ### Status, stop, archive
 
 ```bash

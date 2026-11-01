@@ -47,6 +47,8 @@ export const MOTION_ANIMATIONS = [
     'elapsedTick',
     /** The highlight travelling inside the desktop setup mark's ring while a stage is in progress. */
     'setupActivity',
+    /** A determinate progress bar's fill catching up with a new value. */
+    'progressFill',
 ] as const;
 
 export type MotionAnimationId = (typeof MOTION_ANIMATIONS)[number];
@@ -108,6 +110,9 @@ const MOTION_REDUCED_MOTION_TABLE = {
     // Hiding the highlight would leave a ring that reads as paused; keeping it turning is exactly
     // the vestibular travel the preference asks to remove.
     setupActivity: { springRole: null, reduced: 'substitute' },
+    // A short timing, not a spring. Under reduced motion the fill jumps to the new value: the bar
+    // and its accessible value still report every change, only the glide between them is removed.
+    progressFill: { springRole: null, reduced: 'settleInstantly' },
 } as const satisfies Record<MotionAnimationId, MotionReducedMotionEntry>;
 
 /**

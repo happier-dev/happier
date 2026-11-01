@@ -1,7 +1,158 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { synthesizeKokoroWav } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
-import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
+import { prepareKokoroTts, streamKokoroWavSentences } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
+
+// Mirrors the published kokoro-int8-multi-lang-v1_1 pack: explicit sids, defaultVoiceId af_maple, no af_heart.
+const PUBLISHED_PACK_MANIFEST = {
+  packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+  kind: 'tts_sherpa',
+  model: 'kokoro',
+  version: 'kokoro-int8-multi-lang-v1_1',
+  defaultVoiceId: 'af_maple',
+  voices: [
+    { id: 'af_maple', title: 'Maple', sid: 0 },
+    { id: 'af_sol', title: 'Sol', sid: 1 },
+    { id: 'bf_vale', title: 'Vale', sid: 2 },
+  ],
+  files: [],
+} as any;
+
+function createNativeHarness(manifest: any = PUBLISHED_PACK_MANIFEST) {
+  class File {
+    uri: string;
+    constructor(...uris: any[]) {
+      this.uri = uris.length === 1 && typeof uris[0] === 'string' ? uris[0] : `file:///tmp/${String(uris[1] ?? '')}`;
+    }
+    async arrayBuffer() {
+      return new Uint8Array([7]).buffer;
+    }
+    async delete() {}
+  }
+  const kokoroNativeModule = {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    // 103 speakers would make the legacy static map pick a wrong (Mandarin) speaker for af_heart.
+    listVoices: vi.fn().mockResolvedValue(Array.from({ length: 103 }).map((_, i) => ({ id: `sid:${i}`, title: `${i}`, sid: i }))),
+    synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  };
+  const ensureInstalled = vi.fn().mockResolvedValue({ packDirUri: 'file:///docs/pack', manifest });
+  return {
+    kokoroNativeModule,
+    ensureInstalled,
+    overrides: {
+      kokoroNativeModule,
+      ensureInstalled,
+      fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+      resolveOutWavPath: () => 'file:///tmp/out.wav',
+    },
+  };
+}
+
+describe('Kokoro native voice resolution', () => {
+  it.each([
+    ['unset', null],
+    ['a web-only voice', 'af_heart'],
+  ])('uses the installed pack default voice when the stored voice is %s', async (_label, voiceId) => {
+    const harness = createNativeHarness();
+
+    await synthesizeKokoroWav(
+      { text: 'hello', assetSetId: null, voiceId, speed: 1, timeoutMs: 5000, signal: new AbortController().signal },
+      harness.overrides,
+    );
+
+    expect(harness.kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'af_maple', sid: 0 }),
+    );
+  });
+
+  it('falls back to the first catalog voice when the installed manifest predates defaultVoiceId', async () => {
+    const { defaultVoiceId: _omit, ...legacyStored } = PUBLISHED_PACK_MANIFEST;
+    const harness = createNativeHarness({ ...legacyStored, voices: [{ id: 'bf_vale', title: 'Vale', sid: 2 }, ...legacyStored.voices] });
+
+    await synthesizeKokoroWav(
+      { text: 'hello', assetSetId: null, voiceId: 'af_heart', speed: 1, timeoutMs: 5000, signal: new AbortController().signal },
+      harness.overrides,
+    );
+
+    expect(harness.kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'bf_vale', sid: 2 }),
+    );
+  });
+
+  it('keeps a stored voice that exists in the installed pack', async () => {
+    const harness = createNativeHarness();
+
+    await synthesizeKokoroWav(
+      { text: 'hello', assetSetId: null, voiceId: 'af_sol', speed: 1, timeoutMs: 5000, signal: new AbortController().signal },
+      harness.overrides,
+    );
+
+    expect(harness.kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledWith(
+      expect.objectContaining({ voiceId: 'af_sol', sid: 1 }),
+    );
+  });
+});
+
+describe('streamKokoroWavSentences (native)', () => {
+  it('cancels the native job when a sentence times out so the native queue is freed', async () => {
+    const harness = createNativeHarness();
+    harness.kokoroNativeModule.synthesizeToWavFile.mockImplementation(() => new Promise(() => {}));
+
+    const iterator = streamKokoroWavSentences(
+      { text: 'Never finishes.', voiceId: null, speed: 1, timeoutMs: 20, signal: new AbortController().signal },
+      harness.overrides,
+    )[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).rejects.toThrow(/timeout/);
+    expect(harness.kokoroNativeModule.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('synthesizes and yields one sentence at a time so playback can start early', async () => {
+    const harness = createNativeHarness();
+    let releaseSecond: (() => void) | null = null;
+    harness.kokoroNativeModule.synthesizeToWavFile
+      .mockResolvedValueOnce({ wavPath: 'file:///tmp/one.wav', sampleRate: 24000 })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseSecond = () => resolve({ wavPath: 'file:///tmp/two.wav', sampleRate: 24000 });
+          }),
+      );
+
+    const iterator = streamKokoroWavSentences(
+      { text: 'First sentence. Second sentence.', voiceId: null, speed: 1, timeoutMs: 5000, signal: new AbortController().signal },
+      harness.overrides,
+    )[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.value?.sentenceText).toBe('First sentence.');
+    expect(harness.kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledTimes(1);
+
+    const secondPromise = iterator.next();
+    await vi.waitFor(() => expect(releaseSecond).toBeTruthy());
+    releaseSecond!();
+    const second = await secondPromise;
+    expect(second.value?.sentenceText).toBe('Second sentence.');
+    expect((await iterator.next()).done).toBe(true);
+    expect(harness.ensureInstalled).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops synthesizing remaining sentences once aborted', async () => {
+    const harness = createNativeHarness();
+    const controller = new AbortController();
+    const iterator = streamKokoroWavSentences(
+      { text: 'One. Two. Three.', voiceId: null, speed: 1, timeoutMs: 5000, signal: controller.signal },
+      harness.overrides,
+    )[Symbol.asyncIterator]();
+
+    await iterator.next();
+    controller.abort();
+
+    await expect(iterator.next()).rejects.toThrow(/aborted/);
+    expect(harness.kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('synthesizeKokoroWav (native)', () => {
   it('throws when the model pack is not installed', async () => {
@@ -126,7 +277,11 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
-  it('uses the default Kokoro asset set id when assetSetId is missing', async () => {
+  it.each([
+    ['missing', null],
+    // Settings sync across devices; web can select asset sets that have no published native pack.
+    ['web-only', 'kokoro-82m-v1.0-onnx-fp32-wasm'],
+  ])('uses the default Kokoro native pack when assetSetId is %s', async (_label, assetSetId) => {
     const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
@@ -166,7 +321,7 @@ describe('synthesizeKokoroWav (native)', () => {
     await synthesizeKokoroWav(
       {
         text: 'hello',
-        assetSetId: null,
+        assetSetId,
         voiceId: 'af_bella',
         speed: 1,
         timeoutMs: 5000,
@@ -234,6 +389,7 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
+    await vi.waitFor(() => expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalled());
     controller.abort();
 
     await expect(promise).rejects.toThrow(/aborted/i);
@@ -294,7 +450,7 @@ describe('synthesizeKokoroWav (native)', () => {
     );
   });
 
-  it('forwards model pack download progress (including file) during prepare', async () => {
+  it('forwards model pack download progress (including file counts) during prepare', async () => {
     const onProgress = vi.fn();
 
     const kokoroNativeModule = {
@@ -305,7 +461,7 @@ describe('synthesizeKokoroWav (native)', () => {
     };
 
     const ensureInstalled = vi.fn().mockImplementation(async (opts: any) => {
-      opts?.onProgress?.({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+      opts?.onProgress?.({ loaded: 1, total: 4, filesDone: 2, filesTotal: 7 });
       return {
         packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
         manifest: {
@@ -341,6 +497,6 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
-    expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+    expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, filesDone: 2, filesTotal: 7 });
   });
 });

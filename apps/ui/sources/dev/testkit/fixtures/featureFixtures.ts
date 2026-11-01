@@ -61,6 +61,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             keylessAccounts: { enabled: false },
         },
         encryption: {
+            plaintextMachine: { enabled: false },
             plaintextStorage: { enabled: false },
             accountOptOut: { enabled: false },
         },

@@ -46,8 +46,9 @@ import {
   ConnectedServicesCapabilitiesSchema,
   DEFAULT_CONNECTED_SERVICES_CAPABILITIES,
 } from './connectedServicesCapabilities.js';
+import { lazySchema } from '../../../lazySchema.js';
 
-export const CapabilitiesSchema = z.object({
+export const CapabilitiesSchema = lazySchema(() => z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
   pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
@@ -76,6 +77,6 @@ export const CapabilitiesSchema = z.object({
   session: SessionCapabilitiesSchema.optional().default(DEFAULT_SESSION_CAPABILITIES),
   sharing: SharingCapabilitiesSchema.optional().default(DEFAULT_SHARING_CAPABILITIES),
   connectedServices: ConnectedServicesCapabilitiesSchema.optional().default(DEFAULT_CONNECTED_SERVICES_CAPABILITIES),
-});
+}));
 
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;

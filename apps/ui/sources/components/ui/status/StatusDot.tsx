@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Animated, Platform, View, type ViewStyle } from 'react-native';
 
+import { useIsHostVisible } from '@/hooks/ui/useIsHostVisible';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+
 const WEB_PULSE_TIMING_FUNCTION = 'steps(6, end)';
 
 export interface StatusDotProps {
@@ -9,7 +12,7 @@ export interface StatusDotProps {
     size?: number;
     style?: ViewStyle;
     testID?: string;
-    /** Keep pulsing state visible while disabling the web CSS animation. */
+    /** Keep pulsing state visible while disabling its animation. */
     animationEnabled?: boolean;
 }
 
@@ -33,12 +36,14 @@ function resolveBaseDotStyle(color: string, size: number): ViewStyle {
 }
 
 function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnabled = true }: StatusDotProps) {
+    const hostVisible = useIsHostVisible();
+    const reducedMotion = useReducedMotionPreference();
     return (
         <View
             testID={testID}
             style={[
                 resolveBaseDotStyle(color, size),
-                isPulsing && animationEnabled ? webPulseStyle : null,
+                isPulsing && animationEnabled && hostVisible && !reducedMotion ? webPulseStyle : null,
                 style,
             ]}
         />
@@ -63,10 +68,17 @@ function StaticStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
     );
 }
 
-function PulsingStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
+function PulsingStatusDot({ color, size = 6, style, testID, animationEnabled = true }: StatusDotProps) {
+    const hostVisible = useIsHostVisible();
+    const reducedMotion = useReducedMotionPreference();
+    const shouldAnimate = animationEnabled && hostVisible && !reducedMotion;
     const opacity = React.useRef(new Animated.Value(1)).current;
 
     React.useEffect(() => {
+        if (!shouldAnimate) {
+            opacity.setValue(1);
+            return;
+        }
         const animation = Animated.loop(
             Animated.sequence([
                 Animated.timing(opacity, {
@@ -85,7 +97,7 @@ function PulsingStatusDot({ color, size = 6, style, testID }: StatusDotProps) {
         return () => {
             animation.stop();
         };
-    }, [opacity]);
+    }, [opacity, shouldAnimate]);
 
     return (
         <Animated.View

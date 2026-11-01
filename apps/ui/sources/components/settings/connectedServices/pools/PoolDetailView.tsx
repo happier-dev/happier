@@ -72,6 +72,7 @@ import {
 import { resolveConnectedServiceRuntimeGroupCapability } from '../model/connectedServiceRuntimeFallbackCapability';
 import { resolveConnectedServiceDisplayName } from '../model/resolveConnectedServiceDisplayName';
 import { commitPoolMemberReorder, computePoolMemberPriorities, type ReorderableGroup } from './commitPoolMemberReorder';
+import type { DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 import { commitPoolMembershipBatch } from './commitPoolMembershipBatch';
 import { PoolMembersDropOverlay } from './PoolMembersDropOverlay';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -616,9 +617,11 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
      * through each sequential priority patch and refetches on a generation
      * conflict — the single owner is `commitPoolMemberReorder`.
      */
-    const commitOrder = React.useCallback(async (orderedProfileIds: ReadonlyArray<string>) => {
-        if (!serviceId || !group) return;
+    const commitOrder = React.useCallback(async (orderedProfileIds: ReadonlyArray<string>): Promise<DragHapticsOutcome> => {
+        if (!serviceId || !group) return 'refused';
         const startGroup = group;
+        const currentOrder = sortMembersByPriority(startGroup.members).map((member) => member.profileId);
+        if (currentOrder.length === orderedProfileIds.length && currentOrder.every((id, index) => id === orderedProfileIds[index])) return 'unchanged';
         const reorderable: ReorderableGroup = {
             generation: startGroup.generation,
             members: startGroup.members.map((member) => ({ profileId: member.profileId, priority: member.priority })),
@@ -643,7 +646,7 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
             })),
         });
         try {
-            await commitPoolMemberReorder({
+            const committed = await commitPoolMemberReorder({
                 group: reorderable,
                 orderedProfileIds,
                 patchMember: async ({ profileId, priority, expectedGeneration }) => {
@@ -672,10 +675,12 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
             });
             await sync.refreshProfile().catch(() => undefined);
             await loadGroups().catch(() => undefined);
+            return committed.patchedProfileIds.length > 0 ? 'applied' : 'unchanged';
         } catch (e: unknown) {
             // Revert the optimistic order to authoritative server truth, then surface.
             await loadGroups().catch(() => undefined);
             await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(e));
+            return 'unknown';
         }
     }, [group, loadGroups, serviceId, upsertGroup]);
 

@@ -40,9 +40,7 @@ function makeWindowsCmdExecutable(params: { dir: string; name: string; content: 
 function expectDefaultAcpArgs(args: string[]): void {
   expect(args[0]).toBe('acp');
   expect(args).toContain('--print-logs');
-  const logLevelIdx = args.indexOf('--log-level');
-  expect(logLevelIdx).toBeGreaterThanOrEqual(0);
-  expect(args[logLevelIdx + 1]).toBe('ERROR');
+  expect(args).not.toContain('--log-level');
 }
 
 describe('createOpenCodeBackend command resolution', () => {
@@ -244,5 +242,32 @@ describe('createOpenCodeBackend OPENCODE_CONFIG_CONTENT handling', () => {
     }) as unknown as AcpBackendLike;
     expect(backend.options.args[0]).toBe('acp');
     expect(backend.options.args).not.toContain('--print-logs');
+  });
+
+  it.each(['ERROR', 'error', 'trace', 'none'])(
+    'preserves the native log-level override %s without assuming an OpenCode generation',
+    (level) => {
+      const backend = createOpenCodeBackend({
+        cwd: tmpdir(),
+        env: {
+          HAPPIER_OPENCODE_PATH: process.execPath,
+          HAPPIER_OPENCODE_ACP_LOG_LEVEL: ` ${level} `,
+        },
+      }) as unknown as AcpBackendLike;
+      const levelIndex = backend.options.args.indexOf('--log-level');
+      expect(levelIndex).toBeGreaterThanOrEqual(0);
+      expect(backend.options.args[levelIndex + 1]).toBe(level);
+    },
+  );
+
+  it('leaves log-level selection to OpenCode when the override is blank', () => {
+    const backend = createOpenCodeBackend({
+      cwd: tmpdir(),
+      env: {
+        HAPPIER_OPENCODE_PATH: process.execPath,
+        HAPPIER_OPENCODE_ACP_LOG_LEVEL: '   ',
+      },
+    }) as unknown as AcpBackendLike;
+    expect(backend.options.args).not.toContain('--log-level');
   });
 });

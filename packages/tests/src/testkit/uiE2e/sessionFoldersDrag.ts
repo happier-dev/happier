@@ -254,6 +254,7 @@ export async function createPlainSession(params: Readonly<{
   rootPath: string;
   machineId: string;
   tagPrefix: string;
+  metadata?: Readonly<Record<string, unknown>>;
 }>): Promise<string> {
   const tag = `${params.tagPrefix}-${randomUUID()}`;
   const res = await fetchJson<SessionCreateResponse>(`${params.baseUrl}/v1/sessions`, {
@@ -273,6 +274,7 @@ export async function createPlainSession(params: Readonly<{
         machineId: params.machineId,
         version: '0.0.0',
         flavor: 'claude',
+        ...params.metadata,
       }),
       agentState: null,
       dataEncryptionKey: null,

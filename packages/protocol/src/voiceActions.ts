@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from './actions/actionSpecs.js';
+import { lazySchema } from './lazySchema.js';
 
 export const VOICE_ACTIONS_BLOCK = {
   startTag: '<voice_actions>',
@@ -73,7 +74,7 @@ function getVoiceAssistantActionSchema(): z.ZodType<VoiceAssistantAction> {
   return memoizedVoiceAssistantActionSchema;
 }
 
-export const VoiceAssistantActionSchema: z.ZodType<VoiceAssistantAction> = z.lazy(() => getVoiceAssistantActionSchema());
+export const VoiceAssistantActionSchema: z.ZodType<VoiceAssistantAction> = lazySchema(() => z.lazy(() => getVoiceAssistantActionSchema()));
 
 let memoizedVoiceActionSchemaByToolName: ReadonlyMap<string, z.ZodTypeAny> | undefined;
 function getVoiceActionSchemaByToolName(): ReadonlyMap<string, z.ZodTypeAny> {

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import { MemoryCitationV1Schema } from './memorySearch.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const MemorySnippetV1Schema = z.object({
+export const MemorySnippetV1Schema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   seqFrom: z.number().int().min(0),
   seqTo: z.number().int().min(0),
@@ -16,14 +17,14 @@ export const MemorySnippetV1Schema = z.object({
   if (value.createdAtFromMs > value.createdAtToMs) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'createdAtFromMs must be <= createdAtToMs', path: ['createdAtFromMs'] });
   }
-});
+}));
 export type MemorySnippetV1 = z.infer<typeof MemorySnippetV1Schema>;
 
-export const MemoryWindowV1Schema = z.object({
+export const MemoryWindowV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   snippets: z.array(MemorySnippetV1Schema),
   citations: z.array(MemoryCitationV1Schema),
-}).passthrough();
+}).passthrough());
 
 export type MemoryWindowV1 = z.infer<typeof MemoryWindowV1Schema>;
 

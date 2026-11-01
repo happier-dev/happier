@@ -15,10 +15,12 @@ import {
 import {
     deriveSessionRuntimePresentationState,
     isFreshTimestamp,
+    type SessionRuntimePresentationState,
     readSessionRuntimePresentationFreshnessTimestamps,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import { deriveSessionAttentionState } from '@/sync/domains/session/attention/deriveSessionAttentionState';
+import { deriveSessionWorkObservation } from '@/sync/domains/session/attention/deriveSessionWorkObservation';
 import {
     readDisplayMachineIdForSession,
     readDisplayMachineTargetForSession,
@@ -36,7 +38,7 @@ export {
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 export { isFreshTimestamp };
 
-export type SessionState = 'disconnected' | 'recoverable_unservable' | 'resuming' | 'thinking' | 'background_active' | 'waiting' | 'permission_required' | 'action_required' | 'failed';
+export type SessionState = 'disconnected' | 'recoverable_unservable' | 'archiving' | 'resuming' | 'thinking' | 'background_active' | 'waiting' | 'permission_required' | 'action_required' | 'failed';
 
 export interface SessionStatus {
     state: SessionState;
@@ -213,17 +215,12 @@ function resolveGetSessionStatusOptions(options?: GetSessionStatusOptionsInput):
     return options ?? {};
 }
 
-export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), options?: GetSessionStatusOptionsInput): SessionStatus {
-    const { vibingIndex, workingTextMode = 'animated', statusColors = DEFAULT_SESSION_STATUS_COLORS } = resolveGetSessionStatusOptions(options);
-    const isOnline = session.presence === "online";
-    const isArchived = typeof session.archivedAt === 'number' && Number.isFinite(session.archivedAt);
-    const hasPermissions = hasPendingPermissionRequests(session);
-    const hasUserActions = hasPendingUserActionRequests(session);
-    const terminalControlServiceability = 'terminalControlServiceabilityV1' in (session.metadata ?? {})
-        ? (session.metadata as SessionListRenderableSession['metadata'])?.terminalControlServiceabilityV1
-        : (session as Session).metadata?.terminal?.controlServiceabilityV1;
-    const terminalControlPolicy = resolveTerminalControlServiceabilityPolicy(terminalControlServiceability);
-    const runtimeStatus = deriveSessionRuntimePresentationState({
+/** The canonical runtime presentation (working / background activity / pending requests) for one session record. */
+export function deriveSessionRuntimePresentationStateForSession(
+    session: SessionStatusSource,
+    nowMs: number,
+): SessionRuntimePresentationState {
+    return deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.activeAt,
         archivedAt: session.archivedAt,
@@ -238,10 +235,23 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         runtimeActivityObservedAt: session.runtimeActivityObservedAt,
         runtimeActivityRevision: session.runtimeActivityRevision,
         meaningfulActivityAt: session.meaningfulActivityAt,
-        hasPendingPermissionRequests: hasPermissions,
-        hasPendingUserActionRequests: hasUserActions,
+        hasPendingPermissionRequests: hasPendingPermissionRequests(session),
+        hasPendingUserActionRequests: hasPendingUserActionRequests(session),
         pendingRequestObservedAt: latestPendingRequestObservedAt(session),
     }, nowMs);
+}
+
+export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), options?: GetSessionStatusOptionsInput): SessionStatus {
+    const { vibingIndex, workingTextMode = 'animated', statusColors = DEFAULT_SESSION_STATUS_COLORS } = resolveGetSessionStatusOptions(options);
+    const isOnline = session.presence === "online";
+    const isArchived = typeof session.archivedAt === 'number' && Number.isFinite(session.archivedAt);
+    const hasPermissions = hasPendingPermissionRequests(session);
+    const hasUserActions = hasPendingUserActionRequests(session);
+    const terminalControlServiceability = 'terminalControlServiceabilityV1' in (session.metadata ?? {})
+        ? (session.metadata as SessionListRenderableSession['metadata'])?.terminalControlServiceabilityV1
+        : (session as Session).metadata?.terminal?.controlServiceabilityV1;
+    const terminalControlPolicy = resolveTerminalControlServiceabilityPolicy(terminalControlServiceability);
+    const runtimeStatus = deriveSessionRuntimePresentationStateForSession(session, nowMs);
 
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
     const isOptimisticThinking = !runtimeStatus.hasTerminalMaterializedTurnStatus
@@ -253,6 +263,9 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     // bounded post-acceptance fallback).
     // Header, composer, and list all read this same derived state, so they never disagree.
     const isResuming = (session.resumingAt ?? null) !== null;
+    // Client-owned archive lifecycle marker (see `sessionStopArchiveFlow`): the archive is
+    // committed and in flight, so it outranks every runtime state until it settles.
+    const isArchiving = 'archiving' in session && session.archiving === true;
 
     if (isArchived) {
         return {
@@ -263,6 +276,18 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             statusColor: statusColors.default,
             statusDotColor: statusColors.default,
             isPulsing: false,
+        };
+    }
+
+    if (isArchiving) {
+        return {
+            state: 'archiving',
+            isConnected: isOnline,
+            statusText: t('status.archiving'),
+            shouldShowStatus: true,
+            statusColor: statusColors.connecting,
+            statusDotColor: statusColors.connecting,
+            isPulsing: true,
         };
     }
 
@@ -385,7 +410,9 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             // The count the provider ledger already published, said out loud. It is deliberately
             // kind-neutral: the projection sums every runtime-activity contributor, so the number
             // is attested but the noun would not be.
-            statusText: t('status.backgroundActive', { count: runtimeStatus.backgroundActiveCount }),
+            statusText: deriveSessionWorkObservation(session, nowMs).state === 'unobserved'
+                ? t('status.workingRetained')
+                : t('status.backgroundActive', { count: runtimeStatus.backgroundActiveCount }),
             shouldShowStatus: true,
             statusColor: statusColors.default,
             statusDotColor: statusColors.default,
@@ -429,25 +456,7 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
     });
 
     const now = Date.now();
-    const runtimeStatus = deriveSessionRuntimePresentationState({
-        active: resolvedSession.active,
-        activeAt: resolvedSession.activeAt,
-        archivedAt: resolvedSession.archivedAt,
-        presence: resolvedSession.presence,
-        thinking: resolvedSession.thinking,
-        thinkingAt: resolvedSession.thinkingAt,
-        latestTurnStatus: resolvedSession.latestTurnStatus,
-        latestTurnStatusObservedAt: resolvedSession.latestTurnStatusObservedAt,
-        latestReadyEventAt: resolvedSession.latestReadyEventAt,
-        runtimeActivityState: resolvedSession.runtimeActivityState,
-        runtimeActivityActiveCount: resolvedSession.runtimeActivityActiveCount,
-        runtimeActivityObservedAt: resolvedSession.runtimeActivityObservedAt,
-        runtimeActivityRevision: resolvedSession.runtimeActivityRevision,
-        meaningfulActivityAt: resolvedSession.meaningfulActivityAt,
-        hasPendingPermissionRequests: hasPermissions,
-        hasPendingUserActionRequests: hasUserActions,
-        pendingRequestObservedAt,
-    }, now);
+    const runtimeStatus = deriveSessionRuntimePresentationStateForSession(resolvedSession, now);
 
     const vibingIndex = React.useMemo(() => {
         return Math.floor(Math.random() * vibingMessages.length);

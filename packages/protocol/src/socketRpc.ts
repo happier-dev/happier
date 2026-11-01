@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { SocketRpcAuthorizationContext } from './rpc.js';
+import { lazySchema } from './lazySchema.js';
 
 export const SOCKET_RPC_EVENTS = {
   REGISTER: 'rpc-register',
@@ -20,11 +21,11 @@ export type SocketRpcEvent = (typeof SOCKET_RPC_EVENTS)[keyof typeof SOCKET_RPC_
  * Opaque, short-lived transport correlation. The authenticated relay replaces
  * caller values before dispatch so one caller cannot cancel another's work.
  */
-export const SocketRpcRequestIdSchema = z.string().trim().min(1).max(160);
+export const SocketRpcRequestIdSchema = lazySchema(() => z.string().trim().min(1).max(160));
 
-export const SocketRpcCancellationPayloadSchema = z.object({
+export const SocketRpcCancellationPayloadSchema = lazySchema(() => z.object({
   requestId: SocketRpcRequestIdSchema,
-}).strict();
+}).strict());
 
 export type SocketRpcCancellationPayload = z.infer<typeof SocketRpcCancellationPayloadSchema>;
 
@@ -38,24 +39,24 @@ export type SocketRpcRequestPayload = Readonly<{
 
 export const SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1 = 1 as const;
 
-export const SocketRpcTransportAcknowledgementV1Schema = z.discriminatedUnion('kind', [
+export const SocketRpcTransportAcknowledgementV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session.stop'),
     status: z.literal('stopped'),
   }).strict(),
-]);
+]));
 
 export type SocketRpcTransportAcknowledgementV1 =
   z.infer<typeof SocketRpcTransportAcknowledgementV1Schema>;
 
-export const SocketRpcTransportResponseEnvelopeV1Schema = z.object({
+export const SocketRpcTransportResponseEnvelopeV1Schema = lazySchema(() => z.object({
   v: z.literal(SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1),
   result: z.unknown(),
   acknowledgement: SocketRpcTransportAcknowledgementV1Schema.optional(),
 }).strict().refine(
   (value) => Object.prototype.hasOwnProperty.call(value, 'result'),
   { path: ['result'], message: 'result is required' },
-);
+));
 
 export type SocketRpcTransportResponseEnvelopeV1 =
   z.infer<typeof SocketRpcTransportResponseEnvelopeV1Schema>;

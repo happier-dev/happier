@@ -4,6 +4,7 @@ import type { EnhancedMode } from "./loop";
 import { logger } from "@/ui/logger";
 import type { JsRuntime } from "./runClaude";
 import type { SessionHookData } from "./utils/startHookServer";
+import { ClaudeToolHookCorrelation } from './utils/claudeToolHookCorrelation';
 import type { ClaudeStatuslineRuntimeReconcileInput } from "./statusline/applyClaudeStatuslineUpdate";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
@@ -29,6 +30,7 @@ import { resolveConfiguredClaudeConfigDir } from './utils/resolveConfiguredClaud
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { resolveSessionCriticalMetadataDrainTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
+import { hasClaudeMaterializedSessionTranscript } from './utils/claudeCheckSession';
 import { getProjectPath } from './utils/path';
 import { readExplicitClaudeResumeSessionIdFromArgs } from './utils/claudeResumeArgs';
 import {
@@ -48,6 +50,16 @@ import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwa
 export type SessionFoundInfo = {
     sessionId: string;
     transcriptPath: string | null;
+};
+
+/**
+ * Identity cleared by `Session.clearSessionId`, restorable via
+ * `Session.restoreClearedSessionIdentity` when an unconfirmed fork rolls back.
+ */
+export type ClearedClaudeSessionIdentity = {
+    sessionId: string;
+    transcriptPath: string | null;
+    mustResume: boolean;
 };
 
 type SessionMetadataDaemonReporter = (input: Readonly<{
@@ -329,11 +341,18 @@ export class Session {
     /** Terminal host metadata for this CLI process, when launched by tmux/daemon wrappers. */
     readonly terminalRuntime: TerminalRuntimeFlags | null;
     readonly defaultSystemPromptText: string | undefined;
+    readonly observeClaudePermissionTranscript: ((value: unknown) => void) | undefined;
+    readonly claudeToolHookCorrelation = new ClaudeToolHookCorrelation();
 
     sessionId: string | null;
     transcriptPath: string | null = null;
+    // Once requested or proven, identity survives transcript loss: launch validation must
+    // fail visibly instead of silently replacing an established conversation.
+    private sessionIdMustBeResumed = false;
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
+    /** When `thinking` was last written; idle provider exit measures quiet time from here. */
+    thinkingChangedAtMs: number = Date.now();
     private currentTaskId: string | null = null;
     private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
     private happierMcpBridge:
@@ -411,6 +430,7 @@ export class Session {
         startedBy?: 'daemon' | 'terminal',
         terminalRuntime?: TerminalRuntimeFlags | null,
         defaultSystemPromptText?: string,
+        observeClaudePermissionTranscript?: (value: unknown) => void,
         precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null,
         reportSessionMetadataToDaemon?: SessionMetadataDaemonReporter | null,
         runtimeActivityContributions?: Readonly<{
@@ -420,6 +440,7 @@ export class Session {
     }) {
         this.path = opts.path;
         this.client = opts.client;
+        this.observeClaudePermissionTranscript = opts.observeClaudePermissionTranscript;
         this.unregisterConnectedServiceAuthGroupRuntimeControl = this.client.registerSessionRuntimeControls?.({
             applyConnectedServiceAuthGeneration: this.applyConnectedServiceAuthGeneration,
         }) ?? (() => {});
@@ -439,6 +460,9 @@ export class Session {
         this.accountSettingsSecretsReadKeys = opts.accountSettingsSecretsReadKeys ?? [];
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
+        // An externally supplied id is an established identity this runner continues,
+        // not a fresh allocation observed from a hook.
+        this.sessionIdMustBeResumed = Boolean(opts.sessionId);
         this.queue = opts.messageQueue;
         this.claudeArgs = opts.claudeArgs;
         this.adoptExplicitResumeSessionIdFromArgs();
@@ -493,8 +517,36 @@ export class Session {
         if (!resumeSessionId) return;
 
         this.sessionId = resumeSessionId;
-        logger.debug(`[Session] Adopted provisional Claude resume session ID from args: ${resumeSessionId}`);
+        // An explicitly requested resume is resumable from birth and must keep failing
+        // closed when its transcript is unavailable.
+        this.sessionIdMustBeResumed = true;
+        logger.debug(`[Session] Adopted requested Claude resume session ID from args: ${resumeSessionId}`);
     }
+
+    /** Project the coherent resume identity for launch, replay, and startup observers. */
+    getResumableSessionIdentity = (): SessionFoundInfo | null => {
+        if (!this.sessionId) return null;
+        if (this.sessionIdMustBeResumed) return { sessionId: this.sessionId, transcriptPath: this.transcriptPath };
+        if (
+            hasClaudeMaterializedSessionTranscript(
+                this.sessionId,
+                this.path,
+                this.transcriptPath,
+                resolveConfiguredClaudeConfigDir({ env: process.env }),
+            )
+        ) {
+            this.sessionIdMustBeResumed = true;
+            return { sessionId: this.sessionId, transcriptPath: this.transcriptPath };
+        }
+        logger.infoFile('[Session] Starting without a provisional Claude resume identity', {
+            event: 'claude_provisional_resume_identity',
+            providerSessionId: this.sessionId,
+        });
+        return null;
+    }
+
+    /** Return only the ID when the caller does not need the canonical transcript path. */
+    getResumableSessionId = (): string | null => this.getResumableSessionIdentity()?.sessionId ?? null;
 
     setPushSender(pushSender: PushNotificationClient | null): void {
         this.pushSender = pushSender;
@@ -550,6 +602,7 @@ export class Session {
      * Cleanup resources (call when session is no longer needed)
      */
     cleanup = (): void => {
+        this.claudeToolHookCorrelation.clear();
         this.unregisterConnectedServiceAuthGroupRuntimeControl();
         this.unregisterConnectedServiceAuthGroupRuntimeControl = () => {};
         this.connectedServiceExactApplicationHandler = null;
@@ -585,7 +638,7 @@ export class Session {
             && this.connectedServiceExactApplicationHandler
         ) {
             await this.connectedServiceExactApplicationHandler().catch((error) => {
-                logger.debug('[Session] Failed to release Claude provider UI after exact connected-service application (non-fatal)', error);
+                logger.infoFile('[Session] Failed to wake Claude pending input after exact connected-service application (non-fatal)', error);
             });
         }
         return { ok: true, appliedVia: 'current_truth_fence' };
@@ -767,6 +820,7 @@ export class Session {
     private applyThinkingState = (thinking: boolean): boolean => {
         const wasThinking = this.thinking;
         this.thinking = thinking;
+        this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(thinking, this.mode);
         this.scheduleNextKeepAlive();
         return wasThinking !== thinking;
@@ -808,6 +862,7 @@ export class Session {
         const id = this.currentTaskId ?? randomUUID();
         this.currentTaskId = null;
         this.thinking = false;
+        this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(false, this.mode);
         this.client.sendAgentMessage('claude', { type: 'turn_aborted', id });
     }
@@ -830,6 +885,12 @@ export class Session {
      * all registered callbacks (e.g., SessionScanner) about the change.
      */
     onSessionFound = (sessionId: string, hookData?: SessionHookData) => {
+        const hookEventName = hookData ? readSessionHookEventName(hookData) : '';
+        // Lifecycle notifications describe activity, not a new conversation. In particular,
+        // SessionEnd can report a different, unmaterialized id while switching to remote mode.
+        // Eventless SDK and offline discoveries still use this same identity owner.
+        if (hookEventName && hookEventName !== 'SessionStart') return;
+
         // PLAN 4.9.1 step 2: arm the provider-task identity gate HERE, at the one place this runtime
         // learns its Claude session identity, so the unified terminal, the local launcher and the
         // remote launcher inherit it instead of each remembering to arm the ledger they were handed.
@@ -863,9 +924,15 @@ export class Session {
             // Avoid carrying a transcript path across different Claude sessions.
             // If the hook didn't provide a transcript path for this session, force fallback to heuristics.
             this.transcriptPath = observedTranscriptPath;
+            this.sessionIdMustBeResumed = false;
         } else if (observedTranscriptPath) {
             // Same sessionId, but we learned/updated the exact transcript path.
             this.transcriptPath = observedTranscriptPath;
+        }
+        // Native continuation/fork/compaction already carries context, including a
+        // resume of the same observed ID before its transcript becomes available.
+        if (hookData?.source === 'resume' || hookData?.source === 'fork' || hookData?.source === 'compact') {
+            this.sessionIdMustBeResumed = true;
         }
         // Hooks need the observed identity immediately, but allocation alone does not
         // establish a native session that a later inactive resume can load.
@@ -878,6 +945,7 @@ export class Session {
                 // A newer observation can arrive while complete-record proof is being read.
                 if (this.sessionId !== sessionId || this.transcriptPath !== observedTranscriptPath) return;
                 if (!canPublishSessionResumeIdentity({ isExistingResume: false, hasResumeEvidence: Boolean(metadataTranscriptPath) })) return;
+                this.sessionIdMustBeResumed = true;
                 if (metadataTranscriptPath && this.transcriptPath !== metadataTranscriptPath) {
                     this.transcriptPath = metadataTranscriptPath;
                     for (const callback of this.sessionFoundCallbacks) callback({ sessionId, transcriptPath: metadataTranscriptPath });
@@ -925,8 +993,17 @@ export class Session {
     }
 
     onClaudeSessionHook = (data: SessionHookData): void => {
+        this.claudeToolHookCorrelation.observePreToolUse(data);
         for (const callback of this.claudeSessionHookCallbacks) {
             callback(data);
+        }
+        if (isSidechainSessionHook(data)) return;
+        const event = data.hook_event_name ?? data.hookEventName;
+        if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+            const id = data.tool_use_id ?? data.toolUseId;
+            if (typeof id === 'string') this.claudeToolHookCorrelation.delete(id);
+        } else if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd' || event === 'UserPromptSubmit') {
+            this.claudeToolHookCorrelation.clear();
         }
     }
 
@@ -1030,10 +1107,20 @@ export class Session {
     }
 
     /**
-     * Clear the current session ID (used by /clear command)
+     * Identity cleared by `clearSessionId`, restorable via
+     * `restoreClearedSessionIdentity` when an unconfirmed fork rolls back.
      */
-    clearSessionId = (): void => {
+    clearSessionId = (): ClearedClaudeSessionIdentity | null => {
+        const cleared: ClearedClaudeSessionIdentity | null = this.sessionId
+            ? {
+                sessionId: this.sessionId,
+                transcriptPath: this.transcriptPath,
+                mustResume: this.getResumableSessionId() !== null,
+            }
+            : null;
+        this.claudeToolHookCorrelation.clear();
         this.sessionId = null;
+        this.sessionIdMustBeResumed = false;
         this.transcriptPath = null;
         updateMetadataBestEffort(
             this.client,
@@ -1042,6 +1129,19 @@ export class Session {
             'claude_session_cleared',
         );
         logger.debug('[Session] Session ID cleared');
+        return cleared;
+    }
+
+    /**
+     * Restore an identity previously returned by `clearSessionId` when the launch
+     * whose fork confirmation was being awaited never confirmed. Restoring also
+     * restores the cleared identity's established context, so requested or proven
+     * resumes still fail closed after the rollback.
+     */
+    restoreClearedSessionIdentity = (cleared: ClearedClaudeSessionIdentity): void => {
+        this.sessionId = cleared.sessionId;
+        this.transcriptPath = cleared.transcriptPath;
+        this.sessionIdMustBeResumed = cleared.mustResume;
     }
 
     /**

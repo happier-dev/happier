@@ -6,6 +6,7 @@ export type ParsedHappierCustomSchemeUrl = Readonly<{
     pathname: string;
     search: string;
     searchParams: URLSearchParams;
+    hash?: string;
 }>;
 
 function normalizeProtocol(value: string): string {
@@ -65,6 +66,7 @@ export function parseHappierCustomSchemeUrl(raw: string): ParsedHappierCustomSch
         hostname,
         pathname,
         search,
+        ...(hashIndex >= 0 ? { hash: remainder.slice(hashIndex) } : {}),
         searchParams: new URLSearchParams(search.replace(/^\?/, '')),
     };
 }

@@ -1,6 +1,7 @@
 import { readFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { z } from 'zod';
 
 import {
     SessionMessageRoleSchema,
@@ -316,6 +317,24 @@ export function parseQueuedSessionMutation(value: unknown, sessionId: string): Q
         ? value.unknownGuardSegment
         : null;
     const mutationId = typeof value.mutationId === 'string' ? value.mutationId : undefined;
+    if (value.kind === 'agent_state_request_settlement') {
+        const parsed = z.object({
+            v: z.literal(1), source: z.literal('agent_state_request_settlement'),
+            sessionId: z.literal(sessionId), mutationId: z.string().min(1),
+            content: z.object({ t: z.enum(['encrypted', 'installation_encrypted_v1']), c: z.string().min(1) }).strict(),
+        }).strict().safeParse(value.payload);
+        if (parsed.success && parsed.data.mutationId === mutationId) {
+            return { ok: true, mutation: {
+                kind: 'agent_state_request_settlement', mutationId, payload: parsed.data,
+                createdAt, attempts, nextAttemptAt,
+            } };
+        }
+        return { ok: false, deadLetter: createDeadLetterEntry({
+            sessionId, kind: 'agent_state_request_settlement',
+            reason: 'invalid_agent_state_request_settlement', mutationId, attempts, createdAt,
+            payload: value.payload,
+        }) };
+    }
     if (value.kind === 'session_turn') {
         const parsedPayload = parseSessionTurnPayload(value.payload);
         if (!parsedPayload.payload) {
@@ -641,6 +660,14 @@ function readRecoverableQueuedMutation(
     entry: SessionMutationDeadLetterEntry,
     context: SessionMutationPersistenceContext,
 ): QueuedSessionMutation | null {
+    // CLI v0.2.15 quarantines unknown runtime kinds byte-for-byte. Re-admit only this
+    // encrypted intent when returning from that reader; daemon-terminal custody stays strict.
+    if (entry.kind === 'unknown' && entry.reason === 'unknown_queued_mutation_kind'
+        && isRecord(entry.recoveryPayload) && entry.recoveryPayload.kind === 'agent_state_request_settlement') {
+        if (typeof entry.recoveryAttemptedAt === 'number') return null;
+        const parsed = context.parseQueuedMutation(entry.recoveryPayload, context.sessionId);
+        return parsed.ok ? { ...parsed.mutation, nextAttemptAt: 0 } : null;
+    }
     if (!isAuthoritativeSessionMutationKind(entry.kind as QueuedSessionMutation['kind'])) return null;
     if (entry.reason === 'permanent_invalid_payload') return null;
     if (typeof entry.recoveryAttemptedAt === 'number') return null;

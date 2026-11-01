@@ -82,6 +82,7 @@ model Account {
     SessionFolderAssignment SessionFolderAssignment[]
     SessionPin             SessionPin[]
     SessionAttentionStanding SessionAttentionStanding[]
+    SessionAppearance      SessionAppearance[]
     SessionOrganizationFolder SessionOrganizationFolder[]
     SessionOrganizationTag SessionOrganizationTag[]
     SessionTagAssignment   SessionTagAssignment[]
@@ -231,6 +232,7 @@ model TerminalAuthRequest {
     id                String   @id @default(cuid())
     publicKey         String   @unique
     supportsV2        Boolean  @default(false)
+    supportsTokenOnly Boolean  @default(false)
     claimSecretHash   String?
     claimedAt         DateTime?
     response          String?
@@ -260,6 +262,7 @@ model AuthPairingSession {
     account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
     secretHash          String
     requestedPublicKey  String?
+    supportsCredentialVariants Boolean @default(false)
     requestedDeviceLabel String?
     requestedAt         DateTime?
     expiresAt           DateTime
@@ -381,6 +384,7 @@ model Session {
     sessionFolderAssignments SessionFolderAssignment[]
     sessionPins       SessionPin[]
     sessionAttentionStandings SessionAttentionStanding[]
+    sessionAppearances SessionAppearance[]
     sessionTagAssignments SessionTagAssignment[]
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
@@ -538,6 +542,21 @@ model SessionAttentionStanding {
     @@unique([accountId, sessionId])
     @@index([accountId, standing])
     @@index([accountId, remindAt])
+    @@index([sessionId])
+}
+
+model SessionAppearance {
+    id             String   @id @default(cuid())
+    accountId      String
+    sessionId      String
+    displayDbValue String @db.LongText
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
     @@index([sessionId])
 }
 

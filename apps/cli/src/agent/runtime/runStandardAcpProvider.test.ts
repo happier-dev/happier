@@ -1,5 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentState, Metadata } from '@/api/types';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createMockSession, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { reloadConfiguration } from '@/configuration';
+import * as daemonControlClient from '@/daemon/controlClient';
+import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 
 import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from './runStandardAcpProvider';
 
@@ -103,7 +115,7 @@ function createHarness() {
       happyHomeDir: '/tmp/.happy',
       happyLibDir: '/tmp/lib',
     },
-    terminalDisplay: (() => null) as any,
+    loadTerminalDisplay: async () => () => null,
     beforeInitializeSession: ({ metadata }: any) => {
       beforeInitializeCalls += 1;
       (metadata as any).auggieAllowIndexing = true;
@@ -251,6 +263,46 @@ function createHarness() {
 }
 
 describe('runStandardAcpProvider', () => {
+  it.each(['runtime', 'startup'] as const)('respects %s ownership when reporting tmux startup fallback', async (terminalHostOwner) => {
+    const harness = createHarness();
+    const home = await createTempDir('happier-provider-terminal-owner-');
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    env.patch({ HAPPIER_HOME_DIR: home });
+    reloadConfiguration();
+    const daemonReport = vi.spyOn(daemonControlClient, 'notifyDaemonSessionStarted').mockResolvedValue({});
+    harness.opts.startedBy = 'daemon';
+    harness.opts.terminalRuntime = { mode: 'plain', requested: 'tmux', tmuxTarget: 'happy' };
+    harness.config.terminalHostOwner = terminalHostOwner;
+    // Exercise the real metadata factory, initializer, warning builder, and local persistence.
+    // The API/session transport, daemon IPC, and provider loop use harness boundaries.
+    harness.deps.createSessionMetadataFn = undefined;
+    harness.deps.initializeBackendRunSessionFn = undefined;
+    harness.session.updateAgentState = vi.fn(async () => undefined);
+    harness.deps.initializeBackendApiContextFn = async () => ({
+      machineId: 'machine-1',
+      api: {
+        getOrCreateSession: async ({ metadata }: { metadata: Metadata }) => createMockSession({ id: 'session-1', metadata }),
+        sessionSyncClient: () => harness.session,
+        push: () => ({ sendToAllDevices: () => undefined }),
+      },
+    });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+      const warning = expect.objectContaining({ type: 'message', message: expect.stringContaining('tmux') });
+      if (terminalHostOwner === 'runtime') {
+        expect(harness.session.sendSessionEvent).not.toHaveBeenCalledWith(warning);
+      } else {
+        expect(harness.session.sendSessionEvent).toHaveBeenCalledWith(warning);
+      }
+    } finally {
+      daemonReport.mockRestore();
+      env.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+    }
+  });
+
   it('preserves an ordinary manifest resume identity when no matching local return exists', async () => {
     const harness = createHarness();
     harness.opts.resume = 'qwen-native-1';
@@ -878,9 +930,73 @@ describe('runStandardAcpProvider', () => {
     expect(keepAliveModes[0]).toBe('local');
   });
 
-  it('skips terminal rendering when the provider disables the remote terminal UI', async () => {
+  it.each([
+    ['loading', { loadFails: true, renderFails: false }],
+    ['rendering', { loadFails: false, renderFails: true }],
+  ])('keeps the session running when %s the terminal display fails', async (_phase, failure) => {
+    const harness = createHarness();
+    harness.config.loadTerminalDisplay = async () => {
+      if (failure.loadFails) throw new Error('display chunk missing');
+      return () => null;
+    };
+    const renderFn = vi.fn(() => {
+      if (failure.renderFails) throw new Error('render failed');
+      return { unmount: vi.fn() };
+    });
+    let readySent = false;
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      await vi.dynamicImportSettled();
+      if (failure.renderFails) {
+        await vi.waitFor(() => expect(renderFn).toHaveBeenCalledTimes(1));
+      }
+      params.sendReady();
+      readySent = true;
+    };
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, { ...harness.deps, renderFn });
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(readySent).toBe(true);
+  });
+
+  it('does not load the terminal display without an attached TTY', async () => {
+    const harness = createHarness();
+    const loadTerminalDisplay = vi.fn(async () => () => null);
+    harness.config.loadTerminalDisplay = loadTerminalDisplay;
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(loadTerminalDisplay).not.toHaveBeenCalled();
+  });
+
+  it('skips loading and rendering the terminal UI when the provider disables it', async () => {
     const harness = createHarness();
     const renderFn = vi.fn(() => ({ unmount: vi.fn() }));
+    const loadTerminalDisplay = vi.fn(async () => () => null);
+    harness.config.loadTerminalDisplay = loadTerminalDisplay;
     (harness.config as any).shouldRenderTerminalDisplay = () => false;
 
     const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -899,6 +1015,7 @@ describe('runStandardAcpProvider', () => {
     }
 
     expect(renderFn).not.toHaveBeenCalled();
+    expect(loadTerminalDisplay).not.toHaveBeenCalled();
   });
 
   it('exposes a terminal display controller for provider-managed mount and unmount transitions', async () => {
@@ -922,13 +1039,16 @@ describe('runStandardAcpProvider', () => {
       controller = value;
     };
     harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
-      if (!controller) throw new Error('Expected terminal display controller');
-      expect(controller.isMounted()).toBe(false);
-      controller.mount();
-      expect(controller.isMounted()).toBe(true);
-      await controller.unmount();
-      expect(controller.isMounted()).toBe(false);
-      controller.mount();
+      const terminalDisplay = controller;
+      if (!terminalDisplay) throw new Error('Expected terminal display controller');
+      expect(terminalDisplay.isMounted()).toBe(false);
+      // The first mount loads the terminal UI; later mounts render synchronously.
+      terminalDisplay.mount();
+      await vi.waitFor(() => expect(terminalDisplay.isMounted()).toBe(true));
+      await terminalDisplay.unmount();
+      expect(terminalDisplay.isMounted()).toBe(false);
+      terminalDisplay.mount();
+      expect(terminalDisplay.isMounted()).toBe(true);
       params.sendReady();
     };
 
@@ -1050,6 +1170,31 @@ describe('runStandardAcpProvider', () => {
     expect(harness.session.close).toHaveBeenCalledTimes(1);
   });
 
+  it('stops the ACP provider and aborts its controller when cancellation journal admission fails', async () => {
+    const harness = createHarness();
+    let state: AgentState = { requests: {}, completedRequests: {} };
+    Object.assign(harness.session, {
+      getAgentStateSnapshot: () => state,
+      updateAgentState: async (updater: (current: AgentState) => AgentState) => { state = updater(state); },
+      updateAgentStateRequestSettlement: async () => { throw Object.assign(new Error('journal disk full'), { code: 'ENOSPC' }); },
+    });
+    const handler = createProviderEnforcedPermissionHandler({ session: harness.session, logPrefix: '[AcpStopTest]' });
+    harness.deps.createProviderEnforcedPermissionHandlerFn = () => handler;
+    let stoppedSignal: AbortSignal | undefined;
+    harness.deps.runPermissionModePromptLoopFn = async (params: { getAbortSignal: () => AbortSignal }) => {
+      stoppedSignal = params.getAbortSignal();
+      const pending = handler.handleToolCall('acp-stop', 'Bash', { command: ['echo pending'] });
+      const rejected = expect(pending).rejects.toThrow('Aborted by user');
+      await harness.handlers.get('abort')?.();
+      await rejected;
+    };
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    expect(stoppedSignal?.aborted).toBe(true);
+    expect(harness.runtime.cancel).toHaveBeenCalledTimes(1);
+    expect(state.requests?.['acp-stop']).toBeDefined();
+    expect(state.completedRequests?.['acp-stop']).toBeUndefined();
+  });
+
   it('invokes abort handler lifecycle when abort RPC fires', async () => {
     const harness = createHarness();
     harness.deps.runPermissionModePromptLoopFn = async () => {
@@ -1140,6 +1285,108 @@ describe('runStandardAcpProvider', () => {
     expect(harness.session.close).toHaveBeenCalled();
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
+
+  it.each(['completed', 'failed', 'flush-failed'] as const)(
+    'resumes queued input immediately after %s Stop cancellation without polling',
+    async (cancelOutcome) => {
+      // Only the provider transport and Session API are faked; the runtime, permissions,
+      // input consumer, queue and prompt loop execute their real production paths.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const harness = createHarness();
+      const session = createMutableApiSessionClientFixture({
+        metadata: createTestMetadata({ path: '/tmp/workspace', permissionMode: 'default' }),
+        overrides: {
+          ...harness.session,
+          onUserMessage: () => undefined,
+          flush: async () => {
+            if (cancelOutcome === 'flush-failed') throw new Error('Session transport flush failed');
+          },
+          shouldAttemptPendingMaterialization: () => false,
+          waitForMetadataUpdate: (signal) => new Promise<boolean>((resolve) => {
+            if (signal?.aborted) resolve(false);
+            else signal?.addEventListener('abort', () => resolve(false), { once: true });
+          }),
+          waitForPendingEligibilityUpdate: (signal) => new Promise<boolean>((resolve) => {
+            if (signal?.aborted) resolve(false);
+            else signal?.addEventListener('abort', () => resolve(false), { once: true });
+          }),
+        },
+      });
+      harness.deps.initializeBackendRunSessionFn = async () => ({
+        session, reconnectionHandle: null, reportedSessionId: session.sessionId, attachedToExistingSession: false,
+      });
+      delete harness.deps.createProviderEnforcedPermissionHandlerFn;
+      let queueState: ReturnType<typeof createPermissionModeQueueState>;
+      harness.deps.createPermissionModeQueueStateFn = (params: Parameters<typeof createPermissionModeQueueState>[0]) => {
+        queueState = createPermissionModeQueueState(params);
+        queueState.messageQueue.push({ text: 'first prompt', localId: 'local-first' }, { permissionMode: 'default' });
+        return queueState;
+      };
+      let completeResponse!: () => void;
+      const response = new Promise<void>((resolve) => { completeResponse = resolve; });
+      let releaseCancel!: () => void;
+      const cancellation = new Promise<void>((resolve) => { releaseCancel = resolve; });
+      let notifyCancelStarted!: () => void;
+      const cancelStarted = new Promise<void>((resolve) => { notifyCancelStarted = resolve; });
+      let notifyFirstSent!: () => void;
+      const firstSent = new Promise<void>((resolve) => { notifyFirstSent = resolve; });
+      let completed = false;
+      const sent: string[] = [];
+      const backend = createFakeAcpRuntimeBackend({
+        sendPrompt: async (_sessionId, prompt) => { sent.push(prompt); notifyFirstSent(); },
+        waitForResponseComplete: async () => { if (sent.length === 1) await response; },
+        cancel: async () => {
+          notifyCancelStarted();
+          // ACP cancellation can release the turn before the transport cancellation settles.
+          completeResponse();
+          await cancellation;
+          if (cancelOutcome === 'failed') throw new Error('Provider cancel failed');
+        },
+      });
+      harness.config.deliversSystemPromptAtSpawn = true;
+      harness.config.createRuntime = (params: Parameters<StandardAcpProviderConfig['createRuntime']>[0]) =>
+        createTestAcpRuntime({
+          provider: 'qwen', directory: params.directory, session: params.session,
+          messageBuffer: params.messageBuffer, mcpServers: {}, permissionHandler: params.permissionHandler,
+          onThinkingChange: params.setThinking, ensureBackend: async () => backend,
+        });
+      harness.deps.runPermissionModePromptLoopFn = (params: Parameters<typeof runPermissionModePromptLoop>[0]) =>
+        runPermissionModePromptLoop({
+          ...params,
+          shouldExit: () => completed || params.shouldExit(),
+          sendReady: () => { if (sent.length === 2) completed = true; },
+        });
+      const tick = async () => { await new Promise<void>((resolve) => setImmediate(resolve)); };
+      const run = runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+      let abort: Promise<unknown> | undefined;
+      try {
+        await Promise.race([firstSent, run.then(() => { throw new Error('Runner exited before first prompt'); })]);
+        expect(sent).toEqual(['first prompt']);
+        abort = Promise.resolve(harness.handlers.get('abort')?.());
+        await cancelStarted;
+        const repeatedAbort = Promise.resolve(harness.handlers.get('abort')?.());
+        queueState!.messageQueue.push({ text: 'after Stop', localId: 'local-after-stop' }, { permissionMode: 'default' });
+        for (let i = 0; i < 10; i++) await tick();
+        expect(sent).toEqual(['first prompt']);
+        expect(queueState!.messageQueue.size()).toBe(1);
+        releaseCancel();
+        await Promise.all([abort, repeatedAbort]);
+        // No timeout is advanced: recovery must follow cancellation completion itself.
+        for (let i = 0; i < 100 && !completed; i++) await tick();
+        expect(sent).toEqual(['first prompt', 'after Stop']);
+        expect(completed).toBe(true);
+        await run;
+      } finally {
+        completed = true;
+        releaseCancel();
+        completeResponse();
+        await abort;
+        await vi.runAllTimersAsync();
+        await run;
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('awaits explicit Stop cancellation before API close and backend disposal', async () => {
     const harness = createHarness();

@@ -535,6 +535,7 @@ async function runNodeCapture({ cwd, env, args, stdin }) {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';

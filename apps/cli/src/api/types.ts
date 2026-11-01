@@ -59,6 +59,7 @@ import type {
   UpdateMetadataAckResponse,
   UpdateStateAckResponse,
 } from '@happier-dev/protocol/updates'
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Permission mode values - includes both Claude and Codex modes
@@ -324,7 +325,7 @@ export type Session =
 /**
  * Machine metadata - static information (rarely changes)
  */
-export const MachineMetadataSchema = z.object({
+export const MachineMetadataSchema = lazySchema(() => z.object({
   host: z.string(),
   platform: z.string(),
   happyCliVersion: z.string(),
@@ -335,11 +336,11 @@ export const MachineMetadataSchema = z.object({
   daemonSessionGoalControlsSupported: z.boolean().optional(),
   /** K5 — this machine's first-party CLI update facts (plan R13); absent from older daemons. */
   cliUpdate: CliUpdateFactsSchema.optional(),
-})
+}))
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
 
-export const MachineRegistrationIdentitySchema = z.object({
+export const MachineRegistrationIdentitySchema = lazySchema(() => z.object({
   installationId: z.string().trim().min(1),
   installationPublicKey: MachineInstallationPublicKeySchema,
   installationProof: MachineInstallationProofV1Schema,
@@ -347,7 +348,7 @@ export const MachineRegistrationIdentitySchema = z.object({
   replacementReason: MachineReplacementReasonSchema.optional(),
   contentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.optional(),
   replacementCandidateAccountId: z.string().trim().min(1).optional(),
-});
+}));
 
 export type MachineRegistrationIdentity = Readonly<
   Omit<z.infer<typeof MachineRegistrationIdentitySchema>, 'replacementReason' | 'contentPublicKeyFingerprint'>
@@ -360,7 +361,7 @@ export type MachineRegistrationIdentity = Readonly<
 /**
  * Daemon state - dynamic runtime information (frequently updated)
  */
-export const DaemonStateSchema = z.object({
+export const DaemonStateSchema = lazySchema(() => z.object({
   status: z.union([
     z.enum(['running', 'shutting-down']),
     z.string() // Forward compatibility
@@ -376,24 +377,26 @@ export const DaemonStateSchema = z.object({
       z.enum(['mobile-app', 'cli', 'os-signal', 'unknown']),
       z.string() // Forward compatibility
     ]).optional()
-})
+}))
 
 export type DaemonState = z.infer<typeof DaemonStateSchema>
 
 export type Machine = {
   id: string,
-  encryptionKey: Uint8Array;
-  encryptionVariant: 'legacy' | 'dataKey';
+  publishedDataEncryptionKey?: string | null;
   metadata: MachineMetadata | null,
   metadataVersion: number,
   daemonState: DaemonState | null,
   daemonStateVersion: number,
-}
+} & (
+  | { encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }
+  | { encryptionKey: null; encryptionVariant: 'plain' }
+)
 
 /**
  * Session message from API
  */
-export const SessionMessageSchema = z.object({
+export const SessionMessageSchema = lazySchema(() => z.object({
   content: SessionMessageContentSchema,
   createdAt: z.number(),
   id: z.string(),
@@ -401,14 +404,14 @@ export const SessionMessageSchema = z.object({
   seq: z.number(),
   sidechainId: z.string().nullable(),
   updatedAt: z.number()
-}).passthrough()
+}).passthrough())
 
 export type SessionMessage = z.infer<typeof SessionMessageSchema>
 
 /**
  * Message metadata schema
  */
-export const MessageMetaSchema = z.object({
+export const MessageMetaSchema = lazySchema(() => z.object({
   sentFrom: SentFromSchema.optional(), // Source identifier
   /**
    * High-level origin of the message. This is used to prevent reliability features
@@ -425,14 +428,14 @@ export const MessageMetaSchema = z.object({
   appendSystemPrompt: z.string().nullable().optional(), // Append to system prompt for this message (null = reset)
   allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
   disallowedTools: z.array(z.string()).nullable().optional() // Disallowed tools for this message (null = reset)
-}).passthrough()
+}).passthrough())
 
 export type MessageMeta = z.infer<typeof MessageMetaSchema>
 
 /**
  * API response types
  */
-export const CreateSessionResponseSchema = z.object({
+export const CreateSessionResponseSchema = lazySchema(() => z.object({
   resolution: z.enum(['created', 'existing']).optional(),
   session: z.object({
     id: z.string(),
@@ -446,11 +449,11 @@ export const CreateSessionResponseSchema = z.object({
     agentStateVersion: z.number(),
     dataEncryptionKey: z.string().nullable().optional(),
   }).passthrough(),
-})
+}))
 
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
 
-export const UserMessageSchema = z.object({
+export const UserMessageSchema = lazySchema(() => z.object({
   role: z.literal('user'),
   content: z.object({
     type: z.literal('text'),
@@ -466,22 +469,22 @@ export const UserMessageSchema = z.object({
   localId: z.string().nullish().optional(),
   localKey: z.string().optional(), // Mobile messages include this
   meta: MessageMetaSchema.optional()
-}).passthrough()
+}).passthrough())
 
 export type UserMessage = z.infer<typeof UserMessageSchema>
 
-export const AgentMessageSchema = z.object({
+export const AgentMessageSchema = lazySchema(() => z.object({
   role: z.literal('agent'),
   content: z.object({
     type: z.literal('output'),
     data: z.any()
   }).passthrough(),
   meta: MessageMetaSchema.optional()
-}).passthrough()
+}).passthrough())
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 
-export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSchema])
+export const MessageContentSchema = lazySchema(() => z.union([UserMessageSchema, AgentMessageSchema]))
 
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
@@ -538,6 +541,8 @@ export type Metadata = {
    * Null indicates "no profile".
    */
   profileId?: string | null,
+  /** Non-secret native account directory overrides captured by the creating runner. */
+  nativeAgentEnvironmentV1?: import('@/agent/runtime/sessionNativeEnvironment').SessionNativeEnvironment,
   summary?: {
     text: string,
     updatedAt: number
@@ -883,6 +888,8 @@ export type AgentState = {
           kind?: 'permission' | 'user_action' | string,
           arguments: any,
           createdAt: number
+          /** Opaque identity of this permission occurrence, safe to include in notification data. */
+          occurrenceId?: string
           /**
            * Optional provider-provided permission suggestions for this request.
            * (e.g. Claude Agent SDK `permission_suggestions`).
@@ -902,6 +909,7 @@ export type AgentState = {
         arguments: any,
         createdAt: number,
         completedAt: number,
+        occurrenceId?: string,
         status: 'canceled' | 'denied' | 'approved',
       reason?: string,
       mode?: PermissionMode,

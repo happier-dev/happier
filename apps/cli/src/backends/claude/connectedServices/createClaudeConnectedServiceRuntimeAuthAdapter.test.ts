@@ -47,6 +47,7 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
         tokenType: 'Bearer',
         providerAccountId: 'provider-account',
         providerEmail: 'team@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-team' } },
       },
     });
 
@@ -60,12 +61,11 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
         record,
       },
       error: {
-        type: 'rate_limit_event',
-        rate_limit_info: {
-          status: 'rejected',
-          rateLimitType: 'weekly',
-          utilization: 100,
-        },
+        type: 'assistant',
+        isApiErrorMessage: true,
+        apiErrorStatus: 429,
+        error: 'rate_limit_error',
+        providerLimitId: 'weekly',
       },
     });
 
@@ -77,6 +77,7 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
       groupGeneration: 42,
       sourceProviderAccountId: 'provider-account',
       sourceAccountLabel: 'team@example.com',
+      sourceProviderOrganizationId: 'org-team',
     });
   });
 
@@ -269,6 +270,7 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
         tokenType: 'Bearer',
         providerAccountId: 'provider-account',
         providerEmail: 'member@example.com',
+        raw: { claudeAiOauth: { organizationUuid: 'org-member' } },
       },
     });
     const selection = {
@@ -337,6 +339,13 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
         accountUuid: 'provider-account',
         emailAddress: 'member@example.com',
       },
+    });
+    const rootConfig = JSON.parse(await readFile(join(runtimeClaudeConfigDir, '.claude.json'), 'utf8'));
+    await writeFile(join(runtimeClaudeConfigDir, '.claude.json'), JSON.stringify({
+      ...rootConfig, oauthAccount: { ...rootConfig.oauthAccount, organizationUuid: 'org-other' },
+    }));
+    await expect(adapter.verifyActiveAccount?.({ target: { agentId: 'claude' }, selection })).resolves.toMatchObject({
+      status: 'unavailable', reason: 'claude_code_runtime_account_adoption_unproven',
     });
     expect(await readFile(join(runtimeClaudeConfigDir, 'settings.json'), 'utf8')).toBe(settingsBefore);
     expect(JSON.parse(await readFile(
@@ -433,6 +442,9 @@ describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
         },
       },
     });
+    await writeFile(join(runtimeClaudeConfigDir, '.claude.json'), JSON.stringify({
+      oauthAccount: { accountUuid: 'provider-account', emailAddress: 'member@example.com' },
+    }));
     const credentialFingerprint = computeClaudeCodeCredentialFingerprint(JSON.parse(
       await readFile(resolveClaudeCodeCredentialsFilePath(runtimeClaudeConfigDir), 'utf8'),
     ));

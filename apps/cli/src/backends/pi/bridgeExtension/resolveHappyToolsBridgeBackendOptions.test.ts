@@ -22,6 +22,31 @@ afterEach(() => {
 });
 
 describe('resolveHappyToolsBridgeBackendOptions', () => {
+  it('does not materialize the Happier tools extension after a session opt-out', async () => {
+    const agentDir = tempAgentDir();
+    expect(await resolveHappyToolsBridgeBackendOptions({
+      agentDir,
+      sessionId: 'restricted-session',
+      settings: null,
+      sessionMetadata: { mcpSelectionV1: { happierToolsEnabled: false } },
+      memoryRecallGuidanceEnabled: true,
+    })).toBeNull();
+    expect(existsSync(resolvePiBridgeExtensionPath(agentDir))).toBe(false);
+  });
+
+  it('preserves an existing title without removing the explicit rename tool', async () => {
+    const resolved = await resolveHappyToolsBridgeBackendOptions({
+      agentDir: tempAgentDir(),
+      sessionId: 'happy-session-1',
+      settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } },
+      sessionMetadata: { summary: { text: 'Original task' } },
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(resolved?.sessionConfig.promptAddition).not.toContain('change_title');
+    expect(resolved?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
+  });
+
   it('returns null when Happier does not control the Pi agent dir', async () => {
     expect(await resolveHappyToolsBridgeBackendOptions({
       agentDir: null,

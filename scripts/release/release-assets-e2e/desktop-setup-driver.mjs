@@ -25,14 +25,47 @@ const LEGACY_PAIRING_PROMPT_KIND = 'authRequest';
 const PREDECESSOR_0_2_12_SETUP_PARAMS = Object.freeze({ surface: 'desktop.ui', target: 'thisComputer' });
 
 /**
- * The `setup.thisComputer.v1` params a released desktop sent, per baseline tag. A baseline whose
- * contract was not characterized from its tagged source has none, and the upgrade scenario is
- * reported BLOCKED rather than driven with another version's params.
- * @type {Readonly<Record<string, Readonly<Record<string, unknown>>>>}
+ * What the released 0.2.17 app sent: the explicit relay, account and channel of the signed-in app
+ * (`ui-desktop-v0.2.17:apps/ui/sources/components/systemTasks/buildLocalMachineSetupSystemTaskSpec.ts:36-52`).
+ * Its hsetup requires activeRelayUrl, activeWebappUrl, expectedAccountId and a bootstrap channel
+ * (`ui-desktop-v0.2.17:apps/bootstrap/src/systemTasks/kinds/setupThisComputer.ts:732-800`).
+ * @param {PredecessorSetupTarget} target
+ */
+const predecessor0217SetupParams = (target) => Object.freeze({
+  activeRelayUrl: target.relayUrl,
+  activeWebappUrl: target.webappUrl,
+  activeLocalRelayUrl: null,
+  channel: target.channel,
+  expectedAccountId: target.accountId,
+  surface: 'desktop.ui',
+});
+
+/**
+ * @typedef {{ relayUrl: string; webappUrl: string; channel: string; accountId: string }} PredecessorSetupTarget
+ */
+
+/**
+ * The `setup.thisComputer.v1` params a released desktop sent, per baseline tag, as a function of the
+ * run's relay, account and channel. A baseline whose contract was not characterized from its tagged
+ * source has none, and the upgrade scenario is reported BLOCKED rather than driven with another
+ * version's params.
+ * @type {Readonly<Record<string, (target: PredecessorSetupTarget) => Readonly<Record<string, unknown>>>>}
  */
 export const PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG = Object.freeze({
-  'ui-desktop-v0.2.12': PREDECESSOR_0_2_12_SETUP_PARAMS,
+  'ui-desktop-v0.2.12': () => PREDECESSOR_0_2_12_SETUP_PARAMS,
+  'ui-desktop-v0.2.17': predecessor0217SetupParams,
 });
+
+/**
+ * @param {string} desktopTag
+ * @param {PredecessorSetupTarget} target
+ * @returns {Readonly<Record<string, unknown>> | null}
+ */
+export function resolvePredecessorSetupParams(desktopTag, target) {
+  return Object.hasOwn(PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, desktopTag)
+    ? PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[desktopTag](target)
+    : null;
+}
 
 /**
  * @typedef {{ kind: string; stepId: string | null; answered: boolean; approved: boolean | null }} PromptRecord

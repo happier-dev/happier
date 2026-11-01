@@ -470,8 +470,7 @@ describe('DirectSessionsBrowseScreen', () => {
             codexBackendMode: 'appServer',
             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
         });
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/happy-session-1', expect.any(Object));
-        expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
     });
 
     it('switches to the codex connected-service source before linking', async () => {

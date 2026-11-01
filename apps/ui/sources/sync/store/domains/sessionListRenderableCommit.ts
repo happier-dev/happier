@@ -1,4 +1,5 @@
 import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
+import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
 import {
     resolveSessionListDateGroupingAt,
     type SessionListViewItem,
@@ -287,8 +288,11 @@ export function applySessionListRenderableCommitPlan<S extends SessionListRender
             })
             : input.state.sessionListViewData;
     const cacheServerId = targetServerId ?? activeServerId;
-    const previousCachedSessionListViewData = cacheServerId
-        ? input.state.sessionListViewDataByServerId[cacheServerId] ?? null
+    const previousCacheServerId = cacheServerId
+        ? resolveSessionListCacheServerId(input.state.sessionListViewDataByServerId, cacheServerId)
+        : null;
+    const previousCachedSessionListViewData = previousCacheServerId
+        ? input.state.sessionListViewDataByServerId[previousCacheServerId] ?? null
         : null;
     const canReuseUpdatedActiveViewForCache = shouldUpdateActiveView
         && previousCachedSessionListViewData === input.state.sessionListViewData;

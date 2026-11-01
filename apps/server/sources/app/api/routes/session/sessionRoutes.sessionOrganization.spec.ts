@@ -116,6 +116,32 @@ describe("session organization routes", () => {
         resetSessionRouteMocks();
     });
 
+    it("rejects malformed appearance mutations before access checks", async () => {
+        const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/appearances/:sessionId");
+        for (const body of [{}, { display: { t: "encrypted" } }, { display: null, extra: true }]) {
+            const { response, reply } = await route.invoke({ params: { sessionId: "s1" }, body });
+            expect(reply.statusCode).toBe(400);
+            expect(response).toEqual({ error: "invalid-session-appearance" });
+        }
+        expect(sessionFindFirst).not.toHaveBeenCalled();
+    });
+
+    it("refuses to set or clear an appearance on an inaccessible session", async () => {
+        const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/appearances/:sessionId");
+        for (const display of [encryptedDisplay, null]) {
+            const { response, reply } = await route.invoke({ params: { sessionId: "s1" }, body: { display } });
+            expect(reply.statusCode).toBe(404);
+            expect(response).toEqual({ error: "Session not found" });
+        }
+    });
+
+    it("rejects malformed appearance snapshot flags", async () => {
+        const route = await createSessionRouteTestBuilder("GET", "/v2/session-organization");
+        const { response, reply } = await route.invoke({ query: { includeSessionAppearances: "invalid" } });
+        expect(reply.statusCode).toBe(400);
+        expect(response).toEqual({ error: "invalid-session-organization-snapshot-request" });
+    });
+
     it("returns an account-scoped organization snapshot", async () => {
         sessionOrganizationCheckpointFindUnique.mockResolvedValue({ version: 12 });
         sessionPinFindMany.mockResolvedValue([

@@ -9,8 +9,123 @@ import { createBasicSessionClient, createSessionClientWithMetadata } from '@/tes
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { AcpBackend } from '@/agent/acp/AcpBackend';
+import { createFx014SessionResponse, writeFx014AcpAgentScript } from '@/agent/acp/testkit/fx014';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('createAcpRuntime (configOptions)', () => {
+  it('keeps equal metadata facts and unaffected model, mode and config rows stable', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    const { session, getMetadata, metadataUpdates } = createSessionClientWithMetadata();
+    const runtime = createAcpRuntime({
+      provider: 'fx', directory: '/tmp', session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {}, ensureBackend: async () => backend,
+    });
+    await runtime.startOrLoad({ resumeId: null });
+    const configOptions = createFx014SessionResponse().configOptions;
+    const emitSnapshot = (options: unknown) => backend.emit({
+      type: 'event', name: 'config_options_update', payload: { configOptions: options },
+    });
+    emitSnapshot(configOptions);
+    const initial = getMetadata();
+    const offset = metadataUpdates.length;
+    for (let i = 0; i < 100; i++) emitSnapshot(structuredClone(configOptions));
+    expect(getMetadata()).toBe(initial);
+    expect(metadataUpdates.slice(offset).filter((metadata) => metadata !== initial)).toHaveLength(0);
+
+    emitSnapshot(configOptions.map((option) => option.id === 'fast' ? { ...option, currentValue: 'true' } : option));
+    const changed = getMetadata();
+    expect(changed).not.toBe(initial);
+    expect(changed.sessionModesV1).toBe(initial.sessionModesV1);
+    expect(changed.sessionModelsV1?.updatedAt).toBeGreaterThanOrEqual(initial.sessionModelsV1?.updatedAt ?? 0);
+    for (const model of initial.sessionModelsV1?.availableModels ?? []) {
+      if (model.id !== initial.sessionModelsV1?.currentModelId) {
+        expect(changed.sessionModelsV1?.availableModels.find((row) => row.id === model.id)).toBe(model);
+      }
+    }
+    for (const row of initial.sessionConfigOptionsV1?.configOptions ?? []) {
+      if (row.id !== 'fast') expect(changed.sessionConfigOptionsV1?.configOptions.find((option) => option.id === row.id)).toBe(row);
+    }
+
+    const beforeUnrelated = getMetadata();
+    emitSnapshot([...configOptions.map((option) => option.id === 'fast' ? { ...option, currentValue: 'true' } : option),
+      { id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: false }]);
+    expect(getMetadata().sessionModelsV1).toBe(beforeUnrelated.sessionModelsV1);
+    expect(getMetadata().sessionModesV1).toBe(beforeUnrelated.sessionModesV1);
+    emitSnapshot([]);
+    expect(getMetadata().sessionConfigOptionsV1?.configOptions).toEqual([]);
+  });
+
+  it.each([false, true])('projects real FX models and refreshes full setter snapshots (reordered: %s)', async (reordered) => {
+    await withTempDir('happier-fx014-runtime-', async (dir) => {
+      const response = createFx014SessionResponse();
+      const backend = new AcpBackend({
+        agentName: 'fx', cwd: dir, command: process.execPath,
+        args: [writeFx014AcpAgentScript({ dir, configOptions: reordered ? [...response.configOptions].reverse() : response.configOptions })],
+      });
+      const { session, getMetadata, metadataUpdates } = createSessionClientWithMetadata();
+      const runtime = createAcpRuntime({
+        provider: 'fx', directory: dir, session, messageBuffer: new MessageBuffer(), mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {}, ensureBackend: async () => backend,
+      });
+      try {
+        await runtime.startOrLoad({ resumeId: null });
+        const models = () => getMetadata().sessionModelsV1;
+        expect(models()?.currentModelId).toBe('gpt-6.1-sol');
+        expect(models()?.availableModels.map((model) => model.id)).toEqual(response.configOptions[1].options.map((choice) => choice.value));
+        expect(models()?.availableModels.find((model) => model.id === 'gpt-6.1-sol')?.modelOptions?.map((option) => option.id).sort()).toEqual(['effort', 'fast']);
+        expect(models()?.availableModels.filter((model) => model.id !== 'gpt-6.1-sol').every((model) => !model.modelOptions)).toBe(true);
+        expect(getMetadata().sessionConfigOptionsV1?.configOptions.find((option) => option.id === 'provider')).toEqual(response.configOptions[0]);
+
+        const initialPublications = metadataUpdates.length;
+        for (let i = 0; i < 10; i++) await runtime.setSessionConfigOption('provider', 'codex');
+        expect(metadataUpdates).toHaveLength(initialPublications);
+
+        await runtime.setSessionConfigOption('model', 'gpt-6-luna');
+        expect(metadataUpdates).toHaveLength(initialPublications + 1);
+        expect(models()?.currentModelId).toBe('gpt-6-luna');
+        expect(models()?.availableModels.find((model) => model.id === 'gpt-6-luna')?.modelOptions?.find((option) => option.id === 'effort')?.options?.map((choice) => choice.value)).toEqual(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
+        await runtime.setSessionConfigOption('effort', 'low');
+        await runtime.setSessionConfigOption('fast', 'true');
+        expect(models()?.availableModels.find((model) => model.id === 'gpt-6-luna')?.modelOptions).toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: 'effort', currentValue: 'low' }),
+          expect.objectContaining({ id: 'fast', currentValue: 'true' }),
+        ]));
+        const lastGoodModels = models();
+        const lastGoodConfig = getMetadata().sessionConfigOptionsV1;
+        await expect(runtime.setSessionConfigOption('provider', 'gateway')).rejects.toThrow(/fx needs access to Vercel AI Gateway/);
+        expect(models()).toEqual(lastGoodModels);
+        expect(getMetadata().sessionConfigOptionsV1).toEqual(lastGoodConfig);
+        await runtime.setSessionConfigOption('provider', 'codex');
+        expect(models()?.currentModelId).toBe('gpt-6-luna');
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it('does not treat ambiguous model-category controls as a model catalog', async () => {
+    await withTempDir('happier-acp-ambiguous-runtime-', async (dir) => {
+      const configOptions = createFx014SessionResponse().configOptions.filter((option) => option.id !== 'model');
+      const backend = new AcpBackend({
+        agentName: 'fx', cwd: dir, command: process.execPath,
+        args: [writeFx014AcpAgentScript({ dir, configOptions })],
+      });
+      const { session, getMetadata } = createSessionClientWithMetadata();
+      const runtime = createAcpRuntime({
+        provider: 'fx', directory: dir, session, messageBuffer: new MessageBuffer(), mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(), onThinkingChange: () => {}, ensureBackend: async () => backend,
+      });
+      try {
+        await runtime.startOrLoad({ resumeId: null });
+        expect(getMetadata().sessionModelsV1).toBeUndefined();
+        expect(getMetadata().sessionConfigOptionsV1?.configOptions).toEqual(configOptions);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it('publishes ACP configOptions into session metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({

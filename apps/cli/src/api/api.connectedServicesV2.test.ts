@@ -38,11 +38,11 @@ vi.mock('./configuration', () => ({
   },
 }));
 
-function createTestCredentials(): Credentials {
+function createTestCredentials() {
   return {
     token: 'happy-token',
     encryption: { type: 'legacy', secret: new Uint8Array(32) },
-  };
+  } satisfies Credentials;
 }
 
 function createAxiosResponseError(params: Readonly<{

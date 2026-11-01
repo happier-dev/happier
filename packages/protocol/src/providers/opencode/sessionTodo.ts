@@ -1,18 +1,19 @@
 import { z } from 'zod';
 
 import type { SessionWorkStateItemV1, SessionWorkStateStatusV1 } from '../../sessionWorkState/sessionWorkStateV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
 const OPEN_CODE_TODO_ITEM_ID_PREFIX = 'todo:opencode:';
 
-export const OpenCodeSessionTodoStatusSchema = z.string().min(1);
-export const OpenCodeSessionTodoSchema = z
+export const OpenCodeSessionTodoStatusSchema = lazySchema(() => z.string().min(1));
+export const OpenCodeSessionTodoSchema = lazySchema(() => z
   .object({
     id: z.string().min(1).optional(),
     content: z.string().trim().min(1),
     status: OpenCodeSessionTodoStatusSchema,
     priority: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type OpenCodeSessionTodo = z.infer<typeof OpenCodeSessionTodoSchema>;
 
 function normalizeOpenCodeTodoStatus(status: string): SessionWorkStateStatusV1 {

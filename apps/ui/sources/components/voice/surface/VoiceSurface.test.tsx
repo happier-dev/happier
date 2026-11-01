@@ -287,7 +287,7 @@ describe('VoiceSurface', () => {
 
     await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'common.open' }), 'common.open');
 
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/carrier-s1', expect.any(Object));
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/carrier-s1');
   });
 
   it('shows the hidden voice conversation icon when the binding appears after the surface renders', async () => {
@@ -488,7 +488,7 @@ describe('VoiceSurface', () => {
     await pressTestInstanceAsync(openConversation, 'common.open');
 
     expect(ensureVoiceBindingSpy).not.toHaveBeenCalled();
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session', expect.any(Object));
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session');
   });
 
   it('does not render the session voice surface inside a hidden voice conversation session', async () => {
@@ -639,6 +639,90 @@ describe('VoiceSurface', () => {
 
     await pressTestInstanceAsync(bargeIn, 'voiceSurface.a11y.bargeIn');
     expect(toggleLocalVoiceTurnSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
+  });
+
+  it('offers barge-in by default when the barge-in setting is unset (schema default on)', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: { local_conversation: { conversationMode: 'agent', tts: {} } },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'speaking',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.root.findAllByProps({ accessibilityLabel: 'voiceSurface.a11y.bargeIn' }).length).toBeGreaterThan(0);
+  });
+
+  it('shows an actionable message for a local voice error, with the root cause for generic failures', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_direct',
+      ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'auto' },
+      adapters: { local_direct: {} },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_direct',
+      sessionId: 's1',
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+      errorCode: 'send_failed',
+      errorMessage: 'session is offline',
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+
+    const texts = screen.getTextContent();
+    expect(texts).toContain('voiceSurface.errors.sendFailed');
+    expect(texts).toContain('session is offline');
+    for (const text of ['voiceSurface.errors.sendFailed', 'session is offline']) {
+      expect(screen.root.findAllByProps({ children: text }).some(node =>
+        node.props.selectable === true && node.props.numberOfLines === undefined,
+      )).toBe(true);
+    }
+  });
+
+  it('keeps a local voice error visible after the call ended so the user can act on it', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: { local_conversation: { conversationMode: 'agent' } },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+      errorCode: 'local_neural_pack_not_installed',
+      errorMessage: 'local_neural_pack_not_installed',
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    const texts = screen.getTextContent();
+    expect(texts).toContain('voiceSurface.errors.localNeuralPackNotInstalled');
   });
 
   it('renders a cancel-turn control while thinking and calls voiceSessionManager.interrupt', async () => {
@@ -821,7 +905,7 @@ describe('VoiceSurface', () => {
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       requestedTargetSessionId: 's1',
     });
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/voice-root-s1', expect.any(Object));
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/voice-root-s1');
   });
 
   it('does not disable the stop button while connecting (escape hatch)', async () => {

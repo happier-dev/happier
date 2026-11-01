@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useDesktopWindowChromePolicy } from '@/hooks/ui/useDesktopWindowChromePolicy';
+import { desktopWindowChromeUsesAppDragRegions } from '@/utils/platform/desktopWindowBridge';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import {
     handleDesktopWindowTitlebarMouseAction,
@@ -46,10 +48,12 @@ function resolveDesktopMainContentDragDocument(): Pick<Document, 'addEventListen
 }
 
 export const DesktopMainContentDragSurface = React.memo((props: DesktopMainContentDragSurfaceProps) => {
+    const policy = useDesktopWindowChromePolicy();
+    const enabled = props.enabled && desktopWindowChromeUsesAppDragRegions(policy);
     const heightPx = props.heightPx ?? DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX;
 
     const startDraggingFromEvent = React.useCallback((event: DesktopWindowPointerLikeEvent) => {
-        if (!props.enabled || Platform.OS !== 'web') {
+        if (!enabled || Platform.OS !== 'web') {
             return false;
         }
         if (!isInsideMainContentTitlebarStrip(event, props.leftOffsetPx, heightPx)) {
@@ -59,10 +63,10 @@ export const DesktopMainContentDragSurface = React.memo((props: DesktopMainConte
             event,
             'DesktopMainContentDragSurface.mouseDown',
         ) !== 'none';
-    }, [heightPx, props.enabled, props.leftOffsetPx]);
+    }, [enabled, heightPx, props.leftOffsetPx]);
 
     React.useEffect(() => {
-        if (!props.enabled || Platform.OS !== 'web') {
+        if (!enabled || Platform.OS !== 'web') {
             return undefined;
         }
 
@@ -79,7 +83,7 @@ export const DesktopMainContentDragSurface = React.memo((props: DesktopMainConte
         return () => {
             ownerDocument.removeEventListener('mousedown', handleMouseDown, true);
         };
-    }, [props.enabled, startDraggingFromEvent]);
+    }, [enabled, startDraggingFromEvent]);
 
     return (
         <View

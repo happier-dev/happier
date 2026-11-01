@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { File, Paths } from 'expo-file-system';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 import type { BugReportUserAction } from '@/utils/system/bugReportActionTrail';
 
@@ -13,11 +14,18 @@ export type PreRestartBugReportSnapshotV1 = Readonly<{
   errorDetails: string;
   appLogs: string;
   userActions: ReadonlyArray<BugReportUserAction>;
+  runtime?: Readonly<Record<string, string | null>>;
 }>;
+
+export function formatPreRestartBugReportSnapshotDetails(snapshot: PreRestartBugReportSnapshotV1): string {
+  return redactBugReportSensitiveText([
+    snapshot.errorDetails,
+    snapshot.runtime ? JSON.stringify({ capturedAt: new Date(snapshot.createdAtMs).toISOString(), ...snapshot.runtime }, null, 2) : '',
+  ].filter(Boolean).join('\n\n'));
+}
 
 const SNAPSHOT_KEY = 'happier_pre_restart_bug_report_snapshot_v1';
 const SNAPSHOT_FILENAME = 'pre-restart-bug-report-snapshot.v1.json';
-const MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -45,6 +53,10 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
     const appLogs = typeof parsed.appLogs === 'string' ? parsed.appLogs : '';
     const userActions =
       Array.isArray(parsed.userActions) ? parsed.userActions.filter((a) => isRecord(a)) as BugReportUserAction[] : [];
+    // Optional diagnostic facts extend v1; released readers ignore them and old snapshots remain valid.
+    const runtime = isRecord(parsed.runtime)
+      ? Object.fromEntries(Object.entries(parsed.runtime).filter((entry): entry is [string, string | null] => entry[1] === null || typeof entry[1] === 'string'))
+      : undefined;
 
     return {
       v: 1,
@@ -56,6 +68,7 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
       errorDetails,
       appLogs,
       userActions,
+      ...(runtime ? { runtime } : {}),
     };
   } catch {
     return null;
@@ -64,7 +77,9 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
 
 async function readNativeFileSafe(): Promise<string | null> {
   try {
-    const file = getNativeFile();
+    const current = getNativeFile();
+    // Released v1 writers used the cache directory. Read it only when no durable copy exists.
+    const file = current?.exists ? current : new File(Paths.cache, SNAPSHOT_FILENAME);
     if (!file?.exists) return null;
     return await file.text();
   } catch {
@@ -74,51 +89,42 @@ async function readNativeFileSafe(): Promise<string | null> {
 
 async function writeNativeFileSafe(payload: string): Promise<void> {
   const file = getNativeFile();
-  if (!file) return;
+  if (!file) throw new Error('Crash report storage is unavailable');
   file.write(payload);
 }
 
-async function deleteNativeFileSafe(): Promise<void> {
+async function deleteNativeFileSafe(): Promise<boolean> {
   try {
-    const file = getNativeFile();
-    if (file?.exists) file.delete();
+    for (const root of [Paths.document, Paths.cache]) {
+      const file = new File(root, SNAPSHOT_FILENAME);
+      if (file.exists) file.delete();
+    }
+    return true;
   } catch {
-    // ignore
+    console.warn('[bug-report] Could not discard the saved crash');
+    return false;
   }
 }
 
 function getNativeFile(): File | null {
   try {
-    return new File(Paths.cache, SNAPSHOT_FILENAME);
+    return new File(Paths.document, SNAPSHOT_FILENAME);
   } catch {
-    try {
-      return new File(Paths.document, SNAPSHOT_FILENAME);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
 export async function persistPreRestartBugReportSnapshot(snapshot: PreRestartBugReportSnapshotV1): Promise<void> {
   const payload = JSON.stringify(snapshot);
   if (Platform.OS === 'web') {
-    try {
-      globalThis.localStorage?.setItem(SNAPSHOT_KEY, payload);
-    } catch {
-      // ignore
-    }
+    if (!globalThis.localStorage) throw new Error('Crash report storage is unavailable');
+    globalThis.localStorage.setItem(SNAPSHOT_KEY, payload);
     return;
   }
-
-  try {
-    await writeNativeFileSafe(payload);
-  } catch {
-    // ignore
-  }
+  await writeNativeFileSafe(payload);
 }
 
 export async function peekPreRestartBugReportSnapshot(): Promise<PreRestartBugReportSnapshotV1 | null> {
-  const nowMs = Date.now();
   let raw: string | null = null;
 
   if (Platform.OS === 'web') {
@@ -138,7 +144,7 @@ export async function peekPreRestartBugReportSnapshot(): Promise<PreRestartBugRe
     return null;
   }
 
-  if (parsed.createdAtMs < 0 || nowMs - parsed.createdAtMs > MAX_AGE_MS) {
+  if (parsed.createdAtMs < 0) {
     await clearPreRestartBugReportSnapshot();
     return null;
   }
@@ -146,15 +152,17 @@ export async function peekPreRestartBugReportSnapshot(): Promise<PreRestartBugRe
   return parsed;
 }
 
-export async function clearPreRestartBugReportSnapshot(): Promise<void> {
+export async function clearPreRestartBugReportSnapshot(): Promise<boolean> {
   if (Platform.OS === 'web') {
     try {
-      globalThis.localStorage?.removeItem(SNAPSHOT_KEY);
+      if (!globalThis.localStorage) throw new Error('Crash report storage is unavailable');
+      globalThis.localStorage.removeItem(SNAPSHOT_KEY);
+      return true;
     } catch {
-      // ignore
+      console.warn('[bug-report] Could not discard the saved crash');
+      return false;
     }
-    return;
   }
 
-  await deleteNativeFileSafe();
+  return await deleteNativeFileSafe();
 }

@@ -54,6 +54,8 @@ import {
 const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
 export const ToolTimelineRow = React.memo((props: {
+    /** Result content mounted only while this tool's existing disclosure is expanded. */
+    children?: React.ReactNode;
     tool: ToolCall;
     metadata: Metadata | null;
     messages?: Message[];
@@ -371,6 +373,7 @@ export const ToolTimelineRow = React.memo((props: {
                             detailLevel={renderBodyDetailLevel}
                             setHeaderActions={setHeaderActions}
                         />
+                        {effectiveIsExpanded ? props.children : null}
                     </View>
                 </TranscriptCollapsible>
             )}

@@ -5,7 +5,11 @@ import { runOwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess
 import { logger } from '@/ui/logger';
 import type { ProviderAttachOps } from '@/backends/types';
 
-import { readSharedManagedOpenCodeServerStateBestEffort } from '@/backends/opencode/server/sharedManagedServer';
+import {
+  readSharedManagedOpenCodeServerStateBestEffort,
+  retainSharedManagedOpenCodeServerClient,
+  withSharedManagedOpenCodeServerAccess,
+} from '@/backends/opencode/server/sharedManagedServer';
 import { createOpenCodeAttachArgs } from '@/backends/opencode/localControl/createOpenCodeAttachArgs';
 import {
   resolveOpenCodeAttachChildEnv,
@@ -46,72 +50,90 @@ export async function runOpenCodeProviderAttach(params: Readonly<{
     return 1;
   }
 
-  const spawnProcess = params.spawnProcess ?? spawn;
-  const ambientEnv = params.env ?? process.env;
-  const launch = params.command && params.commandArgs
-    ? null
-    : (params.resolveCommandFn ?? resolveOpenCodeCliLaunchSpec)(ambientEnv);
-  const command = params.command ?? launch?.command ?? resolveOpenCodeCliLaunchSpec(ambientEnv).command;
-  const commandArgs = params.commandArgs ?? launch?.args ?? resolveOpenCodeCliLaunchSpec(ambientEnv).args;
-  // A loopback (Happier-managed) target is password protected, so both the dialect probe and the
-  // attached CLI need its credential; a remote target keeps the ambient environment untouched.
-  const env = await resolveOpenCodeAttachChildEnv({
-    baseUrl: target.baseUrl,
-    managedServerLaunchFingerprint: target.managedServerLaunchFingerprint,
-    env: ambientEnv,
-    ...(params.readManagedServerStateFn ? { readManagedServerStateFn: params.readManagedServerStateFn } : {}),
-  });
-  const launchApiGeneration = launch && 'apiGeneration' in launch
-    && (launch.apiGeneration === 'v2' || launch.apiGeneration === 'auto')
-    ? launch.apiGeneration
-    : undefined;
-  const dialect = await (params.resolveDialectFn ?? resolveOpenCodeAttachCliDialect)({
-    baseUrl: target.baseUrl,
-    ...(launchApiGeneration ? { launchApiGeneration } : {}),
-    headers: await resolveOpenCodeAttachTargetAuthHeaders({
+  const releaseClient = await withSharedManagedOpenCodeServerAccess(
+    async () => await retainSharedManagedOpenCodeServerClient(target.baseUrl,
+      target.managedServerLaunchFingerprint != null, target.managedServerLaunchFingerprint),
+    target.baseUrl,
+    target.managedServerLaunchFingerprint,
+  );
+  let ownedProcessStarted = false;
+  let ownedProcessStopped = false;
+  try {
+    const spawnProcess = params.spawnProcess ?? spawn;
+    const ambientEnv = params.env ?? process.env;
+    const launch = params.command && params.commandArgs
+      ? null
+      : (params.resolveCommandFn ?? resolveOpenCodeCliLaunchSpec)(ambientEnv);
+    const command = params.command ?? launch?.command ?? resolveOpenCodeCliLaunchSpec(ambientEnv).command;
+    const commandArgs = params.commandArgs ?? launch?.args ?? resolveOpenCodeCliLaunchSpec(ambientEnv).args;
+    // A loopback (Happier-managed) target is password protected, so both the dialect probe and the
+    // attached CLI need its credential; a remote target keeps the ambient environment untouched.
+    const env = await resolveOpenCodeAttachChildEnv({
       baseUrl: target.baseUrl,
       managedServerLaunchFingerprint: target.managedServerLaunchFingerprint,
       env: ambientEnv,
       ...(params.readManagedServerStateFn ? { readManagedServerStateFn: params.readManagedServerStateFn } : {}),
-    }),
-  });
-  if (dialect === 'v2' || params.terminalClient) {
-    if (!params.prepareProviderCliAttach) {
-      throw new Error('provider_cli_attach_preparation_unavailable');
-    }
-    const preparation = await params.prepareProviderCliAttach({ providerSessionId: target.vendorSessionId }).catch(() => {
-      throw new Error('provider_cli_attach_preparation_failed');
     });
-    if (!preparation.ok) throw new Error('provider_cli_attach_not_ready');
-    if (preparation.providerSessionId !== target.vendorSessionId) {
-      throw new Error('provider_cli_attach_identity_mismatch');
-    }
-  }
-  const prepared = await prepareOwnedTerminalSpawn({
-    command,
-    args: [
-      ...commandArgs,
-      ...createOpenCodeAttachArgs({
+    const launchApiGeneration = launch && 'apiGeneration' in launch
+      && (launch.apiGeneration === 'v2' || launch.apiGeneration === 'auto')
+      ? launch.apiGeneration
+      : undefined;
+    const dialect = await (params.resolveDialectFn ?? resolveOpenCodeAttachCliDialect)({
+      baseUrl: target.baseUrl,
+      ...(launchApiGeneration ? { launchApiGeneration } : {}),
+      headers: await resolveOpenCodeAttachTargetAuthHeaders({
         baseUrl: target.baseUrl,
-        directory: target.directory,
-        sessionId: target.vendorSessionId,
-        dialect,
+        managedServerLaunchFingerprint: target.managedServerLaunchFingerprint,
+        env: ambientEnv,
+        ...(params.readManagedServerStateFn ? { readManagedServerStateFn: params.readManagedServerStateFn } : {}),
       }),
-    ],
-    env,
-    cwd: process.cwd(),
-  });
-  try {
-    const observe = params.terminalClient ? async (attached: boolean, launcher: Parameters<NonNullable<Parameters<typeof runOwnedTerminalProcess>[0]['onStarted']>>[0]) => {
-      const result = await params.prepareProviderCliAttach!({ providerSessionId: target.vendorSessionId,
-        terminalClient: { attached, herdr: params.terminalClient!, launcher } });
-      if (!result.ok || result.providerSessionId !== target.vendorSessionId) throw new Error('provider_cli_attach_admission_failed');
-    } : null;
-    const result = await runOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess,
-      ...(observe ? { onStarted: launcher => observe(true, launcher), onExited: launcher => observe(false, launcher) } : {}) });
-    return result.code ?? 1;
-  } catch {
-    logger.infoFile('[terminal] Native terminal attach failed (terminal_native_attach_failed)');
-    return 1;
+    });
+    if (dialect === 'v2' || params.terminalClient) {
+      if (!params.prepareProviderCliAttach) {
+        throw new Error('provider_cli_attach_preparation_unavailable');
+      }
+      const preparation = await params.prepareProviderCliAttach({ providerSessionId: target.vendorSessionId }).catch(() => {
+        throw new Error('provider_cli_attach_preparation_failed');
+      });
+      if (!preparation.ok) throw new Error('provider_cli_attach_not_ready');
+      if (preparation.providerSessionId !== target.vendorSessionId) {
+        throw new Error('provider_cli_attach_identity_mismatch');
+      }
+    }
+    const prepared = await prepareOwnedTerminalSpawn({
+      command,
+      args: [
+        ...commandArgs,
+        ...createOpenCodeAttachArgs({
+          baseUrl: target.baseUrl,
+          directory: target.directory,
+          sessionId: target.vendorSessionId,
+          dialect,
+        }),
+      ],
+      env,
+      cwd: process.cwd(),
+    });
+    try {
+      const observe = params.terminalClient ? async (attached: boolean, launcher: Parameters<NonNullable<Parameters<typeof runOwnedTerminalProcess>[0]['onStarted']>>[0]) => {
+        const result = await params.prepareProviderCliAttach!({ providerSessionId: target.vendorSessionId,
+          terminalClient: { attached, herdr: params.terminalClient!, launcher } });
+        if (!result.ok || result.providerSessionId !== target.vendorSessionId) throw new Error('provider_cli_attach_admission_failed');
+      } : null;
+      ownedProcessStarted = true;
+      const result = await runOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess,
+        ...(observe ? { onStarted: launcher => observe(true, launcher), onExited: launcher => observe(false, launcher) } : {}) });
+      ownedProcessStopped = result.nativeExited === true || result.processTreeStopped === true;
+      return result.code ?? 1;
+    } catch {
+      logger.infoFile('[terminal] Native terminal attach failed (terminal_native_attach_failed)');
+      return 1;
+    }
+  } finally {
+    if (!ownedProcessStarted || ownedProcessStopped) {
+      await releaseClient().catch(error => logger.warn('[OpenCodeServer] Native attach client release failed; retaining custody', error));
+    } else {
+      logger.warn('[OpenCodeServer] Native attach exit could not prove process cleanup; client custody remains unchanged');
+    }
   }
 }

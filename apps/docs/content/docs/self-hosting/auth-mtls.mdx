@@ -96,7 +96,11 @@ If your enterprise wants:
 
 then pair mTLS with **plaintext storage mode** (encryption opt-out). In that mode, new sessions can be stored without E2EE.
 
-Note: switching encryption mode does not retroactively decrypt or re-encrypt historical data.
+Switching encryption mode does not retroactively decrypt or re-encrypt historical
+sessions. Development clients additionally support [plain Machine control](/self-hosting/encryption#plain-machine-control-development-only)
+when the server advertises it. This Machine format and token-only client support
+are unreleased; converting historical encrypted Machines requires their genuine
+old keys, even after successful certificate login.
 
 ## Environment variables (overview)
 

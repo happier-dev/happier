@@ -6,10 +6,11 @@ import {
   ClientReleaseChannelSchema,
   SafeHttpsUrlSchema,
 } from './primitives.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const VERSION_ENDPOINT_PATH = '/v1/version' as const;
 
-export const ClientVersionCheckRequestV1Schema = z
+export const ClientVersionCheckRequestV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     clientKind: ClientKindSchema,
@@ -17,27 +18,27 @@ export const ClientVersionCheckRequestV1Schema = z
     releaseChannel: ClientReleaseChannelSchema.optional(),
     appId: z.string().min(1).max(160).regex(/^[0-9A-Za-z][0-9A-Za-z._-]*$/).optional(),
   })
-  .strict();
+  .strict());
 
 export type ClientVersionCheckRequestV1 = z.infer<typeof ClientVersionCheckRequestV1Schema>;
 
-const CurrentClientVersionResponseV1Schema = z
+const CurrentClientVersionResponseV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     status: z.literal('current'),
   })
-  .strict();
+  .strict());
 
-const ClientUpdateAvailableResponseV1Schema = z
+const ClientUpdateAvailableResponseV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     status: z.literal('update-available'),
     latestAppVersion: ClientAppVersionSchema,
     updateUrl: SafeHttpsUrlSchema,
   })
-  .strict();
+  .strict());
 
-const ClientUpgradeRequiredResponseV1Schema = z
+const ClientUpgradeRequiredResponseV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     status: z.literal('upgrade-required'),
@@ -45,12 +46,12 @@ const ClientUpgradeRequiredResponseV1Schema = z
     latestAppVersion: ClientAppVersionSchema.optional(),
     updateUrl: SafeHttpsUrlSchema.nullable(),
   })
-  .strict();
+  .strict());
 
-export const ClientVersionCheckResponseV1Schema = z.discriminatedUnion('status', [
+export const ClientVersionCheckResponseV1Schema = lazySchema(() => z.discriminatedUnion('status', [
   CurrentClientVersionResponseV1Schema,
   ClientUpdateAvailableResponseV1Schema,
   ClientUpgradeRequiredResponseV1Schema,
-]);
+]));
 
 export type ClientVersionCheckResponseV1 = z.infer<typeof ClientVersionCheckResponseV1Schema>;

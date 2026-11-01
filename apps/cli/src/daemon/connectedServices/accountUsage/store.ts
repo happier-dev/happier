@@ -2,11 +2,13 @@ import {
   ConnectedServiceUsageSourceV1Schema,
   compareConnectedServiceQuotaObservationRecency,
   mergeProviderAccountSubscription,
+  isProviderAccountUsageOrganizationContextMatch,
   ProviderAccountUsageSnapshotV1Schema,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageRecordKeyV1,
   type ProviderAccountUsageSnapshotV1,
+  type ProviderAccountUsageOrganizationContext,
 } from '@happier-dev/protocol';
 
 import { computeProviderAccountUsageSnapshotMaterialRevision } from './fingerprint';
@@ -42,6 +44,11 @@ export type ProviderAccountUsageStore = Readonly<{
   resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null;
   resolveBySource(source: ConnectedServiceUsageSourceV1): ProviderAccountUsageSnapshotV1 | null;
   listSnapshots(): readonly ProviderAccountUsageSnapshotV1[];
+  retainSourcesForProfile(input: Readonly<{
+    serviceId: ConnectedServiceUsageSourceV1['serviceId'];
+    profileId: string;
+    context: ProviderAccountUsageOrganizationContext | null;
+  }>): void;
 }>;
 
 function sourceKey(source: ConnectedServiceUsageSourceV1): string {
@@ -197,10 +204,25 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
     return snapshotsByRecordId.get(resolveRedirect(recordId)) ?? null;
   }
 
+  function retainSourcesForProfile(input: Parameters<ProviderAccountUsageStore['retainSourcesForProfile']>[0]): void {
+    for (const [recordId, sources] of sourcesByRecordId) {
+      const snapshot = snapshotsByRecordId.get(recordId);
+      if (snapshot && isProviderAccountUsageOrganizationContextMatch(snapshot.recordKey, input.context)) continue;
+      const retained = sources.filter((source) => {
+        if (source.serviceId !== input.serviceId || source.profileId !== input.profileId) return true;
+        const key = sourceKey(source);
+        if (sourceRecordIdsByKey.get(key) === recordId) sourceRecordIdsByKey.delete(key);
+        return false;
+      });
+      if (retained.length !== sources.length) sourcesByRecordId.set(recordId, retained);
+    }
+  }
+
   return {
     recordSnapshot,
     resolveRecordId,
     resolveBySource,
     listSnapshots,
+    retainSourcesForProfile,
   };
 }

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/sessionAuthoring/rememberedEngineSelections';
 
 import {
@@ -11,6 +11,7 @@ import {
     cliDetectionState,
     clearNewSessionDraftMock,
     computeNewSessionInputMaxHeightMock,
+    enableLiveSessionDraftSubscriptions,
     featureFlags,
     flushInteractionQueue,
     loadNewSessionDraftMock,
@@ -35,6 +36,7 @@ import {
     settingsState,
     tempSessionDataState,
     targetServerState,
+    TEST_DRAFT_ID,
     useCreateNewSessionArgsRef,
     useNewSessionScreenModelModulePromise,
     workspaceGraphState,
@@ -52,6 +54,35 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
 
     beforeEach(async () => {
         await resetDraftPersistenceState();
+    });
+
+    it.each([false, true])('retires a removed editor before queued persistence without redirecting a completed launch (launch=%s)', async (launchCompleted) => {
+        await replaceRepositoryDraftFromPersistedFixture();
+        const scope = activeServerAccountScopeState.value;
+        if (!scope) throw new Error('Expected the draft Account scope');
+        const { deleteSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+        const onDraftRemoved = vi.fn();
+        enableLiveSessionDraftSubscriptions();
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: TEST_DRAFT_ID, onDraftRemoved }));
+        const model = hook.getCurrent();
+        if (model.variant !== 'simple') throw new Error('Expected the simple composer');
+        const promptStore = model.simpleProps.promptStore;
+        if (!promptStore) throw new Error('Expected the live prompt store');
+
+        await act(async () => {
+            if (launchCompleted) {
+                (useCreateNewSessionArgsRef.current?.disableDraftPersistence as (() => void) | undefined)?.();
+            }
+            await deleteSessionDraft({ scope, address: { kind: 'newSession', draftId: TEST_DRAFT_ID } });
+            persistDraftNowRef.current?.();
+            await flushInteractionQueue();
+        });
+        await hook.unmount();
+
+        expect(promptStore.getPrompt()).toBe('');
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: TEST_DRAFT_ID })).toBeNull();
+        expect(onDraftRemoved).toHaveBeenCalledTimes(launchCompleted ? 0 : 1);
     });
 
     it('clears remembered Claude plan mode when the user switches the new-session mode back to build', async () => {

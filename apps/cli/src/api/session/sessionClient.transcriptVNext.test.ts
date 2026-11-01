@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SessionMediaMessageMetaEnvelopeV1Schema } from '@happier-dev/protocol';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 import type { RawJSONLines } from '@/backends/claude/types';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
@@ -58,6 +63,39 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 }));
 
 describe('ApiSessionClient transcript vNext transport', () => {
+  it.each(['best-effort', 'exact'] as const)('persists Claude tool-result images before %s transcript delivery', async (delivery) => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'claude-jsonl:task-1:user:image-result', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const directory = await mkdtemp(join(tmpdir(), 'happier-claude-media-'));
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==';
+    try {
+      const { ApiSessionClient } = await import('./sessionClient');
+      const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: directory, flavor: 'claude' }) }));
+      const body: RawJSONLines = {
+        type: 'user', uuid: 'image-result', sidechainId: 'task-1',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: {
+          content: [{ type: 'text', text: 'comparison' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data } }],
+          tool_use_result: { type: 'image' },
+        } }] },
+      };
+      const meta = { happier: { kind: 'existing-provenance' } };
+      if (delivery === 'exact') await client.sendClaudeSessionMessageCommittedExact(body, meta);
+      else client.sendClaudeSessionMessage(body, meta);
+      await flushQueuedCommits(client as unknown as ClientWithQueuedCommits);
+      const message = sessionSocketStub.emitWithAck.mock.calls.find(call => call[0] === 'message')?.[1];
+      expect(message).toMatchObject({ sidechainId: 'task-1', message: { t: 'plain', v: { meta } } });
+      const envelope = SessionMediaMessageMetaEnvelopeV1Schema.parse(message?.message.v.meta.happierMedia);
+      expect(envelope.payload.media).toMatchObject([{ role: 'output', category: 'tool-artifact', mimeType: 'image/png', origin: { source: 'tool-output', toolCallId: 'read-1' } }]);
+      expect(await readFile(join(directory, envelope.payload.media[0]!.path))).toEqual(Buffer.from(data, 'base64'));
+      expect(JSON.stringify(message)).not.toContain(data);
+      expect(JSON.stringify(message)).toContain('comparison');
+      expect(JSON.stringify(body)).toContain(data);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stamps ACP assistant prose as agent', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
@@ -165,6 +203,41 @@ describe('ApiSessionClient transcript vNext transport', () => {
     expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
       'message',
       expect.objectContaining({ messageRole: 'user' }),
+    );
+  });
+
+  it('sends Claude peer messages as agent output that keeps their sender provenance', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    client.sendClaudeSessionMessage({
+      type: 'user',
+      uuid: 'peer-1',
+      origin: { kind: 'peer', from: 'a1', name: 'general-purpose', handback: true },
+      message: { role: 'user', content: 'From general-purpose:\n\nReport' },
+    } as RawJSONLines);
+
+    await flushQueuedCommits(client as unknown as ClientWithQueuedCommits);
+
+    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        messageRole: 'agent',
+        message: expect.objectContaining({
+          t: 'plain',
+          v: expect.objectContaining({
+            role: 'agent',
+            content: expect.objectContaining({
+              type: 'output',
+              data: expect.objectContaining({ origin: expect.objectContaining({ kind: 'peer', name: 'general-purpose' }) }),
+            }),
+          }),
+        }),
+      }),
     );
   });
 

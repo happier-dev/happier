@@ -45,13 +45,13 @@ function truncateReplayText(text: string, maxChars: number | undefined): string 
 
 function resolveReplayDecryptedPayload(params: Readonly<{
   row: RawTranscriptRow;
-  encryptionKey?: Uint8Array;
+  encryptionKey?: Uint8Array | null;
   encryptionVariant?: SessionEncryptionContext['encryptionVariant'];
 }>): unknown | null {
   const content = params.row.content;
   if (!content || typeof content !== 'object') return null;
   if ((content as { t?: unknown }).t === 'plain') return (content as { v?: unknown }).v ?? null;
-  if (!params.encryptionKey || !params.encryptionVariant) return null;
+  if (!params.encryptionKey || !params.encryptionVariant || params.encryptionVariant === 'plain') return null;
   return tryResolveDecryptedTranscriptPayload({
     content,
     ctx: { encryptionKey: params.encryptionKey, encryptionVariant: params.encryptionVariant },
@@ -60,7 +60,7 @@ function resolveReplayDecryptedPayload(params: Readonly<{
 
 export function decryptTranscriptReplayCore(params: Readonly<{
   rows: readonly RawTranscriptRow[];
-  encryptionKey?: Uint8Array;
+  encryptionKey?: Uint8Array | null;
   /**
    * Which scheme opens these rows, as the canonical session-crypto owner
    * resolves it. Hardcoding `dataKey` here silently made a legacy-secret
@@ -116,10 +116,9 @@ export function decryptTranscriptReplayCore(params: Readonly<{
       const extracted = extractSemanticTranscriptItem({
         row: row as TranscriptRawRow,
         index,
-        ctx: {
-          encryptionKey: params.encryptionKey ?? new Uint8Array(0),
-          encryptionVariant: params.encryptionVariant ?? 'legacy',
-        },
+        ctx: params.encryptionKey && params.encryptionVariant && params.encryptionVariant !== 'plain'
+          ? { encryptionKey: params.encryptionKey, encryptionVariant: params.encryptionVariant }
+          : { encryptionKey: null, encryptionVariant: 'plain' },
         options: {
           mode: 'transcript',
           transcriptRoles: ['user', 'assistant'],

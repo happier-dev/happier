@@ -86,6 +86,7 @@ export function createEndpointSupervisedRequest(params: Readonly<{
             const state = await waitForEndpointSupervisorToSettle(supervisor);
             assertEndpointReadyForRequestOrThrow(state, { requireAuth: hadAuth });
 
+            const probeReportScope = supervisor.captureProbeReportScope?.();
             let response: Response;
             try {
                 response = await runtimeFetch(requestUrl, {
@@ -103,7 +104,7 @@ export function createEndpointSupervisedRequest(params: Readonly<{
                 throw error;
             }
 
-            reportEndpointResponseToSupervisor(supervisor, response, hadAuth || token.length > 0);
+            reportEndpointResponseToSupervisor(supervisor, response, hadAuth || token.length > 0, probeReportScope);
             return response;
         } finally {
             await handle?.release().catch(() => {});

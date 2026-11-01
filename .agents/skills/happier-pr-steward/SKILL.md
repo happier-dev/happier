@@ -46,6 +46,10 @@ Use `happier-review` to report:
 
 Do not invent speculative requirements or preserve machinery merely because it is already in the patch.
 
+Before proposing repair work, decide whether the approach is worth retaining. A confirmed defect does not require preserving its proposed mechanism. Do not fix individual bugs, fixtures, or CI in a patch that adds no reachable benefit or whose approach should be declined merely to finish a stewardship loop.
+
+Every assessment names a disposition and the next actor: merge-ready, changes requested from a named author/steward, a concrete author question, a maintainer decision, or approach declined. Follow [PR handoff and disposition](../../../docs/issue-triage.md#pull-request-handoff-and-disposition); GitHub operations owns mutation authority and the shared reconciler owns label transitions. Explain whether listed findings are requested repairs or reasons the approach will not be accepted. An alternative worth investigating is not an instruction to implement it.
+
 ## 4. Pause at the recommendation gate
 
 Review and reporting alone are read-only. Present the evidence-backed recommendation before editing when the request did not already authorize implementation. If the user already asked for autonomous evidence-driven stewardship, that request may establish one bounded standing authorization immediately: acknowledge the repository/PR, allowed refinement and GitHub action classes, commit/push/port scope, exclusions, and terminal condition, then continue through narrow corrections that serve the stated PR outcome without pausing on the recommendation. Do not turn a valid standing grant into an initial ceremonial reapproval or repeated payload approvals later.
@@ -72,6 +76,8 @@ Ordinary corrective commits and pushes use the current machine's configured Git 
 
 Summarize what changed and why, name deciding checks, and ask the configured reviewers (including CodeRabbit and Greptile when requested) to review the current head. Do not claim the 0.3 port is complete unless its commit and validation exist.
 
+Keep the handoff explicit with each public assessment. Select `needs:author` only for a concrete outstanding author request, and `needs:maintainer` only for substantive project action; never use either as a permanent "already analyzed" marker. Include the intended label additions/removals in the active authorization and post-action report. On a declined approach, say no further repair is requested and recommend or perform authorized closure. Do not wait for an author reply when no answer was requested, and never infer closure authority from a negative review.
+
 ## 8. Monitor and adjudicate, do not obey
 
 Monitor the current head without busy-looping. Read all unresolved existing comments and reviews as well as new ones. For each finding:
@@ -87,7 +93,9 @@ Passing CI, an approval, or a bot confidence score is evidence, not authority. C
 
 ## 9. Finish on current-head facts
 
-Continue until the current head is stable and:
+A declined approach has its own terminal outcome: deliver the evidence-backed disposition, leave no implied author repair request, and close only under explicit authority. Keep any still-valid linked issue open. Do not require green CI, a replacement implementation, or a destination port for code that is not being accepted; record why no port is appropriate. If closure authority is absent, report the exact pending closure action rather than presenting it as author waiting.
+
+For an accepted approach, continue until the current head is stable and:
 
 - every existing and new finding has an evidence-backed disposition;
 - all accepted changes are present in the PR branch and required destination line;

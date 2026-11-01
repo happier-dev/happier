@@ -1,15 +1,14 @@
 import { z } from 'zod';
 
-import { THEME_PROFILE_MAX_PROFILES, THEME_PROFILE_SCHEMA_VERSION } from './themeProfileConstants';
+import { THEME_PROFILE_ID_MAX_LENGTH, THEME_PROFILE_SCHEMA_VERSION } from './themeProfileConstants';
 import {
     migrateThemeProfileOverrideTokenIds,
-    sanitizeThemeProfileOverrides,
     sanitizeThemeProfileName,
     sanitizeThemeProfileOverridesForV1TrustBoundary,
     isRouteSafeThemeProfileId,
     isReservedThemeProfileId,
 } from './themeProfileImportExport';
-import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfileV1, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfileStoredSelectionByMode, ThemeProfileV1, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 import { getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from './builtInThemeProfiles';
 import { inferThemeProfileAssetAppearance, isThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 
@@ -48,7 +47,7 @@ const sanitizeActiveProfileId = (
     seenIds: ReadonlySet<string>,
 ): string | null => (isKnownThemeProfileId(value, seenIds) ? value : null);
 
-const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
+export const parseThemeProfile = (value: unknown): Readonly<{ profile: ThemeProfileV1; changed: boolean }> | null => {
     if (!isRecord(value)) return null;
     if (value.schemaVersion !== THEME_PROFILE_SCHEMA_VERSION) return null;
     if (typeof value.id !== 'string' || value.id.trim().length === 0) return null;
@@ -98,7 +97,7 @@ export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfiles
     let changed = false;
     const seenIds = new Set<string>();
 
-    for (const sourceProfile of value.profiles.slice(0, THEME_PROFILE_MAX_PROFILES)) {
+    for (const sourceProfile of value.profiles) {
         const parsedProfile = parseThemeProfile(sourceProfile);
         if (!parsedProfile || seenIds.has(parsedProfile.profile.id) || isBuiltInThemeProfilePresetId(parsedProfile.profile.id)) {
             changed = true;
@@ -108,10 +107,6 @@ export const parseThemeProfilesLocalState = (value: unknown): ParseThemeProfiles
         profiles.push(parsedProfile.profile);
         seenIds.add(parsedProfile.profile.id);
         changed = changed || parsedProfile.changed;
-    }
-
-    if (value.profiles.length > THEME_PROFILE_MAX_PROFILES) {
-        changed = true;
     }
 
     let activeProfileIds: ThemeProfileSelectionByMode;
@@ -155,12 +150,14 @@ export const migrateThemeProfileLocalStateTokenIds = (state: ThemeProfilesLocalS
         }
 
         changed = true;
+        const overrides = sanitizeThemeProfileOverridesForV1TrustBoundary({
+            light: light.overrides,
+            dark: dark.overrides,
+        });
+        if (!overrides) throw new Error('Invalid stored theme overrides during token migration');
         return {
             ...profile,
-            overrides: sanitizeThemeProfileOverrides({
-                light: light.overrides,
-                dark: dark.overrides,
-            }),
+            overrides,
         };
     });
 
@@ -173,6 +170,78 @@ export const migrateThemeProfileLocalStateTokenIds = (state: ThemeProfilesLocalS
 export const ThemeProfilesLocalStateSchema: z.ZodType<ThemeProfilesLocalStateV1> = z
     .unknown()
     .transform((value) => parseThemeProfilesLocalState(value).state);
+
+// The creation limit must not truncate valid profiles collected from several devices.
+// Keep the profile parser shared with legacy persistence instead of introducing another schema.
+export const ThemeProfileLibrarySchema: z.ZodType<readonly ThemeProfileV1[]> = z.unknown().transform((value) => (
+    migrateThemeProfileLocalStateTokenIds(parseThemeProfilesLocalState({ profiles: value }).state).state.profiles
+));
+
+export const ThemeProfileSelectionSchema: z.ZodType<ThemeProfileStoredSelectionByMode> = z.unknown().transform((value) => {
+    const record = isRecord(value) ? value : {};
+    const read = (id: unknown): string | null => (
+        typeof id === 'string' && isRouteSafeThemeProfileId(id)
+        && (!isReservedThemeProfileId(id) || isBuiltInThemeProfilePresetId(id)) ? id : null
+    );
+    const selection = (value: unknown) => isRecord(value) && read(value.legacyProfileId)
+        ? { legacyProfileId: read(value.legacyProfileId)! } : read(value);
+    return { light: selection(record.light), dark: selection(record.dark) };
+});
+
+export function mergeThemeProfileLibraries(
+    profiles: readonly ThemeProfileV1[],
+    legacy: ThemeProfilesLocalStateV1,
+    previousLegacyProfileIds: ReadonlyMap<string, string> = new Map(),
+): Readonly<{ profiles: readonly ThemeProfileV1[]; legacyProfileIds: ReadonlyMap<string, string> }> {
+    if (legacy.profiles.length === 0) return { profiles, legacyProfileIds: new Map() };
+    const merged = [...profiles];
+    const byId = new Map(merged.map((profile) => [profile.id, profile]));
+    const remapped = new Map<string, string>();
+    for (const profile of legacy.profiles) {
+        let id = profile.id;
+        const previousId = previousLegacyProfileIds.get(profile.id);
+        // A retry may find the original collision removed. Reuse a previously displayed ID
+        // only when its current definition is exactly the one being imported.
+        if (previousId && stableStringify(byId.get(previousId)) === stableStringify({ ...profile, id: previousId })) id = previousId;
+        let suffix = 2;
+        while (byId.has(id) && stableStringify(byId.get(id)) !== stableStringify({ ...profile, id })) {
+            const ending = `_${suffix++}`;
+            id = `${profile.id.slice(0, THEME_PROFILE_ID_MAX_LENGTH - ending.length)}${ending}`;
+        }
+        if (!byId.has(id)) {
+            const next = id === profile.id ? profile : { ...profile, id };
+            merged.push(next);
+            byId.set(id, next);
+        }
+        remapped.set(profile.id, id);
+    }
+    return { profiles: merged, legacyProfileIds: remapped };
+}
+
+export function resolveThemeProfileSelection(
+    selection: ThemeProfileStoredSelectionByMode | null,
+    legacy: ThemeProfilesLocalStateV1,
+    legacyProfileIds: ReadonlyMap<string, string>,
+): ThemeProfileSelectionByMode {
+    const read = (mode: ThemeProfileMode) => {
+        const legacyId = legacy.activeProfileIds[mode];
+        const value = selection ? selection[mode] : legacyId
+            ? isBuiltInThemeProfilePresetId(legacyId) ? legacyId : { legacyProfileId: legacyId } : null;
+        return value && typeof value !== 'string' ? legacyProfileIds.get(value.legacyProfileId) ?? null : value;
+    };
+    return { light: read('light'), dark: read('dark') };
+}
+
+/** One composition for migration, live consumers, and startup; legacy profiles are read-only. */
+export function resolveThemeProfilesState(
+    profiles: readonly ThemeProfileV1[],
+    legacy: ThemeProfilesLocalStateV1,
+    selection: ThemeProfileStoredSelectionByMode | null,
+): ThemeProfilesLocalStateV1 {
+    const merged = mergeThemeProfileLibraries(profiles, legacy);
+    return { profiles: merged.profiles,
+        activeProfileIds: resolveThemeProfileSelection(selection, legacy, merged.legacyProfileIds) };
+}
 
 export const findThemeProfileById = (
     state: ThemeProfilesLocalStateV1,

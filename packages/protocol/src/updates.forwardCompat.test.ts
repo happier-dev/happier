@@ -8,6 +8,17 @@ import {
 } from './updates.js';
 
 describe('updates forward compatibility', () => {
+  it('accepts a whole Machine content transition including an absent daemon state', () => {
+    const body = {
+      t: 'update-machine',
+      machineId: 'machine_1',
+      metadata: { value: 'encoded-next-metadata', version: 2 },
+      daemonState: { value: null, version: 3 },
+      dataEncryptionKey: 'encoded-next-key-carrier',
+      contentPublicKeyFingerprint: null,
+    };
+    expect(UpdateBodySchema.parse(body)).toEqual(body);
+  });
   const completeRuntimeActivityProjection = {
     runtimeActivityState: 'active' as const,
     runtimeActivityActiveCount: 1,

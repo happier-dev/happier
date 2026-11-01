@@ -235,8 +235,12 @@ function estimateWrappedLineCount(text: string): number {
  *
  * | variant           | header | expand | tool | footer |
  * |-------------------|--------|--------|------|--------|
- * | `feed`            |   27   |   28   |  28  |   28   |
- * | `feed_background` |   33   |   28   |  28  |   34   |
+ * | `feed`            |   44   |   28   |  28  |    8   |
+ * | `feed_background` |   50   |   28   |  28  |   34   |
+ *
+ * Headers now reserve the 44px disclosure touch target (48px on Android, replaced by
+ * onLayout); plain feed footers reserve 8px for header-only groups and the normal 22px message gap plus 6px body padding after visible tools.
+ * These cap values are derived from those styles; the original measurements above predate them.
  *
  * `cards` is deliberately NOT a key here: a tool GROUP cannot exist in that mode. Grouping is
  * gated on the same setting the variant is resolved from — `useChatListRootState` computes
@@ -460,8 +464,8 @@ type ToolGroupUnitRowHeights = Readonly<{
 type ToolCallsGroupFeedChromeVariant = Exclude<ToolCallsGroupChromeVariant, 'cards'>;
 
 const TOOL_GROUP_UNIT_ROW_PX_BY_CHROME_VARIANT: Readonly<Record<ToolCallsGroupFeedChromeVariant, ToolGroupUnitRowHeights>> = {
-    feed: { header: 27, expand: 28, tool: ESTIMATE_TOOL_ROW_PX, footer: 28 },
-    feed_background: { header: 33, expand: 28, tool: ESTIMATE_TOOL_ROW_PX, footer: 34 },
+    feed: { header: 44, expand: 28, tool: ESTIMATE_TOOL_ROW_PX, footer: 8 },
+    feed_background: { header: 50, expand: 28, tool: ESTIMATE_TOOL_ROW_PX, footer: 34 },
 };
 
 /** `undefined` for `cards`: that mode builds no tool-group rows at all (see the table above). */
@@ -580,9 +584,16 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
     // `getEstimatedItemSize` is called against. Their calibration is what accumulation gaps are
     // made of.
     if (item.kind === 'tool-group-tool') return unitRowHeights?.tool;
-    if (item.kind === 'tool-group-expand') return unitRowHeights?.expand;
-    if (item.kind === 'tool-group-header') return unitRowHeights?.header;
-    if (item.kind === 'tool-group-footer') return unitRowHeights?.footer;
+    if (item.kind === 'tool-group-expand') return params.platformIsWeb && unitRowHeights ? 24 : unitRowHeights?.expand;
+    if (item.kind === 'tool-group-header') {
+        if (params.platformIsWeb && toolCallsGroupChromeVariant !== 'cards') {
+            return toolCallsGroupChromeVariant === 'feed_background' ? 34 : 28;
+        }
+        return unitRowHeights?.header;
+    }
+    if (item.kind === 'tool-group-footer') {
+        return toolCallsGroupChromeVariant === 'feed' && item.hasVisibleTools ? 28 : unitRowHeights?.footer;
+    }
     if (
         item.kind === 'pending-user-action'
         || item.kind === 'action-draft'

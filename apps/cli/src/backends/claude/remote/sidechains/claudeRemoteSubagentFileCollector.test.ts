@@ -7,6 +7,7 @@ import type { SDKAssistantMessage, SDKUserMessage } from '@/backends/claude/sdk'
 import type { RawJSONLines } from '@/backends/claude/types';
 
 import { ClaudeRemoteSubagentFileCollector } from './claudeRemoteSubagentFileCollector';
+import { CLAUDE_HANDBACK_REPORT, claudeHandbackUserRow } from '../../attachments/claudePeerMessage.testkit';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -60,6 +61,30 @@ function makeJsonl(lines: unknown[]): string {
 }
 
 describe('ClaudeRemoteSubagentFileCollector', () => {
+  it('settles a buffered nested report only from its owning sidechain task status', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-nested-handback-'));
+    const file = join(dir, 'agent-parent.jsonl');
+    const status = { type: 'attachment', uuid: 'nested-status', isSidechain: true, agentId: 'parent',
+      attachment: { type: 'task_status', taskId: 'a1', status: 'stopped' } };
+    await writeFile(file, makeJsonl([
+      { type: 'user', uuid: 'nested-ack', isSidechain: true, agentId: 'parent', toolUseResult: { status: 'async_launched', agentId: 'a1' },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'nested-tool', content: 'Async agent launched successfully.' }] } },
+      { ...claudeHandbackUserRow({ withReportText: true }), isSidechain: true, agentId: 'parent' },
+      { ...status, uuid: 'foreign-status', agentId: 'other-parent' }, status,
+    ]));
+    const imported: RawJSONLines[] = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({ emitImported: body => { imported.push(body); }, watchFile: () => () => {} });
+    try {
+      await collector.registerSidechainFile({ sidechainId: 'parent-tool', agentId: 'parent', filePath: file, source: 'task-tool' });
+      await collector.syncAll();
+      expect(imported.map(row => row.uuid)).toEqual(['nested-ack', 'nested-status']);
+      expect(imported[1]).toMatchObject({ isSidechain: true, sidechainId: 'parent-tool', toolUseResult: { status: 'cancelled', result: CLAUDE_HANDBACK_REPORT },
+        message: { content: [{ type: 'tool_result', tool_use_id: 'nested-tool', is_error: true }] } });
+      await collector.syncAll();
+      expect(imported).toHaveLength(2);
+    } finally { collector.cleanup(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('settles a nested native task in its owning sidechain without leaking copied XML', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-task-sidechain-'));
     const file = join(dir, 'agent-parent.jsonl');

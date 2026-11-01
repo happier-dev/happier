@@ -37,6 +37,7 @@ export async function upsertSessionTag(params: Readonly<{
         }),
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
             credentials: params.credentials,
+            serverUrl: params.serverUrl,
             envelope: params.request.display,
         }),
     };

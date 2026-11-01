@@ -21,6 +21,50 @@ This document captures the current low-level Claude implementation across the CL
 | Linked direct transcript source (`.claude/projects/...jsonl`) | `supported` | `apps/cli/src/backends/claude/session.ts`, `apps/cli/src/backends/claude/directSessions/listClaudeSessionCandidates.ts`, `apps/cli/src/backends/claude/directSessions/pageClaudeTranscript.ts`, `apps/cli/src/backends/claude/directSessions/readAfterClaudeTranscript.ts`, `apps/cli/src/backends/claude/directSessions/resolveClaudeDirectSessionFile.ts` | When transcript storage is `direct`, `session.ts` writes `directSessionV1`; browse/tail reads provider-owned JSONL directly and supports backward paging plus forward tail-follow. | Replace `directSessionV1` and Claude-specific file cursors with a shared transcript-source contract used by browse, takeover, and handoff. |
 | Sidechains, subagents, and team inbox | `partial` | `apps/cli/src/backends/claude/remote/sidechains/claudeTaskOutputSidechainImporter.ts`, `apps/cli/src/backends/claude/remote/sidechains/claudeRemoteSubagentFileCollector.ts`, `apps/cli/src/backends/claude/remote/teamInbox/claudeRemoteTeamInboxBridge.ts`, `apps/cli/src/backends/claude/utils/teamInbox/claudeTeamInboxCollector.ts`, `apps/ui/sources/sync/domains/session/participants/providers/claude/deriveClaudeTeamParticipants.ts`, `apps/ui/sources/components/tools/renderers/workflow/SubAgentRunView.tsx` | Remote mode has dedicated collectors for `Task` / `Agent` JSONL sidechains and team-inbox messages; UI then reconstructs team state, shutdown pruning, and run previews from normalized tool calls plus imported sidechain messages. | Centralize Claude sidechain/team normalization so CLI collectors and UI participant derivation stop re-encoding the same lifecycle rules. |
 
+In development source, Direct takeover preserves the current native config
+environment when the linked transcript store is the configured store, including
+an unset `CLAUDE_CONFIG_DIR`. A resolved transcript path alone does not select
+native credentials. Explicit native overrides retain their value, and links to a
+different store retain their pinned root. Existing-state handoff and bundle import
+use the same native environment-overlay owner for their target environment.
+These rules do not recover the original authentication environment of older links.
+
+In development source, Claude Direct candidates publish the native JSONL `cwd`
+through the same working-directory reader used by takeover, so browse linking can
+persist the workspace path without decoding the lossy project-directory name.
+For existing links with an empty path, machine targeting and fork use the shared
+workspace-root resolver to recover a valid `sessionWorkspaceLocationV1` for the
+same machine. Agent and host paths remain distinct; a nonempty conflicting path,
+malformed mapping, or foreign-machine mapping is not replaced. Target selection
+checks the resolved machine, and fork checks the receiving daemon's identity,
+including when a replacement daemon handles the request. This corrects
+workspace targeting for file transfers and replay/config forks; Claude Direct
+native fork support is unchanged. These corrections have not been released.
+
+In development source, the remote launcher records unexpected launch failures
+in the normal session file log, including failures before the SDK subprocess or
+its debug log exists. The entry includes redacted error text and the existing
+error disposition; user cancellation and owned teardown remain debug-only.
+Resume validation and provider identity preservation are unchanged.
+
+Development-source session discovery accepts `SessionStart` hooks and eventless
+SDK/offline discoveries. Other hook events, including `SessionEnd`, continue to
+reach lifecycle handling but cannot replace the active Claude resume identity,
+transcript path, or owned-session lineage during local/remote handoff.
+
+In development source, `Session.getResumableSessionIdentity` supplies the ID and
+transcript path together to local, remote, and Unified Terminal startup, replay,
+and relaunches; the ID-only accessor delegates to it. A newly observed ID without a
+materialized transcript remains provisional, so zero-turn takeover can start a
+fresh Claude conversation in the same Happier session. Requested resumes, native
+resume/fork/compaction, and identities already proven by a transcript retain their
+context requirement if that transcript later becomes unavailable; remote resume
+then fails visibly instead of silently starting a replacement conversation.
+Clear/restore preserves that requirement. Metadata publication still requires
+the stricter complete matching transcript record. Connected-service reachability
+continues to prove an actual resume target; the spawn owner already skips that
+probe for fresh starts.
+
 Development-source transcript ingestion and UI normalization share
 `providers.claude.isClaudeInternalEventType` from `@happier-dev/agents` for
 non-conversation records, including Claude SDK `command_lifecycle` status events.
@@ -29,17 +73,54 @@ does not establish message acceptance or foreground activity. UI normalization a
 filters already-persisted internal records, while genuinely unknown output retains
 the unsupported-output diagnostic.
 
-In development source, native cross-session messages use the shared
+In development source, native peer deliveries (cross-session messages, teammate
+messages and subagent hand-backs) use the shared
 `attachments/claudePeerMessageProjection.ts` conversation projector. Delivered
-queued-command attachments become sender-labelled text with native peer provenance;
-ordinary queued commands and queue operations remain internal. The JSONL parser,
-scanner, direct-session reader and SDK converter consume that projection. Peer input
-cannot acknowledge a pending human prompt.
+queued-command attachments and peer user rows become sender-labelled text with native
+peer provenance; ordinary queued commands and queue operations remain internal. The
+projected body comes from the native `origin.body` (or the `<cross-session-message>` /
+`<agent-message>` wrapper when absent), so delivery sentences and harness guidance are
+not shown. Hand-backs show `origin.handbackReportText` (Claude 2.1.304), or the
+framed body with its provenance frame and two-space report indentation removed
+(Claude 2.1.296). Projected rows drop `body` and `handbackReportText` and keep the
+`From <sender>:` label that released clients display; current clients read the sender
+and body back through `@happier-dev/protocol` `readClaudePeerMessage`. The JSONL parser,
+scanner, direct-session reader and SDK converter consume that projection. Session
+writes send peer rows as raw agent output with `messageRole: 'agent'`, never as user
+text, so the UI renders them as a collapsible "Message from" / "Report from" row and
+composer history, rollback and voice replies do not treat them as human input. Peer
+input cannot acknowledge a pending human prompt.
+
+A hand-back whose sender matches an async Agent launch already correlated by the task
+projector is retained until the native lifecycle supplies a terminal outcome (a task
+notification, task-status attachment, or authenticated stopped-agent SendMessage
+response). That outcome publishes the report on the Agent card with its actual
+success, failure or cancellation; report delivery alone cannot complete the task. Reports
+without an active correlated launch (including after settlement, resume or a CLI
+restart) stay standalone peer rows.
 
 The remote Agent SDK registers its live permission-mode control with the launcher's
 existing metadata consumer. Registration re-reads current permission intent, and
 metadata updates reach the streaming query while idle. Prompt-driven updates and
-ExitPlanMode use the same runtime-settings owner. Claude still owns inbound delivery
+ExitPlanMode use the same runtime-settings owner. Metadata callbacks apply only permission
+controls; model and thinking controls are applied once per explicit queued prompt.
+If a prompt's settings are refused, the runner reports the redacted provider error
+and current model, rejects delivery before effect through the existing pending-queue
+owner, and leaves the prompt available for an explicit retry. It does not send the
+prompt on the previous model or retry model controls on metadata wakes. The shared
+Claude effective-model observer owns both current-model and Running metadata;
+remote and unified-terminal prompt acknowledgments establish input acceptance only.
+In development source, remote model confirmation reads genuine main-session assistant
+messages before presentation normalization. Startup announcements, historical replay,
+sidechains, provider errors and synthesized presentation messages cannot confirm a
+requested model. Launch effort is paired with the first genuine assistant observation
+only; later model observations do not reapply the old launch effort. Native control
+verification also clears effort observed for a different model, so an effort request
+for the new model must be verified again. A submitted but unverified native command
+also invalidates its command verification, so restoring the previous selection is
+not skipped. Verified Ultracode and ordinary effort controls update the same native
+effort witness.
+Claude still owns inbound delivery
 policy: its [non-interactive messaging contract](https://code.claude.com/docs/en/cross-session-messaging#non-interactive-sessions)
 does not expose the terminal approval dialog in `-p` sessions. Happier does not
 override that policy or automatically accept held messages.
@@ -99,7 +180,19 @@ activity, including nested SDK agents that outlive their launching agent.
 `SubagentStop` is progress evidence
 because Claude can veto that stop and continue working. Synchronous children
 finish on their tool results; asynchronous children finish on the provider's
-settled task evidence. Workflow correlation folds every tool block in a message,
+settled task evidence. Claude 2.1.302 reports an Agent `completed` each time it
+stops, including when it stops to wait on backgrounded work it still owns (SDK
+`task_started` rows carrying `parent_task_id`). That terminal leaves the Agent
+awaiting its children (a child Agent that is itself awaiting its own children still
+counts): the children keep their own activity, and only the Agent's
+own typed SDK `task_progress` after it wakes reactivates it until its next
+terminal. Hook `SubagentStop` progress cannot reactivate an awaiting Agent, so an
+Agent that never wakes cannot hold runtime activity open. A later stop or failure
+settles an awaiting Agent and prevents typed progress from reactivating it.
+Confirmed TaskOutput hooks retain the task's terminal status, while confirmed
+TaskStop hooks settle it as stopped. Neither remembers unknown task identities;
+a completed TaskOutput preserves the pending wake.
+Workflow correlation folds every tool block in a message,
 keeps each child's native task alias, and closes an implicit Agent activity group
 when all children settle. A successful native resume can reopen that group.
 A successful SendMessage `resumedAgentId` proves an asynchronous invocation,
@@ -148,6 +241,11 @@ without resending the retired input or manufacturing provider acceptance. The AP
 session client owns exact custody reconciliation and publishes the same Pending
 wake when local custody changes.
 
+The development-source Agent SDK and legacy remote runners also require exact
+native input acknowledgment before reporting acceptance. Their shared settlement
+owner and failed-startup replay retention are described in
+[Pending delivery](pending-delivery.md#ui-settlement-convergence-development).
+
 In development source, Unified Terminal publishes its exact-host stop capability
 as soon as the attachment is persisted, before metadata publication or provider
 initialization can block. Explicit stop still destroys only that owned attachment;
@@ -178,6 +276,20 @@ Genuine rewrites remain subject to Claude's checks; `PreToolUse` still carries
 the input needed for `AskUserQuestion` answers. Claude's Auto classifier remains
 the permission authority before a request reaches these hooks.
 
+In development source, `normalizeClaudeAskUserQuestionInputForPublication` owns
+Claude's implicit freeform answer across the SDK, hook bridge and native broker.
+Native single-select questions with nonempty option previews publish only their
+choices (`freeform: false`); checkbox questions retain the ordinary freeform row.
+The native screen parser separates the preview column from option labels and
+records the actual freeform row. The existing answer driver refuses terminal
+notes or an active notes editor before navigation or submission; notes are
+annotations on a choice and are never converted into freeform answers.
+Long reviews may clip earlier questions above the viewport. The same parser
+recognizes complete visible entries as a suffix of the hook-owned questions;
+the answer driver submits only after visiting every question page and matching
+the visible answers. Complete reviews still require every answer. A confirmation
+with no complete question visible remains unrecognized.
+
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |
 | --- | --- | --- | --- | --- |
 | Direct session browse/list | `supported` | `apps/cli/src/backends/claude/directSessions/listClaudeSessionCandidates.ts`, `apps/ui/sources/agents/providers/claude/directSessions/resolveClaudeBrowseSourceOptions.ts`, `apps/ui/sources/agents/providers/claude/uiBehavior.tsx` | UI exposes only one Claude direct source today: `{ kind: 'claudeConfig' }`; discovery walks `~/.claude/projects/**.jsonl` and lazily reads session titles. | Promote direct-source selection into the same provider runtime record used by resume/takeover instead of a Claude-only browse option. |
@@ -188,6 +300,24 @@ the permission authority before a request reaches these hooks.
 | Session controls: modes, settings sources, checkpoints, remote extras | `partial` | `packages/agents/src/providerSettings/definitions/claudeRemote.ts`, `apps/ui/sources/agents/providers/claude/settings/plugin.ts`, `apps/ui/sources/agents/providers/claude/core.ts`, `apps/cli/src/backends/claude/remote/claudeRemoteMetaState.ts`, `apps/cli/src/backends/claude/remote/resolveInitialClaudeRemoteMetaState.ts`, `apps/cli/src/backends/claude/remote/agentSdk/claudeAgentSdkSlashCommands.ts` | Claude exposes build/plan mode, remote setting sources (`claudeRemoteSettingSources` + `claudeRemoteSettingSourcesV2`), partial streaming, local permission bridge toggles, checkpoint capture, max-thinking override, TODO suppression, strict MCP, and advanced JSON allowlist; some controls are Agent-SDK-only. | Rename transport-branded / legacy settings into one controls schema and stop carrying both v1 and v2 setting-source formats. |
 | Manual resume (`happier resume`, explicit `resume`, vendor `--resume`) | `supported` | `apps/cli/src/rpc/handlers/registerSessionHandlers.ts`, `apps/cli/src/backends/claude/runClaude.ts`, `apps/cli/src/backends/claude/session.ts`, `apps/cli/src/backends/claude/claudeLocal.ts`, `packages/agents/src/manifest.ts`, `packages/agents/src/sessionControls/vendorResumePolicy.ts` | Claude is a first-class vendor-resume provider keyed by `claudeSessionId`; local runs consume one-time `--resume` / `--continue` flags after spawn, and `session.ts` rewrites metadata when Claude forks to a new vendor session id. | Keep a single provider resume record carrying vendor id, transcript path, and source affinity instead of scattering them across session metadata fields. |
 | Wake resume / background wake | `supported` | `apps/ui/sources/agents/runtime/resumeCapabilities.ts`, `apps/ui/sources/agents/providers/claude/core.ts`, `apps/ui/sources/agents/registry/registryUiBehavior.ts`, `packages/agents/src/sessionControls/vendorResumePolicy.ts` | Claude uses the generic vendor-resume wake path; unlike Codex/OpenCode there is no Claude-specific `buildWakeResumeExtras` override, so wake relies on persisted metadata plus the generic resume capability contract. | Replace generic wake heuristics plus provider-specific metadata fields with a serialized provider runtime descriptor that wake can replay directly. |
+
+Development source caches Claude provider-title state in the direct-session title
+reader and scans appended records after validating the cached prefix. Manual
+titles retain precedence over AI titles. Identical concurrent Claude candidate
+listings share their filesystem scan; other agent listings retain their existing
+request lifecycle. Handoff imports publish complete transcripts through
+`atomicFileWrite`, replacing file identity so incremental readers invalidate
+their previous state. A failed import leaves the previous transcript intact.
+
+The title reader persists that state to `claude-direct-session-titles.json` beside
+the daemon's `daemon.state.json`, using its canonical lifecycle directory
+(`servers/<HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID or active server id>/`). Each relay
+daemon keeps its own entries when several daemons share one Happier home.
+Writes use a short debounce through `atomicFileWrite`, so a restarted
+daemon validates the cached prefix instead of rescanning whole transcripts. Tail
+scans parse only lines that can hold a title record; other lines are consumed
+without JSON parsing. Unexpected persistence failures are file-logged without cached
+title content; failed writes remain pending for a later flush.
 
 ## Installables, auth, and coverage
 

@@ -6,6 +6,7 @@ import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readPrismaSqliteConnectionParams } from "@happier-dev/cli-common/firstPartyRuntime";
 import { resolveLightDataDir, resolveLightDatabaseDir } from "@/flavors/light/env";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
@@ -424,11 +425,7 @@ function parsePositiveInteger(value: string | null): number | null {
 function readSqliteDatabaseUrlSearchParam(env: NodeJS.ProcessEnv, key: string): string | null {
     const rawUrl = String(env.DATABASE_URL ?? "").trim();
     if (!rawUrl) return null;
-    try {
-        return new URL(rawUrl).searchParams.get(key);
-    } catch {
-        return null;
-    }
+    return readPrismaSqliteConnectionParams(rawUrl).get(key);
 }
 
 export function resolveSqliteStartupDiagnosticsFromEnv(env: NodeJS.ProcessEnv): SqliteStartupDiagnostics {

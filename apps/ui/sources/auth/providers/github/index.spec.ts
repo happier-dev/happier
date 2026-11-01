@@ -5,11 +5,6 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://server.test',
 }));
 
-vi.mock('@/utils/timing/time', () => ({
-    backoff: async <T>(fn: () => Promise<T>) => await fn(),
-    delay: async () => {},
-}));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({

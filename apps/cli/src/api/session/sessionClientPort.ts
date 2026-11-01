@@ -2,6 +2,7 @@ import type { RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { RawJSONLines } from '@/backends/claude/types';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import type { AgentState, Metadata } from '../types';
+import type { AgentStateWriteOptions } from './sessionWritesBestEffort';
 import type { TurnAssistantTextSnapshot } from './turnAssistantTextSnapshot';
 import type { CommittedUserMessageSeqWaitOptions } from './committedUserMessageSeqTracker';
 import type { SessionTurnLifecycleController } from '@/agent/runtime/session/turn/types';
@@ -82,6 +83,7 @@ export type SessionUserMessageDeliveryInfo = Readonly<{
 
 export interface SessionClientPort {
   sessionId: string;
+  updateAgentStateRequestSettlement(updater: (state: AgentState) => AgentState): Promise<void>;
   rpcHandlerManager: RpcHandlerManagerLike;
   getOrCreatePermissionRpcRouter?(): SessionPermissionRpcRouter;
 
@@ -115,7 +117,7 @@ export interface SessionClientPort {
   fetchRecentTranscriptTextItemsForAcpImport?(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>>;
   fetchCommittedTranscriptIdentitySnapshot?(): Promise<import('./transcriptQueries').CommittedTranscriptIdentitySnapshot>;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
-  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
+  sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown>; provenance?: SessionTranscriptObservationProvenanceV1 }): Promise<void>;
   sendAgentMessageEphemeral?(
     provider: ACPProvider,
     body: ACPMessageData,
@@ -129,7 +131,7 @@ export interface SessionClientPort {
   getEphemeralStreamConnectionEpoch?(): number;
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
-  updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;
+  updateAgentState(updater: (state: AgentState) => AgentState, options?: AgentStateWriteOptions): void | Promise<void>;
   /** Phase-5 transport seam; absent until a client owns a real journal-backed snapshot handle. */
   getRuntimeActivitySnapshotPublisher?(): SessionRuntimeActivitySnapshotPublisher | null;
   readRuntimeActivitySnapshotTail?(): RuntimeActivitySnapshotTail;

@@ -4,10 +4,10 @@ import { basename, dirname, join } from 'node:path';
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
+  resolveManagedCliShimInstall,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
-import { resolveManagedCliShimInstall } from '@/runtime/managedCliShimInstall';
 import {
   isRunnerSnapshotRuntimeRoot,
   resolveRuntimeRootsFromLaunchedProcess,

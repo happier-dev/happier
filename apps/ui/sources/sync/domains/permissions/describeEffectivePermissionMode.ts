@@ -8,7 +8,7 @@ import {
     readSessionModelsState,
     readSessionModesState,
 } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { getBuiltInAcpConfig, parsePermissionIntentAlias, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
+import { getBuiltInAcpConfig, parsePermissionIntentAlias, resolveAcpPermissionModeId, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
 import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
 import { t } from '@/text';
 
@@ -103,8 +103,11 @@ export function describeEffectivePermissionMode(_params: {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
-    const providerNative = permissionMapping?.[effectiveMode] ?? resolveProviderNativePermissionModeForAgent({ agentId, mode: effectiveMode });
-    if (providerNative !== effectiveMode) {
+    const mapping = permissionMapping?.[effectiveMode];
+    const providerNative = mapping == null
+        ? resolveProviderNativePermissionModeForAgent({ agentId, mode: effectiveMode })
+        : resolveAcpPermissionModeId(mapping, nativePolicy?.options ?? []);
+    if (providerNative !== null && providerNative !== effectiveMode) {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }
 

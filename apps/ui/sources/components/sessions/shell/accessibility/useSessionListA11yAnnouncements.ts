@@ -42,8 +42,6 @@ function formatBlockedReason(reason: BlockedReason): string {
 
 function formatSessionListBlockReason(reason: SessionListInstructionBlockReason | undefined): string | null {
     switch (reason) {
-        case 'direct-session':
-            return t('sessionsList.dragA11yBlockedDirectSession');
         case 'feature-disabled':
             return t('sessionsList.dragA11yBlockedFeatureDisabled');
         case 'unsupported-item':

@@ -52,28 +52,6 @@ export async function logPublicShareAccess(
 }
 
 /**
- * Get IP address from request
- *
- * @param headers - Request headers
- * @returns IP address or undefined
- */
-export function getIpAddress(headers: Record<string, string | string[] | undefined>): string | undefined {
-    // Check common headers for IP address
-    const forwardedFor = headers['x-forwarded-for'];
-    if (forwardedFor) {
-        const ip = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-        return ip.split(',')[0].trim();
-    }
-
-    const realIp = headers['x-real-ip'];
-    if (realIp) {
-        return Array.isArray(realIp) ? realIp[0] : realIp;
-    }
-
-    return undefined;
-}
-
-/**
  * Get user agent from request
  *
  * @param headers - Request headers

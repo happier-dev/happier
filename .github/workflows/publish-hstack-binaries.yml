@@ -151,7 +151,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -217,7 +217,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Resolve channel metadata
         id: channel_meta
@@ -305,10 +305,49 @@ jobs:
             --run-contracts false \
             --check-installers false
 
+  build_windows_service_launcher:
+    name: Build Windows service launcher
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}\hstack-source
+      - name: Materialize candidate source without repository authority
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "hstack-source\hstack-source-$env:SOURCE_SHA.tar.gz"
+          if (-not (Test-Path -LiteralPath $archive)) { throw "candidate source archive missing" }
+          tar -xzf $archive -C $env:GITHUB_WORKSPACE
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Compile x64 GUI launcher with the installed MSVC toolchain
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test launcher lifecycle in an isolated fixture
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
+      - name: Upload exact launcher artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hstack-windows-service-launcher-${{ needs.prepare.outputs.source_sha }}
+          path: packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe
+          if-no-files-found: error
+          retention-days: 2
+
   build_candidate:
     name: Build unsigned HStack candidate
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
-    needs: [prepare]
+    needs: [prepare, build_windows_service_launcher]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions: {}
@@ -328,18 +367,21 @@ jobs:
           tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
           test -f "$GITHUB_WORKSPACE/scripts/pipeline/run.mjs"
           test -f "$GITHUB_WORKSPACE/apps/stack/package.json"
+      - name: Download exact Windows service launcher
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-windows-service-launcher-${{ needs.prepare.outputs.source_sha }}
+          path: packages/cli-common/native/windows/bin/windows-x64
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -401,9 +443,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted workflow control dependencies
@@ -517,9 +557,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install minisign
@@ -605,7 +643,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enable trusted control Yarn
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install artifact verifier dependencies

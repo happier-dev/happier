@@ -59,9 +59,10 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
 
         if (!actions) continue;
 
+        const chipActions = Array.isArray(actions) ? actions : [actions];
         extraControlActions[chip.controlId] = [
             ...(extraControlActions[chip.controlId] ?? []),
-            ...(Array.isArray(actions) ? actions : [actions]),
+            ...(chip.disabled ? chipActions.map((action) => ({ ...action, disabled: true })) : chipActions),
         ];
     }
 

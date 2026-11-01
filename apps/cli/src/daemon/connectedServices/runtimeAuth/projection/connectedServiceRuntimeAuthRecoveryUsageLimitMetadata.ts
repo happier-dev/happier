@@ -8,13 +8,13 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
   const intent = input.intent;
   const attemptId = intent.attemptId;
   const service = ConnectedServiceIdSchema.safeParse(intent.classification.serviceId);
-  if (intent.classification.kind !== 'usage_limit' || !attemptId || !intent.profileId || !service.success) return null;
+  if (intent.classification.kind !== 'usage_limit' || !attemptId || (!intent.groupId && !intent.profileId) || !service.success) return null;
   const status: SessionUsageLimitRecoveryV1['status'] = intent.status === 'recovered'
     ? 'paused'
     : intent.status === 'resumed_awaiting_proof' ? 'waiting' : intent.status;
   const selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] = intent.groupId
     ? { kind: 'group', serviceId: service.data, groupId: intent.groupId, profileId: intent.profileId }
-    : { kind: 'profile', serviceId: service.data, profileId: intent.profileId };
+    : { kind: 'profile', serviceId: service.data, profileId: intent.profileId! };
   return (metadata) => {
     const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
     const current = parsed.success ? parsed.data : null;
@@ -28,7 +28,8 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       ...metadata,
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
         v: 1, status,
-        issueFingerprint: sameAttempt && current ? current.issueFingerprint : attemptId,
+        issueFingerprint: intent.classification.runtimeIssueFingerprint
+          ?? (sameAttempt && current ? current.issueFingerprint : attemptId),
         runtimeAuthRecoveryAttemptId: attemptId,
         armedAtMs: intent.armedAtMs,
         resetAtMs: intent.classification.resetsAtMs ?? null,

@@ -7,7 +7,7 @@ export function openSessionDataEncryptionKey(params: {
   credential: Credentials;
   encryptedDataEncryptionKeyBase64: string | null | undefined;
 }): Uint8Array | null {
-  if (params.credential.encryption.type !== 'dataKey') {
+  if (params.credential.encryption?.type !== 'dataKey') {
     return null;
   }
 

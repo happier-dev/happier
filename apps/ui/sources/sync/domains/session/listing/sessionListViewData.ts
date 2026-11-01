@@ -1,4 +1,5 @@
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { SessionListAttentionPromotionReason } from './attentionPromotion/sessionListAttentionPromotionTypes';
 import type { SessionListWorkingPlacementReason } from './placement/sessionListPlacementProjection';
@@ -27,6 +28,8 @@ export type SessionListViewItem =
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'attention' | 'working' | 'shared' | 'folder';
         groupKey?: string;
         workspaceKey?: string;
+        appearanceColor?: SessionAppearanceColor | null;
+        workspaceLabel?: string | null;
         workspace?: SessionFolderWorkspaceRefV1;
         renderWorkspaceKey?: string;
         folderId?: string;

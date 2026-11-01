@@ -91,6 +91,7 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
     sessionIdsToCatchUp: string[];
+    reconcileSessionList?: boolean;
     sessionTranscriptRepairs: PlannedSessionTranscriptRepair[];
     unsupportedChanges: UnsupportedChangeMarker[];
     invalidate: {
@@ -298,6 +299,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     const sessionTranscriptRepairs = new Map<string, { minSeq: number; messageIds: Set<string>; messageSeqs: Record<string, number> }>();
     const unsupportedChanges: UnsupportedChangeMarker[] = [];
     let invalidateSessions = false;
+    let reconcileSessionList = false;
     let invalidateMachines = false;
     let invalidateArtifacts = false;
     let invalidateSettings = false;
@@ -374,8 +376,11 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             for (const scope of readHintOrderScopes(change)) organizationOrderScopes.set(`${scope.scopeKind}:${scope.scopeKey}`, scope);
             const hint = change.hint;
             if (isRecord(hint)) {
+                // Appearance hints refresh organization data above; row-local selectors consume
+                // it directly, so only placement-changing scopes need session invalidation.
                 if (hint.scope === 'pins' || hint.scope === 'attentionStandings') {
                     invalidateSessions = true;
+                    reconcileSessionList = true;
                 }
                 organizationIncludeFolders = organizationIncludeFolders || hint.scope === 'folders';
                 organizationIncludeTags = organizationIncludeTags || hint.scope === 'tags';
@@ -386,6 +391,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
 
         if (kind === 'session' || kind === 'share') {
             invalidateSessions = true;
+            if (kind === 'share') reconcileSessionList = true;
             if (typeof change.entityId === 'string' && change.entityId.length > 0) {
                 sessionIds.add(change.entityId);
                 const updatedMessage = getChangeUpdatedMessageHint(change);
@@ -403,6 +409,8 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
                         });
                     }
                 }
+            } else {
+                reconcileSessionList = true;
             }
             continue;
         }
@@ -500,6 +508,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     return {
         changes: [...changes],
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
+        reconcileSessionList,
         sessionTranscriptRepairs: Array.from(sessionTranscriptRepairs.entries())
             .map(([sessionId, repair]) => ({
                 sessionId,

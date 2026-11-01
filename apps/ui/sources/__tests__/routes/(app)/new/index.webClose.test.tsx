@@ -46,9 +46,12 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
+vi.mock('@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance', () => ({
+    useShouldBlockNewSessionWithGettingStartedGuidance: () => false,
+}));
+
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: () => React.createElement('SessionGettingStartedGuidance'),
-    useShouldBlockNewSessionWithGettingStartedGuidance: () => false,
 }));
 
 vi.mock('@/components/sessions/new/components/NewSessionSimplePanel', () => ({

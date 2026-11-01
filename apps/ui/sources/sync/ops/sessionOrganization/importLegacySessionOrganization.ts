@@ -23,6 +23,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
                 envelope: folder.display,
+                serverUrl: params.serverUrl,
             }),
         }))),
         tags: await Promise.all(params.request.tags.map(async (tag) => ({
@@ -30,6 +31,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
                 envelope: tag.display,
+                serverUrl: params.serverUrl,
             }),
         }))),
         labels: await Promise.all(params.request.labels.map(async (label) => ({
@@ -37,6 +39,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
             display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
                 credentials: params.credentials,
                 envelope: label.display,
+                serverUrl: params.serverUrl,
             }),
         }))),
     };

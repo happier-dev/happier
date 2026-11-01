@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 function isAbsoluteWorkspacePath(value: string): boolean {
   if (!value) return false;
@@ -8,15 +9,15 @@ function isAbsoluteWorkspacePath(value: string): boolean {
   return false;
 }
 
-export const AbsoluteWorkspacePathSchema = z
+export const AbsoluteWorkspacePathSchema = lazySchema(() => z
   .string()
   .min(1)
-  .refine(isAbsoluteWorkspacePath, 'workspace path must be absolute');
+  .refine(isAbsoluteWorkspacePath, 'workspace path must be absolute'));
 
-export const WorkspaceLocationScmSchema = z
+export const WorkspaceLocationScmSchema = lazySchema(() => z
   .object({
     provider: z.literal('git'),
     rootPath: AbsoluteWorkspacePathSchema,
   })
-  .strict();
+  .strict());
 export type WorkspaceLocationScm = z.infer<typeof WorkspaceLocationScmSchema>;

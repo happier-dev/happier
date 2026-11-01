@@ -1,3 +1,5 @@
+import { canUseDirectPendingDeliveryActions } from '@/components/sessions/pending/pendingMessageVisualState';
+import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { SessionModelDiscoveryContext } from '@/components/sessions/agentInput/components/AgentInputModelDiscoveryDetail';
 import Color from 'color';
@@ -6,6 +8,11 @@ import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput, type AgentInputSendOptions } from '@/components/sessions/agentInput';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
+import {
+    useComposerTextStore,
+    useComposerTextValue,
+    type ComposerTextStore,
+} from '@/components/sessions/agentInput/composerTextStore';
 import {
     computeExistingSessionComposerInputMaxHeight,
     computeExistingSessionComposerPanelMaxHeight,
@@ -60,6 +67,10 @@ import { ChatList, type TranscriptViewportChangeState } from '@/components/sessi
 import { applyTranscriptJumpHighlightForJumpResult } from '@/components/sessions/transcript/navigation/transcriptJumpHighlightStore';
 import { TranscriptFirstPaintPlaceholder } from '@/components/sessions/transcript/TranscriptFirstPaintPlaceholder';
 import { TranscriptMessageSelectionProvider } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
+import { TranscriptQuoteProvider } from '@/components/sessions/transcript/quote/TranscriptQuoteContext';
+import { TranscriptQuoteSelectionControls } from '@/components/sessions/transcript/quote/TranscriptQuoteSelectionControls';
+import { appendTranscriptQuoteToDraft } from '@/components/sessions/transcript/quote/transcriptQuote';
+import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
 import { TranscriptSelectionToolbarController } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbarController';
 import type { TranscriptSelectionToolbarMessage } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar';
 import { appendTranscriptSelectionToNewSessionDraft } from '@/components/sessions/transcript/messageSelection/appendTranscriptSelectionToNewSessionDraft';
@@ -159,7 +170,7 @@ import { t, type TranslationKey } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
-import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
+import { useDeviceType, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldReadTranscriptForPendingRequests, shouldShowAbortButtonForSessionState, useSessionStatus, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
@@ -204,7 +215,7 @@ import {
 } from '@/components/sessions/shell/resolveSessionViewContentBottomSpacing';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { confirmNonSteerableSend } from '@/components/sessions/agentInput/confirmNonSteerableSend';
-import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import { canApplySteerConfigInFlight, resolveSessionComposerSendActions, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import {
     buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
@@ -454,6 +465,7 @@ import { useSessionSurfaceActivation } from './view/useSessionSurfaceActivation'
 import { resolveSessionAuthSurfaceState, type SessionAuthSurfaceState } from './sessionAuthSurfaceState';
 import { useSessionRuntimeStatusSource } from './useSessionRuntimeStatusSource';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
+import { confirmRunnerRestartStopsBackgroundWork } from './confirmRunnerRestartStopsBackgroundWork';
 import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
@@ -462,6 +474,7 @@ import {
 import {
     buildSessionUsageLimitRecoveryPresentation,
     buildSessionUsageLimitStatusBadgePresentation,
+    resolveSessionUsageLimitRecoveryOperationStatus,
     translateSessionUsageLimitRecovery,
     type SessionUsageLimitRecoveryActionKind,
     type UsageLimitRecoveryOperationStatus,
@@ -486,7 +499,7 @@ import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import {
     buildQuotaSnapshotScopeKey,
     consumeQuotaRecoveryCredit,
-} from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
+} from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 
 const sessionSubmitPort = createSyncBackedSubmitPort(sync);
 const SESSION_COMPOSER_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = [
@@ -765,24 +778,6 @@ function readUsageLimitRecoveryDiagnosticProfileActionRoute(
         profileId,
         profileKind,
     });
-}
-
-function resolveUsageLimitRecoveryStatusFromTypedFailure(
-    result: Extract<SessionUsageLimitRecoveryOperationResult, { ok: false }>,
-): UsageLimitRecoveryOperationStatus | 'resolved' | null {
-    switch (result.status) {
-        case 'exhausted':
-            return 'exhausted';
-        case 'inactive':
-        case 'not_found':
-            return 'inactive';
-        case 'rate_limited':
-            return 'waiting';
-        case 'cancelled':
-            return 'resolved';
-        default:
-            return null;
-    }
 }
 
 function isUsageLimitRecoveryCheckAction(kind: SessionUsageLimitRecoveryActionKind): boolean {
@@ -1138,7 +1133,9 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
     );
 });
 
-type SessionAgentInputWithUsageProps = Omit<React.ComponentProps<typeof AgentInput>, 'usageData'> & {
+type SessionAgentInputWithUsageProps = Omit<React.ComponentProps<typeof AgentInput>, 'usageData' | 'value'> & {
+    /** Live composer text; only this leaf subscribes to it, so typing renders nothing above it. */
+    composerTextStore: ComposerTextStore;
     sessionId: string;
     sessionLatestUsage: Session['latestUsage'] | null | undefined;
     inputComposerClearTransientStateRef: React.MutableRefObject<() => void>;
@@ -1245,6 +1242,7 @@ function useComposerKeyboardHeight(): number {
 }
 
 const SessionAgentInputWithUsage = React.memo(function SessionAgentInputWithUsage({
+    composerTextStore,
     sessionId,
     sessionLatestUsage,
     inputComposerClearTransientStateRef,
@@ -1252,6 +1250,7 @@ const SessionAgentInputWithUsage = React.memo(function SessionAgentInputWithUsag
     inputComposerRestoreTransientStateRef,
     ...agentInputProps
 }: SessionAgentInputWithUsageProps) {
+    const value = useComposerTextValue(composerTextStore);
     const sessionUsage = useSessionUsage(sessionId);
     const scaffoldAvailablePanelHeight = useComposerAvailablePanelHeight();
     const keyboardHeight = useComposerKeyboardHeight();
@@ -1260,8 +1259,8 @@ const SessionAgentInputWithUsage = React.memo(function SessionAgentInputWithUsag
     const uiFontScale = typeof rawUiFontScale === 'number' ? rawUiFontScale : undefined;
     const inputComposerPersistence = useSessionAgentInputComposerPersistence({
         sessionId,
-        text: agentInputProps.value,
-        textLength: agentInputProps.value.length,
+        text: value,
+        textLength: value.length,
         fontScale: uiFontScale,
     });
     React.useEffect(() => {
@@ -1334,6 +1333,7 @@ const SessionAgentInputWithUsage = React.memo(function SessionAgentInputWithUsag
     return (
         <AgentInput
             {...agentInputProps}
+            value={value}
             sessionId={sessionId}
             contentPaddingHorizontal={COMPOSER_CONTENT_HORIZONTAL_INSET}
             inputMaxHeight={inputMaxHeight}
@@ -1401,6 +1401,8 @@ const SessionAgentInputRuntimeStatusBoundary = React.memo(function SessionAgentI
             ? t('connectedServices.authSwitch.switchFailed')
             : sessionStatus.state === 'resuming'
             ? t('session.resuming')
+            : sessionStatus.state === 'archiving'
+            ? sessionStatus.statusText
             : (inactiveStatusText || sessionStatus.statusText),
         color: sessionStatus.statusColor,
         dotColor: sessionStatus.statusDotColor,
@@ -1587,11 +1589,9 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         });
     }, [router]);
     const safeArea = useSafeAreaInsets();
-    const safeAreaTopInset = props.safeAreaTopMode === 'external' ? 0 : safeArea.top;
     const headerSafeAreaTopMode = props.headerSafeAreaTopMode ?? props.safeAreaTopMode ?? 'internal';
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
-    const headerHeight = useHeaderHeight();
     const { width: windowWidth } = useWindowDimensions();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
@@ -1909,13 +1909,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
 
             {/* Header - always shown on desktop/Mac, hidden in landscape mode only on actual phones */}
             {showTopHeader && shouldRenderSessionSurface && (
-                <View style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    zIndex: 1000
-                }}>
+                <View style={{ zIndex: 1000 }}>
                     <ChatHeaderView
                         {...headerProps}
                         onBackPress={handleBackPress}
@@ -1928,7 +1922,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             )}
 
             {/* Content based on state */}
-            <View style={{ flex: 1, paddingTop: showTopHeader ? safeAreaTopInset + headerHeight : 0 }}>
+            <View style={{ flex: 1 }}>
                 {!session && authSurfaceState ? (
                     <SessionAuthRecoveryFallback message={authSurfaceState.message} />
                 ) : routeHydrationRetrying ? (
@@ -2560,7 +2554,7 @@ function SessionViewLoaded({
         paneUrlState?.rightTabId,
         sessionsRightPaneDefaultOpen,
     ]);
-    const [message, setMessage] = React.useState('');
+    const composerTextStore = useComposerTextStore(() => '');
     const realtimeStatus = useRealtimeStatus();
     const transcriptMessageSelectionEnabled = useSetting('transcriptMessageSelectionEnabled');
     const transcriptMessageSendToSessionEnabled = useSetting('transcriptMessageSendToSessionEnabled');
@@ -3143,6 +3137,7 @@ function SessionViewLoaded({
         }
         if (!staleSessionRunnerStatus) return;
         if (staleSessionRunnerOperationStatus?.status === 'pending') return;
+        if (!(await confirmRunnerRestartStopsBackgroundWork(staleSessionRunnerStatus.sessionId))) return;
 
         const fingerprint = staleSessionRunnerStatus.fingerprint;
         setStaleSessionRunnerOperationStatus({ fingerprint, status: 'pending' });
@@ -3245,6 +3240,7 @@ function SessionViewLoaded({
             Modal.alert(t('session.mcpRestartRequired.errorTitle'), t('session.mcpRestartRequired.errorBody'));
             return;
         }
+        if (!(await confirmRunnerRestartStopsBackgroundWork(sessionId))) return;
 
         setMcpSelectionRestartOperation({ fingerprint: presentation.fingerprint, status: 'pending' });
         const result = await restartSessionRunnerForConfigurationWithObserve({
@@ -3340,12 +3336,13 @@ function SessionViewLoaded({
             });
             Modal.alert(alert.title, alert.body, alert.buttons);
         };
-        const applyTypedUsageLimitRecoveryFailureStatus = (
-            result: Extract<SessionUsageLimitRecoveryOperationResult, { ok: false }>,
+        const applyUsageLimitRecoveryOperationStatus = (
+            result: SessionUsageLimitRecoveryOperationResult,
         ): boolean => {
-            const status = resolveUsageLimitRecoveryStatusFromTypedFailure(result);
+            const status = resolveSessionUsageLimitRecoveryOperationStatus(result.status);
             if (!status) return false;
-            if (status === 'resolved') {
+            if (status === 'cancelled') {
+                if (!result.ok) return false;
                 markUsageLimitRecoveryIssueResolved();
                 return true;
             }
@@ -3375,14 +3372,10 @@ function SessionViewLoaded({
                     });
                     if (!result.ok) {
                         setUsageLimitRecoveryOperationStatus(null);
-                        if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                        if (applyUsageLimitRecoveryOperationStatus(result)) {
                             return;
                         }
                         showUsageLimitRecoveryOperationFailure(result);
-                        return;
-                    }
-                    if (result.status === 'resumed') {
-                        markUsageLimitRecoveryIssueResolved();
                         return;
                     }
                     if (result.status === 'ready') {
@@ -3391,30 +3384,16 @@ function SessionViewLoaded({
                             resumeInactiveSession: async () => (
                                 await handleUsageLimitRecoveryResumeNowRef.current?.({ silent: true }) === true
                             ),
-                            markResolved: markUsageLimitRecoveryIssueResolved,
                             markReady: () => markCurrentUsageLimitRecoveryOperationStatus('ready'),
                         });
                         return;
                     }
-                    if (result.status === 'waiting') {
-                        const issueFingerprint = usageLimitRecoveryPresentation?.issueFingerprint;
-                        if (issueFingerprint) {
-                            setUsageLimitRecoveryOperationStatus({
-                                issueFingerprint,
-                                status: result.status,
-                            });
-                        }
-                        return;
-                    }
-                    if (result.status === 'cancelled') {
-                        markUsageLimitRecoveryIssueResolved();
-                        return;
-                    }
+                    if (applyUsageLimitRecoveryOperationStatus(result)) return;
                 }
 
                 const resumed = await handleUsageLimitRecoveryResumeNowRef.current?.({ silent: false });
                 if (resumed) {
-                    markUsageLimitRecoveryIssueResolved();
+                    markCurrentUsageLimitRecoveryOperationStatus('waiting');
                 }
                 return;
             }
@@ -3424,7 +3403,7 @@ function SessionViewLoaded({
                     rememberPreference: true,
                 }, usageLimitRecoveryOperationOptions);
                 if (!result.ok) {
-                    if (!applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                    if (!applyUsageLimitRecoveryOperationStatus(result)) {
                         showUsageLimitRecoveryOperationFailure(result);
                     }
                 } else {
@@ -3432,7 +3411,7 @@ function SessionViewLoaded({
                         usageLimitRecoverySettingsV1,
                         'auto_wait',
                     ));
-                    setUsageLimitRecoveryOperationStatus(null);
+                    if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
                 }
                 return;
             }
@@ -3446,7 +3425,7 @@ function SessionViewLoaded({
                         : {}),
                 }, usageLimitRecoveryOperationOptions);
                 if (!result.ok) {
-                    if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                    if (applyUsageLimitRecoveryOperationStatus(result)) {
                         return;
                     }
                     showUsageLimitRecoveryOperationFailure(result);
@@ -3456,13 +3435,7 @@ function SessionViewLoaded({
                     usageLimitRecoverySettingsV1,
                     'ask',
                 ));
-                if (result.status === 'cancelled' || result.status === 'resumed' || result.status === 'ready') {
-                    markUsageLimitRecoveryIssueResolved();
-                } else if (result.status === 'waiting') {
-                    markCurrentUsageLimitRecoveryOperationStatus(result.status);
-                } else {
-                    setUsageLimitRecoveryOperationStatus(null);
-                }
+                if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
                 return;
             }
 
@@ -3470,12 +3443,9 @@ function SessionViewLoaded({
                 markCurrentUsageLimitRecoveryOperationStatus('checking');
             }
             if (kind === 'consume_reset_credit' && usageLimitRecoveryQuotaProfileRef && usageLimitRecoveryQuotaProfileKey) {
-                const consumed = await consumeConnectedServiceRecoveryCreditForProfile({
+                await consumeConnectedServiceRecoveryCreditForProfile({
                     profileRef: usageLimitRecoveryQuotaProfileRef,
                 });
-                if (consumed) {
-                    setUsageLimitRecoveryOperationStatus(null);
-                }
                 return;
             }
             const result = kind === 'enable'
@@ -3511,7 +3481,7 @@ function SessionViewLoaded({
                 if (isUsageLimitRecoveryControlAction(kind)) {
                     setUsageLimitRecoveryOperationStatus(null);
                 }
-                if (applyTypedUsageLimitRecoveryFailureStatus(result)) {
+                if (applyUsageLimitRecoveryOperationStatus(result)) {
                     return;
                 }
                 showUsageLimitRecoveryOperationFailure(result);
@@ -3522,19 +3492,9 @@ function SessionViewLoaded({
                 setUsageLimitRecoveryOperationStatus(null);
                 return;
             }
-            if (isUsageLimitRecoveryControlAction(kind) && result.status && usageLimitRecoveryPresentation?.issueFingerprint) {
-                if (result.status === 'resumed' || result.status === 'ready' || result.status === 'cancelled') {
-                    markUsageLimitRecoveryIssueResolved();
-                    return;
-                }
-                setUsageLimitRecoveryOperationStatus({
-                    issueFingerprint: usageLimitRecoveryPresentation.issueFingerprint,
-                    status: result.status,
-                });
-            } else if (kind === 'enable' || kind === 'cancel') {
-                setUsageLimitRecoveryOperationStatus(null);
-            }
+            if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
         } finally {
+            setUsageLimitRecoveryOperationStatus((current) => current?.status === 'checking' ? null : current);
             usageLimitRecoveryPendingActionRef.current = false;
             setUsageLimitRecoveryPendingAction(null);
         }
@@ -4399,18 +4359,15 @@ function SessionViewLoaded({
         restoreComposerSnapshot,
         captureDraftForOutboundHandoff,
         clearDraftCurrentness,
-        draftSnapshot,
+        draftConflict,
+        draftStatus,
         draftScope,
-    } = useDraft(sessionId, message, setMessage, { active: surfaceFocused });
-    const draftConflictBanner = useSessionDraftConflictComposerBanner(draftSnapshot?.conflict ?? null);
+    } = useDraft(sessionId, composerTextStore, { active: surfaceFocused });
+    const draftConflictBanner = useSessionDraftConflictComposerBanner(draftConflict);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftSnapshot?.status ?? 'clean'),
-        [draftSnapshot?.status],
+        () => buildSessionDraftSyncStatusBadge(draftStatus ?? 'clean'),
+        [draftStatus],
     );
-    const messageRef = React.useRef(message);
-    React.useEffect(() => {
-        messageRef.current = message;
-    }, [message]);
     const [pendingMessageEdit, setPendingMessageEdit] = React.useState<PendingMessageComposerEditState | null>(null);
     const pendingMessageEditRef = React.useRef(pendingMessageEdit);
     React.useEffect(() => {
@@ -4542,8 +4499,8 @@ function SessionViewLoaded({
         sessionId,
     ]);
     const captureComposerSemanticDraftSnapshot = React.useCallback((): ComposerSemanticDraftSnapshot => (
-        readPendingMessageComposerSemanticDraftSnapshot(draftSnapshot?.document ?? null)
-    ), [draftSnapshot]);
+        readPendingMessageComposerSemanticDraftSnapshot(existingSessionDraftSemanticValues, draftScope, sessionId)
+    ), [draftScope, sessionId]);
     const restoreSemanticDraftValuesFromSnapshot = React.useCallback((snapshot: ComposerSemanticDraftSnapshot) => {
         if (!draftScope) return;
         for (const [fieldId, value] of [
@@ -4616,7 +4573,7 @@ function SessionViewLoaded({
         // kept the typed sentence in `displayText`, and editing the expansion is
         // editing something the user never wrote.
         const editText = readMessageDisplayText(request);
-        const previousDraftText = pendingMessageEditRef.current?.previousDraftText ?? messageRef.current;
+        const previousDraftText = pendingMessageEditRef.current?.previousDraftText ?? composerTextStore.getPrompt();
         const previousAttachmentDrafts = pendingMessageEditRef.current?.previousAttachmentDrafts ?? attachmentDraftsSnapshotRef.current;
         const previousSemanticDraftSnapshot = pendingMessageEditRef.current?.previousSemanticDraftSnapshot
             ?? captureComposerSemanticDraftSnapshot();
@@ -4640,6 +4597,7 @@ function SessionViewLoaded({
         captureComposerSemanticDraftSnapshot,
         captureDraftForOutboundHandoff,
         clearDraftCurrentness,
+        composerTextStore,
         clearMountedArmedContinuationAfterAcceptedComposerClear,
         replaceSessionAttachmentDrafts,
         setDraftValue,
@@ -4653,16 +4611,16 @@ function SessionViewLoaded({
         if (stillQueued) return;
 
         setPendingMessageEdit(null);
-        if (messageRef.current === edit.loadedText) {
+        if (composerTextStore.getPrompt() === edit.loadedText) {
             restorePendingEditComposerSnapshotIfSafe(edit);
         } else {
             restorePendingEditNonTextComposerSnapshotIfSafe(edit);
         }
-    }, [pendingMessages, restorePendingEditComposerSnapshotIfSafe, restorePendingEditNonTextComposerSnapshotIfSafe]);
+    }, [composerTextStore, pendingMessages, restorePendingEditComposerSnapshotIfSafe, restorePendingEditNonTextComposerSnapshotIfSafe]);
     React.useEffect(() => () => {
         const edit = pendingMessageEditRef.current;
         if (!edit) return;
-        if (messageRef.current === edit.loadedText) {
+        if (composerTextStore.getPrompt() === edit.loadedText) {
             restorePendingEditComposerSnapshotIfSafeRef.current(edit);
         } else {
             restorePendingEditNonTextComposerSnapshotIfSafeRef.current(edit);
@@ -4724,13 +4682,23 @@ function SessionViewLoaded({
             });
             return readSessionConfigOptionOverridesState(nextMetadata);
         });
-        fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
-            sessionId,
-            configId,
-            value: valueId,
-            updatedAt,
-        }), { tag: 'SessionView.updateSessionConfigOptionOverride' });
-    }, [session.metadata, sessionId]);
+        fireAndForget((async () => {
+            const result = await actionExecutor.execute('session.config_option.set', {
+                sessionId, configId, valueId,
+            }, { surface: 'ui_button', defaultSessionId: sessionId });
+            const deferred = result.ok && result.result && typeof result.result === 'object'
+                && 'kind' in result.result && result.result.kind === 'approval_request_created';
+            if (!result.ok || deferred) {
+                setOptimisticSessionConfigOptionOverrides((current) => resolveNextOptimisticAcpConfigOptionOverrides({
+                    current,
+                    incoming: sessionConfigOptionOverrides,
+                    sessionChanged: false,
+                    rejected: { configId, updatedAt },
+                }) as typeof current);
+            }
+            if (!result.ok) throw new Error(result.error);
+        })(), { tag: 'SessionView.updateSessionConfigOptionOverride' });
+    }, [actionExecutor, session.metadata, sessionConfigOptionOverrides, sessionId]);
     const buildNextMessageMetaOverrides = React.useCallback((
         metaOverrides: Record<string, unknown> | undefined,
         destination: SessionComposerSendDestination,
@@ -5211,6 +5179,13 @@ function SessionViewLoaded({
                 return `${base}${spacer}@${path} `;
             });
         }, [setDraftValue]);
+        const executeKeyboardCommand = useKeyboardCommand();
+        const handleQuoteTranscriptSelection = React.useCallback((selectedText: string) => {
+            setDraftValue((prev) => appendTranscriptQuoteToDraft(prev, selectedText) ?? prev);
+            requestAnimationFrame(() => { executeKeyboardCommand('composer.focus'); });
+        }, [executeKeyboardCommand, setDraftValue]);
+        // The transcript quotes into the composer only while this surface's composer is shown and writable.
+        const transcriptQuoteHandler = surfaceFocused && shouldShowInput && !isReadOnly ? handleQuoteTranscriptSelection : null;
         const extraActionChips = useSessionAgentInputExtraActionChips({
             sessionId,
             attachmentsUploadsEnabled,
@@ -5225,7 +5200,7 @@ function SessionViewLoaded({
             reviewCommentDrafts,
             defaultBackendTarget: sessionActionDefaultBackend?.backendTarget ?? null,
             defaultBackendId: sessionActionDefaultBackend?.defaultBackendId ?? null,
-            instructionsText: message,
+            getInstructionsText: composerTextStore.getPrompt,
         });
         const sessionMcpChip = useExistingSessionMcpSelection({
             sessionId,
@@ -5350,13 +5325,45 @@ function SessionViewLoaded({
         }),
         [sessionId],
     );
+    const composerProfileId = liveComposerState.profileId;
+    const handleProfileClick = React.useCallback(() => {
+        const profileInfo = (composerProfileId === null || (typeof composerProfileId === 'string' && composerProfileId.trim() === ''))
+            ? t('profiles.noProfile')
+            : (typeof composerProfileId === 'string' ? composerProfileId : t('status.unknown'));
+        Modal.alert(
+            t('profiles.title'),
+            `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
+        );
+    }, [composerProfileId]);
+    const queuedSendInFlight = React.useRef(false);
+    const composerSendActions = resolveSessionComposerSendActions({
+        configuredMode: settings.sessionMessageSendMode,
+        busySteerSendPolicy: settings.sessionBusySteerSendPolicy,
+        session: sessionRuntimeStatusSource,
+    });
+    const canChooseComposerSendActions = !pendingMessageEdit && !recipientState.recipient && !armedContinuationTarget
+        && persistedVoiceComposerRouting?.kind !== 'adapter_text';
     const handleAgentInputSend = useStableAgentInputOnSend((sendOptions) => {
         if (!hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return;
         }
 
-        const composerMessage = sendOptions?.inputTextOverride ?? message;
+        const composerMessage = sendOptions?.inputTextOverride ?? composerTextStore.getPrompt();
+        if (sendOptions?.sendNextQueued) {
+            const message = pendingMessages[0];
+            if (!canChooseComposerSendActions || composerMessage.trim() || attachmentDrafts.length > 0 || hasIncludedReviewCommentDrafts
+                || pendingMessageEditRef.current
+                || queuedSendInFlight.current || isReadOnly || !shouldShowInput || isResuming || isUploadingAttachments
+                || !message || !canUseDirectPendingDeliveryActions(message)
+                || (sendOptions.deliveryIntent !== 'agent_queue' && sendOptions.deliveryIntent !== 'interrupt')) return;
+            queuedSendInFlight.current = true;
+            setIsComposerSendPending(true);
+            fireAndForget(sendPendingMessageWithIntent({ sessionId, session: sessionRuntimeStatusSource, message,
+                deliveryIntent: sendOptions.deliveryIntent === 'interrupt' ? 'interrupt_and_send' : 'steer_now',
+            }).finally(() => { queuedSendInFlight.current = false; setIsComposerSendPending(false); }), { tag: 'SessionView.pendingMessageShortcut' });
+            return;
+        }
         const activePendingEdit = pendingMessageEditRef.current;
         if (activePendingEdit) {
             const nextText = composerMessage;
@@ -5391,6 +5398,7 @@ function SessionViewLoaded({
             const nonSteerableSendPrompt = storage.getState().settings.sessionNonSteerableSendPrompt;
             const sessionInactiveResumePolicy = storage.getState().settings.sessionInactiveResumePolicy;
             const forceImmediateSend = sendIntent?.forceImmediate === true;
+            const explicitSendMode = !forceImmediateSend ? sendIntent?.deliveryIntent : undefined;
             const armedContinuationTargetLabel = armedContinuationTarget?.label ?? '';
             const resolveSendDestination = (
                 route: SessionComposerSendRoute,
@@ -5425,9 +5433,11 @@ function SessionViewLoaded({
                 && nonSteerableSendPrompt === 'ask'
                 && !forceImmediateSend
                 && sendIntent?.deliveryIntent !== 'server_pending'
+                && sendIntent?.deliveryIntent !== 'interrupt'
             ) {
                 const preflight = decideSessionMessageDelivery({
                     configuredMode,
+                    explicitMode: explicitSendMode,
                     busySteerSendPolicy,
                     session: sessionRuntimeStatusSource,
                     text: trimmedText,
@@ -5852,10 +5862,7 @@ function SessionViewLoaded({
                             providerNonSteerablePayloadReason,
                             ...(nonSteerableApplyConfigAndSteer ? { applyConfigAndSteer: true } : {}),
                             ...(nonSteerableSteerWithoutConfig ? { steerWithoutConfig: true } : {}),
-                            explicitMode: nonSteerableExplicitMode
-                                ?? (!forceImmediateSend && sendIntent?.deliveryIntent === 'server_pending'
-                                    ? 'server_pending'
-                                    : undefined),
+                            explicitMode: nonSteerableExplicitMode ?? explicitSendMode,
                             forceImmediate: forceImmediateSend,
                             profileId: liveComposerState.profileId,
                             resumeCapabilityOptions,
@@ -6089,10 +6096,7 @@ function SessionViewLoaded({
                         providerNonSteerablePayloadReason,
                         ...(nonSteerableApplyConfigAndSteer ? { applyConfigAndSteer: true } : {}),
                         ...(nonSteerableSteerWithoutConfig ? { steerWithoutConfig: true } : {}),
-                        explicitMode: nonSteerableExplicitMode
-                            ?? (!forceImmediateSend && sendIntent?.deliveryIntent === 'server_pending'
-                                ? 'server_pending'
-                                : undefined),
+                        explicitMode: nonSteerableExplicitMode ?? explicitSendMode,
                         forceImmediate: forceImmediateSend,
                         profileId: liveComposerState.profileId,
                         resumeCapabilityOptions,
@@ -6140,6 +6144,9 @@ function SessionViewLoaded({
         const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
         const resolved = resolveSessionComposerSend({
             input: composerMessage,
+            emptyInputFallback: inSessionAgentPicker.armedContinuation !== null
+                && attachmentDrafts.length === 0 && !hasIncludedReviewCommentDrafts
+                ? t('common.continue') : undefined,
             executionRunsEnabled,
             goalControlsAvailable: providerSupportsEditableSessionGoals,
             promptInvocationsV1,
@@ -6396,12 +6403,12 @@ function SessionViewLoaded({
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
-            {draftScope && draftSnapshot?.conflict && !draftConflictBanner.collapsed ? (
+            {draftScope && draftConflict && !draftConflictBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionDraftConflictResolution
                         scope={draftScope}
                         address={{ kind: 'session', sessionId }}
-                        conflict={draftSnapshot.conflict}
+                        conflict={draftConflict}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
@@ -6409,7 +6416,7 @@ function SessionViewLoaded({
                 session={session}
                 sessionLatestUsage={session.latestUsage}
                 placeholder={isReadOnly ? t('session.sharing.viewOnlyMode') : t('session.inputPlaceholder')}
-                value={message}
+                composerTextStore={composerTextStore}
                 onChangeText={setDraftValue}
                 sessionId={sessionId}
                 inputComposerClearTransientStateRef={inputComposerClearTransientStateRef}
@@ -6437,16 +6444,7 @@ function SessionViewLoaded({
                 modelDiscoveryContext={resolveSessionModelDiscoveryContext}
                 metadata={session.metadata}
                 profileId={liveComposerState.profileId ?? undefined}
-                onProfileClick={liveComposerState.profileId !== null ? () => {
-                    const profileId = liveComposerState.profileId;
-                    const profileInfo = (profileId === null || (typeof profileId === 'string' && profileId.trim() === ''))
-                        ? t('profiles.noProfile')
-                        : (typeof profileId === 'string' ? profileId : t('status.unknown'));
-                    Modal.alert(
-                        t('profiles.title'),
-                        `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
-                    );
-                } : undefined}
+                onProfileClick={liveComposerState.profileId !== null ? handleProfileClick : undefined}
                 statusBadges={agentInputStatusBadges}
                 providerUsageGauge={providerUsageGauge}
                 onProviderUsageRecoveryCreditPress={providerUsageRecoveryCreditAction}
@@ -6455,6 +6453,9 @@ function SessionViewLoaded({
                 onActiveStatusBadgeKeyChange={setActiveStatusBadgeKey}
                 connectedServicesRestartState={sessionConnectedServicesAuthSwitch.restartState}
                 onSend={handleAgentInputSend}
+                sendMenuModes={canChooseComposerSendActions ? composerSendActions.modes : undefined}
+                alternateSendMode={composerSendActions.alternateMode}
+                canSendNextQueued={canChooseComposerSendActions}
                 isSendDisabled={!shouldShowInput || isResuming || isReadOnly || isUploadingAttachments}
                 isSending={isComposerSendPending}
                 onMicPress={micButtonState.onMicPress}
@@ -6583,19 +6584,22 @@ function SessionViewLoaded({
                         latestTurnStatus={session.latestTurnStatus}
                         surfaceFocused={surfaceFocused}
                     />
-                    <SessionTranscriptAgentContentView
-                        sessionId={sessionId}
-                        session={session}
-                        isEncryptedSessionLocked={isEncryptedSessionLocked}
-                        isForkedSessionV1={isForkedSessionV1}
-                        isLocallyAttached={isLocallyAttached}
-                        pendingMessagesCount={pendingMessages.length}
-                        hasDirectControlFooter={directControlFooter != null}
-                        content={content}
-                        input={inputWithTranscriptSelection}
-                        placeholder={placeholder}
-                        safeAreaBottom={agentContentSafeAreaBottom}
-                    />
+                    <TranscriptQuoteSelectionControls sessionId={sessionId} onQuote={transcriptQuoteHandler} />
+                    <TranscriptQuoteProvider value={transcriptQuoteHandler}>
+                        <SessionTranscriptAgentContentView
+                            sessionId={sessionId}
+                            session={session}
+                            isEncryptedSessionLocked={isEncryptedSessionLocked}
+                            isForkedSessionV1={isForkedSessionV1}
+                            isLocallyAttached={isLocallyAttached}
+                            pendingMessagesCount={pendingMessages.length}
+                            hasDirectControlFooter={directControlFooter != null}
+                            content={content}
+                            input={inputWithTranscriptSelection}
+                            placeholder={placeholder}
+                            safeAreaBottom={agentContentSafeAreaBottom}
+                        />
+                    </TranscriptQuoteProvider>
                 </TranscriptMessageSelectionProvider>
             </View >
 

@@ -135,6 +135,7 @@ function createEnvelopeHarness(params: Readonly<{
         invalidateViewportAnchorCapture: vi.fn(),
         isScrollable: vi.fn(() => true),
         isViewportAnchorSeqLoaded: vi.fn(() => false),
+        isViewportNearOlderEdge: vi.fn(() => false),
         jumpToSeqActiveRef: { current: false },
         lastScrollOffsetForIntentRef: { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },

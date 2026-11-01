@@ -108,8 +108,8 @@ export function isLiveSessionRuntime(
  * **`runtimeActivityObservedAt` is not a heartbeat.** The server stamps it only when the projected
  * `(state, activeCount)` pair actually changes — a semantic duplicate never rewrites storage — so a
  * background task that has been running for an hour legitimately carries an hour-old instant.
- * Ageing that instant out on its own would mark live work dead, which is worse than the bug this
- * gate exists to close.
+ * Ageing that instant out on its own would mark live work dead. These timestamps describe
+ * observation uncertainty; publisher presence and explicit activity snapshots own liveness.
  *
  * The session keep-alive is the signal that genuinely repeats: the CLI pings every
  * `HAPPIER_SESSION_KEEPALIVE_IDLE_MS` (15 s by default, faster while a turn is in flight), which is
@@ -124,14 +124,6 @@ export function readSessionRuntimeObservationTimestamps(
     const observedAt = normalizeRuntimeStatusTimestamp(input.runtimeActivityObservedAt);
     if (observedAt !== null) timestamps.push(observedAt);
     return timestamps;
-}
-
-function hasWitnessedRuntimeActivityObservation(
-    input: DeriveSessionRuntimePresentationStateInput,
-    nowMs: number,
-): boolean {
-    return readSessionRuntimeObservationTimestamps(input)
-        .some((timestamp) => isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS));
 }
 
 export function deriveSessionRuntimePresentationState(
@@ -156,14 +148,10 @@ export function deriveSessionRuntimePresentationState(
     const freshInProgress = freshInProgressSignals.length > 0;
     const runtimeActivityState = isArchived
         ? 'idle'
-        : readRuntimeActivityPresentationState(input, nowMs, isLiveRuntime);
+        : readRuntimeActivityPresentationState(input, isLiveRuntime);
     const freshProviderRuntimeActivity = runtimeActivityState === 'active';
     const working = freshInProgress || freshThinking;
     const backgroundActive = !working && freshProviderRuntimeActivity;
-    const pendingRequestObservedAt = normalizeRuntimeStatusTimestamp(input.pendingRequestObservedAt);
-    const hasFreshPendingRequest =
-        pendingRequestObservedAt !== null
-        && isFreshTimestamp(pendingRequestObservedAt, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
     const activityState: SessionRuntimeActivityPresentationState = working
         ? 'working'
         : backgroundActive
@@ -185,14 +173,16 @@ export function deriveSessionRuntimePresentationState(
         activityState,
         runtimeProjectionInProgress: freshInProgress,
         runtimeActivelyWorking,
+        // Keep an outstanding request visible until its count clears or its owning runtime is no
+        // longer live. `pendingRequestObservedAt` need not advance while a request waits, so its age
+        // is not settlement evidence. Updated CLIs retain and retry exact settlement intents;
+        // older producers can leave an unresolved count after a failed cancellation write.
         freshPermissionRequired:
             input.hasPendingPermissionRequests === true
-            && isLiveRuntime
-            && (working || hasFreshPendingRequest),
+            && isLiveRuntime,
         freshActionRequired:
             input.hasPendingUserActionRequests === true
-            && isLiveRuntime
-            && (working || hasFreshPendingRequest),
+            && isLiveRuntime,
     };
 }
 
@@ -255,17 +245,11 @@ export function readSessionRuntimePresentationFreshnessTimestamps(
     }
     timestamps.push(...readFreshInProgressRuntimeSignalTimestamps(input, nowMs));
     if (runtimeStatus.freshProviderRuntimeActivity) {
-        // Background activity can now expire, so the surfaces that show it must be woken when it
-        // does — otherwise the gate above only takes effect the next time something unrelated
-        // re-renders, which is exactly how "forever" happened in the first place. Only the newest
-        // witness is published: it is the one whose expiry can change the answer.
+        // Age changes the observation presentation ("awaiting updates"), not the reported work.
+        // Wake once when the newest witness expires so mounted rows can state that uncertainty.
         const witnesses = readSessionRuntimeObservationTimestamps(input)
             .filter((timestamp) => isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS));
         if (witnesses.length > 0) timestamps.push(Math.max(...witnesses));
-    }
-    if (runtimeStatus.freshPermissionRequired || runtimeStatus.freshActionRequired) {
-        const pendingRequestObservedAt = normalizeRuntimeStatusTimestamp(input.pendingRequestObservedAt);
-        if (pendingRequestObservedAt !== null) timestamps.push(pendingRequestObservedAt);
     }
     return timestamps;
 }
@@ -338,24 +322,16 @@ function readRuntimeActivityActiveCount(
 
 function readRuntimeActivityPresentationState(
     input: DeriveSessionRuntimePresentationStateInput,
-    nowMs: number,
     isLiveRuntime: boolean,
 ): SessionRuntimeActivityState {
     if (
         input.runtimeActivityState === 'active'
         && readRuntimeActivityActiveCount(input) > 0
     ) {
-        // An `active` projection is a report, and a report outlives its reporter. The witnessed
-        // deaths are handled at the producer (runtime loss now publishes `unknown` even with tasks
-        // in flight); the residue is the UNWITNESSED one — SIGKILL, OOM, laptop sleep — where
-        // nobody was alive to publish anything and the last claim would render forever.
-        //
-        // So the claim is kept only while something still witnesses it. We do not assert death:
-        // the projection vocabulary already carries `unknown`, and a wrong record is permanent
-        // where a wrong sentence is not.
-        return isLiveRuntime && hasWitnessedRuntimeActivityObservation(input, nowMs)
-            ? 'active'
-            : 'unknown';
+        // Publisher presence owns reachability and expiry. A delayed heartbeat is not settlement
+        // evidence: replacing its active report with a shorter UI lease moves unfinished work to
+        // Needs attention. Observation age is presented separately by deriveSessionWorkObservation.
+        return isLiveRuntime ? 'active' : 'unknown';
     }
     if (
         input.runtimeActivityState === 'idle'

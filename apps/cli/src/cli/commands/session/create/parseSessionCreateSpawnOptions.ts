@@ -3,7 +3,7 @@ import {
   AgentRuntimeDescriptorV1Schema,
   ConnectedServiceBindingsV1Schema,
   SESSION_PERMISSION_INTENT_INPUTS,
-  SessionMcpSelectionV1Schema,
+  SessionMcpSelectionV1InputSchema,
   parseSessionPermissionModeAlias,
   type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
@@ -44,6 +44,9 @@ export const SESSION_CREATE_USAGE = [
   '  [--env <KEY=VALUE>]',
   '  [--auth <default|native|cs:<id>>|--connected-services <selector>|--auth-json <json>]',
   '  [--mcp-selection-json <json>] [--transcript-storage <persisted|direct>]',
+  '    MCP JSON: {"v":1,"managedServersEnabled":true,"happierToolsEnabled":true,',
+  '      "forceIncludeServerIds":[],"forceExcludeServerIds":[]}. All fields are optional; unknown fields are rejected.',
+  '    Set happierToolsEnabled:false to omit built-in Happier tools; managedServersEnabled:false disables saved defaults.',
   '  [--terminal-json <json>] [--codex-backend-mode <mcp|acp|appServer>]',
   '  [--runtime-descriptor-json <json>|--agent-runtime-descriptor-json <json>]',
   '  [--host <host>] [--machine-id <machineId>]',
@@ -255,7 +258,7 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const mcpSelection = readParsedJsonFlag(
     argv,
     '--mcp-selection-json',
-    (value) => SessionMcpSelectionV1Schema.parse(value),
+    (value) => SessionMcpSelectionV1InputSchema.parse(value),
   );
   const terminalRaw = readFlagValue(argv, '--terminal-json');
   const terminal = terminalRaw ? parseObjectJsonFlagValue(terminalRaw, '--terminal-json') : null;

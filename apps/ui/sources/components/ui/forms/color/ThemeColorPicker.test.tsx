@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -76,5 +77,43 @@ describe('ThemeColorPicker', () => {
 
         await screen.pressByTestIdAsync('theme-color-preview-button');
         expect(screen.findByTestId('theme-color-picker')).toBeNull();
+    });
+
+    it('can present an always-open opaque picker that only commits opaque hex colours', async () => {
+        Object.defineProperty(globalThis, 'window', {
+            configurable: true,
+            value: { addEventListener: () => {}, removeEventListener: () => {}, innerWidth: 1024, innerHeight: 768 },
+        });
+        const { ThemeColorPicker } = await import('./ThemeColorPicker');
+        const onChange = vi.fn();
+        const onValidityChange = vi.fn();
+
+        const screen = await renderScreen(
+            <ThemeColorPicker
+                value="#123456"
+                onChange={onChange}
+                onValidityChange={onValidityChange}
+                inline
+                allowAlpha={false}
+                inputTestID="theme-color-input"
+                pickerTestID="theme-color-picker"
+            />,
+        );
+
+        expect(screen.findByTestId('theme-color-picker:panel')).not.toBeNull();
+        expect(screen.findByTestId('theme-color-picker:opacity')).toBeNull();
+
+        const input = screen.findByTestId('theme-color-input') as any;
+        await act(async () => {
+            input.props.onChangeText('rgba(1, 2, 3, 0.5)');
+        });
+        expect(onValidityChange).toHaveBeenLastCalledWith(false);
+        expect(onChange).not.toHaveBeenCalled();
+
+        await act(async () => {
+            input.props.onChangeText('#abc');
+        });
+        expect(onValidityChange).toHaveBeenLastCalledWith(true);
+        expect(onChange).toHaveBeenLastCalledWith('#AABBCC');
     });
 });

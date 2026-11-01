@@ -88,7 +88,7 @@ When you send a message with attachments:
 
 1. Happier uploads each file first
 2. Happier stores the files in the configured attachment upload location
-3. the sent message includes an attachments block with stable file paths
+3. the sent message includes an attachments block with stable file paths (with the default workspace location, these are relative to the session's working directory)
 4. the message tells the agent to read those paths from disk before answering
 
 This means attachments behave like real files in the session environment, not like provider-specific “inline binary parts”.
@@ -134,6 +134,23 @@ If an image is too large for the in-app preview budget, or the preview cannot be
 - Happier falls back to a placeholder/open-file path instead of pretending the preview succeeded
 
 This protects transcript performance while preserving access to the underlying file.
+
+## Images returned by Agent tools
+
+In development source, Claude Code tool results that contain image blocks can also
+appear as previews inside the expanded tool call, including images read with `Read`.
+Collapsed tool calls do not load or display these previews. This
+requires the corrected CLI and app; it is not a claim of availability in 0.2.17.
+The CLI saves a copy under `.happier/uploads/artifacts/...` in the session's project
+folder on the machine running the Agent. The transcript stores the file reference
+and metadata instead of the inline image bytes. This flow does not upload an image
+blob for storage on the Happier server. Previews read the file from the Agent
+machine through the existing transfer flow, which can pass through Happier's relay.
+The machine hosting the session must be reachable to load it.
+
+The CLI keeps the tool's text and execution status if image persistence fails.
+A persisted unavailable-media item explains that the image could not be attached.
+Remote HTTP image URLs are not downloaded by this flow.
 
 ## Attachment storage location
 

@@ -1,6 +1,6 @@
 ---
 title: Organizing sessions
-description: Folders, tags, pins and multi-select — how to keep a long session list navigable, and what carries across your devices.
+description: Folders, tags, pins, colors and multi-select — how to keep a long session list navigable, and what carries across your devices.
 ---
 
 Once you are running more than a handful of sessions, the list becomes the
@@ -14,6 +14,13 @@ operator has disabled `sessions.folders`.
 ## Folders
 
 Folders group sessions the way directories group files, and they nest.
+
+In development builds, Direct and Happier sessions use the same saved folders
+within a workspace. Each storage tab shows its matching sessions; organizing a
+Direct session does not require importing its transcript. Folder destinations
+belong to the same server, machine and workspace path. Automatic project
+headings group sessions by their working directory and are separate from saved
+folders.
 
 - Create, rename, move and delete them, and nest one inside another.
 - Assign a session by dragging it onto a folder, or through the session's
@@ -46,13 +53,84 @@ session that carried it and leaves the sessions alone.
 Pin the few sessions you keep coming back to and they stay at the top of the
 list, above everything else, regardless of folder.
 
+In development builds, the open session's three-dot menu also offers **Pin
+Session**, or **Unpin Session** when it is already pinned. It changes the same
+pin shown in the session list.
+
+Because pins sit outside the Active and Inactive sections, a pinned row says
+for itself when its session is no longer live: it shows **last seen …** under
+the title. A quiet pinned row with nothing under its title is live. Anywhere in
+the list, a session that is not live also has a dimmed avatar or agent logo.
+
 Pinned sessions appear during the first paint of a long list rather than after
 you scroll, which is the point of pinning them. Archiving a session removes it
 from the pinned list and gives the pin quota back.
 
+## Colors
+
+In development builds, you can give a project or a single session a color so
+it stands out at a glance. A colored project shows a small dot beside its name,
+and every session in it shows a thin stripe in that color at the left edge of
+its row — in pinned, recent, project and folder groups alike.
+
+- **A project:** open the project heading's menu and choose **Set color**.
+- **A session:** open the session's menu (the three-dot button that appears
+  when you hover a row on web and desktop, or long-press the row on a phone)
+  and choose **Set color**.
+
+The menu offers the theme's colors — blue, green, orange, yellow, red, indigo
+and purple — which adjust to light and dark mode, followed by any custom colors
+you already use. **Custom color…** opens a picker that takes any opaque hex
+value. The current choice is ringed, and **Remove color** clears it. In a
+session's menu, a color it inherits from its project has a dashed ring instead;
+picking any color gives the session its own.
+
+A session uses its project's color until you give it its own; removing the
+session's color returns it to the project's. Colors are stored on the server
+with the rest of your organization, so they follow you to your other devices.
+Color is decoration, not meaning: Happier does not attach any behavior to it.
+
+Coloring a single session needs a server that stores session colors. On an
+older server the session's **Set color** item is not shown, while project
+colors stay available.
+
+## Referencing another session
+
+In development builds, the session's three-dot menu and list menu include a
+**Copy** submenu near the bottom, without requiring developer mode:
+
+- **Session information** copies the Happier session ID, Agent session ID, and log paths when available.
+- **Happier Session ID** copies only the Happier ID, ready to paste into another session.
+- The Agent's **Session ID** entry, such as **Claude Session ID**, copies only its native ID and appears when that ID is available.
+
+The info screen also lets you copy session information. Review log paths before
+pasting information outside your own sessions. Copying an ID does not grant access
+to the session; an Agent needs authorized Happier tools to retrieve another
+session's transcript using its Happier ID. The native Agent ID identifies that
+Agent's conversation and is separate from the Happier ID.
+
+You can also type `@` in the message composer and choose a session from the
+suggestions; `@session:` narrows the suggestions to sessions.
+
+## Deleting a session
+
+In development builds, **Delete Session** is available for sessions you own
+from the info screen, the open session's three-dot menu, and the session's list
+menu. You do not need to stop a running session in a separate step.
+
+When the session still needs to be stopped, the confirmation offers
+**Stop and delete** and explains that it will stop the session and permanently
+delete its messages and data.
+Happier stops the session before deleting it, without archiving it first. If
+stopping fails, the session is kept. If stopping succeeds but deletion fails,
+the stopped session remains so you can retry deleting it.
+
+When no stop is needed, the existing delete confirmation applies. Deleting is
+permanent and cannot be undone.
+
 ## Selecting several at once
 
-Long-press a row, or use its menu, to start a selection. Then archive, delete,
+Long-press a row, or use its menu, to start a selection. Then archive,
 move, mark read, or change attention handling for all of them together. The
 selection survives the list updating underneath you and survives scrolling.
 
@@ -72,7 +150,8 @@ Generous, but not unbounded. Each is per account:
 | Tags | 500 |
 | Pinned sessions | 1000 |
 | Session attention choices and reminders | 500 |
-| Workspace and group labels | 1000 |
+| Session colors | 1000 |
+| Workspace and group labels, including project colors | 1000 |
 | Sessions changed in one bulk action | 500 |
 | Custom order entries per scope | 1000 |
 

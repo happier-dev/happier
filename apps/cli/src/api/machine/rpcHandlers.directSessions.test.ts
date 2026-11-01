@@ -19,6 +19,7 @@ vi.mock('@/configuration', () => ({
   configuration: {
     activeServerDir: '/tmp/happier-test-active-server',
     happyHomeDir: '/tmp/happier-test-home',
+    daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     logsDir: '/tmp',
     isDaemonProcess: false,
   },

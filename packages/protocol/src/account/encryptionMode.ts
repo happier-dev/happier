@@ -1,17 +1,18 @@
 import { z } from 'zod';
 
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const AccountEncryptionModeResponseSchema = z.object({
+export const AccountEncryptionModeResponseSchema = lazySchema(() => z.object({
   mode: AccountEncryptionModeSchema,
   updatedAt: z.number().int().min(0),
-}).strict();
+}).strict());
 
 export type AccountEncryptionModeResponse = z.infer<typeof AccountEncryptionModeResponseSchema>;
 
-export const AccountEncryptionModeUpdateRequestSchema = z.object({
+export const AccountEncryptionModeUpdateRequestSchema = lazySchema(() => z.object({
   mode: AccountEncryptionModeSchema,
-}).strict();
+}).strict());
 
 export type AccountEncryptionModeUpdateRequest = z.infer<typeof AccountEncryptionModeUpdateRequestSchema>;
 

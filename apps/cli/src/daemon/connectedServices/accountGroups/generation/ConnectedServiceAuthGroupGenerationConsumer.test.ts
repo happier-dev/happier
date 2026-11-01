@@ -51,6 +51,29 @@ function convergedConsumer(overrides: Partial<ConsumerDeps> = {}) {
 }
 
 describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
+  it.each(['per_session_runtime', 'shared_group_auth_surface'] as const)(
+    'does not acknowledge a revisionless provider claim as runner availability (%s)', async (scope) => {
+    const revisionless = {
+      ...providerAdoptedTarget, credentialRevision: null,
+      proof: { ...providerAdoptedTarget.proof, credentialRevision: null },
+    };
+    const result = await convergedConsumer({
+      resolveGenerationApplicationScope: async () => ({ status: 'supported', scope, ownerId: 'claude' }),
+      verifySharedGenerationApplication: async () => scope === 'shared_group_auth_surface' ? revisionless : null,
+      applyCommittedGeneration: async () => ({
+        reconciliationDisposition: 'converged', errorCode: null,
+        providerAdoptedTarget: revisionless,
+      }),
+    }).consume({
+      executionAuthority: 'runtime_recovery', committedGeneration: generation,
+      switchReason: 'automatic_runtime_failure', sessions: [{ sessionId: 'blocked', activity: 'live' }],
+    });
+    expect(result).toMatchObject({
+      acknowledgeable: false, outcome: 'retryable_not_acknowledged',
+      resultsBySessionId: { blocked: { errorCode: 'credential_revision_missing' } },
+    });
+  });
+
   it.each([
     ['automatic_runtime_failure', 'same_provider_account_exhausted'],
     ['pre_turn_group_policy', 'soft_threshold'],
@@ -369,6 +392,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
   });
 
   it('redistributes a newer authoritative epoch to every live recipient', async () => {
+    const notifyCurrentGroupTruth = vi.fn(async () => ({ ok: true as const }));
     const generationC = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'decision-3',
       provenance: 'reconciliation',
@@ -381,6 +405,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     });
     const applied: string[] = [];
     const result = await convergedConsumer({
+      notifyCurrentGroupTruth,
       applyCommittedGeneration: async ({ sessionId, committedGeneration }) => {
         applied.push(`${sessionId}:${committedGeneration.decisionCommittedTarget.generation}`);
         if (sessionId === 'source' && committedGeneration.decisionCommittedTarget.generation === 2) {
@@ -412,5 +437,10 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
 
     expect(applied).toEqual(expect.arrayContaining(['source:2', 'sibling:2', 'source:3', 'sibling:3']));
     expect(result.acknowledgeable).toBe(true);
+    for (const sessionId of ['source', 'sibling']) {
+      expect(notifyCurrentGroupTruth).toHaveBeenCalledWith(expect.objectContaining({ sessionId,
+        currentTruth: { kind: 'current_auth_group_available', groupId: 'team', generation: 3,
+          credentialRevision: generationC.decisionCommittedTarget.credentialRevision } }));
+    }
   });
 });

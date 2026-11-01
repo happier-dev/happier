@@ -4,7 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
-import { SessionGettingStartedGuidance, useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
+import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance';
+import { NewSessionBlockingGuidance } from '@/components/sessions/new/components/NewSessionBlockingGuidance';
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
@@ -57,10 +58,11 @@ function NewSessionWebCloseFallback() {
 function NewSessionScreenInner(props: Readonly<{
     composerTopContent?: React.ReactNode;
     draftId: string;
+    onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
 }>) {
-    const model = useNewSessionScreenModel({ draftId: props.draftId });
+    const model = useNewSessionScreenModel({ draftId: props.draftId, onDraftRemoved: props.onDraftRemoved });
 
     if (model.variant === 'simple') {
         return (
@@ -68,7 +70,7 @@ function NewSessionScreenInner(props: Readonly<{
                 {...model.simpleProps}
                 composerTopContent={props.composerTopContent}
                 statusBadges={props.statusBadges}
-                statusTrailingActions={props.statusTrailingActions}
+                statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: model.simpleProps.isCreating })}
             />
         );
     }
@@ -86,7 +88,7 @@ function NewSessionScreenInner(props: Readonly<{
             footer={footer}
             composerTopContent={props.composerTopContent}
             statusBadges={props.statusBadges}
-            statusTrailingActions={props.statusTrailingActions}
+            statusTrailingActions={props.renderStatusTrailingActions?.({ isCreating: footer?.isCreating ?? false })}
         />
     );
 }
@@ -95,8 +97,9 @@ function NewSessionContent(props: Readonly<{
     allowBlockingGuidance: boolean;
     composerTopContent?: React.ReactNode;
     draftId: string;
+    onDraftRemoved: () => void;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
 }>) {
     const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
 
@@ -104,7 +107,7 @@ function NewSessionContent(props: Readonly<{
         return (
             <>
                 <NewSessionWebCloseFallback />
-                <SessionGettingStartedGuidance variant="newSessionBlocking" />
+                <NewSessionBlockingGuidance />
             </>
         );
     }
@@ -143,7 +146,11 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
             operations: actionOperations,
         })
     )), [actionOperations, draftScope, draftSnapshot]);
+    const startedAnotherRef = React.useRef(false);
     const startAnother = React.useCallback(() => {
+        // Local deletion notifies the editor before its confirmation promise settles.
+        if (startedAnotherRef.current) return;
+        startedAnotherRef.current = true;
         const next = resolveOrdinaryEntryRoute({ forceFresh: true });
         router.replace({
             pathname: '/new',
@@ -175,12 +182,8 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
             deleteDraft: () => deleteSessionDraft({ scope: draftScope, address: draftAddress }),
         });
         if (!deleted) return;
-        const next = resolveOrdinaryEntryRoute({ forceFresh: true });
-        router.replace({
-            pathname: '/new',
-            params: { draftId: next.draftId, draftOrigin: next.draftOrigin },
-        });
-    }, [draftAddress, draftScope, hasUnresolvedLaunch, props.draftId, resolveOrdinaryEntryRoute, router]);
+        startAnother();
+    }, [draftAddress, draftScope, hasUnresolvedLaunch, props.draftId, startAnother]);
 
     const tempData = React.useMemo(() => {
         return typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
@@ -224,20 +227,24 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
     ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
-    const statusTrailingActions = draftScope && draftSnapshot?.materialized ? (
-        <NewSessionDraftComposerActions
-            deleteDisabled={hasUnresolvedLaunch}
-            onStartAnother={startAnother}
-            onDelete={deleteDraft}
-        />
-    ) : null;
+    const showDraftActions = Boolean(draftScope && draftSnapshot?.materialized);
+    const renderStatusTrailingActions = React.useCallback((state: Readonly<{ isCreating: boolean }>) => (
+        showDraftActions ? (
+            <NewSessionDraftComposerActions
+                deleteDisabled={hasUnresolvedLaunch || state.isCreating}
+                onStartAnother={startAnother}
+                onDelete={deleteDraft}
+            />
+        ) : null
+    ), [deleteDraft, hasUnresolvedLaunch, showDraftActions, startAnother]);
     return (
         <NewSessionContent
             allowBlockingGuidance={!hasSeededDraftIntent && !hasSeededRouteIntent}
             draftId={props.draftId}
+            onDraftRemoved={startAnother}
             composerTopContent={composerTopContent}
             statusBadges={statusBadges}
-            statusTrailingActions={statusTrailingActions}
+            renderStatusTrailingActions={renderStatusTrailingActions}
         />
     );
 }

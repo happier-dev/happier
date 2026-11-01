@@ -76,7 +76,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     buildCurrentPersistedDraft: () => PersistedDraft;
     stageDraftIfEnabled: (draft: PersistedDraft) => void;
     persistDraftIfEnabled: (draft: PersistedDraft) => void;
-    disableDraftPersistence: () => void;
+    disableDraftPersistence: () => boolean;
     draftPersistenceEnabled: boolean;
     draftPersistenceGenerationRef: React.MutableRefObject<number>;
 }> {
@@ -247,9 +247,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
     ]);
 
     const disableDraftPersistence = React.useCallback(() => {
+        if (!draftPersistenceEnabledRef.current) return false;
         draftPersistenceEnabledRef.current = false;
         draftPersistenceGenerationRef.current += 1;
         setDraftPersistenceEnabled(false);
+        return true;
     }, []);
 
     return {

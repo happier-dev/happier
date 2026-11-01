@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { Encryption } from '@/sync/encryption/encryption';
+import { MachineEncryption } from '@/sync/encryption/machineEncryption';
+import { EncryptionCache } from '@/sync/encryption/encryptionCache';
+import { decodeBase64 } from '@/encryption/base64';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
   buildConnectedServiceCredentialRecord,
@@ -12,11 +18,11 @@ import { encodeAutomationTemplateForTransport } from '@/sync/domains/automations
 
 import { buildAccountEncryptionMigrateToE2eeRequest } from './buildAccountEncryptionMigrateToE2eeRequest';
 
-function createLegacyCredentials(): AuthCredentials {
+function createLegacyCredentials(): Extract<AuthCredentials, { secret: string }> {
   return {
     token: 't',
     secret: Buffer.from(new Uint8Array(32).fill(9)).toString('base64url'),
-  } as any;
+  };
 }
 
 function assertObject(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -32,6 +38,33 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
+  it('converts the complete plain Machine payload without dropping metadata extensions', async () => {
+    const credentials = createLegacyCredentials();
+    if (!('secret' in credentials)) throw new Error('Expected legacy credentials');
+    const encryption = await Encryption.create(decodeBase64(credentials.secret, 'base64url'));
+    const metadata = { displayName: 'Retained machine', unknownExtension: { nested: [1, 2] } };
+    const daemonState = { status: 'running', unknownExtension: ['retained'] };
+    const request = await buildAccountEncryptionMigrateToE2eeRequest({
+      credentials, expectedSettingsVersion: 0,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as never,
+      connectedServiceProfiles: [], automations: [],
+      machines: [{ id: 'm1', metadata: encodePlainMachineStoredContent(metadata), metadataVersion: 3,
+        daemonState: encodePlainMachineStoredContent(daemonState), daemonStateVersion: 4,
+        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }],
+      machineEncryption: encryption,
+      fetchConnectedServiceCredentialPlain: async () => { throw new Error('unexpected credential read'); },
+    });
+    expect(request.machines).toMatchObject({ action: 'migrate', items: [{ machineId: 'm1', expected: { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 3, daemonStateVersion: 4 } }] });
+    if (request.machines?.action !== 'migrate') throw new Error('Missing Machine migration');
+    const next = request.machines.items[0].next;
+    if (!next.dataEncryptionKey) throw new Error('Missing wrapped Machine key');
+    const key = await encryption.decryptEncryptionKey(next.dataEncryptionKey);
+    if (!key) throw new Error('Machine key did not open');
+    const codec = new MachineEncryption('m1', await encryption.openEncryption(key), new EncryptionCache());
+    expect(await codec.decryptRaw(next.metadata)).toEqual(metadata);
+    expect(await codec.decryptRaw(next.daemonState!)).toEqual(daemonState);
+  });
+
   it('reseals exact server-backed new-session drafts with the target Account material', async () => {
     const credentials = createLegacyCredentials();
     const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);

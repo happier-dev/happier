@@ -1,9 +1,8 @@
-import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
+import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState, ManagedProbeReportScope, ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { HappyError } from '@/utils/errors/errors';
 
-import { isAuthenticationResponseStatus } from './authErrors';
-import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
+import { buildRetryLaterProbeResultFromResponse, parseRetryAfterMs, readRetryLaterReason } from './retryLaterProbeResult';
 
 export function shouldReportEndpointFailure(params: { init?: RequestInit; error: unknown }): boolean {
     if (params.init?.signal?.aborted) return false;
@@ -71,26 +70,37 @@ export function assertEndpointReadyForRequestOrThrow(
     }
 }
 
+export function classifyEndpointResponse(
+    response: Response,
+    hadAuth: boolean,
+): Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>> | null {
+    // Authentication middleware uses 401 for invalid credentials. Resource 403
+    // and route-level 500/503 failures do not establish an endpoint outage.
+    if (hadAuth && response.status === 401) {
+        return { status: 'auth_failed', statusCode: 401, errorMessage: 'HTTP 401' };
+    }
+    if (response.status === 502 || response.status === 504 || (
+        response.status === 503
+        && (parseRetryAfterMs(response.headers) !== undefined || readRetryLaterReason(response.headers) === 'server_restarting')
+    )) {
+        return buildRetryLaterProbeResultFromResponse(response, `HTTP ${response.status}`);
+    }
+    return null;
+}
+
 export function reportEndpointResponseToSupervisor(
     supervisor: ManagedEndpointSupervisor,
     response: Response,
     hadAuth: boolean,
+    probeReportScope: ManagedProbeReportScope | undefined,
 ): void {
-    if (hadAuth && isAuthenticationResponseStatus(response.status)) {
-        if (supervisor.reportProbeResult) {
-            supervisor.reportProbeResult({
-                status: 'auth_failed',
-                statusCode: response.status,
-                errorMessage: `HTTP ${response.status}`,
-            });
-            return;
-        }
+    const probe = classifyEndpointResponse(response, hadAuth);
+    if (!probe) return;
+    if (supervisor.reportProbeResult) {
+        supervisor.reportProbeResult(probe, probeReportScope);
+    } else if (probe.status === 'auth_failed') {
         supervisor.invalidate();
-    } else if (response.status >= 500) {
-        if (supervisor.reportProbeResult) {
-            supervisor.reportProbeResult(buildRetryLaterProbeResultFromResponse(response, `HTTP ${response.status}`));
-            return;
-        }
-        supervisor.reportFailure({ errorMessage: `HTTP ${response.status}` });
+    } else {
+        supervisor.reportFailure({ errorMessage: probe.errorMessage });
     }
 }

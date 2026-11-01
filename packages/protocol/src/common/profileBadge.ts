@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ProfileBadgeSchema = z.object({
+export const ProfileBadgeSchema = lazySchema(() => z.object({
   id: z.string(),
   label: z.string(),
   url: z.string(),
-}).strict();
+}).strict());
 
 export type ProfileBadge = z.infer<typeof ProfileBadgeSchema>;
 

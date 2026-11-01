@@ -1,4 +1,5 @@
-import type { Message } from '@/sync/domains/messages/messageTypes';
+import { readStoredSessionMessagesReadProjectionFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
+import { deriveSessionWorkObservation } from '@/sync/domains/session/attention/deriveSessionWorkObservation';
 import {
     deriveSessionListAttentionState,
     deriveSessionListMeaningfulActivityAt,
@@ -31,6 +32,7 @@ import {
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
+import { resolveEffectiveSessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { sessionTagKey } from '../sessionTagUtils';
 import { treeRowId } from '../drop-resolution/treeRowId';
 import {
@@ -91,19 +93,6 @@ function readPendingBlockedCount(snapshot: Partial<SessionListRowStateSnapshot>,
     return 0;
 }
 
-function listCommittedMessages(snapshot: Partial<SessionListRowStateSnapshot>): readonly Message[] {
-    const messages = snapshot.messages;
-    if (!messages) return [];
-    const ids = messages.messageIdsOldestFirst;
-    if (!Array.isArray(ids) || ids.length === 0) return [];
-    const out: Message[] = [];
-    for (const messageId of ids) {
-        const message = messages.messagesById[messageId];
-        if (message) out.push(message);
-    }
-    return out;
-}
-
 function resolveLatestCommittedMessageCreatedAt(snapshot: Partial<SessionListRowStateSnapshot>): number | null {
     const messages = snapshot.messages;
     const ids = messages?.messageIdsOldestFirst;
@@ -137,6 +126,7 @@ function resolveSessionListRowSession(
         storeSession.hasPendingUserActionRequests ?? (rowRenderable.hasPendingUserActionRequests === true);
     const keepVisibleWhenInactive =
         rowRenderable.keepVisibleWhenInactive === true || storeSession.keepVisibleWhenInactive === true;
+    const archiving = rowRenderable.archiving === true;
     const rowPendingBlockedCount = normalizeFiniteCount(rowRenderable.pendingBlockedCount);
     const storePendingBlockedCount = normalizeFiniteCount(storeSession.pendingBlockedCount);
     const pendingBlockedCount = storePendingBlockedCount ?? rowPendingBlockedCount;
@@ -154,6 +144,7 @@ function resolveSessionListRowSession(
         hasPendingPermissionRequests === storeSession.hasPendingPermissionRequests
         && hasPendingUserActionRequests === storeSession.hasPendingUserActionRequests
         && keepVisibleWhenInactive === storeSession.keepVisibleWhenInactive
+        && archiving === (storeSession.archiving === true)
         && pendingBlockedCount === normalizeFiniteCount(storeSession.pendingBlockedCount)
         && meaningfulActivityAt === (storeSession.meaningfulActivityAt ?? null)
     ) {
@@ -162,6 +153,7 @@ function resolveSessionListRowSession(
 
     return {
         ...storeSession,
+        archiving,
         hasPendingPermissionRequests,
         hasPendingUserActionRequests,
         keepVisibleWhenInactive,
@@ -188,7 +180,7 @@ function resolveHasUnreadMessages(
     session: SessionStatusSource,
 ): boolean {
     const readableSeq = resolveSessionReadableSeq({
-        messages: listCommittedMessages(snapshot),
+        messagesProjection: readStoredSessionMessagesReadProjectionFromStateLike(snapshot.messages),
         sessionSeq: session.seq,
         latestReadyEventSeq:
             snapshot.messages?.latestReadyEventSeq
@@ -291,6 +283,7 @@ function resolveRowSubtitle(input: Readonly<{
 
 export function buildSessionListRowModel(input: BuildSessionListRowModelInput): SessionListRowModel {
     const { item, settings } = input;
+    const appearanceColor = resolveEffectiveSessionAppearanceColor({ sessionColor: input.state?.appearanceColor });
     const sessionId = String(item.session.id);
     const serverId = normalizeNonEmptyString(item.serverId);
     const rowKey = serverId ? sessionTagKey(serverId, sessionId) : sessionId;
@@ -319,6 +312,9 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         pendingCount,
         pendingBlockedCount,
         sessionState: status.state,
+        backgroundWorkAttentionMode: settings.backgroundWorkAttentionMode,
+        runtimeActivityState: resolvedSession.runtimeActivityState,
+        runtimeActivityActiveCount: resolvedSession.runtimeActivityActiveCount,
         latestTurnStatus: resolvedSession.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeFiniteTimestamp(resolvedSession.latestTurnStatusObservedAt),
         lastRuntimeIssue: resolvedSession.lastRuntimeIssue ?? null,
@@ -342,13 +338,17 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
     // indicator without animation) unless a more alerting state applies —
     // otherwise the user sees a session in the working group with no
     // indicator at all.
-    const presentsRetainedWorking = item.workingPlacementReason === 'working-retained'
+    // A committed archive in flight speaks through the working indicator and the
+    // status line ("archiving…" from `getSessionStatus`), whatever the session was doing.
+    const presentsArchiving = status.state === 'archiving';
+    const presentsRetainedWorking = !presentsArchiving
+        && item.workingPlacementReason === 'working-retained'
         && (
             derivedRowAttentionState === 'quiet'
             || derivedRowAttentionState === 'unread'
             || derivedRowAttentionState === 'pending'
         );
-    const rowAttentionState = presentsRetainedWorking
+    const rowAttentionState = presentsArchiving || presentsRetainedWorking
         ? 'working'
         : derivedRowAttentionState;
     // Attention standing is the person's own instruction to keep a read, idle
@@ -371,6 +371,9 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         workingRetained: presentsRetainedWorking,
         standing: presentsAttentionStanding,
         backgroundActive: status.state === 'background_active',
+        // Pinning lifts a session out of the Active/Inactive sections, whose headers are the
+        // only other place a quiet row's liveness is stated.
+        statesUnseenLiveness: item.groupKind === 'pinned' && status.shouldShowStatus,
     });
     // Absent unless the person asked for it (R-8): the row model always carries the field so a host
     // cannot invent a second way to get the sentence, and the setting decides whether it is drawn.
@@ -398,6 +401,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
 
     return {
         rowKey,
+        appearanceColor,
         sessionId,
         serverId,
         serverName: item.serverName,
@@ -413,7 +417,8 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
             rowState: rowAttentionState,
         },
         presentation,
-        workingIndicatorPaused: presentsRetainedWorking,
+        workingIndicatorPaused: presentsRetainedWorking || (status.state === 'background_active'
+            && deriveSessionWorkObservation(resolvedSession, settings.runtimeNowMs).state === 'unobserved'),
         activity: {
             mode: activityMode,
             timestamp: activityTimestamp,

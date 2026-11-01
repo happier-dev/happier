@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SessionForkPointSchema } from './sessionForkPoint.js';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * Typed source recipe for a configurable Replay-seeded child Session.
@@ -35,12 +36,12 @@ import { SessionForkPointSchema } from './sessionForkPoint.js';
  * `session.continuation.inspect` remains the read-only in-place-transition
  * operation and does not authorize this spawn.
  */
-export const SessionSpawnSourceContextV1Schema = z
+export const SessionSpawnSourceContextV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     kind: z.literal('session_replay'),
     sourceSessionId: z.string().trim().min(1),
     forkPoint: SessionForkPointSchema,
   })
-  .strict();
+  .strict());
 export type SessionSpawnSourceContextV1 = z.infer<typeof SessionSpawnSourceContextV1Schema>;

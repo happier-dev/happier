@@ -5,10 +5,12 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "test": "node --test scripts/*.test.mjs"
+    "test": "node --test scripts/*.test.mjs",
+    "test:native": "node scripts/run-native-cpp-tests.mjs"
   },
   "files": [
     "src",
+    "common",
     "scripts",
     "ios",
     "android",

@@ -1,15 +1,16 @@
 import { z } from 'zod';
 import { ConnectedServiceQuotaFetchError, type ConnectedServiceSubscriptionFetcher } from '@/daemon/connectedServices/quotas/types';
 import { parseRetryAfterHeader } from '@/daemon/connectedServices/quotas/normalization';
+import { lazySchema } from '@happier-dev/protocol';
 
 const DEFAULT_SUBSCRIPTION_URL = 'https://chatgpt.com/backend-api/subscriptions';
 // This private endpoint currently rejects the generic CLI UA. Keep this policy local
 // to subscriptions; it does not change the Codex quota endpoint's request identity.
 const SUBSCRIPTION_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const subscriptionResponseSchema = z.object({
+const subscriptionResponseSchema = lazySchema(() => z.object({
   active_until: z.string().datetime({ offset: true }).transform((value) => Date.parse(value)),
   will_renew: z.unknown().optional(),
-});
+}));
 
 export function createOpenAiCodexSubscriptionFetcher(params?: Readonly<{
   subscriptionUrl?: string;

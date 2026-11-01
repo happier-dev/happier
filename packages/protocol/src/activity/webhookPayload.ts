@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ActivityWebhookTopicSchema = z.enum([
+export const ActivityWebhookTopicSchema = lazySchema(() => z.enum([
   'ready',
   'permission_request',
   'user_action_request',
@@ -8,11 +9,11 @@ export const ActivityWebhookTopicSchema = z.enum([
   'connected_service_credential_health',
   'connected_service_quota_blocked',
   'connected_service_quota_recovered',
-]);
+]));
 
 export type ActivityWebhookTopic = z.infer<typeof ActivityWebhookTopicSchema>;
 
-export const ActivityWebhookPayloadV1Schema = z.object({
+export const ActivityWebhookPayloadV1Schema = lazySchema(() => z.object({
   v: z.literal(1).default(1),
   channelId: z.string().trim().min(1),
   createdAt: z.number().int().nonnegative(),
@@ -36,7 +37,7 @@ export const ActivityWebhookPayloadV1Schema = z.object({
     sessionId: z.string().trim().min(1).optional(),
     requestId: z.string().trim().min(1).optional(),
   }),
-});
+}));
 
 export type ActivityWebhookPayloadV1 = z.infer<typeof ActivityWebhookPayloadV1Schema>;
 

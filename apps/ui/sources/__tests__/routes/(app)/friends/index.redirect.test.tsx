@@ -1,46 +1,77 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native-reanimated', () => ({}));
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+const boundary = vi.hoisted(() => ({
+    push: vi.fn(), replace: vi.fn(), width: 390,
 }));
 
-describe('/friends redirect', () => {
-    it('does not redirect /friends to /inbox', async () => {
-        const replace = vi.fn();
-        const back = vi.fn();
-
-        vi.doMock('expo-router', async () => {
+vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace, back },
+    return createExpoRouterMock({ router: { push: boundary.push, replace: boundary.replace } }).module;
+});
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'android' }, {
+        useWindowDimensions: () => ({ width: boundary.width, height: 844, scale: 1, fontScale: 1 }),
     });
-    return expoRouterMock.module;
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 24, bottom: 0, left: 0, right: 0 }),
+}));
+
+beforeEach(() => {
+    boundary.width = 390;
+    boundary.push.mockClear();
+    boundary.replace.mockClear();
+    storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'social.friends': true } });
+    storage.getState().applyProfile({ ...profileDefaults, username: 'alice' });
+    const features = createRootLayoutFeaturesResponse({
+        capabilities: { social: { friends: { allowUsername: true, requiredIdentityProviderId: null } } },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => createOkFetchResponse(features)));
 });
 
-        vi.doMock('@/hooks/friends/useRequireFriendsEnabled', () => ({
-            useRequireFriendsEnabled: () => true,
-        }));
-
-        vi.doMock('@/utils/platform/responsive', () => ({
-            useIsTablet: () => true,
-            useHeaderHeight: () => 44,
-        }));
-
-        vi.doMock('@/components/navigation/shell/FriendsView', () => ({
-            FriendsView: 'FriendsView',
-        }));
-
+describe('/friends', () => {
+    it.each([390, 1024])('opens friend search from the header at width %i', async (width) => {
+        boundary.width = width;
         const Page = (await import('@/app/(app)/friends/index')).default;
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><Page /></AuthProvider>);
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('tabs.friends');
 
-        await renderScreen(React.createElement(Page));
+        const buttons = screen.findAllByProps({ accessibilityRole: 'button', testID: 'friends-add-friend' });
+        expect(buttons).toHaveLength(1);
+        expect(buttons[0].props.disabled).toBe(false);
+        await act(async () => { buttons[0].props.onPress(); });
+        expect(boundary.push).toHaveBeenCalledWith('/friends/search');
+        expect(boundary.replace).not.toHaveBeenCalledWith('/inbox');
+    });
 
-        expect(replace).not.toHaveBeenCalledWith('/inbox');
+    it('keeps search disabled until the required identity is ready', async () => {
+        storage.getState().applyProfile({ ...profileDefaults, username: null });
+        const Page = (await import('@/app/(app)/friends/index')).default;
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><Page /></AuthProvider>);
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('tabs.friends');
+
+        const button = screen.findByProps({ accessibilityRole: 'button', testID: 'friends-add-friend' });
+        expect(button.props.disabled).toBe(true);
+        expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+        await act(async () => { button.props.onPress(); });
+        expect(boundary.push).not.toHaveBeenCalled();
     });
 });

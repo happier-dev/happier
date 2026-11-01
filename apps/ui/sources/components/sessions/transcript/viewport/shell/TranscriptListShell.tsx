@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import { MarkdownCodeBlockWrapStateProvider } from '@/components/markdown/MarkdownCodeBlockWrapState';
+
 import type {
     TranscriptListShellProps,
     TranscriptListShellRef,
@@ -28,15 +30,17 @@ function TranscriptListShellInner<TItem>(
     const Renderer = rendererBinding.renderer.Component;
 
     return (
-        <View style={TRANSCRIPT_LIST_SHELL_STYLE}>
-            <Renderer
-                ref={ref}
-                {...rendererProps}
-                frame={rendererBinding.frame}
-            />
-            {olderLoadOverlay ?? null}
-            {catchUpOverlay ?? null}
-        </View>
+        <MarkdownCodeBlockWrapStateProvider>
+            <View style={TRANSCRIPT_LIST_SHELL_STYLE}>
+                <Renderer
+                    ref={ref}
+                    {...rendererProps}
+                    frame={rendererBinding.frame}
+                />
+                {olderLoadOverlay ?? null}
+                {catchUpOverlay ?? null}
+            </View>
+        </MarkdownCodeBlockWrapStateProvider>
     );
 }
 

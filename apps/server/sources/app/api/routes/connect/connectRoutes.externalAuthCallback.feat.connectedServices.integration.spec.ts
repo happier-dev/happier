@@ -119,8 +119,18 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         await app.close();
     });
 
-    it("redirects back to the requesting web origin when the auth params request includes a loopback Origin header", async () => {
-        applyGithubExternalAuthCallbackEnv(harness);
+    it.each([
+        { origin: "http://localhost:19081", allowedSchemes: "", expectedBase: "http://localhost:19081/ui" },
+        { origin: "http://tauri.localhost", allowedSchemes: "", expectedBase: "http://tauri.localhost" },
+        { origin: "tauri://localhost", allowedSchemes: "tauri", expectedBase: "tauri://localhost" },
+        { origin: "tauri://localhost", allowedSchemes: "", expectedBase: "tauri://localhost" },
+        { origin: "tauri://evil.example.test", allowedSchemes: "tauri", expectedBase: "https://app.example.test" },
+    ])("returns OAuth from $origin to $expectedBase with allowed schemes '$allowedSchemes'", async ({ origin, allowedSchemes, expectedBase }) => {
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_SERVER_UI_DIR: "/tmp/ui",
+            HAPPIER_SERVER_UI_PREFIX: "/ui",
+            HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES: allowedSchemes,
+        });
 
         const seed = new Uint8Array(32).fill(2);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -148,7 +158,6 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         connectRoutes(app as any);
         await app.ready();
 
-        const origin = "http://localhost:19081";
         const paramsRes = await app.inject({
             method: "GET",
             url: `/v1/auth/external/github/params?publicKey=${encodeURIComponent(publicKey)}`,
@@ -166,7 +175,8 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
 
         expect(res.statusCode).toBe(302);
         const redirect = new URL(res.headers.location as string);
-        expect(redirect.origin + redirect.pathname).toBe(`${origin}/oauth/github`);
+        // Custom-scheme URL.origin is "null"; check the actual Location authority and path.
+        expect(`${redirect.protocol}//${redirect.host}${redirect.pathname}`).toBe(`${expectedBase}/oauth/github`);
         expect(redirect.searchParams.get("flow")).toBe("auth");
         expect(redirect.searchParams.get("pending")).toBeTruthy();
 
@@ -240,8 +250,14 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         await app.close();
     });
 
-    it("redirects with an oauth error when the user denies access (no code)", async () => {
-        applyGithubExternalAuthCallbackEnv(harness);
+    it.each([
+        { origin: "https://app.example.test", expectedBase: "https://app.example.test" },
+        { origin: "tauri://localhost", expectedBase: "tauri://localhost" },
+    ])("returns cancellation to $expectedBase without creating pending credentials", async ({ origin, expectedBase }) => {
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_SERVER_UI_DIR: "/tmp/ui",
+            HAPPIER_SERVER_UI_PREFIX: "/ui",
+        });
 
         const seed = new Uint8Array(32).fill(9);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -254,6 +270,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         const paramsRes = await app.inject({
             method: "GET",
             url: `/v1/auth/external/github/params?publicKey=${encodeURIComponent(publicKey)}`,
+            headers: { origin },
         });
         expect(paramsRes.statusCode).toBe(200);
         const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
@@ -267,7 +284,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
 
         expect(res.statusCode).toBe(302);
         const redirect = new URL(res.headers.location as string);
-        expect(redirect.origin + redirect.pathname).toBe("https://app.example.test/oauth/github");
+        expect(`${redirect.protocol}//${redirect.host}${redirect.pathname}`).toBe(`${expectedBase}/oauth/github`);
         expect(redirect.searchParams.get("flow")).toBe("auth");
         expect(redirect.searchParams.get("error")).toBe("access_denied");
         expect(redirect.searchParams.get("pending")).toBeNull();

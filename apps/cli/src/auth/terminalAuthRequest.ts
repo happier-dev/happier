@@ -9,6 +9,7 @@ export async function postTerminalAuthRequestCompatible(params: Readonly<{
   serverUrl: string;
   publicKey: string;
   supportsV2?: boolean;
+  supportsTokenOnly?: boolean;
   claimSecretHash?: string;
   timeoutMs?: number;
 }>): Promise<PostTerminalAuthRequestCompatibleResponse> {
@@ -18,6 +19,7 @@ export async function postTerminalAuthRequestCompatible(params: Readonly<{
     const response = await axios.post<PostTerminalAuthRequestCompatibleResponse>(url, {
       publicKey: params.publicKey,
       ...(typeof params.supportsV2 === 'boolean' ? { supportsV2: params.supportsV2 } : {}),
+      ...(typeof params.supportsTokenOnly === 'boolean' ? { supportsTokenOnly: params.supportsTokenOnly } : {}),
       ...(typeof params.claimSecretHash === 'string' ? { claimSecretHash: params.claimSecretHash } : {}),
     }, config);
     return response.data;

@@ -138,3 +138,48 @@ index 2f38990..4a91ec4 100644
    }
    spec.pod_target_xcconfig = {
      "CLANG_CXX_LANGUAGE_STANDARD" => rct_cxx_language_standard(),
+diff --git a/node_modules/react-native/scripts/cocoapods/utils.rb b/node_modules/react-native/scripts/cocoapods/utils.rb
+--- a/node_modules/react-native/scripts/cocoapods/utils.rb
++++ b/node_modules/react-native/scripts/cocoapods/utils.rb
+@@ -10,6 +10,30 @@
+ 
+ # Utilities class for React Native Cocoapods
+ class ReactNativePodsUtils
++    # logging.h includes these fragments inside namespace google. Inferred
++    # Clang submodule imports are invalid there when Swift imports Fabric headers.
++    def self.fix_glog_module_map(installer)
++        installer.pod_targets.select { |target| target.pod_name == 'glog' }.each do |target|
++            headers = target.file_accessors.flat_map(&:public_headers)
++            declarations = %w[log_severity.h vlog_is_on.h].map do |name|
++                header = headers.find { |candidate| candidate.basename.to_s == name }
++                raise "Missing glog namespace header #{name}" unless header
++                "  textual header #{header.to_s.inspect}"
++            end
++
++            module_map = target.module_map_path
++            contents = module_map.read
++            missing = declarations.reject { |declaration| contents.include?(declaration.strip) }
++            next if missing.empty?
++
++            updated = contents.sub(/(^\s*(?:framework\s+)?module\s+glog\s*\{)/) do |start|
++                "#{start}\n#{missing.join("\n")}"
++            end
++            raise "Could not locate glog module declaration in #{module_map}" if updated == contents
++            module_map.write(updated)
++        end
++    end
++
+     def self.warn_if_not_on_arm64
+         if SysctlChecker.new().call_sysctl_arm64() == 1 && !Environment.new().ruby_platform().include?('arm64')
+             Pod::UI.warn 'Do not use "pod install" from inside Rosetta2 (x86_64 emulation on arm64).'
+diff --git a/node_modules/react-native/scripts/react_native_pods.rb b/node_modules/react-native/scripts/react_native_pods.rb
+--- a/node_modules/react-native/scripts/react_native_pods.rb
++++ b/node_modules/react-native/scripts/react_native_pods.rb
+@@ -487,6 +487,7 @@
+   end
+   ReactNativePodsUtils.set_gcc_preprocessor_definition_for_debugger(installer)
+ 
++  ReactNativePodsUtils.fix_glog_module_map(installer)
+   ReactNativePodsUtils.fix_library_search_paths(installer)
+   ReactNativePodsUtils.update_search_paths(installer)
+   ReactNativePodsUtils.set_build_setting(installer, build_setting: "USE_HERMES", value: use_hermes())

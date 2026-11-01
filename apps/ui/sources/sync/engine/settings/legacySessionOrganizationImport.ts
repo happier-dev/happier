@@ -11,6 +11,7 @@ import {
     type SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
+import { mergeWorkspaceDisplay } from '@/sync/domains/session/organization/workspaceDisplay';
 import {
     buildSessionOrganizationReorderRequestFromGroupOrder,
     buildSessionOrganizationReorderRequestFromWorkspaceOrder,
@@ -363,7 +364,7 @@ function readLegacyLabels(params: {
         labels.push({
             labelKind: 'workspace',
             scopeKey,
-            display: { t: 'plain', v: { label } },
+            display: mergeWorkspaceDisplay(null, { label }),
         });
     }
     return labels;

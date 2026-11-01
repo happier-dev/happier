@@ -100,6 +100,7 @@ export async function resolveClaudeAdoptEndpointRecoveryForState(
   state: AttachmentBoundClaudeEndpointState,
   options: Readonly<{
     permissionHookTimeoutSeconds?: number;
+    observeNativeToolPrompts?: boolean;
   }> = {},
 ): Promise<ClaudeAdoptEndpointRecovery | null> {
   if (!state.hookPluginDir) return null;
@@ -152,6 +153,7 @@ export async function resolveClaudeAdoptEndpointRecoveryForState(
     refreshRetainedClaudeHookPlugin({
       pluginDir: state.hookPluginDir,
       port: state.hookServerPort,
+      observeNativeToolPrompts: options.observeNativeToolPrompts,
       ...(options.permissionHookTimeoutSeconds === undefined
         ? {}
         : { permissionHookTimeoutSeconds: options.permissionHookTimeoutSeconds }),
@@ -165,6 +167,7 @@ export async function resolveClaudeAdoptEndpointRecoveryForState(
 
 export async function resolveClaudeAdoptEndpointRecovery(options: Readonly<{
   permissionHookTimeoutSeconds?: number;
+  observeNativeToolPrompts?: boolean;
   /** Explicit continuation, consumed only after this runner's Session lock admission. */
   existingSession?: Readonly<{ happyHomeDir: string; sessionId: string }>;
 }> = {}): Promise<ClaudeAdoptEndpointRecovery | null> {

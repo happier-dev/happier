@@ -21,9 +21,9 @@ Status legend:
 | Happier sessions + resume | Stable | App, Web, CLI | Resume inactive Happier-managed sessions when the provider/backend supports vendor resume for that session. |
 | New session shortcuts | Stable | App, Web, Mobile app | Start a new session from a project or Session info while reusing the relevant session setup; existing composer draft content is preserved while launch selections are replaced. |
 | Session handoff between machines | Capability-driven | App, Web | Move a live session to another machine while keeping the same session id. Claude and OpenCode are supported; Codex is experimental. |
-| Direct provider sessions | Experimental | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
+| Direct provider sessions | Stable | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
 | Mobile session cockpit | Stable | Mobile app, mobile web | Default phone session layout with bottom tabs for agent chat, Files, Git, open details tabs, and Terminal when available. |
-| Embedded terminal | Experimental | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |
+| Embedded terminal | Stable | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |
 | Pending queue | Stable | App, Web, CLI runtime | Queue, reorder, edit, remove, and send-now workflows. |
 | In-flight steering while busy | Capability-driven | App, Web, CLI runtime | When supported by backend/runtime, messages can steer an active turn instead of waiting in queue. |
 | Git/file manager | Stable | App, Web, Mobile app | Browse/search files, upload/download, rename/delete, open previews/editors, inspect metadata, open markdown file links, initialize Git repositories, and review changed files from the session UI. |
@@ -32,6 +32,7 @@ Status legend:
 | SCM hosting providers | Experimental | App, Web, daemon | Detect GitHub/GitLab/Bitbucket remotes, publish local repositories to GitHub, and open/reuse/checkout PRs or MRs where provider auth is available. |
 | Review comments | Experimental | App, Web | Add line-specific comments to file/diff lines, select which comments are sent, reuse saved workspace comments in new sessions, and jump back to commented files from the transcript. |
 | Tool timeline normalization | Stable | App, Web, CLI runtime | Provider tools are normalized to canonical UI tool types. |
+| Delegated work (subagents) | Stable | App, Web, CLI runtime | Launch review, plan and delegate runs on another agent from a session and follow them in the Agents surface. On by default under **Settings → Features → Subagents**. |
 | Subagent timeline visibility | Capability-driven | App, Web | When providers expose subagents, Happier shows their activity in-session. |
 | Tool detail controls (title/summary/full) | Stable | App, Web | Configure default/per-tool timeline detail levels. |
 | Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |

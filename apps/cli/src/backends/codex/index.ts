@@ -61,6 +61,7 @@ function resolveCodexProbeConnectedServicesIdentity(
 export const agent = {
   id: AGENTS_CORE.codex.id,
   cliSubcommand: AGENTS_CORE.codex.cliSubcommand,
+  autostartDaemonInInteractiveTerminal: false,
   getCliCommandHandler: async () => (await import('@/backends/codex/cli/command')).handleCodexCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/codex/cli/capability')).cliCapability,
   getCapabilities: async () => (await import('@/backends/codex/cli/extraCapabilities')).capabilities,

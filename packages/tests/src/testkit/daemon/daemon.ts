@@ -112,7 +112,7 @@ async function listServerDaemonStateCandidates(happyHomeDir: string): Promise<Ar
   }
 }
 
-export async function readDaemonState(happyHomeDir: string): Promise<DaemonState | null> {
+export async function readDaemonState(happyHomeDir: string, opts?: { excludePid?: number }): Promise<DaemonState | null> {
   const activeServerId = await resolveActiveServerIdFromSettings(happyHomeDir);
   const candidates: string[] = [];
   if (activeServerId) candidates.push(perServerDaemonStatePath(happyHomeDir, activeServerId));
@@ -120,7 +120,7 @@ export async function readDaemonState(happyHomeDir: string): Promise<DaemonState
 
   for (const candidate of candidates) {
     const state = await readDaemonStateFromPath(candidate);
-    if (state) return state;
+    if (state && state.pid !== opts?.excludePid) return state;
   }
 
   // Fallback: if settings.json is stale/mismatched, find the newest per-server daemon state.
@@ -129,16 +129,16 @@ export async function readDaemonState(happyHomeDir: string): Promise<DaemonState
   perServerStates.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const candidate of perServerStates) {
     const state = await readDaemonStateFromPath(candidate.path);
-    if (state) return state;
+    if (state && state.pid !== opts?.excludePid) return state;
   }
   return null;
 }
 
-export async function waitForDaemonState(happyHomeDir: string, opts?: { timeoutMs?: number }): Promise<DaemonState> {
+export async function waitForDaemonState(happyHomeDir: string, opts?: { timeoutMs?: number; excludePid?: number }): Promise<DaemonState> {
   const timeoutMs = opts?.timeoutMs ?? 30_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const state = await readDaemonState(happyHomeDir);
+    const state = await readDaemonState(happyHomeDir, opts);
     if (state && state.httpPort > 0 && state.pid > 0) return state;
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -307,8 +307,8 @@ async function waitForReplacementDaemonState(
   const timeoutMs = opts?.timeoutMs ?? 45_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const state = await readDaemonState(happyHomeDir);
-    if (state && state.httpPort > 0 && state.pid > 0 && state.pid !== originalPid) {
+    const state = await readDaemonState(happyHomeDir, { excludePid: originalPid });
+    if (state && state.httpPort > 0 && state.pid > 0) {
       try {
         process.kill(state.pid, 0);
         return state;
@@ -574,6 +574,7 @@ export type StartedDaemon = {
   state: DaemonState;
   proc: SpawnedProcess;
   stop: () => Promise<void>;
+  restart: () => Promise<StartedDaemon>;
 };
 
 export function resolveTestDaemonOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
@@ -686,6 +687,9 @@ export async function startTestDaemon(params: {
     stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {}),
     baseDiagnostics,
   );
+  // A stopped daemon can leave its state file behind. Readiness for this
+  // launch must come from the new process, including after a restart.
+  const previousState = await readDaemonState(params.happyHomeDir);
 
   const proc = spawnLoggedProcess({
     command: cliLaunchSpec.command,
@@ -722,12 +726,12 @@ export async function startTestDaemon(params: {
     state = await runDaemonStartupPhase(
       'waitForDaemonState',
       Promise.race([
-        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs }),
+        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, excludePid: previousState?.pid }),
         new Promise<DaemonState>((resolveState, rejectState) => {
           proc.child.once('exit', (code, signal) => {
             void (async () => {
               try {
-                const exitedState = await waitForDaemonState(params.happyHomeDir, { timeoutMs: exitStateGraceTimeoutMs });
+                const exitedState = await waitForDaemonState(params.happyHomeDir, { timeoutMs: exitStateGraceTimeoutMs, excludePid: previousState?.pid });
                 resolveState(exitedState);
               } catch {
                 const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
@@ -754,13 +758,18 @@ export async function startTestDaemon(params: {
     throw e;
   }
 
+  const stop = async () => {
+    await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
+    await proc.stop().catch(() => {});
+  };
   return {
     happyHomeDir: params.happyHomeDir,
     state,
     proc,
-    stop: async () => {
-      await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
-      await proc.stop().catch(() => {});
+    stop,
+    restart: async () => {
+      await stop();
+      return await startTestDaemon(params);
     },
   };
 }

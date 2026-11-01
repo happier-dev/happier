@@ -1190,12 +1190,13 @@ describe('startUiWeb baseUrl resolution', () => {
     ).toBeGreaterThan(420_000);
   });
 
-  it('keeps the export build timeout above the observed cold export wall time', async () => {
-    const uiWebExportModule = await import('./uiWebExport');
-    const resolveUiWebExportBuildTimeoutMs = (uiWebExportModule as Record<string, unknown>).resolveUiWebExportBuildTimeoutMs;
+  it('lets a cold export use its whole before-all budget instead of a shorter competing cutoff', async () => {
+    const { resolveUiWebExportBuildTimeoutMs, resolveUiWebExportBeforeAllTimeoutMs } = await import('./uiWebExport');
 
-    expect(typeof resolveUiWebExportBuildTimeoutMs).toBe('function');
-    expect((resolveUiWebExportBuildTimeoutMs as (env: NodeJS.ProcessEnv) => number)({})).toBeGreaterThan(150_000);
+    // Cold GitHub-runner exports were still bundling at 240 s (dev runs 40690089245, 40741493460).
+    expect(resolveUiWebExportBuildTimeoutMs({}) + 60_000).toBe(resolveUiWebExportBeforeAllTimeoutMs({}));
+    expect(resolveUiWebExportBuildTimeoutMs({ HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS: '1200000' })).toBe(1_140_000);
+    expect(resolveUiWebExportBuildTimeoutMs({ HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '1000' })).toBe(1000);
   });
 
   it('uses a bounded metro script-fetch attempt budget unless explicitly overridden', async () => {

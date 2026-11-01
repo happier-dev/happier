@@ -42,7 +42,7 @@ function shouldRetryForPublishedSessionDataEncryptionKey(params: Readonly<{
     credentials: Credentials;
     rawSession: RawSessionRecord;
 }>): boolean {
-    if (params.credentials.encryption.type !== 'dataKey') {
+    if (params.credentials.encryption?.type !== 'dataKey') {
         return false;
     }
 

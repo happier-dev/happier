@@ -2,6 +2,7 @@ import { encodeWavPcm16 } from '@/voice/kokoro/audio/encodeWavPcm16';
 import { resolveKokoroRuntimeConfig } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { ensureKokoroCacheApiAvailable } from '@/voice/kokoro/assets/kokoroCacheApi';
 import { loadKokoroWebRuntime } from '@/voice/kokoro/runtime/loadKokoroWebRuntime.web';
+import { resolveKokoroWebVoiceId } from '@/voice/kokoro/voices/resolveKokoroVoice';
 import {
   prepareKokoroTtsInWorker,
   streamKokoroWavSentencesInWorker,
@@ -9,6 +10,7 @@ import {
 } from '@/voice/kokoro/runtime/kokoroWebWorkerClient.web';
 
 type KokoroTtsInstance = {
+  voices?: Record<string, unknown>;
   generate(text: string, opts: { voice: string; speed: number }): Promise<{ audio: Float32Array; sampling_rate: number }>;
 };
 
@@ -103,7 +105,8 @@ function resolveWorkerCfg(cfg: { modelId: string; dtype: string; device: string;
 export async function synthesizeKokoroWav(opts: {
   text: string;
   assetSetId?: string | null;
-  voiceId: string;
+  /** Requested voice; null or an id outside the kokoro-js catalog uses the kokoro-js default. */
+  voiceId: string | null;
   speed: number;
   timeoutMs: number;
   signal: AbortSignal;
@@ -132,7 +135,8 @@ export async function synthesizeKokoroWav(opts: {
   }
 
   const tts = await Promise.race([getKokoroTts(cfg, null), createAbortPromise(opts.signal), createTimeoutPromise(opts.timeoutMs)]);
-  const rawAudio = await Promise.race([tts.generate(opts.text, { voice: opts.voiceId, speed: opts.speed }), createAbortPromise(opts.signal), createTimeoutPromise(opts.timeoutMs)]);
+  const voice = resolveKokoroWebVoiceId(opts.voiceId, Object.keys(tts.voices ?? {}));
+  const rawAudio = await Promise.race([tts.generate(opts.text, { voice, speed: opts.speed }), createAbortPromise(opts.signal), createTimeoutPromise(opts.timeoutMs)]);
   return encodeWavPcm16({ samples: rawAudio.audio, sampleRate: rawAudio.sampling_rate });
 }
 
@@ -175,7 +179,8 @@ export async function prepareKokoroTts(opts: {
 export function streamKokoroWavSentences(opts: {
   text: string;
   assetSetId?: string | null;
-  voiceId: string;
+  /** Requested voice; null or an id outside the kokoro-js catalog uses the kokoro-js default. */
+  voiceId: string | null;
   speed: number;
   timeoutMs: number;
   signal: AbortSignal;

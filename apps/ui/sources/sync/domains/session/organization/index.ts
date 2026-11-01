@@ -1,4 +1,6 @@
 export * from './attentionStanding';
+export * from './appearanceColor';
+export * from './workspaceDisplay';
 export * from './keys';
 export * from './projection';
 export * from './requiredHydration';

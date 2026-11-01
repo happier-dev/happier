@@ -528,9 +528,12 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     intervalPresetGroup: {
+        // Yoga zeroes the basis of a row's only grow+shrink child, which would keep the presets
+        // beside the rigid stepper at one character wide. Without shrink the 260 basis decides
+        // wrapping, and the max width lets the presets fit a panel narrower than that basis.
         flexBasis: 260,
         flexGrow: 1,
-        flexShrink: 1,
+        maxWidth: '100%',
         gap: 8,
     },
     presetRow: {

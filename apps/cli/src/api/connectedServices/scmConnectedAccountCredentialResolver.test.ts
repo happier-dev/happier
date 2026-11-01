@@ -10,14 +10,14 @@ import type { Credentials } from '@/persistence';
 
 import { createScmConnectedAccountCredentialResolver } from './scmConnectedAccountCredentialResolver';
 
-function createTestCredentials(): Credentials {
+function createTestCredentials() {
   return {
     token: 'happy-token',
     encryption: { type: 'legacy', secret: new Uint8Array(32) },
-  };
+  } satisfies Credentials;
 }
 
-function createSealedGithubCredential(credentials: Credentials) {
+function createSealedGithubCredential(credentials: ReturnType<typeof createTestCredentials>) {
   const record = buildConnectedServiceCredentialRecord({
     now: 1_000,
     serviceId: 'github',

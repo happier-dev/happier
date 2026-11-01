@@ -1,3 +1,4 @@
+import { requireEncryptedSessionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import chalk from 'chalk';
 
 import { readCredentials, readSettings, type Credentials } from '@/persistence';
@@ -260,6 +261,7 @@ export async function handleResumeCommand(
       ? { v: 2, encryptionMode: 'plain' }
       : (() => {
         const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  requireEncryptedSessionContext(ctx);
         return {
           v: 2 as const,
           encryptionMode: 'e2ee' as const,

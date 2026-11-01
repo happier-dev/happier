@@ -21,6 +21,15 @@ export type MarkdownSourceRangeAction = Readonly<{
     markdown: string;
 }>;
 
+/**
+ * An action offered in the platform text-selection menu of rendered prose (native renderers; on web
+ * the surface hosting the Markdown owns its own selection affordance).
+ */
+export type MarkdownSelectionAction = Readonly<{
+    label: string;
+    onPress: (selection: Readonly<{ text: string }>) => void;
+}>;
+
 export type MarkdownSourceRangeLayoutObserver = Readonly<{
     onRanges: (ranges: readonly MarkdownSourceRangeAction[]) => void;
     onLayout: (range: MarkdownSourceRangeAction, layout: Readonly<{ y: number; height: number }>) => void;
@@ -39,12 +48,15 @@ export const MarkdownView = React.memo((props: {
     streamingMode?: MarkdownStreamingMode;
     streamingAnimated?: boolean;
     streamingParseCacheKey?: string | null;
+    /** Stable message identity, independent of streaming revisions, for per-block presentation state. */
+    codeBlockStateKey?: string;
     streamingRevealPreset?: StreamingTextRevealPreset;
     staticRenderPlaceholderEnabled?: boolean;
     sourceRangeLayoutObserver?: MarkdownSourceRangeLayoutObserver;
     onPressSourceRange?: (action: MarkdownSourceRangeAction) => void;
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
+    selectionActions?: readonly MarkdownSelectionAction[];
     agentTexMath?: boolean;
 }) => {
     const profile = normalizeMarkdownRenderingProfile({
@@ -66,12 +78,14 @@ export const MarkdownView = React.memo((props: {
             streamingMode={props.streamingMode === 'streaming' ? 'streaming' : 'static'}
             streamingAnimated={props.streamingAnimated === true}
             streamingParseCacheKey={props.streamingParseCacheKey}
+            codeBlockStateKey={props.codeBlockStateKey}
             streamingRevealPreset={props.streamingRevealPreset}
             staticRenderPlaceholderEnabled={props.staticRenderPlaceholderEnabled}
             sourceRangeLayoutObserver={props.sourceRangeLayoutObserver}
             onPressSourceRange={props.onPressSourceRange}
             renderAfterSourceRange={props.renderAfterSourceRange}
             highlightSourceRange={props.highlightSourceRange}
+            selectionActions={props.selectionActions}
             agentTexMath={props.agentTexMath === true}
         />
     );

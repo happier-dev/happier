@@ -7,6 +7,7 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCa
 import { createDeviceSttController } from '@/voice/input/DeviceSttController';
 import { createSherpaStreamingSttController } from '@/voice/input/SherpaStreamingSttController';
 import { MissingGeminiApiKeyError, MissingSttBaseUrlError, transcribeRecordedAudioWithProvider } from '@/voice/input/transcribeRecordedAudioWithProvider';
+import { resolveSttFailureCode } from '@/voice/input/sttRequestError';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
@@ -25,10 +26,10 @@ import type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
 import {
   getLocalVoiceState,
   patchLocalVoiceState,
+  resolveLocalVoiceError,
 } from './localVoiceState';
 import {
-  isHandsFreeDeviceSttEnabled,
-  isHandsFreeLocalNeuralSttEnabled,
+  isHandsFreeSttEnabled,
   isVoiceBargeInEnabled,
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
@@ -50,14 +51,26 @@ const deviceSttController = createDeviceSttController({
   canAutoStopTurn: () => !inFlight,
   onAutoStopTurn: (sessionId: string) => {
     if (inFlight) return;
-    inFlight = stopDeviceSpeechRecognitionAndSend(sessionId).finally(() => {
-      inFlight = null;
-    });
+    inFlight = stopDeviceSpeechRecognitionAndSend(sessionId)
+      .catch((error) => {
+        // Hands-free auto-stop has no awaiting caller; surface the failure on the voice surface.
+        patchLocalVoiceState({ status: 'idle', ...resolveLocalVoiceError(error, 'stt_failed') });
+      })
+      .finally(() => {
+        inFlight = null;
+      });
   },
 });
 const sherpaSttController = createSherpaStreamingSttController({
   setState: patchLocalVoiceState,
   getSettings: () => storage.getState().settings as any,
+  canAutoStopTurn: () => !inFlight,
+  onAutoStopTurn: (sessionId: string) => {
+    if (inFlight) return;
+    inFlight = stopSherpaSpeechRecognitionAndSend(sessionId).finally(() => {
+      inFlight = null;
+    });
+  },
 });
 
 function isUnsupportedVoiceAgentPrewarmError(error: unknown): boolean {
@@ -74,24 +87,30 @@ function isAbortedVoiceTurnError(error: unknown): boolean {
   return error instanceof Error && error.message === 'turn_aborted';
 }
 
+/**
+ * Runs one voice turn. Failures never reject: they are surfaced through the local voice error state
+ * (rendered by the voice surface) so hands-free loops keep running and fire-and-forget callers do
+ * not produce unhandled rejections. A more specific error already recorded by the turn is kept.
+ */
 async function runVoiceTurnWithSendFailureHandling(
   sessionId: string,
-  settings: any,
   runner: (signal: AbortSignal) => Promise<void>,
 ): Promise<void> {
+  patchLocalVoiceState({ error: null });
+  let signal: AbortSignal | null = null;
   try {
-    await runAbortableVoiceTurn(sessionId, runner);
+    await runAbortableVoiceTurn(sessionId, (turnSignal) => {
+      signal = turnSignal;
+      return runner(turnSignal);
+    });
   } catch (error) {
-    if (isAbortedVoiceTurnError(error)) {
+    if (isAbortedVoiceTurnError(error) || (signal as AbortSignal | null)?.aborted) {
       return;
     }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
-    const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
-    const shouldSwallowSendFailure = adapterId === 'local_conversation' && config?.conversationMode === 'agent';
-    if (!shouldSwallowSendFailure) {
-      throw error;
+    if (getLocalVoiceState().error) {
+      return;
     }
-    return;
+    patchLocalVoiceState({ status: 'idle', sessionId, ...resolveLocalVoiceError(error, 'send_failed') });
   }
 }
 
@@ -102,7 +121,12 @@ async function startRecording(sessionId: string): Promise<void> {
     return;
   }
 
-  const nextRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  // Expo's types describe the native module; its web namespace exposes AudioRecorderWeb.
+  const audioModule = AudioModule as typeof AudioModule & {
+    AudioRecorderWeb?: typeof AudioModule.AudioRecorder;
+  };
+  const Recorder = audioModule.AudioRecorderWeb ?? audioModule.AudioRecorder;
+  const nextRecorder = new Recorder(RecordingPresets.HIGH_QUALITY);
   try {
     await nextRecorder.prepareToRecordAsync();
     nextRecorder.record();
@@ -156,7 +180,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
       patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_api_key' });
       throw error;
     }
-    patchLocalVoiceState({ status: 'idle', sessionId, error: 'stt_failed' });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: resolveSttFailureCode(error) });
     return;
   }
 
@@ -165,7 +189,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
     return;
   }
 
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+  await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
       settings,
@@ -182,7 +206,7 @@ async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<vo
 
   const text = await deviceSttController.stop(sessionId);
   if (!text) {
-    if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
+    if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
       await deviceSttController.start(sessionId);
       return;
     }
@@ -191,7 +215,7 @@ async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<vo
   }
 
   const settings = storage.getState().settings as any;
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+  await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
       settings,
@@ -202,7 +226,7 @@ async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<vo
     }),
   );
 
-  if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
+  if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
     await deviceSttController.start(sessionId);
   }
 }
@@ -212,7 +236,7 @@ async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<vo
 
   const text = await sherpaSttController.stop(sessionId);
   if (!text) {
-    if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
+    if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
       await sherpaSttController.start(sessionId);
       return;
     }
@@ -221,7 +245,7 @@ async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<vo
   }
 
   const settings = storage.getState().settings as any;
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+  await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
       settings,
@@ -232,7 +256,7 @@ async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<vo
     }),
   );
 
-  if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
+  if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeSttEnabled(storage.getState().settings)) {
     await sherpaSttController.start(sessionId);
   }
 }
@@ -281,7 +305,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
   if (!text) return;
 
   const settings = storage.getState().settings as any;
-  await runVoiceTurnWithSendFailureHandling(sessionId, settings, (signal) =>
+  await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     sendVoiceTextTurnImpl({
       sessionId,
       settings,
@@ -352,7 +376,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
   }
 
   if (inFlight && !canAttemptBargeIn) {
-    await inFlight;
+    // A tap while a turn is starting, transcribing, or waiting for its reply is not a request to
+    // record once that turn finishes; cancelling a pending reply is the surface's cancel control.
+    return;
   }
 
   const current = getLocalVoiceState();
@@ -372,13 +398,25 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text) {
             voiceActivityController.appendAssistantText(sessionId, 'local_conversation', text);
+            // The welcome plays while the mic is already being armed for the first turn. It only
+            // owns the status when nothing else does, and hands it back when it finishes.
+            let welcomeOwnsSpeakingStatus = false;
             await speakAssistantText({
               text,
               settings: params.settings,
               networkTimeoutMs,
               registerPlaybackStopper: playbackController.registerStopper,
-              onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+              onSpeaking: () => {
+                const state = getLocalVoiceState();
+                if (state.status !== 'idle' || state.sessionId !== sessionId) return;
+                welcomeOwnsSpeakingStatus = true;
+                patchLocalVoiceState({ status: 'speaking' });
+              },
             });
+            const state = getLocalVoiceState();
+            if (welcomeOwnsSpeakingStatus && state.status === 'speaking' && state.sessionId === sessionId) {
+              patchLocalVoiceState({ status: 'idle' });
+            }
           }
           return;
         }
@@ -494,19 +532,21 @@ export async function stopLocalVoiceSession(): Promise<void> {
   }
 
   if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
+    // Hang-up ends hands-free first so no auto-stop or re-arm can run while recognizers stop.
+    deviceSttController.clearHandsFreeSession(activeSessionId);
+    sherpaSttController.clearHandsFreeSession(activeSessionId);
+
     try {
       await deviceSttController.stop(activeSessionId);
     } catch {
       // ignore
     }
-    deviceSttController.clearHandsFreeSession(activeSessionId);
 
     try {
       await sherpaSttController.stop(activeSessionId);
     } catch {
       // ignore
     }
-    sherpaSttController.clearHandsFreeSession(activeSessionId);
 
     try {
       await voiceAgentSessions.stop(activeSessionId);

@@ -40,7 +40,8 @@ const VoiceLocalTtsGoogleCloudSchema = z
   .prefault({});
 
 const VoiceLocalTtsSchemaV2 = z.object({
-  provider: VoiceLocalTtsProviderSchema.default('openai_compat'),
+  // Device speech works with no configuration; network providers need a base URL or API key first.
+  provider: VoiceLocalTtsProviderSchema.default('device'),
   openaiCompat: VoiceLocalTtsOpenAiCompatSchema,
   localNeural: VoiceLocalTtsLocalNeuralSchema,
   googleCloud: VoiceLocalTtsGoogleCloudSchema,
@@ -90,28 +91,6 @@ function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV2 
   };
 }
 
-function migrateKokoroProviderToLocalNeural(input: Record<string, unknown>): VoiceLocalTtsV2 {
-  const provider = input.provider === 'device' ? 'device' : 'local_neural';
-  const kokoro = (input.kokoro && typeof input.kokoro === 'object' ? input.kokoro : null) as any;
-  const assetId = typeof kokoro?.assetSetId === 'string' && kokoro.assetSetId.trim().length > 0 ? kokoro.assetSetId.trim() : null;
-  const voiceId = typeof kokoro?.voiceId === 'string' && kokoro.voiceId.trim().length > 0 ? kokoro.voiceId.trim() : null;
-  const speed = typeof kokoro?.speed === 'number' && Number.isFinite(kokoro.speed) ? kokoro.speed : null;
-
-  const base = VoiceLocalTtsSchemaV2.parse({});
-  return {
-    ...base,
-    provider: provider as any,
-    localNeural: {
-      model: 'kokoro',
-      assetId,
-      voiceId,
-      speed,
-    },
-    autoSpeakReplies: input.autoSpeakReplies !== false,
-    bargeInEnabled: input.bargeInEnabled !== false,
-  };
-}
-
 export const VoiceLocalTtsSchema = z.preprocess((raw) => {
   if (!raw || typeof raw !== 'object') return raw;
   const obj = raw as Record<string, unknown>;
@@ -139,11 +118,6 @@ export const VoiceLocalTtsSchema = z.preprocess((raw) => {
   // Legacy shape (flat openai-compat fields + `useDeviceTts` toggle).
   if ('baseUrl' in obj || 'useDeviceTts' in obj || 'format' in obj || 'voice' in obj || 'model' in obj) {
     return migrateLegacyLocalTts(obj);
-  }
-
-  // Legacy v2 shape: kokoro provider config.
-  if ('kokoro' in obj || obj.provider === 'kokoro') {
-    return migrateKokoroProviderToLocalNeural(obj);
   }
 
   return obj;

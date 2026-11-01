@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY = 2 as const;
 export const PENDING_INPUT_PROTOCOL_VERSION_V1 = 1 as const;
 export const PENDING_INPUT_PROTOCOL_VERSION_V2 = 2 as const;
 export const CURRENT_PENDING_INPUT_PROTOCOL_VERSION = PENDING_INPUT_PROTOCOL_VERSION_V2;
 
-export const ClientKindSchema = z.enum([
+export const ClientKindSchema = lazySchema(() => z.enum([
   'ui-web',
   'ui-ios',
   'ui-android',
@@ -13,23 +14,23 @@ export const ClientKindSchema = z.enum([
   'cli',
   'daemon',
   'session-runner',
-]);
+]));
 
 export type ClientKind = z.infer<typeof ClientKindSchema>;
 
-export const ClientAppVersionSchema = z
+export const ClientAppVersionSchema = lazySchema(() => z
   .string()
   .min(1)
   .max(96)
-  .regex(/^[0-9A-Za-z][0-9A-Za-z.+_-]*$/);
+  .regex(/^[0-9A-Za-z][0-9A-Za-z.+_-]*$/));
 
-export const ClientReleaseChannelSchema = z
+export const ClientReleaseChannelSchema = lazySchema(() => z
   .string()
   .min(1)
   .max(32)
-  .regex(/^[a-z0-9][a-z0-9-]*$/);
+  .regex(/^[a-z0-9][a-z0-9-]*$/));
 
-export const SafeHttpsUrlSchema = z
+export const SafeHttpsUrlSchema = lazySchema(() => z
   .string()
   .min(1)
   .max(2_048)
@@ -47,4 +48,4 @@ export const SafeHttpsUrlSchema = z
     } catch {
       return false;
     }
-  }, 'Expected a safe HTTPS URL');
+  }, 'Expected a safe HTTPS URL'));

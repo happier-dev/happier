@@ -36,6 +36,10 @@ On desktop, the app is intended to be the main control panel for your Happier se
 
 This keeps Relay choice, account context, daemon state, and machine setup visible in one place instead of spreading the flow across separate CLI steps.
 
+In the current development build (unreleased), the macOS main window remembers its
+size and position across app restarts and when reopened from menu-bar mode. macOS
+adjusts the saved placement to the connected displays when restoring it.
+
 ## Multi-server workflows
 
 For detailed Relay profile, switching, and multi-daemon guidance, see [Features → Multi-server](/accounts/multi-server).
@@ -51,6 +55,24 @@ Happier supports push notifications for:
 On iOS and Android, permission/action-request notifications can also expose action buttons and route you back into the correct session, including multi-server flows.
 
 See [Notifications](/extras/notifications-setup) for setup/self-hosting notes and [Notification routing](/extras/notifications-routing) for the exact in-app behavior.
+
+## Haptic feedback
+
+<Callout type="info">
+  Reorder haptics and the device preference described here are development-build
+  changes and have not yet been released.
+</Callout>
+
+On iOS and Android, dragging an item gives a light pickup pulse and a soft tick
+when its available insertion position changes. A changed move gives a light
+confirmation after it is applied. Staying in the same position, cancelling, and
+ordinary scrolling stay quiet. Web and desktop do not vibrate.
+
+Turn **Haptic feedback** off under **Settings → Appearance** to silence touch
+feedback for actions and reordering on this device. The preference starts on,
+is saved per device, and is independent of visual reduced-motion preferences.
+Devices and system settings can suppress physical feedback; the visible
+indicators and controls remain available.
 
 ## Session read and unread state
 

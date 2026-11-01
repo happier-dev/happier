@@ -9,6 +9,8 @@ import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { storage } from '@/sync/domains/state/storageStore';
+import { parseToken } from '@/utils/auth/parseToken';
 
 interface AuthContextType {
     isAuthenticated: boolean;
@@ -35,9 +37,21 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     const applyLocalSettings = useApplyLocalSettings();
 
     const loginWithCredentials = React.useCallback(async (newCredentials: AuthCredentials) => {
+        let resetPendingArchives = false;
+        if (credentials) {
+            try {
+                resetPendingArchives = parseToken(credentials.token) !== parseToken(newCredentials.token);
+            } catch {
+                console.warn('AuthContext.loginWithCredentials: invalid token while comparing account identities');
+                resetPendingArchives = true;
+            }
+        }
         const success = await TokenStorage.setCredentials(newCredentials);
         if (!success) {
             throw new Error('Failed to save credentials');
+        }
+        if (resetPendingArchives) {
+            storage.setState({ sessionArchiveOperations: {} });
         }
         // Mark this device as one where the user has authenticated at least once.
         // We persist this through the store (not raw saveLocalSettings) so the
@@ -51,8 +65,8 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         setCredentials(newCredentials);
         setIsAuthenticated(true);
         setAuthenticatedThisRun(true);
-        fireAndForget(syncSwitchServer(newCredentials), { tag: 'AuthContext.login.syncSwitchServer' });
-    }, [applyLocalSettings]);
+        await syncSwitchServer(newCredentials);
+    }, [applyLocalSettings, credentials]);
 
     const login = React.useCallback(
         async (token: string, secret: string) => {
@@ -64,6 +78,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
 
     const logout = React.useCallback(async () => {
         trackLogout();
+        storage.setState({ sessionArchiveOperations: {} });
         // Preserve device-local flags across logout — the user is signing out of
         // an account but the device itself has still seen the brand hero and
         // still has prior auth experience. Clearing these would force returning

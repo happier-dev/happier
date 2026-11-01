@@ -15,6 +15,8 @@ export type SherpaStreamingSttController = Readonly<{
 export function createSherpaStreamingSttController(deps: {
   setState: (patch: DeviceSttStatePatch) => void;
   getSettings: () => any;
+  canAutoStopTurn: (sessionId: string) => boolean;
+  onAutoStopTurn: (sessionId: string) => void;
 }): SherpaStreamingSttController {
   let handsFreeSessionId: string | null = null;
 
@@ -28,7 +30,8 @@ export function createSherpaStreamingSttController(deps: {
       handsFreeSessionId = sessionId;
     },
     start: async (_sessionId: string) => {
-      // Sherpa streaming STT is native-only. On web, surface an actionable error.
+      // Sherpa streaming STT is native-only. resolveLocalSttProvider routes web to device STT, so this
+      // is reached only by a direct caller; surface an actionable error rather than a silent no-op.
       deps.setState({ status: 'idle', sessionId: null, error: 'local_neural_stt_unavailable' });
     },
     stop: async (_sessionId: string) => '',

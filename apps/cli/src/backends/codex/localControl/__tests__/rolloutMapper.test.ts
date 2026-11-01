@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { mapCodexRolloutEventToActions } from '../rolloutMapper';
 
 describe('mapCodexRolloutEventToActions', () => {
+    it('preserves readable reasoning without exposing encrypted payloads, including in debug mode', () => {
+        expect(mapCodexRolloutEventToActions({ type: 'response_item', payload: {
+            type: 'reasoning', summary: [{ type: 'summary_text', text: 'Check the boundary' }, { type: 'summary_text', text: 'Then verify' }],
+            encrypted_content: 'opaque-private-reasoning',
+        } }, { debug: false })).toEqual([{ type: 'thinking', text: 'Check the boundary\n\nThen verify' }]);
+        expect(mapCodexRolloutEventToActions({ type: 'response_item', payload: {
+            type: 'reasoning', content: [{ type: 'reasoning_text', text: 'Readable detail' }],
+            summary: [{ type: 'summary_text', text: 'Summary fallback' }],
+        } }, { debug: false })).toEqual([{ type: 'thinking', text: 'Readable detail' }]);
+        expect(mapCodexRolloutEventToActions({ type: 'response_item', payload: {
+            type: 'reasoning', summary: [{ type: 'encrypted', text: 'do not render' }],
+            encrypted_content: 'opaque-private-reasoning',
+        } }, { debug: true })).toEqual([]);
+    });
+
+    it('accepts the Codex 0.162.1 rollout reasoning content text variant', () => {
+        expect(mapCodexRolloutEventToActions({ type: 'response_item', payload: {
+            type: 'reasoning', content: [{ type: 'text', text: 'Provider-exposed detail' }], summary: [],
+        } }, { debug: false })).toEqual([{ type: 'thinking', text: 'Provider-exposed detail' }]);
+    });
+
     it('extracts codex session id from session_meta', () => {
         const actions = mapCodexRolloutEventToActions(
             { type: 'session_meta', payload: { id: 'abc' } },

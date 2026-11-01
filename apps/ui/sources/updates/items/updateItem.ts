@@ -67,6 +67,10 @@ export type UpdateItem = Readonly<{
     title: string;
     currentVersion: string | null;
     latestVersion: string | null;
+    /** A cached release lookup is not refreshed by the Updates capability request. */
+    cachedRelease?: Readonly<{ channel: string | null }>;
+    /** The remote runtime reports the update target running; independent of release-check freshness. */
+    updateCompleted?: boolean;
     state: UpdateItemState;
     /** Whole percent, only when the producer reports a real fraction. */
     progressPercent: number | null;

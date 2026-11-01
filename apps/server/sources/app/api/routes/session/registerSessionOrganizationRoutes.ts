@@ -20,6 +20,8 @@ import {
     SessionOrganizationSnapshotResponseSchema,
     SetSessionAttentionStandingRequestSchema,
     SetSessionAttentionStandingResponseSchema,
+    SetSessionAppearanceRequestSchema,
+    SetSessionAppearanceResponseSchema,
     SetSessionFolderAssignmentRequestSchema,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinRequestSchema,
@@ -43,6 +45,7 @@ import {
     importLegacySessionOrganization,
     moveSessionFolderAssignments,
     setSessionAttentionStanding,
+    setSessionAppearance,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
@@ -121,6 +124,7 @@ function buildSnapshotRequestFromQuery(query: unknown): unknown {
         "includeAllTagAssignments",
         "includeAttentionStandings",
         "includeAttentionReminderTimes",
+        "includeSessionAppearances",
     ]) {
         if (!addOptionalBooleanQueryField(request, key, record[key])) return { [key]: invalidQueryValue };
     }
@@ -248,6 +252,40 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             return reply.code(404).send({ error: "Session not found" });
         }
 
+        return reply.send(result);
+    });
+
+    app.put("/v2/session-organization/appearances/:sessionId", {
+        preHandler: app.authenticate,
+        schema: {
+            params: sessionIdParamsSchema,
+            body: SetSessionAppearanceRequestSchema,
+            response: {
+                200: SetSessionAppearanceResponseSchema,
+                400: z.object({ error: z.literal("invalid-session-appearance") }),
+                404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal("session-appearance-limit-exceeded") }),
+            },
+        },
+    }, async (request, reply) => {
+        const parsedParams = sessionIdParamsSchema.safeParse(request.params);
+        const parsedBody = SetSessionAppearanceRequestSchema.safeParse(request.body);
+        if (!parsedParams.success || !parsedBody.success) {
+            return reply.code(400).send({ error: "invalid-session-appearance" });
+        }
+        const visible = parsedBody.data.display === null
+            ? await canAccessSyncedSessionForOrganization({ accountId: request.userId, sessionId: parsedParams.data.sessionId })
+            : await canAccessVisibleUnarchivedSessionForOrganization({ accountId: request.userId, sessionId: parsedParams.data.sessionId });
+        if (!visible) return reply.code(404).send({ error: "Session not found" });
+
+        const result = await setSessionAppearance({
+            accountId: request.userId, sessionId: parsedParams.data.sessionId, request: parsedBody.data,
+        });
+        if ("error" in result) {
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
+            if (result.error === "invalid-display-envelope") return reply.code(400).send({ error: "invalid-session-appearance" });
+            return reply.code(409).send({ error: result.error });
+        }
         return reply.send(result);
     });
 

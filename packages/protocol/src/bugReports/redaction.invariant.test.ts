@@ -49,6 +49,8 @@ const SECRET_BODIES: ReadonlyArray<readonly [string, string]> = [
  * would blank the rest of every command line it ever sees.
  */
 const INTRODUCERS: ReadonlyArray<readonly [string, (secret: string) => string, boolean]> = [
+  ['bearer-bare', (s) => `Bearer ${s}`, false],
+  ['bearer-quoted', (s) => `Bearer "${s}"`, true],
   ['header-bare', (s) => `Authorization: ${s}`, false],
   ['header-bearer', (s) => `Authorization: Bearer ${s}`, false],
   ['header-no-space', (s) => `authorization:${s}`, false],
@@ -130,6 +132,15 @@ function label(command: string): string {
 const CROSS_LINE_RESIDUAL = /^header-in-(curl-argument|single-quoted-argument) × embedded-newline/;
 
 describe('redaction invariant — a marker never stands beside surviving credential material', () => {
+  it('redacts provider-reported Bearer credentials without an Authorization header', () => {
+    const secret = 'opaque-bearer-credential';
+    for (const input of [`Bearer ${secret}`, `Provider rejected bearer "${secret}"; retry`]) {
+      const output = redactBugReportSensitiveText(input);
+      expect(output).not.toContain(secret);
+      expect(output).toContain('[REDACTED]');
+    }
+  });
+
   it('holds for every generated (introducer × secret × trailing context) composition', () => {
     const violations: string[] = [];
     for (const { id, input } of compositions()) {

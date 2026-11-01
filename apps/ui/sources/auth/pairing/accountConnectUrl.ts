@@ -3,6 +3,7 @@ import { parseHappierCustomSchemeUrl } from '@/utils/url/parseHappierCustomSchem
 
 export type ParsedAccountConnectDeepLink = Readonly<{
     publicKeyB64Url: string;
+    supportsCredentialVariants?: boolean;
 }>;
 
 export const ACCOUNT_CONNECT_ROUTE_PARAM = 'accountConnectKey';
@@ -24,15 +25,19 @@ export function parseAccountConnectDeepLink(rawLink: string): ParsedAccountConne
     const tail = String(parsed.search ?? '').replace(/^\?/, '').trim();
     if (!tail) return null;
 
-    return { publicKeyB64Url: tail };
+    const fragment = new URLSearchParams((parsed.hash ?? '').replace(/^#/, ''));
+    return {
+        publicKeyB64Url: tail,
+        ...(fragment.get('supportsCredentialVariants') === '1' ? { supportsCredentialVariants: true } : {}),
+    };
 }
 
-export function buildAccountConnectDeepLink(input: Readonly<{ publicKeyB64Url: string }>): string {
+export function buildAccountConnectDeepLink(input: ParsedAccountConnectDeepLink): string {
     const publicKeyB64Url = String(input.publicKeyB64Url ?? '').trim();
-    return `${resolveAppUrlScheme()}:///account?${publicKeyB64Url}`;
+    return `${resolveAppUrlScheme()}:///account?${publicKeyB64Url}${input.supportsCredentialVariants === true ? '#supportsCredentialVariants=1' : ''}`;
 }
 
-export function buildAccountConnectRoutePath(input: Readonly<{ publicKeyB64Url: string }>): string {
+export function buildAccountConnectRoutePath(input: ParsedAccountConnectDeepLink): string {
     const publicKeyB64Url = String(input.publicKeyB64Url ?? '').trim();
-    return `/account?${ACCOUNT_CONNECT_ROUTE_PARAM}=${encodeURIComponent(publicKeyB64Url)}`;
+    return `/account?${ACCOUNT_CONNECT_ROUTE_PARAM}=${encodeURIComponent(publicKeyB64Url)}${input.supportsCredentialVariants === true ? '&supportsCredentialVariants=1' : ''}`;
 }

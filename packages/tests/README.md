@@ -118,10 +118,27 @@ Artifacts are written on failure by default. You can force keeping artifacts eve
 - `HAPPIER_E2E_SAVE_ARTIFACTS=1 yarn workspace @happier-dev/tests test`
 
 UI E2E (Playwright) notes:
+
 - Expo web is started via `expo start --web`; if you suspect stale Metro transforms, you can opt into cache clearing with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
 - UI E2E artifacts live under `.project/logs/e2e/ui-playwright/...` and include screenshots + videos on failure.
 - WSREPL Lima matrix artifacts live under `apps/stack/output/wsrepl-lima-matrix/...`; the lane entrypoint, raw harness, and Lima bootstrap helper now live in `packages/tests` (`packages/tests/scripts/run-wsrepl-lima-matrix.mjs`, `packages/tests/scripts/wsrepl-lima-matrix.sh`, `packages/tests/scripts/lima-vm.sh`). The stack copies are compatibility shims only and are excluded from the published stack package.
 - Harness self-tests run via `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self`. Their environment and fake guest shell are owned by the stack testkit’s `apps/stack/scripts/testkit/core/lima_guest_harness.mjs`: fixtures explicitly supply stack/provider settings and run guest scripts without loading host login profiles. Keep fake `limactl shell` execution on that boundary; executing guest login shells directly on the host can reach the real CLI and restart a live daemon.
+
+The development CI network-transfer job measures cold/warm Home, a 30-second idle window,
+a fixed metadata burst, session open/leave, and recovery of an edit made while offline.
+It runs on `dev` source pushes (except the canonical editorial-only shortcut) and PRs
+touching sync, server, socket transport, protocol or the measurement harness. PR results
+are initially report-only. Deterministic ceilings live beside
+`suites/ui-e2e/session.networkTransfer.spec.ts`; timing, compression and heartbeat metrics
+remain informational. The summary compares matching workload/schema/browser/runtime
+dimensions with the latest comparable successful base-branch push artifact. Missing
+baselines never waive absolute ceilings on `dev` pushes. Every retry is retained.
+
+For a manual run, select `network_transfer` in `tests-dispatch.yml`; select
+`network_transfer_enforce` to enforce ceilings outside `dev` pushes. Locally, run
+`./apps/stack/bin/hstack-exec -- yarn -s test:e2e:ui -- suites/ui-e2e/session.networkTransfer.spec.ts`
+from the repository root. JSON attachments are always retained in Playwright's output;
+WebSocket bytes are decompressed application payloads, not encoded wire bytes.
 
 ## Core e2e suite: what each test ensures
 

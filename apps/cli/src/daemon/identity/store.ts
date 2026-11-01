@@ -327,3 +327,14 @@ export function readInstallationIdentityIfExistsSync(
   }
   return identity;
 }
+
+export async function readInstallationIdentityIfExists(
+  path = configuration.installationIdentityFile,
+): Promise<MachineInstallationIdentityV1 | null> {
+  try {
+    return await readExistingInstallationIdentity(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
+  }
+}

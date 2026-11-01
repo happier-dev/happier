@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +16,92 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe('withOpenCodeServerFileLock', () => {
+  it('serializes concurrent mutations nested under one bounded access owner', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-opencode-lock-parallel-'));
+    const lockFile = join(dir, 'opencode.lock');
+    const stateFile = join(dir, 'state.json');
+    try {
+      await writeFile(stateFile, '0');
+      const mutate = async () => await withOpenCodeServerFileLock(lockFile, async () => {
+        const prior = Number(await readFile(stateFile, 'utf8'));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await writeFile(stateFile, String(prior + 1));
+      });
+      await withOpenCodeServerFileLock(lockFile, async () => {
+        await Promise.all([mutate(), mutate()]);
+      });
+      expect(await readFile(stateFile, 'utf8')).toBe('2');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reuse a lock from async work that outlived its owning callback', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-opencode-lock-expired-'));
+    const lockFile = join(dir, 'opencode.lock');
+    let wakeEscaped!: () => void;
+    let releaseCompetitor!: () => void;
+    let enteredCompetitor!: () => void;
+    const wake = new Promise<void>((resolve) => { wakeEscaped = resolve; });
+    const competitorEntered = new Promise<void>((resolve) => { enteredCompetitor = resolve; });
+    const competitorRelease = new Promise<void>((resolve) => { releaseCompetitor = resolve; });
+    let escaped: Promise<void> = Promise.resolve();
+    let competitor: Promise<void> = Promise.resolve();
+    process.env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS = '50';
+    try {
+      await withOpenCodeServerFileLock(lockFile, async () => {
+        escaped = (async () => {
+          await wake;
+          await withOpenCodeServerFileLock(lockFile, async () => {});
+        })();
+      });
+      competitor = withOpenCodeServerFileLock(lockFile, async () => {
+        enteredCompetitor();
+        await competitorRelease;
+      });
+      await competitorEntered;
+      wakeEscaped();
+      await expect(escaped).rejects.toThrow('Timeout acquiring OpenCode server lock after 50ms');
+    } finally {
+      wakeEscaped();
+      releaseCompetitor();
+      await Promise.allSettled([escaped, competitor]);
+      await rm(dir, { recursive: true, force: true });
+      delete process.env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS;
+    }
+  });
+
+  it('keeps one acquisition lock across nested work while excluding an unrelated concurrent operation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-opencode-lock-nested-'));
+    const lockFile = join(dir, 'opencode.lock');
+    let releaseOuter!: () => void;
+    let enteredOuter!: () => void;
+    const outerEntered = new Promise<void>((resolve) => { enteredOuter = resolve; });
+    const outerRelease = new Promise<void>((resolve) => { releaseOuter = resolve; });
+    const events: string[] = [];
+    process.env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS = '100';
+    try {
+      const outer = withOpenCodeServerFileLock(lockFile, async () => {
+        await withOpenCodeServerFileLock(lockFile, async () => { events.push('nested'); });
+        enteredOuter();
+        await outerRelease;
+        events.push('outer-released');
+      });
+      // Before reentrancy exists this rejects from the nested acquisition, not a harness timeout.
+      await Promise.race([outerEntered, outer]);
+      const competing = withOpenCodeServerFileLock(lockFile, async () => { events.push('competing'); });
+      expect(events).toEqual(['nested']);
+      expect(await pathExists(lockFile)).toBe(true);
+      releaseOuter();
+      await Promise.all([outer, competing]);
+      expect(events).toEqual(['nested', 'outer-released', 'competing']);
+    } finally {
+      releaseOuter();
+      await rm(dir, { recursive: true, force: true });
+      delete process.env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS;
+    }
+  });
+
   it('defaults the lock timeout beyond the canonical managed-server startup deadline', () => {
     expect(resolveOpenCodeServerLockTimeoutMsFromEnv({
       HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS: '30000',

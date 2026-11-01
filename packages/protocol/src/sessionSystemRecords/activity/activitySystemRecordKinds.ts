@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
 export const SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE = 'activity' as const;
 
@@ -13,7 +14,7 @@ export const ACTIVITY_SESSION_SYSTEM_RECORD_KINDS = [
   'background_task.v1',
 ] as const;
 
-export const ActivitySessionSystemRecordKindSchema = z.enum(ACTIVITY_SESSION_SYSTEM_RECORD_KINDS);
+export const ActivitySessionSystemRecordKindSchema = lazySchema(() => z.enum(ACTIVITY_SESSION_SYSTEM_RECORD_KINDS));
 export type ActivitySessionSystemRecordKind = z.infer<typeof ActivitySessionSystemRecordKindSchema>;
 
 /**

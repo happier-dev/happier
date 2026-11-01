@@ -206,6 +206,7 @@ function cleanupFailedOwnerInitialization(lockPath, fd, initializationError) {
 }
 
 export async function withWorkspaceBundleLock(fn, options = {}) {
+  options.signal?.throwIfAborted();
   const lockPath = String(options.lockPath ?? '').trim();
   if (!lockPath) throw new Error('Missing workspace bundle lock path');
 
@@ -220,9 +221,9 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   }
 
   mkdirSync(dirname(lockPath), { recursive: true });
-  const timeoutMs = options.timeoutMs ?? 240_000;
+  const timeoutMs = options.timeoutMs === null ? null : (options.timeoutMs ?? 240_000);
   const pollIntervalMs = options.pollIntervalMs ?? 250;
-  const staleAfterMs = options.staleAfterMs ?? timeoutMs;
+  const staleAfterMs = options.staleAfterMs ?? timeoutMs ?? 240_000;
   const startedAt = Date.now();
   const ownerToken = randomUUID();
   let createdAtMs = 0;
@@ -235,6 +236,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   const processInstanceFingerprint = readProcessInstanceFingerprintImpl(process.pid);
 
   while (true) {
+    options.signal?.throwIfAborted();
     try {
       createdAtMs = Date.now();
       ownLockRaw = serializeLockOwner({
@@ -260,13 +262,19 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         reclaimLockSnapshot(lockPath, snapshot.raw);
         continue;
       }
-      if (Date.now() - startedAt > timeoutMs) {
+      if (timeoutMs !== null && Date.now() - startedAt > timeoutMs) {
         const errorLabel = options.errorLabel ?? 'workspace bundle lock';
         throw createWorkspaceBundleLockTimeoutError({ errorLabel, lockPath, snapshot });
       }
       waited = true;
       notifyWaiter(options, lockPath, snapshot, startedAt, staleAfterMs, timeoutMs);
-      await sleep(pollIntervalMs);
+      options.signal?.throwIfAborted();
+      try {
+        await sleep(pollIntervalMs, undefined, { signal: options.signal });
+      } catch (error) {
+        options.signal?.throwIfAborted();
+        throw error;
+      }
     }
   }
 

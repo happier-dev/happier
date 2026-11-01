@@ -10,7 +10,7 @@ import {
 } from '@/sync/domains/social/friendTypes';
 
 type RetryMode = 'default' | 'none';
-type RetryOptions = Readonly<{ retry?: RetryMode }>;
+type RetryOptions = Readonly<{ retry?: RetryMode; endpointUrl?: string }>;
 type FriendsListRequest = (path: string, init?: RequestInit) => Promise<Response>;
 type FriendsListOptions = RetryOptions & Readonly<{ request?: FriendsListRequest }>;
 
@@ -70,7 +70,7 @@ export async function getUserProfile(
 ): Promise<UserProfile | null> {
     const run = async () => {
         const response = await serverFetch(
-            `/v1/user/${userId}`,
+            `${opts.endpointUrl?.replace(/\/+$/, '') ?? ''}/v1/user/${encodeURIComponent(userId)}`,
             {
                 method: 'GET',
                 headers: {

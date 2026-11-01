@@ -243,6 +243,7 @@ describe('finalizeRuntimeArtifactPayload native target projection', () => {
       'sharp-libvips-linuxmusl-arm64', 'sharp-libvips-linuxmusl-x64',
       'sharp-win32-arm64', 'sharp-win32-x64',
       'sharp-wasm32',
+      'sharp-freebsd-wasm32', 'sharp-webcontainers-wasm32',
     ];
     const claudePackages = [
       'claude-agent-sdk-darwin-arm64', 'claude-agent-sdk-darwin-x64',
@@ -473,7 +474,11 @@ describe('finalizeRuntimeArtifactPayload native target projection', () => {
       expectedMissing: '@img/sharp-darwin-arm64',
     },
   ])('rejects an incomplete cross-target closure for $packageRoot', async ({ packageRoot, installedPackage, expectedMissing }) => {
-    const root = await fixtureRoot();
+    const parent = await fixtureRoot();
+    const root = join(parent, 'payload');
+    for (const packageName of ['sharp-darwin-arm64', 'sharp-libvips-darwin-arm64']) {
+      await put(parent, `node_modules/@img/${packageName}/package.json`, '{}');
+    }
     await put(root, `${packageRoot}/package.json`, '{}');
     await put(root, `${installedPackage}/package.json`, '{}');
     await put(root, 'package-dist/index.mjs');

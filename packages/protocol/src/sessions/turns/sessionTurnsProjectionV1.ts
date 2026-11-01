@@ -7,8 +7,9 @@ import {
   buildSessionTurnV1,
   type SessionTurnV1,
 } from './sessionTurnV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const SessionTurnsProjectionV1Schema = z
+export const SessionTurnsProjectionV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     sessionId: SessionTurnIdentifierV1Schema,
@@ -17,7 +18,7 @@ export const SessionTurnsProjectionV1Schema = z
     turns: z.array(SessionTurnV1Schema).readonly(),
   })
   .passthrough()
-  .readonly();
+  .readonly());
 export type SessionTurnsProjectionV1 = z.infer<typeof SessionTurnsProjectionV1Schema>;
 
 export function buildSessionTurnsProjectionV1(params: Readonly<{

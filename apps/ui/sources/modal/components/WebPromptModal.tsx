@@ -125,6 +125,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
         <BaseModal
             visible={true}
             onClose={handleCancel}
+            accessibilityLabel={config.title}
             closeOnBackdrop={false}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}

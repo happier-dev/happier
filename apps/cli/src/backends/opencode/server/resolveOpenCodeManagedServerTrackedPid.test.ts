@@ -35,6 +35,7 @@ describe('resolveOpenCodeManagedServerTrackedPid', () => {
             expect.objectContaining({
                 encoding: 'utf8',
                 stdio: ['ignore', 'pipe', 'ignore'],
+                windowsHide: true,
             }),
         );
         expect(execFileSyncMock).toHaveBeenCalledWith(
@@ -48,6 +49,7 @@ describe('resolveOpenCodeManagedServerTrackedPid', () => {
             expect.objectContaining({
                 encoding: 'utf8',
                 stdio: ['ignore', 'pipe', 'ignore'],
+                windowsHide: true,
             }),
         );
     });

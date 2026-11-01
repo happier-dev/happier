@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 
 describe('parseSessionCreateSpawnOptions', () => {
+  it.each(['{"servers":[]}', '[]', 'null', 'false'])('rejects unsupported MCP selection %s', (raw) => {
+    expect(() => parseSessionCreateSpawnOptions(['--mcp-selection-json', raw]))
+      .toThrow('Invalid --mcp-selection-json');
+  });
+
+  it('preserves the built-in Happier tools opt-out in spawn input', () => {
+    expect(parseSessionCreateSpawnOptions([
+      '--mcp-selection-json', '{"happierToolsEnabled":false}',
+    ]).actionInput.mcpSelection).toMatchObject({ happierToolsEnabled: false });
+  });
+
   it.each([
     ['read_only', 'read-only'],
     ['read-only', 'read-only'],

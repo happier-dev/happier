@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { V2SessionRecord } from '@happier-dev/protocol';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 import { fetchAndApplySessions, type SessionListEncryption } from './sessionSnapshot';
 
@@ -93,6 +94,142 @@ afterEach(() => {
 });
 
 describe('session-list snapshot replacement coverage', () => {
+    it('requires readable metadata for a targeted row without a separate hydration option', async () => {
+        const encryption = createEncryptionHarness();
+        encryption.getSessionEncryption = () => ({
+            decryptMetadata: async () => null,
+            decryptAgentState: async () => ({}),
+        });
+        await expect(fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map(),
+            sessionListScope: 'required',
+            requiredSessionIds: ['required'],
+            request: async () => jsonResponse({
+                sessions: [{ ...buildPlainRow('required'), encryptionMode: 'e2ee' }],
+                nextCursor: null,
+                hasNext: false,
+            }),
+            applySessionListRenderables: () => {},
+            applySessions: () => {},
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        })).rejects.toThrow(/required.*hydration/i);
+    });
+
+    it('keeps account hydration running when targeted changed rows hydrate through the same owner', async () => {
+        const accountStarted = createDeferred<void>();
+        const accountMetadata = createDeferred<{ path: string; host: string }>();
+        const encryption = createEncryptionHarness();
+        encryption.getSessionEncryption = () => ({
+            decryptMetadata: async (_version, value) => {
+                if (value === 'account-payload') {
+                    accountStarted.resolve(undefined);
+                    return accountMetadata.promise;
+                }
+                return { path: '/targeted', host: 'host' };
+            },
+            decryptAgentState: async () => ({}),
+        });
+        const appliedIds: string[] = [];
+        const fetchRow = (id: string, scope: 'account' | 'required') => fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map(),
+            sessionListScope: scope,
+            requiredSessionIds: [id],
+            requiredHydrationSessionIds: [id],
+            awaitSessionListHydration: true,
+            request: async () => jsonResponse({
+                sessions: [{ ...buildPlainRow(id), encryptionMode: 'e2ee', metadata: `${id}-payload` }],
+                nextCursor: null,
+                hasNext: false,
+            }),
+            applySessionListRenderables: () => {},
+            applySessions: (sessions) => { appliedIds.push(...sessions.map((session) => session.id)); },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        const accountFetch = fetchRow('account', 'account');
+        await accountStarted.promise;
+        try {
+            await fetchRow('targeted', 'required');
+        } finally {
+            accountMetadata.resolve({ path: '/account', host: 'host' });
+            await accountFetch;
+        }
+        expect(appliedIds.sort()).toEqual(['account', 'targeted']);
+    });
+
+    it.each([true, false])('rejects awaited required-row hydration when its encrypted payload cannot be decrypted (renderables: %s)', async (withRenderables) => {
+        const encryption = createEncryptionHarness();
+        encryption.getSessionEncryption = () => ({
+            decryptMetadata: async () => { throw new Error('invalid encrypted payload'); },
+            decryptAgentState: async () => ({}),
+        });
+        const applySessions = vi.fn();
+        await expect(fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map(),
+            requiredHydrationSessionIds: ['required'],
+            awaitSessionListHydration: true,
+            request: async () => jsonResponse({
+                sessions: [{ ...buildPlainRow('required'), encryptionMode: 'e2ee' }],
+                nextCursor: null,
+                hasNext: false,
+            }),
+            applySessionListRenderables: withRenderables ? () => {} : undefined,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        })).rejects.toThrow(/required.*hydration/i);
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('hydrates a required-only response without replacing the account list or reporting whole-list coverage', async () => {
+        const applySessionListRenderables = vi.fn();
+        const applySessions = vi.fn();
+        const requestedPaths: string[] = [];
+        const result = await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption: createEncryptionHarness(),
+            sessionDataKeys: new Map(),
+            sessionListScope: 'required',
+            requiredSessionIds: ['required', 'omitted'],
+            requiredHydrationSessionIds: ['required', 'omitted'],
+            includeActiveSessionRows: true,
+            includeSessionListAttentionRows: true,
+            awaitSessionListHydration: true,
+            request: async (path) => {
+                requestedPaths.push(path);
+                return jsonResponse({
+                    sessions: [buildPlainRow('unrelated'), buildPlainRow('required')],
+                    nextCursor: 'ordinary-page-2',
+                    hasNext: true,
+                });
+            },
+            applySessionListRenderables,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(result).toMatchObject({ sessionIds: ['required'], nextCursor: null, hasNext: false });
+        expect(applySessionListRenderables).toHaveBeenCalledWith(
+            [expect.objectContaining({ id: 'required' })],
+            { replace: false, coversWholeList: false },
+        );
+        expect(applySessions.mock.calls.flatMap(([sessions]) => sessions.map((session: { id: string }) => session.id))).toEqual(['required']);
+        expect(requestedPaths).toHaveLength(1);
+        const query = new URL(requestedPaths[0], 'https://example.test').searchParams;
+        expect(query.get('requiredOnly')).toBe('true');
+        expect(query.has('includeActive')).toBe(false);
+        expect(query.has('includeAttention')).toBe(false);
+    });
+
     it('declares the replacement authoritative for the whole list when the server has no further page', async () => {
         await expect(snapshotCoverage({ page: { hasNext: false, nextCursor: null } })).resolves.toBe(true);
     });

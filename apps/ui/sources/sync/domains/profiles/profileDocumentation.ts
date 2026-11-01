@@ -151,7 +151,7 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
         case 'minimax':
             return {
                 setupGuideUrl: 'https://platform.minimax.io/docs/api-reference/api-overview',
-                description: 'MiniMax M3 through the Anthropic-compatible endpoint (global). Use a key issued on api.minimax.io — China keys are not valid here.',
+                description: 'MiniMax M3.1 Flash through the Anthropic-compatible endpoint (global). Use a key issued on api.minimax.io — China keys are not valid here.',
                 environmentVariables: [
                     {
                         name: 'MINIMAX_BASE_URL',
@@ -174,30 +174,30 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
                     {
                         name: 'MINIMAX_AUTO_COMPACT_WINDOW',
                         expectedValue: '1000000',
-                        description: 'Context capacity used for auto-compaction. Matches M3\'s 1M context window.',
+                        description: 'Context capacity used for auto-compaction. Matches Flash\'s 1M context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Default model with a 1M-token context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_OPUS_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Model used when the session selects the Opus tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_SONNET_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Model used when the session selects the Sonnet tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_HAIKU_MODEL',
-                        expectedValue: 'MiniMax-M2.7',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Fast model used for background tasks and the Haiku tier',
                         isSecret: false,
                     },
@@ -213,20 +213,21 @@ export MINIMAX_BASE_URL="https://api.minimax.io/anthropic"
 export MINIMAX_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_API_TIMEOUT_MS="600000"
 export MINIMAX_AUTO_COMPACT_WINDOW="1000000"
-export MINIMAX_MODEL="MiniMax-M3"
-export MINIMAX_OPUS_MODEL="MiniMax-M3"
-export MINIMAX_SONNET_MODEL="MiniMax-M3"
-export MINIMAX_HAIKU_MODEL="MiniMax-M2.7"
+export MINIMAX_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_OPUS_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_SONNET_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_HAIKU_MODEL="MiniMax-M3.1-Flash"
 export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 
 # Model selection guide:
-# - MiniMax-M3: Default model with a 1M-token context window.
-# - MiniMax-M2.7: Faster, lighter model for background work.`,
+# - MiniMax-M3.1-Flash: Default model for all tiers, with a 1M-token context window.
+# - MiniMax-M3: Alternative model; set MINIMAX_MODEL explicitly to select it.
+# Explicit saved/custom model IDs remain supported.`,
             };
         case 'minimax-cn':
             return {
                 setupGuideUrl: 'https://platform.minimaxi.com/docs/api-reference/api-overview',
-                description: 'MiniMax M3 through the Anthropic-compatible endpoint (China). Use a key issued on api.minimaxi.com — global keys are not valid here.',
+                description: 'MiniMax M3.1 Flash through the Anthropic-compatible endpoint (China). Use a key issued on api.minimaxi.com — global keys are not valid here.',
                 environmentVariables: [
                     {
                         name: 'MINIMAX_CN_BASE_URL',
@@ -249,30 +250,30 @@ export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
                     {
                         name: 'MINIMAX_CN_AUTO_COMPACT_WINDOW',
                         expectedValue: '1000000',
-                        description: 'Context capacity used for auto-compaction. Matches M3\'s 1M context window.',
+                        description: 'Context capacity used for auto-compaction. Matches Flash\'s 1M context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Default model with a 1M-token context window.',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_OPUS_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Model used when the session selects the Opus tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_SONNET_MODEL',
-                        expectedValue: 'MiniMax-M3',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Model used when the session selects the Sonnet tier',
                         isSecret: false,
                     },
                     {
                         name: 'MINIMAX_CN_HAIKU_MODEL',
-                        expectedValue: 'MiniMax-M2.7',
+                        expectedValue: 'MiniMax-M3.1-Flash',
                         description: 'Fast model used for background tasks and the Haiku tier',
                         isSecret: false,
                     },
@@ -288,10 +289,10 @@ export MINIMAX_CN_BASE_URL="https://api.minimaxi.com/anthropic"
 export MINIMAX_CN_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_CN_API_TIMEOUT_MS="600000"
 export MINIMAX_CN_AUTO_COMPACT_WINDOW="1000000"
-export MINIMAX_CN_MODEL="MiniMax-M3"
-export MINIMAX_CN_OPUS_MODEL="MiniMax-M3"
-export MINIMAX_CN_SONNET_MODEL="MiniMax-M3"
-export MINIMAX_CN_HAIKU_MODEL="MiniMax-M2.7"
+export MINIMAX_CN_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_CN_OPUS_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_CN_SONNET_MODEL="MiniMax-M3.1-Flash"
+export MINIMAX_CN_HAIKU_MODEL="MiniMax-M3.1-Flash"
 export MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"`,
             };
         case 'openai':

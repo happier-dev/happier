@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import {
+  openTerminalProvisioningV3Response,
+  sealTerminalProvisioningV3TokenOnlyPayload,
   isTerminalProvisioningV3Payload,
   openTerminalProvisioningV3Payload,
   openTerminalProvisioningV2Payload,
@@ -105,6 +107,9 @@ describe('terminalProvisioningV3', () => {
       randomBytes: deterministicRandomBytesFactory(),
     });
 
+    // Pinned from the pre-extension codec with this deterministic random stream.
+    expect(Buffer.from(payload).toString('hex')).toBe('4850563307a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c2122232425262728292a2b2c2d2e2f303132333435363738038421ac68edc7135402995448e77117e81672a45e7c6cf4c2adccbbc9002707396eee6a007127b87017ea460009127322e1d42c22f204cd76284a35fc425cc84ccd5c295c34fde4f0e5316eab47e18ea8');
+
     expect(isTerminalProvisioningV3Payload(payload)).toBe(true);
     expect(
       openTerminalProvisioningV3Payload({
@@ -114,6 +119,22 @@ describe('terminalProvisioningV3', () => {
         nowMs: 2_000,
       }),
     ).toEqual(contentPrivateKey);
+  });
+
+  it('authenticates explicit token-only responses and rejects tampering without treating them as keys', () => {
+    const payload = sealTerminalProvisioningV3TokenOnlyPayload({
+      ...context,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+    const input = { payload, recipientSecretKeyOrSeed: terminalSecretKey, ...context, nowMs: 2_000 };
+    expect(isTerminalProvisioningV3Payload(payload)).toBe(true);
+    expect(openTerminalProvisioningV3Response(input)).toEqual({ type: 'tokenOnly' });
+    expect(openTerminalProvisioningV3Payload(input)).toBeNull();
+    const tampered = payload.slice();
+    tampered[10] ^= 1;
+    expect(openTerminalProvisioningV3Response({ ...input, payload: tampered })).toBeNull();
+    expect(openTerminalProvisioningV3Response({ ...input, pairingSecret: new Uint8Array(32).fill(12) })).toBeNull();
+    expect(openTerminalProvisioningV3Response({ ...input, nowMs: context.expiresAtMs + 1 })).toBeNull();
   });
 
   it('fails closed for tampering or a different QR secret', () => {

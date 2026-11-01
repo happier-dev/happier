@@ -26,6 +26,16 @@ vocabulary).
 This is not session handoff, which moves a Session between machines and keeps
 the Agent, and not forking, which creates a new Session.
 
+In development source, **Session title updates: At session start** generates a
+title only while the Happier Session has no non-empty `summary.text` or legacy
+`name`. Starting a fresh Agent conversation during continuation does not restart
+that instruction. `resolveCodingPromptSessionTitleInstructionModeV1` owns this
+decision for base prompts, shell-bridge guidance and Pi's extension prompt;
+the runtime passes the Session's existing metadata into prompt composition.
+Ongoing title guidance and explicit rename tools retain their existing policy.
+The shared `hasSessionTitleInMetadata` reader also governs ACP native-title
+initialization, so a provider title cannot replace a legacy `name` title either.
+
 ## Canonical owners
 
 | Concern | Owner |
@@ -42,6 +52,12 @@ the Agent, and not forking, which creates a new Session.
 | Client eligibility per catalog row | `apps/ui/sources/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility.ts` |
 | Arming, arm scope, and the transition's correlation id | `apps/ui/sources/components/sessions/agentPicker/useInSessionAgentPickerControls.tsx` |
 | Which destination one composer send reaches | `apps/ui/sources/sync/domains/session/input/resolveSessionComposerSendDestination.ts` |
+
+In development source, an armed continuation is a submit intent even when the
+composer is blank. `resolveSessionComposerSend` supplies the localized
+`common.continue` prompt only when there is no authored text, attachment or
+included review comment. The original draft remains the compare-clear snapshot;
+the existing transition submission retains the resolved input for retries.
 
 Machine RPCs (`packages/protocol/src/rpc.ts`, registered in
 `apps/cli/src/api/machine/rpcHandlers.ts`):
@@ -196,6 +212,14 @@ view (CAS on `metadataVersion`/`agentStateVersion`), then appends the divider
 through the canonical message owner. Missing, conflicting, unreadable, or
 unverifiable divider evidence after that committed view maps to the one public
 `divider_unavailable` result; storage-specific evidence stays internal.
+
+In current development source, the cutover also retires the departed Agent's
+current turn and runtime-issue projection. It advances the previous observation
+timestamp in the runner's clock domain and publishes that clear alongside the
+target identity. Historical `SessionTurn` rows and their failures remain intact.
+Later transcript-anchor or provider-id
+bookkeeping updates those historical rows without selecting them as current.
+An exact cutover retry leaves the target runtime's new status and issue intact.
 
 **7.4 Admit input, then activate.** Input custody is taken **before** the target
 runtime is started, matching this tree's `sendSessionMessage` invariant:

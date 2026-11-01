@@ -1,13 +1,13 @@
 import { readCredentials, type Credentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { argvBeforeOptionTerminator, hasFlag } from '@/cli/commands/shared/argvFlags';
 
 import { cmdSessionList } from './list';
 import { cmdSessionHistory } from './history';
 import { cmdSessionStatus } from './status';
 import { cmdSessionCreate } from './create';
 import { SESSION_CREATE_USAGE } from './create/parseSessionCreateSpawnOptions';
-import { cmdSessionSend } from './send';
+import { cmdSessionSend, SESSION_SEND_USAGE } from './send';
 import { cmdSessionWait } from './wait';
 import { cmdSessionStop } from './stop';
 import { cmdSessionArchive } from './archive';
@@ -83,7 +83,7 @@ const SESSION_HELP_BY_COMMAND = {
   list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]',
   status: 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]',
   create: SESSION_CREATE_USAGE,
-  send: 'happier session send <session-id-or-prefix-or-tag> <message> [--local-id <id>] [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]',
+  send: SESSION_SEND_USAGE,
   wait: 'happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]',
   stop: 'happier session stop <session-id-or-prefix-or-tag> [--json]',
   history: 'happier session history <session-id-or-prefix-or-tag> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]',
@@ -141,7 +141,8 @@ function printSessionHelp(argv: readonly string[]): boolean {
     return true;
   }
 
-  if (!hasFlag(argv, '--help') && !hasFlag(argv, '-h')) return false;
+  const optionArgv = argvBeforeOptionTerminator(argv);
+  if (!hasFlag(optionArgv, '--help') && !hasFlag(optionArgv, '-h')) return false;
 
   const nested = String(argv[1] ?? '').trim();
   const groupedCommands = SESSION_HELP_GROUPS[subcommand];
@@ -170,7 +171,7 @@ export async function handleSessionCommand(
     readCredentialsFn?: () => Promise<Credentials | null>;
   }>,
 ): Promise<void> {
-  const json = wantsJson(argv);
+  const json = wantsJson(argvBeforeOptionTerminator(argv));
   const kind = inferSessionKind(argv);
   const subcommand = String(argv[0] ?? '').trim();
 

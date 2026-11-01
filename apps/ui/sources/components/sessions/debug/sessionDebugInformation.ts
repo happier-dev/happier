@@ -1,3 +1,7 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
+import { t } from '@/text';
+
 type SessionDebugMetadata = unknown;
 
 export type SessionDebugInformationSession = Readonly<{
@@ -7,6 +11,9 @@ export type SessionDebugInformationSession = Readonly<{
 
 export type SessionDebugInformation = Readonly<{
     text: string;
+    happierSessionId: string;
+    providerDisplayName: string | null;
+    providerSessionId: string | null;
     happierSessionLogPath: string | null;
     providerSessionArtifactPath: string | null;
 }>;
@@ -85,7 +92,24 @@ export function buildSessionDebugInformation(params: Readonly<{
 
     return {
         text: lines.join('\n'),
+        happierSessionId: params.session.id,
+        providerDisplayName,
+        providerSessionId,
         happierSessionLogPath,
         providerSessionArtifactPath: providerSessionArtifactPath ?? null,
     };
+}
+
+/** Menu entrypoints share the same agent identity and information formatter. */
+export function buildSessionDebugInformationForSession(session: SessionDebugInformationSession): SessionDebugInformation {
+    const agentId = resolveAgentIdFromSessionMetadata(session.metadata) ?? DEFAULT_AGENT_ID;
+    const agentCore = getAgentCore(agentId);
+    return buildSessionDebugInformation({
+        session,
+        providerDisplayName: t(agentCore.displayNameKey),
+        providerSessionId: resolveProviderSessionIdForDebug({
+            metadata: session.metadata,
+            vendorResumeIdField: agentCore.resume.vendorResumeIdField,
+        }),
+    });
 }

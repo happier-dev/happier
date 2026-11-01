@@ -5,7 +5,7 @@ import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwa
 import type { RawJSONLines } from '../types';
 import { providers } from '@happier-dev/agents';
 import { parseRawJsonLinesObject } from './parseRawJsonLines';
-import { readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
+import { isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 
 /**
  * Read and parse a Claude Code session JSONL file.
@@ -80,7 +80,7 @@ export async function readClaudeSessionJsonlMessages(params: Readonly<{
 
       const parsed = parseRawJsonLinesObject(raw);
       if (providers.claude.isClaudeInternalEventType(parsed?.type ?? raw?.type)
-        && readClaudeTaskLifecycleEnvelope(raw)?.subtype !== 'task_notification') {
+        && !isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(raw))) {
         continue;
       }
 

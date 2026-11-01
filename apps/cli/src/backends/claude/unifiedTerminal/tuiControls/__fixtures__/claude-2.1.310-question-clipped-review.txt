@@ -1,0 +1,21 @@
+
+Review your answers
+
+ │ ● S1: A synthetic client reads task-owned fixture updates from a scratch
+ │   server and displays a simple status indicator. Which isolated validation
+ │   path should this harmless probe use?
+   → Keep synthetic updates (Recommended)
+ │ ● L2: The synthetic probe records harmless fixture markers while its scratch
+ │   client displays a status indicator. Which isolated timing choice should
+ │   this validation keep without changing a user preference?
+   → Keep the synthetic timing (Recommended)
+ │ ● L3: Several synthetic fixture checks share this task-owned scratch
+ │   transcript: a local status marker, a harmless text update, and a captured
+ │   review page. Which final summary should the isolated validation retain
+ │   while preserving all existing user settings?
+   → Keep synthetic result evidence
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

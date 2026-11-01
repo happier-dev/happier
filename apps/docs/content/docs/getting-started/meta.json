@@ -2,6 +2,7 @@
   "title": "Start here",
   "pages": [
     "index",
+    "agent-setup",
     "get-the-apps",
     "onboarding",
     "check-your-setup",

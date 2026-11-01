@@ -73,6 +73,8 @@ export interface EnhancedMode {
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
+    claudeRemoteIdleReclaimEnabled?: boolean;
+    claudeRemoteIdleReclaimTimeoutMinutes?: number;
     claudeUnifiedTerminalEnabled?: boolean;
     claudeUnifiedTerminalHost?: ClaudeUnifiedTerminalHost;
     claudeUnifiedTerminalResumeChoice?: ClaudeUnifiedTerminalResumeChoice;
@@ -127,6 +129,7 @@ interface LoopOptions {
     startedBy?: 'daemon' | 'terminal'
     terminalRuntime?: TerminalRuntimeFlags | null
     defaultSystemPromptText?: string
+    observeClaudePermissionTranscript?: (value: unknown) => void
     precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null
     reportSessionMetadataToDaemon?: (input: Readonly<{
         sessionId: string;
@@ -178,6 +181,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         startedBy: opts.startedBy ?? 'terminal',
         terminalRuntime: opts.terminalRuntime ?? null,
         defaultSystemPromptText: opts.defaultSystemPromptText,
+        observeClaudePermissionTranscript: opts.observeClaudePermissionTranscript,
         precomputedMcpBridge: opts.precomputedMcpBridge ?? null,
         reportSessionMetadataToDaemon: opts.reportSessionMetadataToDaemon ?? null,
         runtimeActivityContributions,
@@ -236,6 +240,10 @@ export async function loop(opts: LoopOptions): Promise<number> {
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';
     let localEntry: 'initial' | 'switch' = mode === 'local' ? 'initial' : 'switch';
     while (true) {
+        // Runner termination may land while one launcher hands off to the other; never start the next.
+        if (opts.signal?.aborted) {
+            return 0;
+        }
         logger.debug(`[loop] Iteration with mode: ${mode}`);
         switch (mode) {
             case 'local': {
@@ -243,6 +251,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
                 const result = await claudeLocalLauncher(session, {
                     entry: localEntry,
                     remoteSwitchingEnabled: true,
+                    signal: opts.signal,
                 });
                 localEntry = 'switch';
                 switch (result.type) {
@@ -262,6 +271,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
                 logger.infoFile('[CLAUDE_STARTUP] stage=provider_launcher_entered', { runtime: 'agent-sdk' });
                 const reason = await claudeRemoteLauncher(session, {
                     initialMode: opts.initialClaudeUnifiedTerminalMode,
+                    signal: opts.signal,
                 });
                 switch (reason) {
                     case 'exit':

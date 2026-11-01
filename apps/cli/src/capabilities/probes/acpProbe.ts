@@ -1,11 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import {
-    ndJsonStream,
-    PROTOCOL_VERSION,
-    type InitializeRequest,
-    type InitializeResponse,
+import type {
+    InitializeRequest,
+    InitializeResponse,
 } from '@agentclientprotocol/sdk';
 
 import { logger } from '@/ui/logger';
@@ -16,6 +14,7 @@ import {
     createAcpClientConnection,
     type AcpClientConnection,
 } from '@/agent/acp/connection/createAcpClientConnection';
+import { loadAcpSdk } from '@/agent/acp/connection/acpSdk';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
@@ -96,6 +95,9 @@ export async function probeAcpAgentCapabilities(params: {
     let connection: AcpClientConnection | null = null;
     let spawnErrorPromise: Promise<never> | null = null;
     try {
+        // Load before spawning: an I/O-sized await between the spawn-error promise
+        // below and the initialize race would leave an early spawn error unhandled.
+        const { ndJsonStream, PROTOCOL_VERSION } = await loadAcpSdk();
         const invocation = resolveWindowsCommandInvocation({
             command: params.command,
             args: params.args,
@@ -191,7 +193,7 @@ export async function probeAcpAgentCapabilities(params: {
 
         const stream = ndJsonStream(writable, filteredReadable);
 
-        connection = createAcpClientConnection({
+        connection = await createAcpClientConnection({
             name: 'happier-cli-capabilities',
             transport: stream,
             handlers: {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * The one owner of the Replay seed budget bounds.
@@ -46,22 +47,22 @@ export const HAPPIER_REPLAY_RECENT_MESSAGES_MIN_COUNT = 1;
 export const HAPPIER_REPLAY_RECENT_MESSAGES_MAX_COUNT = 500;
 
 /** The budget an owner may WRITE: settings catalog, settings screen, env clamp. */
-export const HappierReplayWritableMaxSeedCharsSchema = z
+export const HappierReplayWritableMaxSeedCharsSchema = lazySchema(() => z
   .number()
   .int()
   .min(HAPPIER_REPLAY_SEED_MIN_CHARS)
-  .max(HAPPIER_REPLAY_SEED_MAX_CHARS);
+  .max(HAPPIER_REPLAY_SEED_MAX_CHARS));
 
 /** The budget a wire READER accepts, including from released older clients. */
-export const HappierReplayWireMaxSeedCharsSchema = z
+export const HappierReplayWireMaxSeedCharsSchema = lazySchema(() => z
   .number()
   .int()
   .min(HAPPIER_REPLAY_SEED_ACCEPTED_MIN_CHARS)
-  .max(HAPPIER_REPLAY_SEED_MAX_CHARS);
+  .max(HAPPIER_REPLAY_SEED_MAX_CHARS));
 
 /** The `recentMessagesCount` window, identical for writers and the wire. */
-export const HappierReplayRecentMessagesCountSchema = z
+export const HappierReplayRecentMessagesCountSchema = lazySchema(() => z
   .number()
   .int()
   .min(HAPPIER_REPLAY_RECENT_MESSAGES_MIN_COUNT)
-  .max(HAPPIER_REPLAY_RECENT_MESSAGES_MAX_COUNT);
+  .max(HAPPIER_REPLAY_RECENT_MESSAGES_MAX_COUNT));

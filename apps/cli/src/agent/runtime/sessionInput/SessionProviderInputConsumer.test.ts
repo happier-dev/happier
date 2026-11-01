@@ -1143,6 +1143,102 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(onMetadataUpdate).not.toHaveBeenCalled();
   });
 
+  it.each(['queued', 'materialized'] as const)('retains a %s batch across cancellation during metadata reconciliation', async (source) => {
+    const messageQueue = new MessageQueue2<TestMode>((mode) => mode.id);
+    const metadataStarted = createDeferred<void>();
+    const metadataFinished = createDeferred<void>();
+    const mode = { id: 'first-mode' };
+    const queueFirst = () => messageQueue.pushIsolateAndClear('first input', mode, {
+      userMessageSeq: 17,
+      userMessageLocalId: 'first-local-id',
+      providerAcceptancePending: true,
+      pendingProviderAction: 'send',
+      pendingRequestedAction: { v: 1, kind: 'send_now' },
+    });
+    let materializations = 0;
+    let metadataUpdates = 0;
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue,
+      session: {
+        materializeNextPendingMessageSafely: async () => {
+          materializations += 1;
+          if (source === 'materialized' && materializations === 1) {
+            queueFirst();
+            return { type: 'materialized', localId: 'first-local-id', seq: 17, content: null };
+          }
+          return { type: 'no_pending' };
+        },
+        waitForPendingEligibilityUpdate: async () => false,
+      },
+      onMetadataUpdate: async () => {
+        if (metadataUpdates++ === 0) {
+          metadataStarted.resolve();
+          await metadataFinished.promise;
+        }
+      },
+    });
+    if (source === 'queued') queueFirst();
+    const abortController = new AbortController();
+    const waiting = consumer.waitForNextInput({ abortSignal: abortController.signal });
+    await metadataStarted.promise;
+    expect(messageQueue.size()).toBe(0);
+    abortController.abort();
+    await expect(waiting).resolves.toBeNull();
+
+    await expect(consumer.drainPending({ reason: 'between-provider-launches' })).resolves.toEqual({
+      materialized: 0,
+      stoppedReason: 'drain_disallowed',
+    });
+    expect(materializations).toBe(source === 'materialized' ? 1 : 0);
+    messageQueue.push('second input', { id: 'second-mode' }, { userMessageLocalId: 'second-local-id' });
+    metadataFinished.resolve();
+
+    await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal })).resolves.toEqual({
+      message: 'first input',
+      mode,
+      hash: 'first-mode',
+      isolate: true,
+      maxUserMessageSeq: 17,
+      userMessageLocalIds: ['first-local-id'],
+      providerAcceptancePending: true,
+      pendingProviderAction: 'send',
+      pendingRequestedAction: { v: 1, kind: 'send_now' },
+    });
+    await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal })).resolves.toMatchObject({
+      message: 'second input',
+      userMessageLocalIds: ['second-local-id'],
+    });
+    const finalAbortController = new AbortController();
+    const finalWait = consumer.waitForNextInput({ abortSignal: finalAbortController.signal });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finalAbortController.abort();
+    await expect(finalWait).resolves.toBeNull();
+  });
+
+  it('does not return a dequeued batch when admission closes during metadata reconciliation', async () => {
+    const messageQueue = new MessageQueue2<TestMode>(() => 'hash');
+    const metadataStarted = createDeferred<void>();
+    const metadataFinished = createDeferred<void>();
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue,
+      session: {
+        materializeNextPendingMessageSafely: async () => ({ type: 'no_pending' }),
+        waitForPendingEligibilityUpdate: async () => false,
+      },
+      onMetadataUpdate: async () => {
+        metadataStarted.resolve();
+        await metadataFinished.promise;
+      },
+    });
+    messageQueue.push('must not reach a closed runtime', { id: 'mode' });
+    const waiting = consumer.waitForNextInput({ abortSignal: new AbortController().signal });
+    await metadataStarted.promise;
+    await consumer.closeProviderInputAdmissionAndWaitForDispatches();
+    metadataFinished.resolve();
+    await expect(waiting).resolves.toBeNull();
+    await expect(consumer.waitForNextInput({ abortSignal: new AbortController().signal })).resolves.toBeNull();
+  });
+
   it('releases a queued input wait when metadata reconciliation never settles and the session closes', async () => {
     const abortController = new AbortController();
     const messageQueue = new MessageQueue2<TestMode>(() => 'hash');

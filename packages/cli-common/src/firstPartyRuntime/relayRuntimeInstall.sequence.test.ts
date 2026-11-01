@@ -42,6 +42,8 @@ vi.mock('../service/index.js', async (importOriginal) => {
         applyServicePlan: vi.fn(async (plan: { __action?: string }) => {
             serviceActions.push(String(plan?.__action ?? 'unknown'));
         }),
+        // The packaged Windows launcher is a filesystem asset outside this sequencing fixture.
+        preflightServiceInstallAssets: vi.fn(async () => undefined),
     };
 });
 
@@ -257,6 +259,41 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
                 generated: 'old-generated',
                 prismaEngine: 'old-engine',
             }]);
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects missing service install assets before stopping the existing relay service', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-asset-preflight-'));
+        try {
+            const payloadRoot = join(homeDir, 'payload');
+            await mkdir(payloadRoot, { recursive: true });
+            const serverBinaryPath = join(payloadRoot, 'happier-server');
+            await writeFile(serverBinaryPath, '#!/bin/sh\necho new-runtime\n', 'utf8');
+            const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
+            const installServerBinaryPath = join(defaults.installRoot, 'bin', 'happier-server');
+            await mkdir(dirname(installServerBinaryPath), { recursive: true });
+            await writeFile(installServerBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf8');
+
+            const serviceModule = await import('../service/index.js');
+            vi.mocked(serviceModule.preflightServiceInstallAssets).mockRejectedValueOnce(
+                new Error('[service] packaged Windows service launcher is unavailable'),
+            );
+
+            await expect(installOrUpdateRelayRuntimeLocal({
+                serverBinaryPath,
+                channel: 'preview',
+                mode: 'user',
+                platform: 'linux',
+                arch: 'arm64',
+                homeDir,
+                runServiceCommands: true,
+                skipHealthCheck: true,
+            })).rejects.toThrow(/launcher is unavailable/u);
+
+            expect(serviceActions).toEqual([]);
+            await expect(readFile(installServerBinaryPath, 'utf8')).resolves.toBe('#!/bin/sh\necho old-runtime\n');
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }

@@ -90,7 +90,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Bind source and union changed paths across target channels
         id: source
         working-directory: release-source
@@ -164,7 +164,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Verify successful existing CI for exact source
         id: existing_ci
         env:
@@ -261,7 +261,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Validate installer and updater trust roots
         run: |
           set -euo pipefail

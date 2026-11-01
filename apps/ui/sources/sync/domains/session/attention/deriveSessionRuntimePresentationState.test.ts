@@ -72,7 +72,7 @@ describe('deriveSessionRuntimePresentationState', () => {
         });
     });
 
-    it('stops attesting background activity once every observation of it has aged out', () => {
+    it('preserves reported background work while the publisher remains online despite delayed observations', () => {
         expect(deriveSessionRuntimePresentationState({
             active: true,
             activeAt: nowMs - 300_000,
@@ -84,10 +84,10 @@ describe('deriveSessionRuntimePresentationState', () => {
             runtimeActivityObservedAt: nowMs - 300_000,
             runtimeActivityRevision: 7,
         }, nowMs)).toMatchObject({
-            freshProviderRuntimeActivity: false,
-            backgroundActive: false,
-            backgroundActiveCount: 0,
-            activityState: 'idle',
+            freshProviderRuntimeActivity: true,
+            backgroundActive: true,
+            backgroundActiveCount: 2,
+            activityState: 'backgroundActive',
         });
     });
 
@@ -245,6 +245,38 @@ describe('deriveSessionRuntimePresentationState', () => {
             runtimeActivityState: 'unknown',
             runtimeActivityActiveCount: 0,
         }, nowMs).freshPermissionRequired).toBe(true);
+    });
+
+    it('keeps a pending request visible while the runtime is live, however long it has waited', () => {
+        // `pendingRequestObservedAt` is stamped once when the request is published and never refreshed
+        // while it waits, so its age says nothing about whether the request is still open. A request
+        // raised after the foreground turn ended (e.g. by a background agent) must not fall back to
+        // "running in background" two minutes later while the agent is still blocked on the person.
+        const waitingRequest = {
+            active: true,
+            activeAt: nowMs - 1_000,
+            presence: 'online' as const,
+            latestTurnStatus: 'completed' as const,
+            latestTurnStatusObservedAt: nowMs - 600_000,
+            runtimeActivityState: 'active' as const,
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: nowMs - 600_000,
+            pendingRequestObservedAt: nowMs - 600_000,
+        };
+
+        expect(deriveSessionRuntimePresentationState({
+            ...waitingRequest,
+            hasPendingPermissionRequests: true,
+        }, nowMs).freshPermissionRequired).toBe(true);
+        expect(deriveSessionRuntimePresentationState({
+            ...waitingRequest,
+            hasPendingUserActionRequests: true,
+        }, nowMs).freshActionRequired).toBe(true);
+        expect(deriveSessionRuntimePresentationState({
+            ...waitingRequest,
+            presence: 0,
+            hasPendingPermissionRequests: true,
+        }, nowMs).freshPermissionRequired).toBe(false);
     });
 
     it('never presents archived sessions as foreground or background work', () => {

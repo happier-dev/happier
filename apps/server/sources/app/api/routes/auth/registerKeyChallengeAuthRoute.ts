@@ -1,3 +1,4 @@
+import { verifyAccountContentPublicKeyBinding } from "@happier-dev/protocol";
 import { z } from "zod";
 import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
@@ -88,11 +89,11 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
                 return reply.code(400).send({ error: 'Invalid contentPublicKeySig' });
             }
 
-            const binding = Buffer.concat([
-                Buffer.from('Happy content key v1\u0000', 'utf8'),
-                Buffer.from(contentPublicKey)
-            ]);
-            const isContentKeyValid = tweetnacl.sign.detached.verify(binding, contentPublicKeySig, publicKey);
+            const isContentKeyValid = verifyAccountContentPublicKeyBinding({
+                signingPublicKeyHex: privacyKit.encodeHex(publicKey),
+                contentPublicKeyB64: request.body.contentPublicKey,
+                contentPublicKeySigB64: request.body.contentPublicKeySig,
+            });
             if (!isContentKeyValid) {
                 return reply.code(400).send({ error: 'Invalid contentPublicKeySig' });
             }

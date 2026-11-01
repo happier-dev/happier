@@ -1,9 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-
-const stableApplyLocalSettings = vi.fn();
 
 vi.mock('@/sync/sync', () => ({
     syncSwitchServer: vi.fn(async () => {}),
@@ -17,17 +15,6 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
 vi.mock('@/sync/runtime/orchestration/concurrentSessionCache', () => ({
     startConcurrentSessionCacheSync: vi.fn(),
     stopConcurrentSessionCacheSync: vi.fn(),
-}));
-vi.mock('@/sync/domains/state/persistence', () => ({
-    clearPersistence: vi.fn(),
-    loadLocalSettings: () => ({}),
-    saveLocalSettings: vi.fn(),
-}));
-vi.mock('@/sync/domains/settings/localSettings', () => ({
-    localSettingsDefaults: {},
-}));
-vi.mock('@/sync/store/settingsWriters', () => ({
-    useApplyLocalSettings: () => stableApplyLocalSettings,
 }));
 vi.mock('@/track', () => ({
     trackLogout: vi.fn(),
@@ -44,10 +31,6 @@ import { AuthProvider, useAuth } from './AuthContext';
 type AuthValue = ReturnType<typeof useAuth>;
 
 describe('AuthContext provider value identity', () => {
-    beforeEach(() => {
-        stableApplyLocalSettings.mockClear();
-    });
-
     it('keeps the provider value identity stable across unrelated provider re-renders', async () => {
         const identities: AuthValue[] = [];
         let bump: () => void = () => {};

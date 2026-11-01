@@ -48,7 +48,8 @@ import { t } from '@/text';
 
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 // From the registry rather than the catalog facade: this narrows an id the picker
 // supplied, which is the same check the send control's presentation resolver makes.
@@ -144,6 +145,7 @@ import type {
     AgentInputStatusBadge as AgentInputStatusBadgeDescriptor,
 } from './agentInputContracts';
 import type { AgentInputSendIntentOptions, AgentInputSendOptions } from './agentInputSendOptions';
+import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import { APPLIED_RUNTIME_MARKER_ICON, resolveAppliedRuntimeStatus } from './appliedRuntimeMarker';
 import { resolveArmedComposerContinuation } from './components/agentContinuationSubmitPresentation';
 import { AgentInputStatusBadge } from './status/AgentInputStatusBadge';
@@ -165,6 +167,7 @@ import {
     resolveComposerEnterAction,
     resolveComposerEscapeAction,
     resolveComposerSendShortcutAction,
+    buildComposerSendShortcutLabels,
     shouldRunComposerModeCycleShortcut,
 } from '@/keyboard/composer';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
@@ -252,6 +255,9 @@ interface AgentInputProps {
     onChangeText: (text: string) => void;
     sessionId?: string;
     onSend: (options?: AgentInputSendOptions) => void;
+    sendMenuModes?: readonly MessageSendMode[];
+    alternateSendMode?: MessageSendMode;
+    canSendNextQueued?: boolean;
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
     onMicPress?: () => void;
@@ -648,9 +654,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: AGENT_INPUT_PANEL_PADDING_BOTTOM,
         paddingHorizontal: 8,
     },
-    // Opt-in "glass" composer: the Liquid Glass tab bar's solid look — `surface.base`
-    // fill, the glass rim, and a top inset shadow. Fully redefines the border so the
-    // standard hairline + highlight don't leak through. The cast shadow lives on the
+    // Opt-in "glass" composer: the themed glass fill, rim, and a top inset shadow.
+    // Fully redefines the border so the standard hairline + highlight don't leak
+    // through. The cast shadow lives on the
     // `panelShadow` wrapper (glass mode only).
     unifiedPanelGlass: {
         backgroundColor: theme.colors.glass.composerSurface,
@@ -1233,6 +1239,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const liveTextStatusRef = React.useRef(liveTextStatus);
     const hasText = liveTextStatus.hasText;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
+    const sendMenuShortcuts = React.useMemo(() => buildComposerSendShortcutLabels({
+        alternateMode: props.alternateSendMode ?? 'agent_queue', keyboardShortcutsV2Enabled,
+        keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
+        platformOS: Platform.OS,
+    }), [props.alternateSendMode, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
     const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
     const micActive = voiceEnabled && props.isMicActive === true;
     const [fileDragActive, setFileDragActive] = React.useState(false);
@@ -1261,16 +1272,22 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             updateLayoutHeight(setComposerAttentionHeightPx, 0);
         }
     }, [hasComposerAttentionRequests]);
-    const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
+    const sessionAgentId = resolveAgentIdFromSessionMetadata(props.metadata);
+    const agentId: AgentId = sessionAgentId ?? props.agentType ?? DEFAULT_AGENT_ID;
     const armedComposerTarget = resolveArmedComposerContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
     });
     // Outbound controls describe the armed Agent; runtime status stays with the running Agent.
-    const engineChipAgentId: AgentId = (
-        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
-            ? armedComposerTarget.agentId
-            : agentId
-    );
+    const armedAgentId = armedComposerTarget && isAgentId(armedComposerTarget.agentId)
+        ? armedComposerTarget.agentId
+        : null;
+    const engineChipAgentId = armedAgentId ?? props.agentType ?? agentId;
+    // Existing Sessions may need a policy default while their identity is unavailable.
+    // That default is not evidence for a brand; new-session selection and armed targets are.
+    const engineChipMarkAgentId = armedComposerTarget
+        ? armedAgentId
+        : props.sessionId && !sessionAgentId ? null : engineChipAgentId;
+    const displayedAgentLabel = engineChipMarkAgentId ? props.agentLabel : t('status.unknown');
     const permissionMetadata = armedComposerTarget ? null : props.metadata ?? null;
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
@@ -1842,6 +1859,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // to the composer-view anchor — the "menu appears at the top of the composer,
         // then jumps on the next keystroke" report.
         enabled: isInputFocused && !props.disabled,
+        // Only the command menu consumes the rect, and it can only open over an active `@`/`/`
+        // word. Web skips its per-keystroke mirror-div measurement otherwise and measures before
+        // paint in the commit the word activates; native ignores this and keeps D38 above.
+        demanded: activeWord !== null,
     });
     const commandMenuAnchor: CommandMenuAnchor = React.useMemo(
         () => resolveAgentInputCommandMenuAnchor(caretRect, composerAnchorRef),
@@ -2215,17 +2236,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.agentType
             ? {
                 id: `engine:${props.agentType}`,
-                label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                label: displayedAgentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
                 icon: (
                     <AgentIcon
-                        agentId={props.agentType}
+                        agentId={engineChipMarkAgentId}
                         size={12}
-                        style={{ transform: [{ scale: getAgentPickerIconScale(props.agentType) }] }}
+                        style={{ transform: [{ scale: engineChipMarkAgentId ? getAgentPickerIconScale(engineChipMarkAgentId) : 1 }] }}
                     />
                 ),
             }
             : null
-    ), [props.agentLabel, props.agentType]);
+    ), [displayedAgentLabel, engineChipMarkAgentId, props.agentType]);
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];
@@ -2410,7 +2431,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         handleResumePress,
     } = useAgentInputCoreControlHandlers({
         agentType: props.agentType,
-        agentLabel: props.agentLabel,
+        agentLabel: displayedAgentLabel,
         hasAgentPickerOptions: hasAgentPickerSurface,
         onAgentClick: props.onAgentClick,
         onAgentPickerIntent: props.onAgentPickerIntent,
@@ -2439,8 +2460,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (armedComposerTarget) {
             return armedComposerTarget.modelLabel ?? armedComposerTarget.label;
         }
+        if (!engineChipMarkAgentId) return t('status.unknown');
         return hasAgentPickerOptions ? selectedModelLabel : resolvedAgentLabel;
-    }, [armedComposerTarget, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
+    }, [armedComposerTarget, engineChipMarkAgentId, hasAgentPickerOptions, resolvedAgentLabel, selectedModelLabel]);
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
     }, [props.extraActionChips]);
@@ -2519,8 +2541,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Fade the chip rows out to the composer's own fill: the glass surface in glass
     // mode, the standard input background otherwise.
     const actionBarFadeColor = React.useMemo(() => {
-        return isGlassComposer ? theme.colors.surface.base : theme.colors.input.background;
-    }, [isGlassComposer, theme.colors.surface.base, theme.colors.input.background]);
+        return isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
+    }, [isGlassComposer, theme.colors.glass.composerSurface, theme.colors.input.background]);
 
     // Handle abort button press
     const handleAbortPress = React.useCallback(async () => {
@@ -2586,6 +2608,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut]);
     useKeyboardShortcutHandlers(keyboardShortcutHandlers);
 
+    // Identity-stable handlers: these feed the action-menu and control-row memos, which an inline
+    // arrow would invalidate on every keystroke render.
+    const handleStopFromComposer = React.useCallback(() => {
+        void handleAbortPress();
+    }, [handleAbortPress]);
+    const handleToggleExtraChipCollapsedPopover = React.useCallback((chipKey: string) => {
+        toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
+    }, [toggleSelectionOverlay]);
+    const blurComposerInput = React.useCallback(() => {
+        inputRef.current?.blur();
+    }, []);
     const {
         handleActionMenuPress,
         actionMenuActions,
@@ -2611,7 +2644,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasAnyActions,
         tint: theme.colors.composer.chipTint,
         // The engine control names what runs NEXT, so it follows the armed target.
-        agentId: engineChipAgentId,
+        agentId: engineChipMarkAgentId,
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
@@ -2638,9 +2671,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onResumeClick: handleResumePress,
         onFileViewerPress: props.onFileViewerPress,
         canStop: canStopFromComposer,
-        onStop: () => {
-            void handleAbortPress();
-        },
+        onStop: handleStopFromComposer,
         hasProfile,
         hasEnvVars,
         hasAgent,
@@ -2653,9 +2684,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         layout: effectiveActionBarLayout,
         chips: props.extraActionChips,
         overlayAnchorRef,
-        onToggleExtraChipCollapsedPopover: (chipKey) => {
-            toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
-        },
+        onToggleExtraChipCollapsedPopover: handleToggleExtraChipCollapsedPopover,
         themeTint: theme.colors.composer.chipTint,
         showChipLabels,
         showAutoHideChipLabels,
@@ -2688,7 +2717,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsCount: props.envVarsCount,
         onEnvVarsPress: handleEnvVarsPress,
         // The engine chip names what runs NEXT, so it follows the armed target.
-        agentId: engineChipAgentId,
+        agentId: engineChipMarkAgentId,
         hasAgentSelection: hasAgent,
         agentChipAnchorRef,
         agentLabel: resolvedAgentLabel,
@@ -2703,7 +2732,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         currentPath: props.currentPath,
         resumeChipAnchorRef,
         onResumePress: handleResumePress,
-        blurInput: () => inputRef.current?.blur(),
+        blurInput: blurComposerInput,
         resumeSessionId: props.resumeSessionId,
         resumeIsChecking: props.resumeIsChecking,
         onAbort: props.onAbort,
@@ -2726,24 +2755,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Handle keyboard navigation
     const handleKeyPress = React.useCallback((event: KeyPressEvent): boolean => {
         const eventInputText = event.inputState?.text ?? inputRef.current?.getText?.() ?? inputStateRef.current.text;
-        const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText || props.hasSendableAttachments === true;
+        const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText
+            || props.hasSendableAttachments === true || props.armedContinuationTarget != null;
         const sendShortcutAction = resolveComposerSendShortcutAction(event, {
             keyboardShortcutsV2Enabled,
             keyboardSingleKeyShortcutsEnabled,
             keyboardShortcutOverridesV1,
             keyboardShortcutDisabledCommandIdsV1,
             hasSendableInput,
+            canSendNextQueued: props.canSendNextQueued,
             sendActionDisabled,
             platformOS: Platform.OS,
         });
-        if (sendShortcutAction === 'sendImmediate') {
-            // Explicit immediate-send bypasses autocomplete.
-            handleSend({ forceImmediate: true });
-            return true;
-        }
-        if (sendShortcutAction === 'sendPending') {
-            // Explicit pending-send bypasses steering so the message can be reviewed/reordered.
-            handleSend({ deliveryIntent: 'server_pending' });
+        if (sendShortcutAction) {
+            const deliveryIntent = sendShortcutAction === 'sendInterrupt' ? 'interrupt'
+                : sendShortcutAction === 'sendPending' ? 'server_pending'
+                    : hasSendableInput ? (props.alternateSendMode ?? 'agent_queue') : 'agent_queue';
+            if (!hasSendableInput) {
+                if (deliveryIntent === 'server_pending') return false;
+                props.onSend({ deliveryIntent, sendNextQueued: true });
+            } else {
+                handleSend({ deliveryIntent });
+            }
             return true;
         }
 
@@ -2780,7 +2813,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             // Shell-like history: only when suggestions are not visible and cursor is at the boundary.
             const historyInputState = resolveHistoryKeyInputState(event, inputStateRef.current);
             const isCollapsedSelection = historyInputState.selection.start === historyInputState.selection.end;
-            if (isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+            if (!props.disabled && isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
                 const historyBrowsing = isHistoryBrowsing();
                 if (event.key === 'ArrowUp' && (historyBrowsing || historyInputState.selection.start === 0)) {
                     const next = messageHistory.moveUp(historyInputState.text);
@@ -2826,31 +2859,34 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, props.hasSendableAttachments, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    }, [handleCommandMenuKey, props.disabled, props.hasSendableAttachments, props.armedContinuationTarget, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, applyHistoryInputText, sendActionDisabled, isHistoryBrowsing, hasRetainedHistorySession, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
         if (!enterToSendEnabled) return;
         if (sendActionDisabled) return;
-        const hasSendableInput = liveTextStatus.hasText || props.hasSendableAttachments === true;
+        const hasSendableInput = liveTextStatus.hasText || props.hasSendableAttachments === true
+            || props.armedContinuationTarget != null;
         if (!hasSendableInput) return;
         handleSend();
-    }, [enterToSendEnabled, handleSend, liveTextStatus.hasText, props.hasSendableAttachments, sendActionDisabled]);
+    }, [enterToSendEnabled, handleSend, liveTextStatus.hasText, props.hasSendableAttachments, props.armedContinuationTarget, sendActionDisabled]);
 
     const submitBehavior = React.useMemo<MultiTextInputSubmitBehavior | undefined>(() => {
         if (Platform.OS === 'web') return undefined;
         return enterToSendEnabled ? 'submit' : 'newline';
     }, [enterToSendEnabled]);
 
+    // A disabled composer keeps its attachments as submitted: drop, paste and remove all stop here.
+    const onAttachmentsAdded = props.disabled ? undefined : props.onAttachmentsAdded;
     const handlePanelFilesDropped = React.useCallback((event: any) => {
         const files = extractWebAttachmentFilesFromDataTransfer(event?.dataTransfer);
         if (files.length > 0) {
-            props.onAttachmentsAdded?.(files);
+            onAttachmentsAdded?.(files);
         }
-    }, [props.onAttachmentsAdded]);
+    }, [onAttachmentsAdded]);
 
     const panelDropZoneHandlers = useWebFileDropZone({
-        enabled: Platform.OS === 'web' && typeof props.onAttachmentsAdded === 'function',
+        enabled: Platform.OS === 'web' && typeof onAttachmentsAdded === 'function',
         onFilesDropped: handlePanelFilesDropped,
         onFileDragActiveChange: setFileDragActive,
     });
@@ -2903,7 +2939,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 onSubmitEditing={handleSubmitEditing}
                 maxHeight={resolvedInputMaxHeight}
                 editable={!props.disabled}
-                onFilesPasted={props.onAttachmentsAdded}
+                onFilesPasted={onAttachmentsAdded}
                 onContentHeightChange={handleInputContentHeightChange}
             />
             {props.inputExpansion && shouldShowInputExpansionToggle ? (
@@ -2990,6 +3026,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <AgentInputAttachmentsRow
                 attachments={props.attachments ?? []}
                 composerBadges={composerAttachmentBadges}
+                disabled={props.disabled === true}
             />
         );
 
@@ -3048,7 +3085,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                         sessionId={props.sessionId}
                         submitAccessibilityLabel={props.submitAccessibilityLabel}
-                        disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler && !canStopFromComposer))}
+                        disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending)}
                         isSending={props.isSending}
                         isStopping={isAborting}
                         hasSendableContent={hasSendableContent}
@@ -3057,6 +3094,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         micActive={micActive}
                         armedContinuationTarget={props.armedContinuationTarget ?? null}
                         onSend={handleSend}
+                        sendMenuModes={props.sendMenuModes}
+                        sendMenuShortcuts={sendMenuShortcuts}
                         onStop={handleAbortPress}
                     />
                 </View>,
@@ -3376,7 +3415,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     }}
                     {...panelDropZoneHandlers}
                 >
-                    {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
+                    {fileDragActive && typeof onAttachmentsAdded === 'function' ? (
                         <View
                             testID="agent-input-drop-overlay"
                             pointerEvents="none"

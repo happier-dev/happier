@@ -8,19 +8,20 @@ import {
   type AccountScopedCryptoMaterial,
 } from './accountScopedCipher.js';
 import { deriveKey } from './keyDerivation.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const EncryptedStringV1Schema = z.object({
+export const EncryptedStringV1Schema = lazySchema(() => z.object({
   t: z.literal('enc-v1'),
   c: z.string().min(1),
-});
+}));
 
 export type EncryptedStringV1 = z.infer<typeof EncryptedStringV1Schema>;
 
-export const SecretStringV1Schema = z.object({
+export const SecretStringV1Schema = lazySchema(() => z.object({
   _isSecretValue: z.literal(true),
   value: z.string().min(1).optional(),
   encryptedValue: EncryptedStringV1Schema.optional(),
-});
+}));
 
 export type SecretStringV1 = z.infer<typeof SecretStringV1Schema>;
 export type SettingsSecretsKeySetV1 = Readonly<{

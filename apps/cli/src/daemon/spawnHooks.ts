@@ -8,6 +8,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { validateProviderCliSpawn } from '@/runtime/managedTools/validateProviderCliSpawn';
 
 export function buildTrackedSpawnOptions(params: Readonly<{
   options: SpawnSessionOptions;
@@ -83,6 +84,23 @@ export type DaemonSpawnHooks = Readonly<{
     processEnv: NodeJS.ProcessEnv;
   }>) => DaemonTerminalPresentation;
 }>;
+
+/**
+ * Launch admission for a built-in provider: its hook owns the requirement when the session does
+ * not launch the base provider CLI; otherwise the resolvable base CLI is required.
+ */
+export async function validateDaemonSpawn(params: Readonly<{
+  hooks: DaemonSpawnHooks | null | undefined;
+  agentId: AgentId | null;
+  runtimeSelection: DaemonSpawnRuntimeSelection;
+}>): Promise<DaemonSpawnValidationResult> {
+  if (params.hooks?.validateSpawn) return await params.hooks.validateSpawn(params.runtimeSelection);
+  if (!params.agentId || params.agentId === 'customAcp') return { ok: true };
+  return await validateProviderCliSpawn({
+    agentId: params.agentId,
+    processEnv: params.runtimeSelection.environmentVariables,
+  });
+}
 
 export function resolveDaemonTerminalPresentation(params: Readonly<{
   hooks: DaemonSpawnHooks | null | undefined;

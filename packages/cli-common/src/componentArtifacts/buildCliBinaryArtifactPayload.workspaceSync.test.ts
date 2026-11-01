@@ -151,6 +151,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             dependencies: {
                 '@happier-dev/cli-common': '0.0.0',
                 '@huggingface/transformers': '0.0.0',
+                sharp: '0.0.0',
             },
         }, null, 2)}\n`, older);
         const cliDistEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
@@ -218,6 +219,9 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             '@huggingface/transformers',
             'node-pty',
             '@homebridge/node-pty-prebuilt-multiarch',
+            'sharp',
+            '@img/sharp-darwin-arm64',
+            '@img/sharp-libvips-darwin-arm64',
         ]) {
             await writeRepoFile(
                 join(repoRoot, 'node_modules', ...packageName.split('/'), 'package.json'),
@@ -263,6 +267,12 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         });
 
         expect(buildVersions).toEqual(['0.2.10-dev.61']);
+        await expect(readFile(join(payloadDir, 'node_modules', 'sharp', 'index.js'), 'utf8'))
+            .resolves.toBe('module.exports = {};\n');
+        await expect(readFile(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64', 'index.js'), 'utf8'))
+            .resolves.toBe('module.exports = {};\n');
+        await expect(readFile(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-darwin-arm64', 'index.js'), 'utf8'))
+            .resolves.toBe('module.exports = {};\n');
         expect(compileObservedContents).toEqual([currentSourceContent]);
         const requireFromPayload = createRequire(join(payloadDir, 'scripts', 'claude_remote_launcher.cjs'));
         expect(requireFromPayload('./claude_launcher_runtime.cjs')).toHaveProperty('runClaudeCli', expect.any(Function));

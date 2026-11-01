@@ -1,3 +1,5 @@
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -227,8 +229,8 @@ function createFakeClient(opts: Readonly<{
     getManagedServerIdentity: () => managedServerIdentity as any,
     dispose: vi.fn(async (_input?: unknown) => {}),
     // Real OpenCode SSE subscribers do not await the callback return value.
-    __emit: async (evt: OpenCodeGlobalEvent) => {
-      onEvent?.(evt, { provenance: 'accepted-live', connectionGeneration: 1 });
+    __emit: async (evt: OpenCodeGlobalEvent, delivery: OpenCodeGlobalEventDelivery = { provenance: 'accepted-live', connectionGeneration: 1 }) => {
+      onEvent?.(evt, delivery);
     },
     // Released V2 serves every durable and ephemeral frame on one authoritative stream.
     __emitLive: async (evt: OpenCodeGlobalEvent) => {
@@ -245,7 +247,7 @@ function createFakeClient(opts: Readonly<{
   const client = Object.assign(clientBase, {
     sessionMessagesListRaw: vi.fn(async (params: { sessionId: string }) => await clientBase.sessionMessagesList(params)),
   }) satisfies OpenCodeServerRuntimeClient & {
-    __emit: (evt: OpenCodeGlobalEvent) => Promise<void>;
+    __emit: (evt: OpenCodeGlobalEvent, delivery?: OpenCodeGlobalEventDelivery) => Promise<void>;
     __emitLive: (evt: OpenCodeGlobalEvent) => Promise<void>;
     __setStatusType: (next: string) => void;
     __getDirectoryOverride: () => string | null;
@@ -301,6 +303,7 @@ function createFakeSession(sessionId = 'happy_sess_opencode') {
     sendAgentMessage: vi.fn(),
     sendSessionEvent: vi.fn(),
     sessionTurnLifecycle: {
+      observeProviderTurnEvent: vi.fn(),
       beginTurn: vi.fn(async () => ({ turnId: 'session-turn-1' })),
       attachProviderTurnId: vi.fn(async (_input?: unknown) => {}),
       appendTranscriptAnchors: vi.fn(async (_input?: unknown) => {}),
@@ -558,6 +561,99 @@ describe('createOpenCodeServerRuntime', () => {
     // The shared daemon-report path dedupes on stable identity; tests reuse session ids and
     // classifications across cases, so the window must not leak between tests.
     resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
+  });
+
+  it('observes provider receipt while an earlier event handler awaits history', async () => {
+    vi.useFakeTimers();
+    const notices: unknown[] = [];
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'happy_sess_opencode', turnStallWarnMs: 1000,
+      onTurnStallNotice: (notice) => notices.push(notice),
+      enqueueSessionTurn: async () => {},
+    });
+    const session = Object.assign(createFakeSession(), { sessionTurnLifecycle: lifecycle });
+    const started = await beginOpenCodePromptForTest({ session });
+    let releaseRead: () => void = () => {};
+    const blockedHistory = new Promise<unknown[]>((resolve) => { releaseRead = () => resolve([]); });
+    try {
+      await lifecycle.beginTurn({ provider: 'opencode' });
+      await emitAssistantMessageUpdated(started.client, {
+        messageId: 'assistant_live_before_block', completed: null,
+        extraInfo: { parentID: readOpenCodePromptAsyncCall(started.client, 0).messageId },
+      });
+      await flushTranscriptCommitMicrotasks();
+      const readsBefore = started.client.sessionMessagesList.mock.calls.length;
+      started.client.sessionMessagesList.mockReturnValueOnce(blockedHistory);
+      await started.client.__emit({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } });
+      await flushTranscriptCommitMicrotasks();
+      expect(started.client.sessionMessagesList.mock.calls.length).toBeGreaterThan(readsBefore);
+      await advanceTimersAndFlush(600);
+      await started.client.__emitLive({ directory: '/tmp', payload: {
+        type: 'session.next.step.started', properties: { sessionID: 'ses_1', id: 'step_live' },
+      } });
+      await advanceTimersAndFlush(600);
+      expect(notices).toEqual([]);
+    } finally {
+      releaseRead();
+      await flushTranscriptCommitMicrotasks();
+      await lifecycle.endSession();
+      await started.runtime.cancel();
+      await started.promptPromise.catch(() => {});
+      await started.runtime.reset();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['session.next.step.started', 'session.next.compaction.delta', 'session.updated'])(
+    'resets stall silence only for accepted live provider frames in the selected session (%s)', async (type) => {
+    vi.useFakeTimers();
+    const notices: unknown[] = [];
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'happy_sess_opencode',
+      turnStallWarnMs: 1000,
+      onTurnStallNotice: (notice) => notices.push(notice),
+      enqueueSessionTurn: async () => {},
+    });
+    const session = Object.assign(createFakeSession(), { sessionTurnLifecycle: lifecycle });
+    const started = await beginOpenCodePromptForTest({ session });
+    try {
+      await lifecycle.beginTurn({ provider: 'opencode' });
+      await advanceTimersAndFlush(600);
+      // A real provider step has no transcript output, but is still backflow.
+      await started.client.__emitLive({ directory: '/tmp', payload: {
+        type,
+        // Native Session.Event.Updated schema: anomalyco/opencode v1.2.17 src/session/index.ts.
+        properties: type === 'session.updated' ? { info: {
+          id: 'ses_1', slug: 'live-session', projectID: 'project-1', directory: '/tmp',
+          title: 'Native session update', version: '1.2.17', time: { created: 0, updated: 600 },
+        } } : { sessionID: 'ses_1', id: 'step_live' },
+      } });
+      await flushTranscriptCommitMicrotasks();
+      await advanceTimersAndFlush(600);
+      expect(notices).toEqual([]);
+      await started.client.__emitLive({ directory: '/tmp', payload: {
+        type: 'session.next.step.started', properties: { sessionID: 'foreign', id: 'step_foreign' },
+      } });
+      await started.client.__emit({ directory: '/tmp', payload: {
+        type: 'session.next.step.started', properties: { sessionID: 'ses_1', id: 'replayed-step' },
+      } }, { provenance: 'connection-boundary', connectionGeneration: 2 });
+      await started.client.__emitLive({ directory: '/tmp', payload: {
+        type: 'message.part.updated', properties: { part: {
+          id: 'synthetic-part', sessionID: 'ses_1', type: 'text', text: 'internal', synthetic: true,
+        } },
+      } });
+      await started.client.__emitLive({ directory: '/tmp', payload: { type: 'server.heartbeat', properties: { sessionID: 'ses_1' } } });
+      await started.client.__emit({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } });
+      await advanceTimersAndFlush(400);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatchObject({ provider: 'opencode', lastEventAgeMs: 1000 });
+    } finally {
+      await lifecycle.endSession();
+      await started.runtime.cancel();
+      await started.promptPromise.catch(() => {});
+      await started.runtime.reset();
+      vi.useRealTimers();
+    }
   });
 
   it('advertises and dispatches in-flight prompt steering through the OpenCode prompt owner', async () => {
@@ -8613,6 +8709,15 @@ describe('createOpenCodeServerRuntime', () => {
   it('maps structured OpenCode usage-limit session errors into runtime issue details', async () => {
     const client = createFakeClient();
     const session = createFakeSession('happy_sess_opencode_usage_error');
+    const acceptedIssues: Array<import('@happier-dev/protocol').SessionRuntimeIssueV1> = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: session.sessionId, enqueueSessionTurn: async (mutation) => {
+      if (mutation.action === 'fail' && mutation.issue) acceptedIssues.push(mutation.issue);
+    } });
+    session.sessionTurnLifecycle = lifecycle;
+    const failTurn = vi.spyOn(lifecycle, 'failTurn');
+    session.sendAgentMessage.mockImplementation((provider: import('@/api/session/sessionMessageTypes').ACPProvider, body: import('@/api/session/sessionMessageTypes').ACPMessageData) => {
+      void lifecycle.observeAcpLifecycleMarker({ provider, body }).pendingWrite;
+    });
     const runtime = createOpenCodeServerRuntime({
       directory: '/tmp',
       env: {
@@ -8670,7 +8775,7 @@ describe('createOpenCodeServerRuntime', () => {
       { timeout: 5_000 },
     ).toBe(1);
 
-    expect(session.sessionTurnLifecycle.failTurn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'opencode',
       issue: expect.objectContaining({
         source: 'usage_limit',
@@ -8697,6 +8802,7 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: 'happy_sess_opencode_usage_error',
       switchesThisTurn: 0,
       classification: expect.objectContaining({
+        runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(acceptedIssues[0]!),
         kind: 'rate_limit',
         serviceId: 'openai',
         profileId: 'primary',
@@ -10163,6 +10269,7 @@ describe('createOpenCodeServerRuntime', () => {
       sessionId: session.sessionId,
       getAgentStateSnapshot: () => agentState,
       updateAgentState: async (updater) => { agentState = updater(agentState); },
+      updateAgentStateRequestSettlement: async (updater) => { agentState = updater(agentState); },
     } });
     const onAbortRequested = vi.fn();
     const permissionHandler = new ProviderEnforcedPermissionHandler(permissionSession, { logPrefix: '[Test]', onAbortRequested });

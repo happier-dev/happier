@@ -3,7 +3,10 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ItemInfoNotice } from '@/components/ui/lists/ItemInfoNotice';
+import { useAuth } from '@/auth/context/AuthContext';
 import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
+import { useEndpointConnectivity, useSocketStatus } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -15,6 +18,12 @@ type ScanAuthQrScreenProps = Readonly<{
 
 export function ScanAuthQrScreen(props: ScanAuthQrScreenProps) {
     const router = useRouter();
+    const auth = useAuth();
+    const socket = useSocketStatus();
+    const endpoint = useEndpointConnectivity();
+    const showConnectionWarning = endpoint.status === 'offline'
+        || endpoint.status === 'auth_failed'
+        || (auth.isAuthenticated && socket.status !== 'connected');
     const { processAuthUrl } = useScannedAuthUrlProcessor({
         onSuccess: () => router.back(),
     });
@@ -33,6 +42,19 @@ export function ScanAuthQrScreen(props: ScanAuthQrScreenProps) {
             }}
             footer={
                 <View style={{ width: '100%', maxWidth: 360 }}>
+                    {showConnectionWarning ? (
+                        <View
+                            testID={`${props.testIDPrefix}-connection-warning`}
+                            accessible
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="polite"
+                        >
+                            <ItemInfoNotice
+                                title={t('connect.pairingConnectionWarningTitle')}
+                                body={t('connect.pairingConnectionWarningBody')}
+                            />
+                        </View>
+                    ) : null}
                     <RoundButton
                         testID={`${props.testIDPrefix}-enter-url`}
                         size="normal"

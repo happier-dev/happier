@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionEventMessage } from './sessionMessageTypes';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
@@ -127,7 +128,11 @@ describe('ApiSessionClient stuck-thinking keepalive guard', () => {
     expect(readPresenceThinking(client)).toBe(true);
   });
 
-  it('self-heals a terminal keepalive latch when an active local turn has made no progress past the stale boundary', async () => {
+  it.each([
+    { name: 'no transcript progress', event: null, recovers: true },
+    { name: 'informational notice', event: { type: 'message', message: 'hub: CI failed' }, recovers: true },
+    { name: 'provider compaction progress', event: { type: 'context-compaction', phase: 'progress' }, recovers: false },
+  ] satisfies Array<{ name: string; event: SessionEventMessage | null; recovers: boolean }>)('reconciles stale thinking with $name', async ({ event, recovers }) => {
     const client = await createClient({ latestTurnStatus: 'completed' });
     const { logger } = await import('@/ui/logger');
     const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
@@ -135,17 +140,28 @@ describe('ApiSessionClient stuck-thinking keepalive guard', () => {
     (client as any).latestTurnStatus = 'completed';
 
     vi.setSystemTime(5 * 60 * 1000 + 1);
+    if (event) {
+      sessionSocketStub!.trigger('update', {
+        id: 'update-notice', seq: 1, createdAt: Date.now(),
+        body: { t: 'new-message', sid: 's-stuck-thinking', message: {
+          id: 'notice-message', seq: 1, localId: 'notice-1', createdAt: Date.now(), updatedAt: Date.now(),
+          content: { t: 'plain', v: { role: 'agent', content: {
+            id: 'notice-1', type: 'event', data: event,
+          } } },
+        } },
+      });
+    }
     client.keepAlive(true, 'remote');
     expect(readPresenceThinking(client)).toBe(true);
 
     vi.setSystemTime(5 * 60 * 1000 + 16_001);
     client.keepAlive(true, 'remote');
-    expect(readPresenceThinking(client)).toBe(false);
+    expect(readPresenceThinking(client)).toBe(!recovers);
 
     vi.setSystemTime(5 * 60 * 1000 + 18_001);
     client.keepAlive(true, 'remote');
-    expect(readPresenceThinking(client)).toBe(false);
-    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(readPresenceThinking(client)).toBe(!recovers);
+    expect(infoSpy).toHaveBeenCalledTimes(recovers ? 1 : 0);
     infoSpy.mockRestore();
   });
 });

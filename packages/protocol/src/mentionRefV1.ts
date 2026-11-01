@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * `MentionRefV1` is the one-way persisted, transmitted and publicly exported shape
@@ -126,13 +127,13 @@ export function parseMentionRefV1(ref: string): Readonly<{ scheme: string; opaqu
  *
  * `token` is deliberately NOT trimmed: it must occur in the text exactly as inserted.
  */
-export const MentionRefV1Schema = z.object({
+export const MentionRefV1Schema = lazySchema(() => z.object({
   kind: z.string().trim().min(1).max(MENTION_BOUNDS.maxKindChars),
   ref: z.string().trim().min(1).max(MENTION_BOUNDS.maxRefChars),
   token: z.string().min(1).max(MENTION_BOUNDS.maxTokenChars),
   label: z.string().trim().min(1).max(MENTION_BOUNDS.maxLabelChars).optional(),
 }).passthrough()
-  .refine((mention) => parseMentionRefV1(mention.ref) !== null, { path: ['ref'] });
+  .refine((mention) => parseMentionRefV1(mention.ref) !== null, { path: ['ref'] }));
 
 export type MentionRefV1 = z.infer<typeof MentionRefV1Schema>;
 

@@ -1,15 +1,16 @@
 import { z } from 'zod';
 import { ServerRetentionCapabilitiesSchema, type ServerRetentionCapabilities } from './serverRetentionCapabilities.js';
+import { lazySchema } from '../../../lazySchema.js';
 
-const OptionalNonEmptyString = z.string().trim().min(1).optional();
+const OptionalNonEmptyString = lazySchema(() => z.string().trim().min(1).optional());
 
-export const ServerCapabilitiesSchema = z
+export const ServerCapabilitiesSchema = lazySchema(() => z
   .object({
     canonicalServerUrl: OptionalNonEmptyString,
     webappUrl: OptionalNonEmptyString,
     retention: ServerRetentionCapabilitiesSchema.optional(),
   })
-  .strict();
+  .strict());
 
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>;
 export type { ServerRetentionCapabilities };

@@ -108,6 +108,22 @@ describe('createClaudeStatuslineApplier', () => {
     expect(fixture.getMetadata().acpSessionModelsV1).toMatchObject({
       currentModelId: 'claude-haiku-4-5-20251001',
     });
+    expect(fixture.getMetadata().sessionAppliedModelV1).toMatchObject({
+      v: 1, provider: 'claude', modelId: 'claude-haiku-4-5-20251001',
+    });
+  });
+
+  it('repairs Running from an observation even when current-model metadata already matches', () => {
+    const fixture = createSessionFixture({ sessionId: 'claude-session-id', metadata: createTestMetadata({
+      sessionModelsV1: {
+        v: 1, provider: 'claude', updatedAt: 1, currentModelId: 'claude-haiku-4-5-20251001',
+        availableModels: [{ id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', contextWindowTokens: 200_000 }],
+      },
+      sessionAppliedModelV1: { v: 1, provider: 'claude', updatedAt: 2, modelId: 'requested-but-refused' },
+    }) });
+    const applier = createClaudeStatuslineApplier({ logPrefix: '[test]' });
+    applier.apply(fixture.session, buildPayload());
+    expect(fixture.getMetadata().sessionAppliedModelV1?.modelId).toBe('claude-haiku-4-5-20251001');
   });
 
   it('dedupes repeated identical payloads to a single metadata write', () => {
@@ -274,6 +290,6 @@ describe('createClaudeStatuslineApplier — runtime reconcile feed (lane Y)', ()
     expect(metadata.permissionModeUpdatedAt).toBeUndefined();
     expect(metadata.acpSessionModeOverrideV1).toBeUndefined();
     // Only the effective/display surfaces are written.
-    expect(Object.keys(metadata).sort()).toEqual(['acpSessionModelsV1', 'sessionModelsV1']);
+    expect(Object.keys(metadata).sort()).toEqual(['acpSessionModelsV1', 'sessionAppliedModelV1', 'sessionModelsV1']);
   });
 });

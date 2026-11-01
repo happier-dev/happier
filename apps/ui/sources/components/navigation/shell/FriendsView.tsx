@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, Pressable } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
@@ -14,7 +14,7 @@ import {
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { t } from '@/text';
-import { trackFriendsProfileView, trackFriendsSearch } from '@/track';
+import { trackFriendsProfileView } from '@/track';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
@@ -30,7 +30,7 @@ import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { Text } from '@/components/ui/text/Text';
-import { Icon } from '@/components/ui/icons/Icon';
+import { FriendsAddButton } from '@/components/friends/FriendsAddButton';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -79,35 +79,6 @@ function HeaderTitleTablet() {
     );
 }
 
-function HeaderRightTablet() {
-    const router = useRouter();
-    const { theme } = useUnistyles();
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
-
-    if (!friendsIdentityReady) {
-        return <View style={{ width: 32, height: 32 }} />;
-    }
-
-    return (
-        <Pressable
-            onPress={() => {
-                trackFriendsSearch();
-                router.push('/friends/search');
-            }}
-            hitSlop={15}
-            style={{
-                width: 32,
-                height: 32,
-                alignItems: 'center',
-                justifyContent: 'center',
-            }}
-        >
-            <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
-        </Pressable>
-    );
-}
-
 export const FriendsView = React.memo(({}: FriendsViewProps) => {
     const navigateToSession = useNavigateToSession();
     const router = useRouter();
@@ -144,7 +115,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     <View style={{ backgroundColor: theme.colors.background.canvas }}>
                         <Header
                             title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
+                            headerRight={() => <FriendsAddButton />}
                             headerLeft={() => null}
                             headerShadowVisible={false}
                             headerTransparent={true}
@@ -165,7 +136,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     <View style={{ backgroundColor: theme.colors.background.canvas }}>
                         <Header
                             title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
+                            headerRight={() => <FriendsAddButton />}
                             headerLeft={() => null}
                             headerShadowVisible={false}
                             headerTransparent={true}
@@ -187,7 +158,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     <View style={{ backgroundColor: theme.colors.background.canvas }}>
                         <Header
                             title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
+                            headerRight={() => <FriendsAddButton />}
                             headerLeft={() => null}
                             headerShadowVisible={false}
                             headerTransparent={true}
@@ -215,7 +186,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                 <View style={{ backgroundColor: theme.colors.background.canvas }}>
                     <Header
                         title={<HeaderTitleTablet />}
-                        headerRight={() => <HeaderRightTablet />}
+                        headerRight={() => <FriendsAddButton />}
                         headerLeft={() => null}
                         headerShadowVisible={false}
                         headerTransparent={true}

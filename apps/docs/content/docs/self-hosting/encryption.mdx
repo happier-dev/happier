@@ -108,6 +108,34 @@ This prevents “mixed-mode” content inside one session and makes it predictab
 
 Public share links also work for plaintext sessions (the server returns plaintext envelopes).
 
+## Plain Machine control (development only)
+
+Current development source extends plaintext mode to Machine metadata, daemon
+state, and Machine control requests and responses. This is unreleased behavior;
+released 0.2 clients still encrypt Machine content even when their account stores
+new sessions as plaintext.
+
+Updated clients require the server's `encryption.plaintextMachine` feature bit.
+The server advertises it when plaintext storage is supported and its build feature
+policy allows it. Plain Machines belong to plaintext accounts and use an explicit
+plain format. Token-only login can use them without creating substitute encryption
+keys. Refreshing a login for the same account preserves genuine keys already held
+on that device.
+
+Plain Machine content and control traffic are **readable by the server**. Choose
+this mode only when you trust the server with both session content and Machine
+control content. E2EE Machines continue to require genuine encryption keys.
+
+Historical encrypted Machines require the genuine old keys for conversion. A
+missing key produces an explicit operation failure; it does not authorize replacing
+Machine settings or daemon state. Updated clients preserve complete stored content
+during conversion. Account mode changes that convert Machines commit them together
+with the account mode; an incomplete or stale conversion is rejected. A released
+client's opt-out can leave historical Machines encrypted until a capable client
+converts them. After an explicit conversion, restart an older running daemon so it
+refetches the new Machine context. Upgrading the server alone does not convert
+historical records or give older clients the new format.
+
 ## Client compatibility
 
 - Older clients that only support encrypted writes continue to work when:
@@ -119,6 +147,7 @@ Public share links also work for plaintext sessions (the server returns plaintex
 
 Clients use `GET /v1/features`:
 - gates: `features.encryption.plaintextStorage.enabled`, `features.encryption.accountOptOut.enabled`
+- development Machine support: `features.encryption.plaintextMachine.enabled`
 - details: `capabilities.encryption.storagePolicy`, `capabilities.encryption.defaultAccountMode`
 
 ## Security checklist (plaintext mode)

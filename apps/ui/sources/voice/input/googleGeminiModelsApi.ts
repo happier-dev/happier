@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from '@/voice/runtime/fetchWithTimeout';
+import { buildGoogleApiKeyRestrictionHeaders } from '@/voice/runtime/googleApiKeyHeaders';
 
 export type GoogleGeminiModelSummary = Readonly<{
   id: string;
@@ -34,6 +35,7 @@ function parseModelCatalog(json: any): GoogleGeminiModelSummary[] {
 
 export async function fetchGoogleGeminiModelCatalog(opts: {
   apiKey: string;
+  androidCertSha1?: string | null;
   timeoutMs: number;
 }): Promise<GoogleGeminiModelSummary[]> {
   const apiKey = String(opts.apiKey ?? '').trim();
@@ -44,6 +46,7 @@ export async function fetchGoogleGeminiModelCatalog(opts: {
     method: 'GET',
     headers: {
       'x-goog-api-key': apiKey,
+      ...buildGoogleApiKeyRestrictionHeaders({ androidCertSha1: opts.androidCertSha1 ?? null }),
     },
   };
 

@@ -9,12 +9,13 @@ import { configuration } from '@/configuration';
 import { withAbortTimeout } from '@/diagnostics/httpClient';
 
 import type { EmbeddingsProvider } from './embeddingsProviderTypes';
+import { lazySchema } from '@happier-dev/protocol';
 
-const EmbeddingsResponseSchema = z.object({
+const EmbeddingsResponseSchema = lazySchema(() => z.object({
   data: z.array(z.object({
     embedding: z.array(z.number()),
   })),
-});
+}));
 
 function buildEmbeddingsUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');

@@ -2,6 +2,15 @@ import type { RpcErrorCode } from './rpc.js';
 import { RPC_ERROR_CODES } from './rpc.js';
 import type { SocketRpcTargetFailureV1 } from './socketRpc.js';
 
+/** Socket.IO's native ACK deadline and the portable ACK race share this error. */
+export function createSocketIoAckTimeoutError(): Error {
+  return new Error('operation has timed out');
+}
+
+export function isSocketIoAckTimeoutError(error: unknown): error is Error {
+  return error instanceof Error && error.message === 'operation has timed out';
+}
+
 export type RpcErrorCarrier = {
   rpcErrorCode?: RpcErrorCode | string;
   message?: string;

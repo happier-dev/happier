@@ -1,15 +1,14 @@
 import * as React from 'react';
-import { Animated, Easing, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import type { WorkspaceDownloadState, WorkspaceUploadState } from '@/hooks/session/files/useWorkspaceFileTransfers';
 import { Icon } from '@/components/ui/icons/Icon';
-
-const BAR_HEIGHT = 4;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -31,17 +30,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
-    progressTrack: {
-        height: BAR_HEIGHT,
-        borderRadius: 999,
-        overflow: 'hidden',
-        backgroundColor: theme.colors.surface.pressedOverlay,
-    },
-    progressFill: {
-        height: BAR_HEIGHT,
-        borderRadius: 999,
-        backgroundColor: theme.colors.text.link,
-    },
     cancelButton: {
         width: 28,
         height: 28,
@@ -58,38 +46,6 @@ function resolveProgress(uploadedBytes: number, totalBytes: number): number {
     if (!Number.isFinite(uploadedBytes) || uploadedBytes <= 0) return 0;
     if (!Number.isFinite(totalBytes) || totalBytes <= 0) return 0;
     return Math.max(0, Math.min(1, uploadedBytes / totalBytes));
-}
-
-function TransferProgressBar(props: Readonly<{ progress: number }>): React.ReactElement {
-    const styles = stylesheet;
-    const progress = Math.max(0, Math.min(1, props.progress));
-    const anim = React.useRef(new Animated.Value(progress)).current;
-
-    React.useEffect(() => {
-        const useNativeDriver = Platform.OS !== 'web';
-        Animated.timing(anim, {
-            toValue: progress,
-            duration: 160,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver,
-        }).start();
-    }, [anim, progress]);
-
-    return (
-        <View style={styles.progressTrack}>
-            <Animated.View
-                style={[
-                    styles.progressFill,
-                    {
-                        width: anim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: ['0%', '100%'],
-                        }),
-                    },
-                ]}
-            />
-        </View>
-    );
 }
 
 function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { status: 'preflighting' | 'uploading' }>; onCancel: () => void }>) {
@@ -125,7 +81,7 @@ function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { stat
                     <Icon name="x" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
-            {props.state.status === 'uploading' ? <TransferProgressBar progress={progress} /> : null}
+            {props.state.status === 'uploading' ? <MeterBar tone="neutral" height={4} animated fillFraction={progress} fillColor={theme.colors.text.link} progressAccessibilityLabel={label} /> : null}
         </View>
     );
 }
@@ -156,7 +112,7 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
                     <Icon name="x" size={16} color={theme.colors.text.secondary} />
                 </Pressable> : <View style={{ width: styles.cancelButton.width, height: styles.cancelButton.height }} />}
             </View>
-            <TransferProgressBar progress={progress} />
+            <MeterBar tone="neutral" height={4} animated fillFraction={progress} fillColor={theme.colors.text.link} progressAccessibilityLabel={label} />
         </View>
     );
 }

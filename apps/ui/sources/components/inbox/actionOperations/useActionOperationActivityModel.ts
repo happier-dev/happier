@@ -33,7 +33,6 @@ export type ActionOperationActivityModel = Readonly<{
     hasAttention: boolean;
     observationForOperation: (operation: ActionOperationSnapshotV1) => ActionOperationObservationPresentation;
     contextForOperation: (operation: ActionOperationSnapshotV1) => string | null;
-    markVisibleTerminalSeen: () => void;
     clearRecent: () => void;
     canDismissOperation: (operation: ActionOperationSnapshotV1) => boolean;
     dismissOperation: (operationId: string) => void;
@@ -115,10 +114,6 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         const machine = machineById.get(operation.scope.machineId);
         return machine ? getMachineDisplayName(machine) : null;
     }, [machineById, sessionNameById]);
-    const markVisibleTerminalSeen = React.useCallback(() => {
-        if (!accountId) return;
-        actionOperationStore.markAccountTerminalSeen(accountId);
-    }, [accountId]);
     const clearRecent = React.useCallback(() => {
         if (!accountId) return;
         const preserveOperationIds = new Set(
@@ -129,21 +124,22 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         actionOperationStore.dismissRecent(accountId, { preserveOperationIds });
     }, [accountId, operations]);
     const dismissOperation = React.useCallback((operationId: string) => {
+        const operation = operations.find((candidate) => candidate.operationId === operationId);
+        if (!operation) return;
         const entry = inboxEntries.find((candidate) => candidate.operation.operationId === operationId);
-        if (!entry) return;
-        if (entry.reason === 'status_unavailable') {
-            actionOperationStore.dismissUnavailable(operationId);
-            return;
-        }
-        if (entry.reason === 'setup_needs_attention') {
+        if (entry?.reason === 'setup_needs_attention') {
             actionOperationReentry.acknowledgeSetupNeedsAttention(entry.operation);
             actionOperationStore.markSeen(operationId);
             return;
         }
-        actionOperationStore.markSeen(operationId);
-    }, [inboxEntries]);
+        if (operation.state === 'failed') {
+            actionOperationStore.dismissTerminal(operationId);
+        } else {
+            actionOperationStore.dismissUnavailable(operationId);
+        }
+    }, [inboxEntries, operations]);
     const canDismissOperation = React.useCallback(
-        (operation: ActionOperationSnapshotV1) => inboxEntries.some(
+        (operation: ActionOperationSnapshotV1) => operation.state === 'failed' || inboxEntries.some(
             (entry) => entry.operation.operationId === operation.operationId,
         ),
         [inboxEntries],
@@ -156,7 +152,6 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         hasAttention,
         observationForOperation,
         contextForOperation,
-        markVisibleTerminalSeen,
         clearRecent,
         canDismissOperation,
         dismissOperation,
@@ -164,7 +159,6 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         activeCount,
         contextForOperation,
         hasAttention,
-        markVisibleTerminalSeen,
         clearRecent,
         canDismissOperation,
         dismissOperation,

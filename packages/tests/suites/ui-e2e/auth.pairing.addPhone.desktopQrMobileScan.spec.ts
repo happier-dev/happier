@@ -9,6 +9,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -56,6 +57,19 @@ function decryptTokenEncryptedBundle(params: { tokenEncryptedBase64: string; rec
 async function createAccountViaWeb(page: Page, baseUrl: string): Promise<void> {
   await gotoDomContentLoadedWithRetries(page, baseUrl);
   await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+}
+
+async function readPairingRequest(page: Page) {
+  await expect(page.getByTestId('add-phone-pairing-link')).toHaveCount(1, { timeout: 120_000 });
+  const pairingLinkRaw = (await page.getByTestId('add-phone-pairing-link').innerText()).trim();
+  const pairingUrl = new URL(pairingLinkRaw);
+  expect(pairingUrl.protocol).toMatch(/^happier/);
+  expect(pairingUrl.pathname).toBe('/pair');
+  const pairId = pairingUrl.searchParams.get('pairId') ?? '';
+  const secret = pairingUrl.searchParams.get('secret') ?? '';
+  expect(pairId).not.toBe('');
+  expect(secret).not.toBe('');
+  return { pairId, secret };
 }
 
 test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
@@ -118,32 +132,7 @@ test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
     await page.getByTestId('settings-add-your-phone-shortcut').click();
 
     await expect(page).toHaveURL(/\/settings\/add-phone/, { timeout: 60_000 });
-    await expect(page.getByTestId('add-phone-pairing-link')).toHaveCount(1, { timeout: 120_000 });
-
-    const pairingLinkRaw = (await page.getByTestId('add-phone-pairing-link').innerText()).trim();
-    let pairingUrl: URL;
-    try {
-      pairingUrl = new URL(pairingLinkRaw);
-    } catch (error) {
-      throw new Error(
-        `Expected pairing link to be a valid URL (got: ${pairingLinkRaw.slice(0, 64)}...): ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (!pairingUrl.protocol.startsWith('happier')) {
-      throw new Error(`Expected pairing link to use a Happier deep-link scheme (got protocol: ${pairingUrl.protocol})`);
-    }
-    if (pairingUrl.pathname !== '/pair') {
-      throw new Error(`Expected pairing link pathname to be /pair (got: ${pairingUrl.pathname})`);
-    }
-
-    const pairId = pairingUrl.searchParams.get('pairId') ?? '';
-    const secret = pairingUrl.searchParams.get('secret') ?? '';
-    const serverUrl = pairingUrl.searchParams.get('server');
-    if (!pairId || !secret) {
-      throw new Error(`Pairing link missing params (pairId=${pairId.length}, secret=${secret.length})`);
-    }
-    // NOTE: `server` is optional when the UI is configured with a loopback-only server URL.
-    // Real devices cannot reach localhost/127.0.0.1, so the app omits it from pairing deep links.
+    const { pairId, secret } = await readPairingRequest(page);
 
     const phoneKp = tweetnacl.box.keyPair();
     const phonePublicKeyBase64 = privacyKit.encodeBase64(toPrivacyKitBytes(phoneKp.publicKey));
@@ -207,5 +196,88 @@ test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
 
     const profileRes = await getJson<any>(`${startedServer.baseUrl}/v1/account/profile`, { Authorization: `Bearer ${mobileToken}` }, 15_000);
     expect(profileRes.status).toBe(200);
+  });
+
+  test('explains a missing underlying account request on the add-phone approval screen', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl) throw new Error('missing server or UI fixture');
+    const diagnostics = collectBrowserDiagnostics({ page });
+
+    try {
+      await createAccountViaWeb(page, uiBaseUrl);
+      await page.goto(`${uiBaseUrl}/settings/add-phone`, { waitUntil: 'domcontentloaded' });
+      const { pairId, secret } = await readPairingRequest(page);
+      const publicKey = privacyKit.encodeBase64(toPrivacyKitBytes(tweetnacl.box.keyPair().publicKey));
+      // The pairing request can outlive its separate account-auth request.
+      const requested = await postJson<{ state: string }>(`${server.baseUrl}/v1/auth/pairing/request`, {
+        pairId, secret, publicKey, deviceLabel: 'Phone with a missing account request',
+      });
+      expect(requested.status).toBe(200);
+      await expect(page.getByTestId('add-phone-request-device-label')).toHaveText('Phone with a missing account request', { timeout: 60_000 });
+
+      const approval = page.waitForResponse((response) =>
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/v1/auth/account/response',
+        { timeout: test.info().timeout },
+      );
+      await page.getByTestId('add-phone-approve').click();
+      expect((await approval).status()).toBe(404);
+      await expect(page.getByText(/both devices use the same relay/)).toBeVisible();
+      await expect(page.getByText(/both devices use the same relay/)).toBeInViewport({ ratio: 1 });
+      await page.getByTestId('web-modal-button-0').click();
+      await expect(page.getByTestId('add-phone-request-card')).toBeVisible();
+      await expect(page.getByTestId('add-phone-approve')).toBeEnabled();
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
+  test('explains a missing account-link request and recovers with a fresh QR', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl) throw new Error('missing server or UI fixture');
+    const diagnostics = collectBrowserDiagnostics({ page });
+
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await createAccountViaWeb(page, uiBaseUrl);
+
+      const openAccountLink = async (publicKey: Uint8Array) => {
+        const key = Buffer.from(publicKey).toString('base64url');
+        const approval = page.waitForResponse((response) =>
+          response.request().method() === 'POST'
+          && new URL(response.url()).pathname === '/v1/auth/account/response',
+          { timeout: test.info().timeout },
+        );
+        await page.goto(`${uiBaseUrl}/account?accountConnectKey=${encodeURIComponent(key)}&supportsCredentialVariants=1`, {
+          waitUntil: 'domcontentloaded',
+        });
+        return await approval;
+      };
+
+      // A code created on another relay and an expired code both have no pending
+      // request here. Neither lets this relay conclude that the URLs differ.
+      const missing = await openAccountLink(tweetnacl.box.keyPair().publicKey);
+      expect(missing.status()).toBe(404);
+      await expect(page.getByText(/both devices use the same relay/)).toBeVisible();
+      await expect(page.getByText(/both devices use the same relay/)).toBeInViewport({ ratio: 1 });
+      await page.getByTestId('web-modal-button-0').click();
+      await expect(page).toHaveURL(/\/settings\/account/);
+
+      const fresh = tweetnacl.box.keyPair();
+      const publicKey = privacyKit.encodeBase64(toPrivacyKitBytes(fresh.publicKey));
+      const requested = await postJson<{ state: string }>(`${server.baseUrl}/v1/auth/account/request`, { publicKey });
+      expect(requested.status).toBe(200);
+
+      const approved = await openAccountLink(fresh.publicKey);
+      expect(approved.status()).toBe(200);
+      await expect(page.getByText('Device linked successfully', { exact: true })).toBeVisible();
+      await page.getByTestId('web-modal-button-0').click();
+
+      const result = await postJson<{ state: string }>(`${server.baseUrl}/v2/auth/account/request`, { publicKey });
+      expect(result.status).toBe(200);
+      expect(result.data?.state).toBe('authorized');
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
   });
 });

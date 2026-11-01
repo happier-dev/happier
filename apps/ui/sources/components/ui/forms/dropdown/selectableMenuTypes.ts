@@ -25,6 +25,21 @@ export type SelectableMenuItem = Readonly<{
     right?: React.ReactNode;
     hasSubmenu?: boolean;
     disabled?: boolean;
+    /** Renders the option as a round colour choice; consecutive swatches share one wrapped row. */
+    swatch?: SelectableMenuSwatch;
+}>;
+
+export type SelectableMenuSwatch = Readonly<{
+    /** Resolved paint for the swatch. */
+    color: string;
+    /** The current choice; shown as a ring and exposed as the selected state. */
+    checked?: boolean;
+    /** Shown but not owned (e.g. a project colour a session inherits): a quieter ring, never `selected`. */
+    inherited?: boolean;
+    /** No colour: an empty ring struck through (the Remove choice), in the same row and radio semantics. */
+    empty?: boolean;
+    /** Consecutive swatches with the same group render together; a new group starts a new row. */
+    group?: string;
 }>;
 
 export type SelectableMenuCategory = Readonly<{

@@ -8,6 +8,8 @@ describe('SherpaStreamingSttController (web stub)', () => {
     const controller = createSherpaStreamingSttController({
       setState: (patch) => patches.push(patch),
       getSettings: () => ({}),
+      canAutoStopTurn: () => true,
+      onAutoStopTurn: () => {},
     });
 
     await controller.start('s1');

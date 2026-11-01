@@ -3,7 +3,7 @@ import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-de
 
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 
-import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
+import { withOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { isOpenCodeSessionBusy } from './isOpenCodeSessionBusy';
 import { parseOpenCodeSessionCandidate } from './parseOpenCodeSessionCandidate';
 
@@ -33,9 +33,8 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
   limit: number;
   searchTerm?: string;
 }>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
-  const client = await createOpenCodeDirectClient(params.source);
+  return await withOpenCodeDirectClient(params.source, async (client) => {
 
-  try {
     const rawSessions = await client.sessionList();
     const rawStatuses = await client.sessionStatusList().catch(() => ({}));
     const statuses = rawStatuses && typeof rawStatuses === 'object' && !Array.isArray(rawStatuses)
@@ -81,7 +80,5 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
     const nextOffset = offset + page.length;
     const nextCursor = nextOffset < candidates.length ? encodeIndexCursor(nextOffset) : null;
     return { candidates: page, nextCursor };
-  } finally {
-    await client.dispose().catch(() => {});
-  }
+  });
 }

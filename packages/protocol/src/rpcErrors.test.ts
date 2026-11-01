@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from './rpc.js';
 import {
   createRpcCallError,
+  createSocketIoAckTimeoutError,
+  isSocketIoAckTimeoutError,
   isRpcError,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
@@ -12,6 +14,15 @@ import {
 } from './rpcErrors.js';
 
 describe('rpcErrors', () => {
+  it('recognizes Socket.IO ACK timeouts without classifying other transport failures', () => {
+    expect(isSocketIoAckTimeoutError(new Error('operation has timed out'))).toBe(true);
+    expect(isSocketIoAckTimeoutError(createSocketIoAckTimeoutError())).toBe(true);
+    expect(isSocketIoAckTimeoutError(new Error('socket disconnected'))).toBe(false);
+    expect(isSocketIoAckTimeoutError({ message: 'operation has timed out' })).toBe(false);
+    expect(isSocketIoAckTimeoutError('operation has timed out')).toBe(false);
+    expect(isSocketIoAckTimeoutError(null)).toBe(false);
+  });
+
   it('creates an Error with rpcErrorCode when provided', () => {
     const err = createRpcCallError({
       error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,

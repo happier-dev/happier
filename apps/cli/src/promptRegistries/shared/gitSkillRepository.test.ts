@@ -1,10 +1,20 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { resolvePromptRegistrySourceRoot } from './gitSkillRepository';
+import { collectPromptRegistrySkillDirectories, resolvePromptRegistrySourceRoot } from './gitSkillRepository';
+
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn(() => '') }));
+
+describe('prompt registry background git commands', () => {
+  it('lists tracked skills without creating a Windows console', () => {
+    expect(collectPromptRegistrySkillDirectories('/registry')).toEqual([]);
+    expect(vi.mocked(execFileSync).mock.calls[0]?.[2]?.windowsHide).toBe(true);
+  });
+});
 
 describe('resolvePromptRegistrySourceRoot', () => {
   it('rejects sibling paths that only share the clone path prefix', () => {

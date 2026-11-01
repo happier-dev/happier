@@ -3307,7 +3307,16 @@ describe('executionRuns session RPC handlers', () => {
       resume: true,
     });
     expect(resumed.ok).toBe(true);
-    expect(sent.filter((m: any) => (m.body as any)?.type === 'message').length).toBeGreaterThanOrEqual(2);
+    await vi.waitFor(async () => {
+      const got = await client.call<
+        { run: { status: string }; latestToolResult?: { summary?: string } },
+        { runId: string }
+      >(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+      expect(got.run.status).toBe('succeeded');
+      expect(got.latestToolResult?.summary).toBe('ok');
+      expect(sent.filter(m => m.body && typeof m.body === 'object' && 'type' in m.body
+        && m.body.type === 'tool-result')).toHaveLength(2);
+    });
   });
 
   it('supports execution.run.ensure(resume=true) for resumable runs', async () => {

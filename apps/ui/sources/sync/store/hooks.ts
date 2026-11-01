@@ -1,3 +1,7 @@
+import { resolveAccountThemeProfileView, type ThemeProfileView } from '../domains/settings/themeProfiles';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import { applyThemeProfilesFromUi } from './settingsWriters';
+import { loadPendingAccountSettingsState } from '../domains/state/accountSettingsPersistence';
 import React from 'react';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { useShallow } from 'zustand/react/shallow';
@@ -32,12 +36,8 @@ import {
   deriveSessionListRenderableHasUnreadMessagesFromReadableSeq,
   type SessionListRenderableSession,
 } from '../domains/session/listing/sessionListRenderable';
+import { resolveSessionListCacheServerId } from '../domains/session/listing/sessionListPresentation';
 import {
-  areServerProfileIdentifiersEquivalent,
-  resolveServerProfileScopeIdForIdentifier,
-} from '../domains/server/serverProfiles';
-import {
-  resolveLatestUnreadAffectingCommittedMessageSeq,
   resolveSessionReadableSeq,
 } from '../domains/session/readCursor/resolveSessionReadableSeq';
 import { resolveSessionWorkspacePath } from '../domains/session/resolveSessionWorkspacePath';
@@ -89,10 +89,10 @@ import {
 } from '../domains/session/subagents/subagentSourceMessageDetection';
 import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
 import {
-  compareTranscriptMessagesOldestFirst,
+  sortTranscriptMessagesOldestFirst,
   normalizeTranscriptSeq,
 } from '../domains/messages/transcriptOrdering';
-import { readStoredSessionMessagesFromStateLike } from '../domains/messages/readStoredSessionMessages';
+import { readStoredSessionMessagesReadProjectionFromStateLike } from '../domains/messages/readStoredSessionMessages';
 import { registerSessionTranscriptDerivedCacheClear } from '../runtime/sessionTranscriptDerivedCaches';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { AgentEvent } from '../typesRaw';
@@ -229,7 +229,7 @@ export type SessionReferenceTarget = Readonly<{
  * "Session isn't available" screen — owns the failure the client cannot predict.
  *
  * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession` — reached
- * on a `delete-session` update, a `session-share-revoked` update, or an exact session fetch
+ * on a successful deletion response, a `delete-session` update, a `session-share-revoked` update, or an exact session fetch
  * answering `not_found`, which is the server telling this viewer it cannot have the session at
  * all. That is the same ground the route states. `metadata` is whichever cached copy exists so
  * a known session still shows its live title; it is always a *stored* object, never a projection,
@@ -341,6 +341,8 @@ export function useSessionOrganizationProjection(serverId: string | null | undef
       tagsByTagKey: state.sessionOrganizationTagsByTagKey,
       tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
       attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
+      appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey,
+      sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId,
       orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
       labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     })),
@@ -513,7 +515,7 @@ export function useSessionSubagentSourceMessages(sessionId: string): readonly Me
     const ids = session.messageIdsOldestFirst;
     const orderedMessages = Array.isArray(ids) && ids.length > 0
       ? ids.map((id) => session.messagesById[id]).filter((message): message is Message => message != null)
-      : Object.values(session.messagesById ?? {}).sort(compareTranscriptMessagesOldestFirst);
+      : sortTranscriptMessagesOldestFirst(Object.values(session.messagesById ?? {}));
 
     for (const message of orderedMessages) {
       if (!shouldIncludeSubagentSourceMessage(message)) continue;
@@ -577,7 +579,7 @@ export function useSessionMessages(
           return cached.messages as Message[];
         }
 
-        const out = Object.values(messagesById).slice().sort(compareTranscriptMessagesOldestFirst);
+        const out = sortTranscriptMessagesOldestFirst(Object.values(messagesById));
         sessionMessagesArrayCache.delete(sessionId);
         sessionMessagesArrayCache.set(sessionId, {
           idsRef: ids,
@@ -997,9 +999,7 @@ export function useSessionVisibleReadSeq(
 function resolveLatestUnreadAffectingCommittedMessageSeqForHooks(
   sessionMessages: StorageState['sessionMessages'][string],
 ): number | null {
-  return resolveLatestUnreadAffectingCommittedMessageSeq(
-    readStoredSessionMessagesFromStateLike(sessionMessages),
-  );
+  return readStoredSessionMessagesReadProjectionFromStateLike(sessionMessages).latestUnreadAffectingMessageSeq;
 }
 
 function resolveLatestUnreadAffectingCommittedMessageSeqForHooksCached(
@@ -1392,21 +1392,6 @@ function normalizeSelectedSessionListServerIds(serverIds: ReadonlyArray<string> 
   return out;
 }
 
-function resolveSelectedSessionListServerId(
-  dataByServerId: Readonly<Record<string, SessionListViewItem[] | null>>,
-  requestedServerId: string,
-): string | null {
-  if (Object.prototype.hasOwnProperty.call(dataByServerId, requestedServerId)) return requestedServerId;
-
-  const scopedServerId = resolveServerProfileScopeIdForIdentifier(requestedServerId);
-  if (scopedServerId && Object.prototype.hasOwnProperty.call(dataByServerId, scopedServerId)) return scopedServerId;
-
-  for (const cachedServerId of Object.keys(dataByServerId)) {
-    if (areServerProfileIdentifiersEquivalent(cachedServerId, requestedServerId)) return cachedServerId;
-  }
-  return null;
-}
-
 export function useSessionListViewDataByServerId(
   serverIds?: ReadonlyArray<string>,
 ): Record<string, SessionListViewItem[] | null> {
@@ -1565,6 +1550,7 @@ export function buildSessionListShellViewItemSignature(item: SessionListViewItem
     item.session.active === true ? '1' : '0',
     item.session.archivedAt ?? '',
     item.session.keepVisibleWhenInactive === true ? '1' : '0',
+    item.session.archiving === true ? '1' : '0',
     item.session.pendingCount ?? '',
     item.session.pendingBlockedCount ?? '',
     metadata?.name ?? '',
@@ -1749,7 +1735,7 @@ function getStableSelectedSessionListShellViewDataByServerId(
   const selectedDataByServerId: SessionListShellViewDataByServerId = {};
   let hasSelectedData = false;
   for (const serverId of selectedServerIds) {
-    const cachedServerId = resolveSelectedSessionListServerId(dataByServerId, serverId);
+    const cachedServerId = resolveSessionListCacheServerId(dataByServerId, serverId);
     if (!cachedServerId || Object.prototype.hasOwnProperty.call(selectedDataByServerId, cachedServerId)) continue;
     selectedDataByServerId[cachedServerId] = dataByServerId[cachedServerId] ?? null;
     hasSelectedData = true;
@@ -2438,4 +2424,26 @@ export function useRequestedFriends() {
       return Object.values(state.friends).filter((friend) => friend.status === 'requested');
     })
   );
+}
+/** Shared library plus device activation. The legacy library is migration input only. */
+function useThemeProfileView(): ThemeProfileView {
+  const profiles = useSetting('themeProfiles');
+  const legacy = useLocalSetting('themeProfiles');
+  const selection = useLocalSetting('themeProfileSelection');
+  const legacyScope = useLocalSetting('themeProfileLegacyAccountScope');
+  const scope = getStorage()((state) => state.settingsScope);
+  return React.useMemo(() => {
+    const pending = scope ? loadPendingAccountSettingsState(scope) : null;
+    return resolveAccountThemeProfileView({ profiles, legacy, selection, legacyScope, scope,
+      pendingProfiles: pending?.settings.themeProfiles, pendingIntent: pending?.themeProfileMigration });
+  }, [profiles, legacy, selection, legacyScope, scope]);
+}
+
+export function useThemeProfiles(): ThemeProfilesLocalStateV1 {
+  return useThemeProfileView().state;
+}
+
+export function useThemeProfilesMutable(): [ThemeProfilesLocalStateV1, (value: ThemeProfilesLocalStateV1) => ThemeProfileView, ThemeProfileView] {
+  const before = useThemeProfileView();
+  return [before.state, React.useCallback((value: ThemeProfilesLocalStateV1) => applyThemeProfilesFromUi(value, before), [before]), before];
 }

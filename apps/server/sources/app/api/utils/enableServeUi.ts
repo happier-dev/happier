@@ -202,10 +202,10 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
     });
 
     if (ui.mountRoot) {
-        app.get('/', async (_request, reply) => await sendIndexHtml(reply));
+        app.get('/', { compress: false }, async (_request, reply) => await sendIndexHtml(reply));
         // SPA deep links (e.g. /terminal/connect) should render the same index.html bundle.
         // Exact API/static routes should still win routing precedence.
-        app.get('/*', async (request, reply) => {
+        app.get('/*', { compress: false }, async (request, reply) => {
             try {
                 const rawUrl = typeof request.url === 'string' ? request.url : '';
                 const pathname = rawUrl ? new URL(rawUrl, 'http://localhost').pathname : '/';
@@ -255,7 +255,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
     } else {
         const prefix = ui.prefix;
         app.get(prefix, async (_request, reply) => reply.redirect(`${prefix}/`, 302));
-        app.get(`${prefix}/*`, async (request, reply) => {
+        app.get(`${prefix}/*`, { compress: false }, async (request, reply) => {
             try {
                 const raw = (request.params as { '*': string | undefined })['*'] || '';
                 const decoded = decodeURIComponent(raw);

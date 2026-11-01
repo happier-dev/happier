@@ -10,6 +10,7 @@ import nacl from 'tweetnacl';
 import { commandExists, extractBinaryFromArtifact, reserveLocalhostPort, run, waitForHealth } from './self_host_service_e2e_harness.mjs';
 
 const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
+const SELF_HOST_TEST_TIMEOUT_MS = 25 * 60_000;
 
 function currentTarget() {
   if (process.platform === 'linux') {
@@ -105,8 +106,9 @@ function runAsRoot(cmd, args, { cwd, env, timeoutMs = 0, allowFail = false, stdi
 
 test(
   'self-host server + daemon integration suite works against installed runtime',
-  { timeout: 25 * 60_000 },
+  { timeout: SELF_HOST_TEST_TIMEOUT_MS },
   async (t) => {
+    const deadlineAtMs = Date.now() + SELF_HOST_TEST_TIMEOUT_MS;
     const target = currentTarget();
     if (!target) {
       t.skip(`unsupported platform for daemon E2E: ${process.platform}-${process.arch}`);
@@ -136,7 +138,7 @@ test(
         label: 'self-host-daemon',
         cwd: repoRoot,
         env: { ...process.env },
-        timeoutMs: 12 * 60_000,
+        deadlineAtMs,
       }
     );
     run(
@@ -151,7 +153,7 @@ test(
         label: 'self-host-daemon',
         cwd: repoRoot,
         env: { ...process.env },
-        timeoutMs: 12 * 60_000,
+        deadlineAtMs,
       }
     );
 

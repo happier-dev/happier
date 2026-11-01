@@ -53,8 +53,11 @@ function plainEnvelope(value: unknown): PlainSessionOrganizationDisplayEnvelope 
 export async function prepareSessionOrganizationDisplayEnvelope(params: Readonly<{
     credentials: AuthCredentials;
     value: unknown;
+    serverUrl?: string;
 }>): Promise<SessionOrganizationContentEnvelope> {
-    const mode = await fetchAccountEncryptionMode(params.credentials);
+    const mode = params.serverUrl
+        ? await fetchAccountEncryptionMode(params.credentials, { endpointUrl: params.serverUrl })
+        : await fetchAccountEncryptionMode(params.credentials);
     if (mode.mode === 'plain') {
         return plainEnvelope(params.value);
     }
@@ -68,12 +71,14 @@ export async function prepareSessionOrganizationDisplayEnvelope(params: Readonly
 export async function prepareSessionOrganizationDisplayEnvelopeForWrite(params: Readonly<{
     credentials: AuthCredentials;
     envelope: SessionOrganizationContentEnvelope | null | undefined;
+    serverUrl?: string;
 }>): Promise<SessionOrganizationContentEnvelope | null> {
     if (!params.envelope) return null;
     if (params.envelope.t === 'encrypted') return params.envelope;
     return prepareSessionOrganizationDisplayEnvelope({
         credentials: params.credentials,
         value: params.envelope.v,
+        serverUrl: params.serverUrl,
     });
 }
 
@@ -141,7 +146,8 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
 }>): Promise<SessionOrganizationSnapshot> {
     const hasEncryptedDisplay = params.snapshot.folders.some((folder) => folder.display?.t === 'encrypted')
         || params.snapshot.tags.some((tag) => tag.display?.t === 'encrypted')
-        || params.snapshot.labels.some((label) => label.display?.t === 'encrypted');
+        || params.snapshot.labels.some((label) => label.display?.t === 'encrypted')
+        || params.snapshot.sessionAppearances?.some((appearance) => appearance.display.t === 'encrypted');
     if (!hasEncryptedDisplay) return params.snapshot;
 
     const machineKey = await getAccountMachineKey(params.credentials);
@@ -157,11 +163,17 @@ export async function openSessionOrganizationSnapshotDisplayEnvelopes(params: Re
         const display = await openDisplayEnvelopeWithMachineKey(machineKey, label.display);
         return display === label.display ? label : { ...label, display };
     }));
+    const sessionAppearances = params.snapshot.sessionAppearances
+        ? await Promise.all(params.snapshot.sessionAppearances.map(async (appearance) => {
+            const display = await openDisplayEnvelopeWithMachineKey(machineKey, appearance.display);
+            return display && display !== appearance.display ? { ...appearance, display } : appearance;
+        })) : undefined;
 
     return {
         ...params.snapshot,
         folders,
         tags,
         labels,
+        ...(sessionAppearances ? { sessionAppearances } : {}),
     };
 }

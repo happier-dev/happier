@@ -1,28 +1,14 @@
 import {
   claudeCheckSession,
-  resolveClaudeSessionTranscriptPath,
+  ClaudeResumeSessionUnavailableError,
+  hasClaudeMaterializedSessionTranscript,
 } from '@/backends/claude/utils/claudeCheckSession';
 import { claudeFindLastSession } from '@/backends/claude/utils/claudeFindLastSession';
-import { existsSync, statSync } from 'node:fs';
 
 export type ClaudeRemoteSessionStartPlan = {
   startFrom: string | null;
   shouldContinue: boolean;
 };
-
-export class ClaudeResumeSessionUnavailableError extends Error {
-  readonly code = 'claude_resume_session_unavailable';
-  readonly providerSessionId: string;
-
-  constructor(providerSessionId: string) {
-    super(
-      `Claude session ${providerSessionId} cannot be resumed because its transcript is unavailable. `
-      + 'Happier did not start a new session because the requested operation was resume.',
-    );
-    this.name = 'ClaudeResumeSessionUnavailableError';
-    this.providerSessionId = providerSessionId;
-  }
-}
 
 type ResolveClaudeRemoteSessionStartPlanDeps = {
   checkSession: (
@@ -36,21 +22,6 @@ type ResolveClaudeRemoteSessionStartPlanDeps = {
   logDebug: (message: string) => void;
   logPrefix: string;
 };
-
-function hasClaudeMaterializedSessionTranscript(
-  sessionId: string,
-  path: string,
-  transcriptPath: string | null,
-  configDir: string | null,
-): boolean {
-  const sessionFile = resolveClaudeSessionTranscriptPath(sessionId, path, transcriptPath, configDir);
-  try {
-    if (!existsSync(sessionFile)) return false;
-    return statSync(sessionFile).size > 0;
-  } catch {
-    return false;
-  }
-}
 
 export function resolveClaudeRemoteSessionStartPlan(
   opts: {
@@ -74,7 +45,10 @@ export function resolveClaudeRemoteSessionStartPlan(
   let shouldContinue = false;
 
   if (opts.sessionId) {
-    if (!effectiveDeps.hasMaterializedSessionTranscript(opts.sessionId, opts.path, opts.transcriptPath, opts.claudeConfigDir)) {
+    const transcriptMaterialized = effectiveDeps.hasMaterializedSessionTranscript(
+      opts.sessionId, opts.path, opts.transcriptPath, opts.claudeConfigDir,
+    );
+    if (!transcriptMaterialized) {
       throw new ClaudeResumeSessionUnavailableError(opts.sessionId);
     } else if (!effectiveDeps.checkSession(
       opts.sessionId,

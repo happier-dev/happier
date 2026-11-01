@@ -1,0 +1,40 @@
+
+❯ Use AskUserQuestion exactly once and no other
+  tools. Ask this exact question: Which approach
+  should this synthetic narrow terminal validation
+  use when the question text and every option label
+  naturally wrap across several display lines?
+  Header Approach. Exactly two options with these
+  exact labels: Preserve the complete wrapped
+  question and option labels while answering
+  through the existing app controls; Keep the
+  complete wrapped question and option labels while
+  answering locally in the terminal. Give each a
+  brief description. multiSelect false. After the
+  answer say only NARROW_SINGLE_DONE and the
+  answer.
+
+  Called happier
+────────────────────────────────────────────────────
+ ☐ Approach
+
+│ Which approach should this synthetic narrow
+│ terminal validation use when the question text and
+│ every option label naturally wrap across several
+│ display lines?
+
+❯ 1. Preserve the complete wrapped question and
+     option labels while answering through the
+     existing app controls
+     Keep the full wrapped text visible and route
+     the answer through the app's existing UI
+     controls.
+  2. Keep the complete wrapped question and option
+     labels while answering locally in the terminal
+     Keep the full wrapped text visible and collect
+     the answer directly in the terminal.
+  3. Type something.
+────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

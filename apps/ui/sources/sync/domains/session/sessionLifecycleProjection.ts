@@ -2,19 +2,84 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveMergedSessionRuntimeActivityProjectionFields } from '@/sync/engine/sessions/sessionRuntimeActivityProjection';
 import { isTerminalPrimaryTurnStatus } from './attention/deriveSessionRuntimePresentationState';
 
-type SessionLifecycleProjection = Pick<Session,
-    | 'seq' | 'updatedAt' | 'meaningfulActivityAt'
-    | 'active' | 'activeAt' | 'thinking' | 'thinkingAt'
-    | 'latestTurnId' | 'latestTurnStatus' | 'latestTurnStatusObservedAt'
-    | 'pendingVersion' | 'pendingCount' | 'pendingBlockedCount' | 'pendingActivationAuthorization'
-    | 'latestReadyEventSeq' | 'latestReadyEventAt'
-    | 'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'
->;
+const sessionLifecycleFields = [
+    'seq', 'updatedAt', 'meaningfulActivityAt',
+    'active', 'activeAt', 'thinking', 'thinkingAt',
+    'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt',
+    'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization',
+    'latestReadyEventSeq', 'latestReadyEventAt',
+    'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
+] as const satisfies readonly (keyof Session)[];
+
+type SessionLifecycleProjection = Pick<Session, typeof sessionLifecycleFields[number]>
+    & Partial<Pick<Session, 'presence'>>;
 
 export function normalizeSessionOrderingNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value)
         ? Math.trunc(value)
         : null;
+}
+
+type SessionRequestProjection = Partial<Pick<Session,
+    | 'agentState' | 'agentStateVersion'
+    | 'pendingPermissionRequestCount' | 'pendingUserActionRequestCount' | 'pendingRequestObservedAt'
+>> & {
+    hasPendingPermissionRequests?: boolean;
+    hasPendingUserActionRequests?: boolean;
+};
+
+// These facts have their own ordering contracts. An older enclosing update can still carry
+// a newer observation; only fields outside this set follow the enclosing update's ordering.
+const independentlyOrderedSessionFields = new Set<PropertyKey>([
+    ...sessionLifecycleFields, 'presence', 'metadata', 'metadataVersion',
+    'agentState', 'agentStateVersion', 'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
+    'pendingRequestObservedAt', 'hasPendingPermissionRequests', 'hasPendingUserActionRequests',
+]);
+
+export function shouldPreserveSessionRequestProjection(
+    previous: SessionRequestProjection | undefined,
+    incoming: SessionRequestProjection,
+): boolean {
+    if (!previous) return false;
+    const previousVersion = normalizeSessionOrderingNumber(previous.agentStateVersion);
+    const incomingVersion = normalizeSessionOrderingNumber(incoming.agentStateVersion);
+    if (previousVersion !== null && incomingVersion !== null && previousVersion !== incomingVersion) {
+        return incomingVersion < previousVersion;
+    }
+    return isOlder(incoming.pendingRequestObservedAt, previous.pendingRequestObservedAt);
+}
+
+/** Keep request content and its public pending projection on the same accepted observation. */
+export function reconcileSessionRequestProjection<T extends SessionRequestProjection>(
+    previous: SessionRequestProjection | undefined,
+    incoming: T,
+): T {
+    if (!previous || !shouldPreserveSessionRequestProjection(previous, incoming)) return incoming;
+    const hasOlderVersion = isOlder(incoming.agentStateVersion, previous.agentStateVersion);
+    let next = incoming;
+    const preserve = (key: keyof SessionRequestProjection): void => {
+        if ((key in previous || key in next) && next[key] !== previous[key]) {
+            next = { ...next, [key]: previous[key] };
+        }
+    };
+    if (hasOlderVersion) {
+        preserve('agentState');
+        preserve('agentStateVersion');
+    }
+    for (const key of [
+        'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
+        'hasPendingPermissionRequests', 'hasPendingUserActionRequests', 'pendingRequestObservedAt',
+    ] as const) preserve(key);
+    return next;
+}
+
+/**
+ * Single owner of a session's presence: "online" while the runtime reports it active, otherwise the
+ * last-seen timestamp. Every path that changes `active` must derive presence here, or a row that
+ * comes back online keeps its last-seen value and its live-runtime signals stay hidden.
+ */
+export function resolveSessionPresence(session: Readonly<{ active: boolean; activeAt: number }>): 'online' | number {
+    return session.active ? 'online' : session.activeAt;
 }
 
 function resolveMergedSessionReadyEvent(params: Readonly<{
@@ -82,7 +147,7 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
         }
     }
     if (isOlder(incoming.activeAt, previous.activeAt)) {
-        applyPatch({ active: previous.active, activeAt: previous.activeAt });
+        applyPatch({ active: previous.active, activeAt: previous.activeAt, presence: resolveSessionPresence(previous) });
     }
     if (isOlder(incoming.thinkingAt, previous.thinkingAt)) {
         applyPatch({ thinking: previous.thinking, thinkingAt: previous.thinkingAt });
@@ -108,4 +173,31 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
     const runtimeActivity = resolveMergedSessionRuntimeActivityProjectionFields(previous, incoming);
     if (runtimeActivity) applyPatch(runtimeActivity);
     return next;
+}
+
+type SessionSnapshotProjection = SessionLifecycleProjection & SessionRequestProjection & {
+    metadata: unknown;
+    metadataVersion: number;
+};
+
+/** Apply the independent lifecycle, request, and metadata ordering rules to a whole snapshot. */
+export function reconcileSessionSnapshot<T extends SessionSnapshotProjection>(
+    previous: T | undefined,
+    incoming: T,
+    options?: Readonly<{ preserveUnversionedFields?: boolean }>,
+): T {
+    if (previous && options?.preserveUnversionedFields) {
+        incoming = { ...incoming };
+        for (const key of Object.keys(incoming) as Array<keyof T>) {
+            if (!independentlyOrderedSessionFields.has(key)) incoming[key] = previous[key];
+        }
+    }
+    let next = reconcileSessionRequestProjection(previous, incoming);
+    const previousMetadataVersion = normalizeSessionOrderingNumber(previous?.metadataVersion);
+    const incomingMetadataVersion = normalizeSessionOrderingNumber(incoming.metadataVersion);
+    if (previous && previousMetadataVersion !== null && incomingMetadataVersion !== null
+        && incomingMetadataVersion < previousMetadataVersion) {
+        next = { ...next, metadata: previous.metadata, metadataVersion: previous.metadataVersion };
+    }
+    return reconcileSessionLifecycleProjection(previous, next);
 }

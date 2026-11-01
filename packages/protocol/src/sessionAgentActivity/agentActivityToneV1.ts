@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { AgentActivityStatusV1 } from './agentActivityStatusV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Presentation tone for an agent-activity status.
@@ -18,7 +19,7 @@ export const AGENT_ACTIVITY_TONES_V1 = [
   'neutral',
 ] as const;
 
-export const AgentActivityToneV1Schema = z.enum(AGENT_ACTIVITY_TONES_V1);
+export const AgentActivityToneV1Schema = lazySchema(() => z.enum(AGENT_ACTIVITY_TONES_V1));
 export type AgentActivityToneV1 = z.infer<typeof AgentActivityToneV1Schema>;
 
 /**

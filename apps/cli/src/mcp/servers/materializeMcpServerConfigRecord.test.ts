@@ -245,10 +245,10 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('normalizes package-runner stdio servers through managed pnpm with a neutral launch cwd', async () => {
+  it('preserves the configured package runner, arguments, environment and workspace cwd', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-stdio-launcher-test-'));
     try {
-      const fakePnpmPath = join(dir, 'pnpm');
+      const fakePnpmPath = join(dir, process.platform === 'win32' ? 'npx.cmd' : 'npx');
       await writeFile(fakePnpmPath, '#!/bin/sh\nexit 0\n', 'utf8');
       await chmod(fakePnpmPath, 0o755);
       const settings = McpServersSettingsV1Schema.parse({
@@ -259,7 +259,7 @@ describe('materializeMcpServerConfigRecord', () => {
             id: 's1',
             name: 'alpha',
             transport: 'stdio',
-            stdio: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-sequential-thinking'] },
+            stdio: { command: fakePnpmPath, args: ['-y', '@modelcontextprotocol/server-sequential-thinking', '--', '--yes', '--prefer-offline'] },
             env: { API_KEY: { t: 'literal', v: '${TOKEN}' } },
             createdAt: 0,
             updatedAt: 0,
@@ -305,9 +305,9 @@ describe('materializeMcpServerConfigRecord', () => {
 
       const configPath = String(cfg.env?.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE ?? '');
       const raw = await readFile(configPath, 'utf8');
-      expect(raw).toContain(`"command":"${fakePnpmPath}"`);
-      expect(raw).toContain('"args":["dlx","@modelcontextprotocol/server-sequential-thinking"]');
-      expect(raw).toContain('"cwd":"/safe-home"');
+      expect(JSON.parse(raw).command).toBe(fakePnpmPath);
+      expect(JSON.parse(raw).args).toEqual(['-y', '@modelcontextprotocol/server-sequential-thinking', '--', '--yes', '--prefer-offline']);
+      expect(JSON.parse(raw).cwd).toBe('/repo');
       expect(raw).toContain('"API_KEY":"sk-test"');
       expect(raw).not.toContain('happier-mcp-stdio-launcher.mjs');
       out.cleanup();
@@ -317,10 +317,10 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('preserves workspace cwd for package-manager run and exec stdio servers', async () => {
+  it('resolves a bare runner using its configured environment and preserves workspace cwd', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-stdio-workspace-cwd-test-'));
     try {
-      const fakePnpmPath = join(dir, 'pnpm');
+      const fakePnpmPath = join(dir, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
       await writeFile(fakePnpmPath, '#!/bin/sh\nexit 0\n', 'utf8');
       await chmod(fakePnpmPath, 0o755);
       const settings = McpServersSettingsV1Schema.parse({
@@ -332,7 +332,7 @@ describe('materializeMcpServerConfigRecord', () => {
             name: 'alpha',
             transport: 'stdio',
             stdio: { command: 'pnpm', args: ['exec', 'tsx', 'server.ts'] },
-            env: {},
+            env: { PATH: { t: 'literal', v: dir } },
             createdAt: 0,
             updatedAt: 0,
           },
@@ -345,13 +345,13 @@ describe('materializeMcpServerConfigRecord', () => {
         resolved,
         settingsSecretsKey: null,
         savedSecretsById: new Map(),
-        processEnv: { HOME: '/safe-home', HAPPIER_PNPM_BIN: fakePnpmPath },
+        processEnv: { HOME: '/safe-home', PATH: '' },
         tmpDir: dir,
       });
 
       const configPath = String(out.mcpServers.alpha.env?.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE ?? '');
       const raw = await readFile(configPath, 'utf8');
-      expect(raw).toContain(`"command":"${fakePnpmPath}"`);
+      expect(JSON.parse(raw).command).toBe(fakePnpmPath);
       expect(raw).toContain('"args":["exec","tsx","server.ts"]');
       expect(raw).toContain('"cwd":"/repo/worktree"');
     } finally {
@@ -359,7 +359,43 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('skips package-runner stdio servers when managed pnpm is unavailable in non-strict mode', async () => {
+  it('resolves Windows runner commands with a configured PATH overriding inherited Path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-path-override-'));
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    let cleanup: (() => void) | undefined;
+    try {
+      const command = join(root, 'npx.cmd');
+      await writeFile(command, '@echo off\r\n');
+      const settings = McpServersSettingsV1Schema.parse({
+        v: 1, strictMode: true,
+        servers: [{
+          id: 's1', name: 'alpha', transport: 'stdio', stdio: { command: 'npx', args: ['server'] },
+          env: { PATH: { t: 'literal', v: root } }, createdAt: 0, updatedAt: 0,
+        }],
+        bindings: [{ id: 'b1', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 }],
+      });
+      Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+      const out = await materializeMcpServerConfigRecord({
+        resolved: resolveEffectiveServersV1(settings, { machineId: 'm1', directory: root }),
+        settingsSecretsKey: null, savedSecretsById: new Map(),
+        processEnv: { Path: join(root, 'missing'), PATHEXT: '.CMD;.EXE' }, tmpDir: root,
+        deps: { resolveStdioLauncherCommand: () => {
+          // The lookup models Windows; config-file protection uses the real host OS boundary.
+          Object.defineProperty(process, 'platform', platform);
+          return { command: process.execPath, args: [] };
+        } },
+      });
+      cleanup = out.cleanup;
+      const configPath = out.mcpServers.alpha.env!.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE;
+      expect(JSON.parse(await readFile(configPath, 'utf8')).command).toBe(command);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      cleanup?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('skips package-runner stdio servers when the configured runner is unavailable in non-strict mode', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-package-runner-unavailable-'));
     const originalFetch = globalThis.fetch;
     const settings = McpServersSettingsV1Schema.parse({
@@ -398,7 +434,7 @@ describe('materializeMcpServerConfigRecord', () => {
       expect(out.warnings).toContainEqual({
         serverName: 'alpha',
         code: 'invalid_server',
-        detail: 'managed pnpm unavailable for package-runner command',
+        detail: expect.stringMatching(/configured MCP command npx.*not found/i),
       });
     } finally {
       globalThis.fetch = originalFetch;
@@ -406,7 +442,7 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('fails closed for package-runner stdio servers when managed pnpm is unavailable in strict mode', async () => {
+  it('fails closed for package-runner stdio servers when the configured runner is unavailable in strict mode', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-package-runner-unavailable-strict-'));
     const originalFetch = globalThis.fetch;
     const settings = McpServersSettingsV1Schema.parse({
@@ -442,7 +478,7 @@ describe('materializeMcpServerConfigRecord', () => {
           tmpDir: null,
           strictMode: true,
         }),
-      ).rejects.toThrow(/managed pnpm unavailable/i);
+      ).rejects.toThrow(/configured MCP command npx.*not found/i);
     } finally {
       globalThis.fetch = originalFetch;
       await rm(dir, { recursive: true, force: true });

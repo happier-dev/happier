@@ -1,4 +1,4 @@
-import type { Log } from "@sentry/core";
+import type { Log } from "@sentry/node";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 const REDACTED_VALUE = "[redacted]";

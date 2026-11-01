@@ -94,6 +94,9 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
@@ -308,6 +311,17 @@ export function createReactiveStorageStoreMock(
 ): UseBoundStore<StoreApi<StorageState>> {
     const snapshot = createStorageStateSnapshot(state);
     return create<StorageState>()(() => snapshot);
+}
+
+/** Acquire the real store after a facade mock returns, avoiding a cyclic async mock factory. */
+export function createStorageStoreProxy(
+    readStore: () => UseBoundStore<StoreApi<StorageState>>,
+): UseBoundStore<StoreApi<StorageState>> {
+    // The callable and every store API delegate to the actual store at this test boundary.
+    const callable = ((...args: unknown[]) => Reflect.apply(readStore(), undefined, args)) as UseBoundStore<StoreApi<StorageState>>;
+    return new Proxy(callable, {
+        get: (_target, property) => Reflect.get(readStore(), property),
+    });
 }
 
 export function createStorageStoreStub(

@@ -7,8 +7,9 @@ import type {
 } from '@happier-dev/protocol';
 import type { ConnectedServiceSharedGenerationMutationCurrentness } from '../credentials/lifecycleTypes';
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../accountTransitions/connectedServiceAccountTransition';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ConnectedServiceRuntimeAuthFailureKindSchema = z.enum([
+export const ConnectedServiceRuntimeAuthFailureKindSchema = lazySchema(() => z.enum([
   'usage_limit',
   'rate_limit',
   'capacity',
@@ -22,7 +23,7 @@ export const ConnectedServiceRuntimeAuthFailureKindSchema = z.enum([
   'temporary_throttle',
   'dependency_failure',
   'unknown',
-]);
+]));
 
 export type ConnectedServiceRuntimeAuthFailureKind =
   z.infer<typeof ConnectedServiceRuntimeAuthFailureKindSchema>;
@@ -55,6 +56,9 @@ export type ConnectedServiceRuntimeFailureClassification = Readonly<{
   quotaScope?: ConnectedServiceRuntimeQuotaScope;
   providerLimitId?: string | null;
   sourceProviderAccountId?: string | null;
+  sourceProviderOrganizationId?: string | null;
+  /** Exact public issue associated with this accepted runtime failure. */
+  runtimeIssueFingerprint?: string | null;
   sourceAccountLabel?: string | null;
   failingAccessTokenFingerprint?: string | null;
   action?: Readonly<{ kind: 'open_url'; url: string }> | null;

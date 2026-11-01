@@ -1,4 +1,3 @@
-import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -83,9 +82,9 @@ export function createSessionActionTarget(params: Readonly<{
         canStop,
         canArchive,
         canRename: hasAdminAccess,
-        canMoveToFolder: getSessionStorageKind(session) !== 'direct',
         canResume,
         canDelete: isOwnedByCurrentUser && !isActive && !hasPreservedTerminalHost && params.isConnected !== true,
+        canStopAndDelete: isOwnedByCurrentUser && (isActive || hasStoppableTerminalHost || params.isConnected === true),
         readStateAction: isArchived
             ? { kind: 'none', visible: false }
             : resolveSessionReadStateAction(session),

@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { installAgentAssetLoader } from '@/dev/testkit/mocks/agentAssets';
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
 import {
     publishSessionNavigationCursor,
@@ -17,7 +19,9 @@ import { SESSION_LATERAL_PICKER_ROW_PITCH_PX, resolveSessionLateralPickerFrame }
 
 const sessionNamesState = vi.hoisted(() => ({
     bySessionId: {} as Record<string, string>,
+    metadataBySessionId: {} as Record<string, Metadata>,
 }));
+beforeEach(installAgentAssetLoader);
 const reducedMotionState = vi.hoisted(() => ({
     value: false,
 }));
@@ -31,10 +35,6 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: unknown[]) => void, ...args: unknown[]) => fn(...args),
-}));
-
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
 // The scrim is a shared primitive with its own suite; here it only has to prove that the
@@ -62,7 +62,7 @@ vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
             sessions: Object.fromEntries(
                 Object.entries(sessionNamesState.bySessionId).map(([sessionId, name]) => [
                     sessionId,
-                    { metadata: { name } },
+                    { metadata: { name, ...sessionNamesState.metadataBySessionId[sessionId] } },
                 ]),
             ),
         }),
@@ -165,6 +165,7 @@ describe('SessionCockpitLateralPicker', () => {
         standardCleanup();
         resetSessionNavigationCursorForTests();
         sessionNamesState.bySessionId = {};
+        sessionNamesState.metadataBySessionId = {};
         reducedMotionState.value = false;
     });
 
@@ -182,6 +183,17 @@ describe('SessionCockpitLateralPicker', () => {
         // non-gesture equivalent rides the cockpit tabs and is unaffected.
         expect(root?.props.accessibilityElementsHidden).toBe(true);
         expect(root?.props.importantForAccessibility).toBe('no-hide-descendants');
+    });
+
+    it('uses a neutral identity for an unknown destination in the open picker', async () => {
+        sessionNamesState.bySessionId = { 'session-3': 'Unknown destination' };
+        publishVisibleSessionOrder(['session-0', 'session-1', 'session-2', 'session-3']);
+        const { harness, screen } = await renderPicker('session-1');
+
+        act(() => openPicker(harness, 'next', 0));
+
+        expect(screen.getTextContent()).toContain('Unknown destination');
+        expect(screen.tree.root.findByProps({ name: 'stack-simple' })).toBeTruthy();
     });
 
     it('lists the sessions FURTHER in the locked direction, never the one already in the capsule', async () => {

@@ -558,7 +558,7 @@ describe('SessionView info navigation', () => {
 
         capturedOpenSessionSpy('child-session-1');
 
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2', expect.any(Object));
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2');
     });
 
     it('does not eagerly hydrate discovered subagent sidechains from the session shell or header', async () => {

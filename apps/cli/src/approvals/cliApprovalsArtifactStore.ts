@@ -8,7 +8,7 @@ import {
   type ApprovalRequestV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import {
   decodeBase64,
   decryptWithDataKey,
@@ -47,11 +47,13 @@ type ArtifactUpdateRequest = Readonly<{
 }>;
 
 async function resolveRecipientSecretKeyOrSeed(credentials: Credentials): Promise<Uint8Array> {
+  requireEncryptionCredentials(credentials);
   if (credentials.encryption.type === 'dataKey') return credentials.encryption.machineKey;
   return await deriveKey(credentials.encryption.secret, 'Happy EnCoder', ['content']);
 }
 
 async function resolveRecipientPublicKey(credentials: Credentials): Promise<Uint8Array> {
+  requireEncryptionCredentials(credentials);
   if (credentials.encryption.type === 'dataKey') return credentials.encryption.publicKey;
   return libsodiumPublicKeyFromSecretKey(await resolveRecipientSecretKeyOrSeed(credentials));
 }

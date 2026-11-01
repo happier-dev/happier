@@ -33,6 +33,14 @@ function consumeFlagValue(argv: string[], index: number): { value: string | unde
   return { value: undefined, nextIndex: index };
 }
 
+/** Keep runner controls outside the provider's literal argument tail. */
+export function withTerminalRuntimeFlags(argv: readonly string[], runtimeArgs: readonly string[]): string[] {
+  const boundary = argv.indexOf('--');
+  return boundary < 0
+    ? [...argv, ...runtimeArgs]
+    : [...argv.slice(0, boundary), ...runtimeArgs, ...argv.slice(boundary)];
+}
+
 export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
   terminal: TerminalRuntimeFlags | null;
   argv: string[];
@@ -42,6 +50,11 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+
+    if (arg === '--') {
+      remaining.push(...argv.slice(i));
+      break;
+    }
 
     if (arg === '--happy-terminal-mode') {
       const consumed = consumeFlagValue(argv, i);

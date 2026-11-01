@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
+
+import { resolveInstalledWindowsServiceLauncherPaths } from '@happier-dev/cli-common/service';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -16,6 +18,7 @@ import {
   type DaemonServiceMode,
   type DaemonServiceTargetMode,
 } from './plan';
+import { resolveDaemonWindowsServiceLauncherInstallSpec } from './windowsServiceLauncher';
 
 export type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -70,6 +73,7 @@ export type DaemonServiceListEntry = Readonly<{
   /** `desktop` when the desktop app manages this service; `null`/absent means user-owned. */
   managedBy?: 'desktop' | null;
   installedDefinitionMatchesExpected?: boolean;
+  windowsLauncherUpgradeNeeded?: boolean;
 }>;
 
 export type DaemonServiceInventoryEntry = Readonly<{
@@ -103,6 +107,8 @@ export function resolveDaemonServicePaths(
   installedPath: string;
   stdoutPath: string;
   stderrPath: string;
+  launcherPath: string;
+  launcherDiagnosticLogPath: string;
 }> {
   const mode: DaemonServiceMode = options.mode === 'system' ? 'system' : 'user';
   const label = resolveDaemonServiceLaunchdLabel(runtime.instanceId, runtime.channel, runtime.targetMode);
@@ -138,6 +144,13 @@ export function resolveDaemonServicePaths(
     : runtime.platform === 'linux'
       ? unitPath
       : wrapperPath;
+  const launcherPaths = runtime.platform === 'win32'
+    ? resolveInstalledWindowsServiceLauncherPaths({
+        definitionPath: wrapperPath,
+        label: win32.basename(wrapperPath, '.ps1'),
+        version: resolveDaemonWindowsServiceLauncherInstallSpec().version,
+      })
+    : { launcherPath: '', diagnosticLogPath: '' };
   const logPaths = runtime.platform === 'win32'
     ? resolveWindowsDaemonServiceLogPaths({
         happierHomeDir: runtime.happierHomeDir,
@@ -169,5 +182,7 @@ export function resolveDaemonServicePaths(
     installedPath,
     stdoutPath: logPaths.stdoutPath,
     stderrPath: logPaths.stderrPath,
+    launcherPath: launcherPaths.launcherPath,
+    launcherDiagnosticLogPath: launcherPaths.diagnosticLogPath,
   };
 }

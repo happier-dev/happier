@@ -31,6 +31,39 @@ function buildState(overrides: Partial<SharedManagedOpenCodeServerState> = {}): 
 }
 
 describe('releaseForAuthSwitchFromState', () => {
+  it.each(['failed termination', 'unavailable claim inventory', 'unavailable turn evidence'] as const)(
+    'retains server custody after %s', async (failure) => {
+      const state = buildState();
+      let retainedState: SharedManagedOpenCodeServerState | null = state;
+      const result = await releaseForAuthSwitchFromState({
+        withLock: async <T>(fn: () => Promise<T>) => await fn(),
+        readState: async () => retainedState,
+        removeState: async () => { retainedState = null; },
+        isPidAlive: () => true,
+        getProcessInfo: async () => ({ name: 'opencode', cmd: 'opencode serve --hostname=127.0.0.1 --port=43111' }),
+        readProcessStartTimeMs: async () => 2500,
+        killPid: async () => {
+          if (failure !== 'failed termination') throw new Error('Protected server must not be signalled');
+          return false;
+        },
+        currentActiveServerDir: '/tmp/happy/servers/cloud',
+        expectedOwnerToken: 'owner-token-a',
+        drainMs: 9_000,
+        trackedClaimCountForLaunchFingerprint: async () => {
+          if (failure === 'unavailable claim inventory') throw new Error('Registry unavailable');
+          return 0;
+        },
+        hasInFlightTurnForLaunchFingerprint: async () => {
+          if (failure === 'unavailable turn evidence') throw new Error('Turn query unavailable');
+          return false;
+        },
+      });
+
+      expect(result.released).toBe(false);
+      expect(retainedState).toBe(state);
+    },
+  );
+
   it('releases a validated prior managed server during auth switch', async () => {
     const state = buildState();
     const killPid = vi.fn(async () => true);
@@ -77,7 +110,7 @@ describe('releaseForAuthSwitchFromState', () => {
     expect(removeState).toHaveBeenCalledTimes(1);
   });
 
-  it('drops stale state without signaling when owner token mismatches', async () => {
+  it.each(['owner token', 'active server directory'] as const)('retains live custody without signaling when %s mismatches', async (mismatch) => {
     const state = buildState();
     const killPid = vi.fn(async () => true);
     const removeState = vi.fn(async () => {});
@@ -90,14 +123,14 @@ describe('releaseForAuthSwitchFromState', () => {
       getProcessInfo: async () => ({ name: 'opencode', cmd: 'opencode serve --hostname=127.0.0.1 --port=43111' }),
       readProcessStartTimeMs: async () => 2500,
       killPid,
-      currentActiveServerDir: '/tmp/happy/servers/cloud',
-      expectedOwnerToken: 'another-owner-token',
+      currentActiveServerDir: mismatch === 'active server directory' ? '/tmp/happy/servers/other' : '/tmp/happy/servers/cloud',
+      expectedOwnerToken: mismatch === 'owner token' ? 'another-owner-token' : 'owner-token-a',
       drainMs: 9_000,
     });
 
-    expect(result).toEqual({ released: false, reason: 'owner_token_mismatch' });
+    expect(result).toEqual({ released: false, reason: mismatch === 'owner token' ? 'owner_token_mismatch' : 'active_server_dir_mismatch' });
     expect(killPid).not.toHaveBeenCalled();
-    expect(removeState).toHaveBeenCalledTimes(1);
+    expect(removeState).not.toHaveBeenCalled();
   });
 
   it('drops stale state without signaling when process validation fails (PID reuse safety)', async () => {
@@ -123,7 +156,7 @@ describe('releaseForAuthSwitchFromState', () => {
     expect(removeState).toHaveBeenCalledTimes(1);
   });
 
-  it('drops untrusted v1 state files without signaling', async () => {
+  it('retains untrusted live v1 state files without signaling', async () => {
     const state = buildState({ v: undefined, ownerToken: undefined, expectedCmdlineHash: undefined });
     const killPid = vi.fn(async () => true);
     const removeState = vi.fn(async () => {});
@@ -143,7 +176,7 @@ describe('releaseForAuthSwitchFromState', () => {
 
     expect(result).toEqual({ released: false, reason: 'state_untrusted' });
     expect(killPid).not.toHaveBeenCalled();
-    expect(removeState).toHaveBeenCalledTimes(1);
+    expect(removeState).not.toHaveBeenCalled();
   });
 
   it('does not reap when another tracked session still claims the same launch fingerprint', async () => {
@@ -282,6 +315,31 @@ describe('releaseForAuthSwitchFromState', () => {
 });
 
 describe('decideManagedOpenCodeStartupScanStateAction', () => {
+  it.each([
+    { state: buildState({ v: undefined }), reason: 'state_untrusted' },
+    { state: buildState({ activeServerDir: '/tmp/happy/servers/other' }), reason: 'active_server_dir_mismatch' },
+  ] as const)('retains live custody when ownership is unverifiable: $reason', ({ state, reason }) => {
+    const input = {
+      state, currentActiveServerDir: '/tmp/happy/servers/cloud',
+      processInfo: null, observedStartTimeMs: null,
+    };
+    expect(decideManagedOpenCodeStartupScanStateAction({ ...input, isPidAlive: true }))
+      .toEqual({ action: 'defer', reason });
+    expect(decideManagedOpenCodeStartupScanStateAction({ ...input, isPidAlive: false }))
+      .toEqual({ action: 'drop', reason: 'pid_dead' });
+  });
+  it.each([
+    { processInfo: null, observedStartTimeMs: 2500 },
+    { processInfo: { name: 'opencode', cmd: 'opencode serve --hostname=127.0.0.1 --port=43111' }, observedStartTimeMs: null },
+  ])('retains custody while live process identity cannot be read', (observation) => {
+    expect(decideManagedOpenCodeStartupScanStateAction({
+      state: buildState(),
+      currentActiveServerDir: '/tmp/happy/servers/cloud',
+      isPidAlive: true,
+      ...observation,
+    })).toEqual({ action: 'defer', reason: 'process_identity_unknown' });
+  });
+
   it('keeps exact live state created by a prior daemon instance', () => {
     const state = buildState({ daemonInstanceId: 'old-daemon' });
     const decision = decideManagedOpenCodeStartupScanStateAction({
@@ -336,9 +394,9 @@ describe('decideManagedOpenCodeStartupScanOrphanReapAction', () => {
 
   it('propagates drop decisions without attempting orphan reaping logic', () => {
     expect(decideManagedOpenCodeStartupScanOrphanReapAction({
-      stateDecision: { action: 'drop', reason: 'state_untrusted' },
+      stateDecision: { action: 'drop', reason: 'pid_dead' },
       trackedClaimCount: 0,
       hasUnknownOpenCodeTrackedClaims: false,
-    })).toEqual({ action: 'drop', reason: 'state_untrusted' });
+    })).toEqual({ action: 'drop', reason: 'pid_dead' });
   });
 });

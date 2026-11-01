@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Structured meta payload for an encrypted summary shard covering a transcript seq window.
@@ -8,7 +9,7 @@ import { z } from 'zod';
  * This payload is intentionally self-contained so the daemon can rebuild local indexes
  * from transcript history without re-running the summarizer.
  */
-export const SessionSummaryShardV1Schema = z.object({
+export const SessionSummaryShardV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   seqFrom: z.number().int().min(0),
   seqTo: z.number().int().min(0),
@@ -33,7 +34,7 @@ export const SessionSummaryShardV1Schema = z.object({
       path: ['createdAtFromMs'],
     });
   }
-});
+}));
 
 export type SessionSummaryShardV1 = z.infer<typeof SessionSummaryShardV1Schema>;
 

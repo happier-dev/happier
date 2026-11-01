@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ConnectedServiceUxDiagnosticV1Schema } from '../connect/connectedServiceUxDiagnostics.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_OK_STATUSES_V1 = [
   'ready',
@@ -27,48 +28,48 @@ export const SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_ERROR_STATUSES_V1 = [
   'not_found',
 ] as const;
 
-export const SessionUsageLimitRecoveryOperationResultOkStatusV1Schema = z.enum(
+export const SessionUsageLimitRecoveryOperationResultOkStatusV1Schema = lazySchema(() => z.enum(
   SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_OK_STATUSES_V1,
-);
+));
 export type SessionUsageLimitRecoveryOperationResultOkStatusV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultOkStatusV1Schema>;
 
-export const SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema = z.enum(
+export const SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema = lazySchema(() => z.enum(
   SESSION_USAGE_LIMIT_RECOVERY_OPERATION_RESULT_ERROR_STATUSES_V1,
-);
+));
 export type SessionUsageLimitRecoveryOperationResultErrorStatusV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultErrorStatusV1Schema>;
 
-const OperationResultSessionIdSchema = z.string().trim().min(1);
-const OperationResultIssueFingerprintSchema = z.string().trim().min(1);
-const OperationResultErrorCodeSchema = z.string().trim().min(1);
-const OperationResultRetryAfterMsSchema = z
+const OperationResultSessionIdSchema = lazySchema(() => z.string().trim().min(1));
+const OperationResultIssueFingerprintSchema = lazySchema(() => z.string().trim().min(1));
+const OperationResultErrorCodeSchema = lazySchema(() => z.string().trim().min(1));
+const OperationResultRetryAfterMsSchema = lazySchema(() => z
   .number()
   .finite()
   .nonnegative()
-  .transform((value) => Math.trunc(value));
-const OperationResultResumePromptModeSchema = z.enum(['standard', 'off', 'custom']);
+  .transform((value) => Math.trunc(value)));
+const OperationResultResumePromptModeSchema = lazySchema(() => z.enum(['standard', 'off', 'custom']));
 type OperationResultResumePromptMode = z.infer<typeof OperationResultResumePromptModeSchema>;
 const INVALID_RESUME_PROMPT_MODE = Symbol('invalid resume prompt mode');
 
-const OperationResultDiagnosticScalarV1Schema = z.union([
+const OperationResultDiagnosticScalarV1Schema = lazySchema(() => z.union([
   z.string(),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const OperationResultDiagnosticsV1Schema = z.record(
+const OperationResultDiagnosticsV1Schema = lazySchema(() => z.record(
   z.string().trim().min(1),
   OperationResultDiagnosticScalarV1Schema,
-);
+));
 
 // RD-REC-17: persisted session-metadata snapshots ride on the typed contract as a
 // plain optional field so they survive schema validation, JSON serialization, and
 // structured-clone boundaries (never smuggled via non-enumerable properties).
-const OperationResultMetadataV1Schema = z.record(z.string(), z.unknown());
+const OperationResultMetadataV1Schema = lazySchema(() => z.record(z.string(), z.unknown()));
 
-export const SessionUsageLimitRecoveryOperationResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionUsageLimitRecoveryOperationResultV1Schema = lazySchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(true),
@@ -96,7 +97,7 @@ export const SessionUsageLimitRecoveryOperationResultV1Schema = z.discriminatedU
       metadata: OperationResultMetadataV1Schema.optional(),
     })
     .strict(),
-]);
+]));
 
 export type SessionUsageLimitRecoveryOperationResultV1 =
   z.infer<typeof SessionUsageLimitRecoveryOperationResultV1Schema>;

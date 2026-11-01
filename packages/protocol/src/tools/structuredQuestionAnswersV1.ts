@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const STRUCTURED_QUESTION_LIMITS = Object.freeze({
   maxQuestions: 16,
@@ -207,7 +208,7 @@ export function normalizeStructuredQuestionDescriptors(
   }
 }
 
-export const StructuredQuestionAnswersV1Schema = z
+export const StructuredQuestionAnswersV1Schema = lazySchema(() => z
   .unknown()
   .superRefine((input, ctx) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -252,7 +253,7 @@ export const StructuredQuestionAnswersV1Schema = z
       normalized[question] = Object.freeze([...(values as string[])]);
     }
     return Object.freeze(normalized) as StructuredQuestionAnswersV1;
-  });
+  }));
 
 export type StructuredQuestionAnswersV1 = Readonly<Record<string, ReadonlyArray<string>>>;
 
@@ -281,10 +282,11 @@ export type SendableAskUserQuestionAnswerPayload = Extract<
   { kind: 'modern' | 'legacy' }
 >['send'];
 
-export const StructuredQuestionResponseV1Schema = z.object({
+export const StructuredQuestionResponseV1Schema = lazySchema(() => z.object({
   id: z.string().trim().min(1).max(512),
+  occurrenceId: z.string().trim().min(1).optional(),
   structuredAnswersV1: StructuredQuestionAnswersV1Schema,
-}).strict();
+}).strict());
 
 export type StructuredQuestionResponseV1 = z.infer<typeof StructuredQuestionResponseV1Schema>;
 

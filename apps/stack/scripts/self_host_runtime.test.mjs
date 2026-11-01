@@ -35,6 +35,75 @@ import {
   resolveSelfHostServerInstallFromReleaseParams,
 } from './self_host_runtime.mjs';
 import { buildServiceDefinition, resolveServiceBackend } from './utils/service/service_manager.mjs';
+import { buildStackHarnessEnv, writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { runNodeCaptureSync } from './testkit/core/run_node_capture.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+
+test('self-host uninstall preserves payload and retained data when service teardown fails', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-self-host-uninstall-refusal-' });
+  const installRoot = fixture.path('install');
+  const configDir = fixture.path('config');
+  const dataDir = fixture.path('data');
+  const logDir = fixture.path('logs');
+  const serverBinaryName = process.platform === 'win32' ? 'happier-server.exe' : 'happier-server';
+  const retainedFiles = [
+    join(installRoot, 'bin', serverBinaryName),
+    join(installRoot, 'self-host-state.json'),
+    join(configDir, 'server.env'),
+    join(dataDir, 'retained-data'),
+    join(logDir, 'server.err.log'),
+  ];
+  for (const file of retainedFiles) {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, 'retained\n', 'utf8');
+  }
+  const command = process.platform === 'win32' ? 'powershell.exe' : process.platform === 'darwin' ? 'launchctl' : 'systemctl';
+  const { binDir } = writeFakeBin({ root: fixture.path('commands'), name: command, content: '' });
+  const serviceName = 'happier-self-host-uninstall-refusal';
+  const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
+  const result = runNodeCaptureSync(['--input-type=module', '--eval', [
+    'import childProcess from "node:child_process";',
+    'import os from "node:os";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    // Only OS command execution and the OS home-directory adapter are replaced.
+    // The CLI dispatcher, service registration inspection, teardown and filesystem stay real.
+    'os.homedir = () => process.env.HAPPIER_TEST_SELF_HOST_HOME;',
+    'const spawnSync = childProcess.spawnSync;',
+    'childProcess.spawnSync = (command, args, options) => {',
+    '  if (command === "sh" && args[0] === "-lc" && args[1]?.startsWith("command -v ")) return spawnSync(command, args, options);',
+    `  if (command !== ${JSON.stringify(command)} && command !== "schtasks") throw new Error("Unexpected OS command: " + command);`,
+    '  const raw = args.join(" ");',
+    `  const serverTarget = args.includes(${JSON.stringify(`${serviceName}.service`)}) || raw.includes(${JSON.stringify(`/${serviceName}`)}) || raw.includes(${JSON.stringify(`$taskName = "${serviceName}"`)});`,
+    '  const inspecting = args.includes("show") || args[0] === "print" || (raw.includes("Get-ScheduledTaskInfo") && !raw.includes("Stop-ScheduledTask"));',
+    '  if (serverTarget && !inspecting) return { status: 1, stdout: "", stderr: "self-host teardown denied sentinel" };',
+    '  return { status: 0, stdout: command === "powershell.exe" ? JSON.stringify({ exists: true }) : "loaded", stderr: "" };',
+    '};',
+    'syncBuiltinESMExports();',
+    `const { runSelfHostCli } = await import(${JSON.stringify(moduleUrl)});`,
+    'await runSelfHostCli(["uninstall", "--mode=user", "--yes", "--purge-data", "--json"]);',
+  ].join('\n')], {
+    env: buildStackHarnessEnv({
+      binDirs: [binDir],
+      extraEnv: {
+        HAPPIER_TEST_SELF_HOST_HOME: fixture.path('home'),
+        HAPPIER_STACK_SELF_HOST_FORWARD: '0',
+        HAPPIER_SELF_HOST_INSTALL_ROOT: installRoot,
+        HAPPIER_SELF_HOST_BIN_DIR: fixture.path('exposed-bin'),
+        HAPPIER_SELF_HOST_CONFIG_DIR: configDir,
+        HAPPIER_SELF_HOST_DATA_DIR: dataDir,
+        HAPPIER_SELF_HOST_LOG_DIR: logDir,
+        HAPPIER_SELF_HOST_SERVICE_NAME: serviceName,
+      },
+    }),
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stderr, /self-host teardown denied sentinel/);
+  assert.doesNotMatch(result.stdout, /"ok"\s*:\s*true/);
+  for (const file of retainedFiles) {
+    assert.equal(await readFile(file, 'utf8'), 'retained\n');
+  }
+});
 
 function b64(buf) {
   return Buffer.from(buf).toString('base64');
@@ -1631,7 +1700,7 @@ test('renderServerEnvFile emits sqlite/local defaults for self-host mode', () =>
   assert.match(envText, /PORT=3005/);
   assert.match(envText, /METRICS_ENABLED=false/);
   assert.match(envText, /HAPPIER_DB_PROVIDER=sqlite/);
-  assert.match(envText, /DATABASE_URL=file:\/\/\/var\/lib\/happier\/happier-server-light\.sqlite/);
+  assert.match(envText, /DATABASE_URL=file:\/var\/lib\/happier\/happier-server-light\.sqlite/);
   assert.match(envText, /HAPPIER_FILES_BACKEND=local/);
   assert.match(envText, /HAPPIER_SQLITE_AUTO_MIGRATE=1/);
   assert.match(envText, /HAPPIER_SQLITE_MIGRATIONS_DIR=\/var\/lib\/happier\/migrations\/sqlite/);
@@ -1703,7 +1772,7 @@ test('renderServerEnvFile uses Prisma-compatible sqlite DATABASE_URL semantics o
     filesDir: 'C:\\\\Users\\\\me\\\\Happier QA\\\\self-host\\\\data\\\\files',
     dbDir: 'C:\\\\Users\\\\me\\\\Happier QA\\\\self-host\\\\data\\\\pglite',
   });
-  assert.match(envText, /DATABASE_URL=file:C:\/Users\/me\/Happier%20QA\/self-host\/data\/happier-server-light\.sqlite/);
+  assert.match(envText, /DATABASE_URL=file:C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light\.sqlite/);
 });
 
 test('resolveSelfHostHealthTimeoutMs defaults to a safe health timeout', () => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 const connectedServiceLimitCategoryCanonicalValues = [
     'usage_limit',
@@ -20,8 +21,8 @@ const connectedServiceLimitCategoryLegacyAliasValues = [
     'account_disabled',
 ] as const;
 
-const ConnectedServiceLimitCategoryCanonicalSchema = z.enum(connectedServiceLimitCategoryCanonicalValues);
-const ConnectedServiceLimitCategoryLegacyAliasSchema = z.enum(connectedServiceLimitCategoryLegacyAliasValues);
+const ConnectedServiceLimitCategoryCanonicalSchema = lazySchema(() => z.enum(connectedServiceLimitCategoryCanonicalValues));
+const ConnectedServiceLimitCategoryLegacyAliasSchema = lazySchema(() => z.enum(connectedServiceLimitCategoryLegacyAliasValues));
 
 export type ConnectedServiceLimitCategoryV1 = z.infer<typeof ConnectedServiceLimitCategoryCanonicalSchema>;
 export type ConnectedServiceLimitCategoryLegacyAliasV1 = z.infer<typeof ConnectedServiceLimitCategoryLegacyAliasSchema>;
@@ -56,9 +57,9 @@ export function readConnectedServiceLimitCategoryV1(value: unknown): ConnectedSe
     return parsed.success ? parsed.data : null;
 }
 
-export const ConnectedServiceLimitCategoryV1Schema = z
+export const ConnectedServiceLimitCategoryV1Schema = lazySchema(() => z
     .union([
         ConnectedServiceLimitCategoryCanonicalSchema,
         ConnectedServiceLimitCategoryLegacyAliasSchema,
     ])
-    .transform(normalizeConnectedServiceLimitCategoryV1);
+    .transform(normalizeConnectedServiceLimitCategoryV1));

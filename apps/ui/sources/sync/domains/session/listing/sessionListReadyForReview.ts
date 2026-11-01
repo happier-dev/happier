@@ -1,4 +1,4 @@
-import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
+import type { PrimaryTurnStatusV1, SessionRuntimeActivityState } from '@happier-dev/protocol';
 
 export type SessionListReadyForReviewInput = Readonly<{
     seq?: number | null;
@@ -7,11 +7,19 @@ export type SessionListReadyForReviewInput = Readonly<{
     latestTurnStatusObservedAt?: number | null;
     latestReadyEventSeq?: number | null;
     lastViewedSessionSeq?: number | null;
+    runtimeActivityState?: SessionRuntimeActivityState | null;
+    runtimeActivityActiveCount?: number | null;
 }>;
 
 export const SESSION_LIST_TERMINAL_ACTIVITY_SKEW_MS = 1_000;
 
 export function isSessionListReadyForReview(input: SessionListReadyForReviewInput): boolean {
+    // Losing observation of previously reported work is not evidence that it finished.
+    if ((input.runtimeActivityActiveCount ?? 0) > 0 && input.runtimeActivityState !== 'idle') return false;
+    return hasUnseenSessionTurnCompletion(input);
+}
+
+export function hasUnseenSessionTurnCompletion(input: SessionListReadyForReviewInput): boolean {
     const lastViewedSeq = normalizeSeq(input.lastViewedSessionSeq) ?? 0;
     const readyEventSeq = normalizeSeq(input.latestReadyEventSeq);
     if (readyEventSeq !== null) {

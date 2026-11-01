@@ -1,31 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/sync/encryption/encryption', () => ({
-    Encryption: {
-        create: async () => ({
-            contentDataKey: new Uint8Array([1, 2, 3, 4]),
-        }),
-    },
-}));
-
-vi.mock('@/encryption/libsodium.lib', () => ({
-    default: {
-        crypto_sign_seed_keypair: () => ({
-            publicKey: new Uint8Array(32).fill(5),
-            privateKey: new Uint8Array(64).fill(6),
-        }),
-        crypto_sign_detached: () => new Uint8Array(64).fill(7),
-    },
-}));
+import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
+import { bytesToHex } from '@noble/hashes/utils';
+import { deriveAccountMachineKeyFromRecoverySecret, verifyAccountContentPublicKeyBinding } from '@happier-dev/protocol';
+import { encodeBase64 } from '@/encryption/base64';
+import { buildContentKeyBinding } from './contentKeyBinding';
 
 describe('buildContentKeyBinding', () => {
-    it('returns encoded content key and signature', async () => {
-        const { buildContentKeyBinding } = await import('./contentKeyBinding');
-        const result = await buildContentKeyBinding(new Uint8Array(32).fill(9));
-
-        expect(typeof result.contentPublicKey).toBe('string');
-        expect(typeof result.contentPublicKeySig).toBe('string');
-        expect(result.contentPublicKey.length).toBeGreaterThan(0);
-        expect(result.contentPublicKeySig.length).toBeGreaterThan(0);
+    it('publishes the genuine recovery-secret content key with its signing-key binding', async () => {
+        const secret = new Uint8Array(32).fill(7);
+        const result = await buildContentKeyBinding(secret);
+        const content = tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(secret)).publicKey;
+        expect(result.contentPublicKey).toBe(encodeBase64(content));
+        expect(verifyAccountContentPublicKeyBinding({
+            signingPublicKeyHex: bytesToHex(tweetnacl.sign.keyPair.fromSeed(secret).publicKey),
+            contentPublicKeyB64: result.contentPublicKey,
+            contentPublicKeySigB64: result.contentPublicKeySig,
+        })).toBe(true);
     });
 });

@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -103,6 +105,68 @@ test('ui postinstall keeps filtered patch directories on the target node_modules
     );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('ui postinstall propagates patch failures outside CI for every installed copy', async (t) => {
+  const postinstallSource = await readFile(uiPostinstallPath, 'utf8');
+  const invocations = [...postinstallSource.matchAll(/args:\s*(\[\s*patchPackageCliPath,[\s\S]*?\])/g)];
+  assert.ok(invocations.length > 0, 'the postinstall patch-package invocations must be exercised');
+  const patchPackageCliPath = createRequire(uiPackagePath).resolve('patch-package/dist/index.js');
+  const commandRunnerUrl = new URL('../../apps/ui/tools/postinstall/runCommand.mjs', import.meta.url).href;
+
+  for (const [, argsExpression] of invocations) {
+    const rootCopy = argsExpression.includes('path.relative(repoRootDir,');
+    await t.test(rootCopy ? 'root node_modules' : 'UI node_modules', async () => {
+      const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-ui-patch-failure-'));
+      t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+      const expoAppDir = join(fixtureRoot, 'apps', 'ui');
+      const cwd = rootCopy ? fixtureRoot : expoAppDir;
+      const packageDir = join(cwd, 'node_modules', 'fixture-dependency');
+      const patchDir = join(expoAppDir, 'patches');
+      await mkdir(packageDir, { recursive: true });
+      await mkdir(patchDir, { recursive: true });
+      await writeFile(join(cwd, 'package.json'), JSON.stringify({
+        name: 'postinstall-fixture', private: true, dependencies: { 'fixture-dependency': '1.0.0' },
+      }));
+      await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: 'fixture-dependency', version: '1.0.0' }));
+      const original = 'module.exports = "original";\n';
+      const patched = 'module.exports = "patched";\n';
+      await writeFile(join(packageDir, 'index.js'), original);
+      await writeFile(join(patchDir, 'fixture-dependency+1.0.0.patch'), [
+        'diff --git a/node_modules/fixture-dependency/index.js b/node_modules/fixture-dependency/index.js',
+        '--- a/node_modules/fixture-dependency/index.js',
+        '+++ b/node_modules/fixture-dependency/index.js',
+        '@@ -1 +1 @@',
+        `-${original.trimEnd()}`,
+        `+${patched.trimEnd()}`,
+        '',
+      ].join('\n'));
+      const { createFilteredPatchDir } = await import('../../apps/ui/tools/postinstall/filteredPatchDirectory.mjs');
+      const filteredPatchDir = createFilteredPatchDir({ patchDir, nodeModulesDir: join(cwd, 'node_modules') });
+      // Read the real owner's external CLI arguments; keep filtering, command execution and patch-package real.
+      const args = runInNewContext(argsExpression, {
+        patchPackageCliPath, repoRootDir: fixtureRoot, expoAppDir, filteredPatchDir, path: { relative },
+      });
+      const run = () => spawnSync(process.execPath, ['--input-type=module', '-e', `
+        import { runCommandOrExit } from ${JSON.stringify(commandRunnerUrl)};
+        runCommandOrExit({ command: process.execPath, args: JSON.parse(process.argv[1]), options: { cwd: process.argv[2] } });
+      `, JSON.stringify(args), cwd], {
+        encoding: 'utf8',
+        // patch-package normally changes its exit policy on CI; exercise its development policy even in CI runners.
+        env: { ...process.env, NODE_ENV: 'development', PATCH_PACKAGE_INTEGRATION_TEST: '1' },
+      });
+      const applied = run();
+      assert.equal(applied.status, 0, applied.stdout + applied.stderr);
+      assert.equal(await readFile(join(packageDir, 'index.js'), 'utf8'), patched);
+
+      const incompatible = 'module.exports = "different source";\n';
+      await writeFile(join(packageDir, 'index.js'), incompatible);
+      const failed = run();
+      assert.match(failed.stdout + failed.stderr, /Failed to apply patch/);
+      assert.notEqual(failed.status, 0, failed.stdout + failed.stderr);
+      assert.equal(await readFile(join(packageDir, 'index.js'), 'utf8'), incompatible);
+    });
   }
 });
 

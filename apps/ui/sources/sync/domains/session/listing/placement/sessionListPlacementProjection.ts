@@ -8,7 +8,8 @@ import {
     type SessionAttentionStandingPolicy,
 } from '../../organization/attentionStanding';
 import type { SessionListAttentionPromotionReason } from '../attentionPromotion/sessionListAttentionPromotionTypes';
-import { isSessionListReadyForReview } from '../sessionListReadyForReview';
+import { hasUnseenSessionTurnCompletion, isSessionListReadyForReview } from '../sessionListReadyForReview';
+import { resolveSessionListBackgroundWorkAttention, type SessionListBackgroundWorkAttentionMode } from '../sessionListBackgroundWorkAttention';
 import type { SessionListRenderableSession } from '../sessionListRenderable';
 import {
     normalizeSessionListPlacementKey,
@@ -57,6 +58,7 @@ export function projectSessionListPlacement(params: Readonly<{
     sessionKey?: string | null;
     retainedWorkingSessionKeys?: SessionListWorkingRetentionKeySource;
     standingPolicy?: SessionAttentionStandingPolicy;
+    backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
 }>): SessionListPlacementProjection {
     const runtimeStatus = deriveSessionRuntimePresentationState(params.session, params.nowMs);
     if (runtimeStatus.freshActionRequired) {
@@ -74,13 +76,20 @@ export function projectSessionListPlacement(params: Readonly<{
     if (isPrimarySessionFailure(params.session)) {
         return createPlacement('failed', resolveSessionListPlacementTimestampForReason(params.session, 'failed'));
     }
-    if (runtimeStatus.isOnline && runtimeStatus.backgroundActive) {
-        return createPlacement('working', null);
+    const unseenCompletion = hasUnseenSessionTurnCompletion(params.session);
+    const backgroundAttention = resolveSessionListBackgroundWorkAttention({
+        backgroundActive: runtimeStatus.backgroundActive,
+        hasUnreadMessages: params.session.hasUnreadMessages === true || unseenCompletion,
+        mode: params.backgroundWorkAttentionMode,
+    });
+    if (backgroundAttention !== null) {
+        return createPlacement(backgroundAttention.placement, backgroundAttention.placement === 'working'
+            ? null : resolveSessionListPlacementTimestampForReason(params.session, backgroundAttention.placement));
     }
     if (isSessionListReadyForReview(params.session)) {
         return createPlacement('ready', resolveSessionListPlacementTimestampForReason(params.session, 'ready'));
     }
-    if (params.session.hasUnreadMessages === true) {
+    if (params.session.hasUnreadMessages === true || unseenCompletion) {
         return createPlacement('unread', resolveSessionListPlacementTimestampForReason(params.session, 'unread'));
     }
 

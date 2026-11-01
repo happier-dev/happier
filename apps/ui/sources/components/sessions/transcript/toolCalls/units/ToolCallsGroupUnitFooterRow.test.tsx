@@ -23,6 +23,7 @@ async function renderFooterRow(props: Record<string, unknown>) {
     return renderScreen(React.createElement(ToolCallsGroupUnitFooterRowWithSessionCommon, {
         sessionId: 's1',
         groupId: 'toolCalls:t1:m1',
+        hasVisibleTools: false,
         metadata: null,
         interaction,
         ...createTranscriptSessionCommonPropsFixture(),
@@ -58,7 +59,7 @@ describe('ToolCallsGroupUnitFooterRow', () => {
 
         const container = screen.findByTestId('transcript-tool-calls-unit-footer') as any;
         const style = flattenStyleProp(container?.props.style);
-        expect(style.marginBottom).toBe(22);
+        expect(style.marginBottom).toBe(8);
         expect(style.borderBottomLeftRadius).toBeUndefined();
         expect(style.backgroundColor ?? 'transparent').toBe('transparent');
     });

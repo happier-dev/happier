@@ -15,6 +15,8 @@ import type { ClaudeUnifiedStartableDisposable } from './_types';
 import type { ClaudeWorkflowActivityObservationContext } from '../workflows/claudeWorkflowActivitySource';
 import { readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 import { readClaudeJsonlTimestampMs } from '../utils/claudeJsonlTimestamp';
+import { readClaudeMainChainAssistantModelId } from '../sessionModels/readClaudeMainChainAssistantModelId';
+import type { ClaudeEffectiveModelObservation } from '../sessionModels/effectiveModelUpdate';
 
 type ClaudeUnifiedTranscriptBridgeSessionFound = (sessionId: string, data: SessionHookData) => void;
 
@@ -162,6 +164,7 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
   workingDirectory: string;
   claudeConfigDir?: string | null | undefined;
   onMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
+  onEffectiveModel?: ((facts: ClaudeEffectiveModelObservation) => void) | undefined;
   onHistoricalMessage?: ((message: RawJSONLines) => void | Promise<void>) | undefined;
   onTranscriptMessage?: ((message: RawJSONLines) => void) | undefined;
   onRawTranscriptValue?: ((
@@ -461,6 +464,10 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
             message,
             resumeLiveTranscriptAfterMsBySessionId,
           );
+          if (lifecycleOwnedByCurrentRunner && observation?.historicalReplay !== true) {
+            const modelId = readClaudeMainChainAssistantModelId(message);
+            if (modelId) opts.onEffectiveModel?.({ modelId });
+          }
           if (
             shouldForwardFreshResumeTranscriptToMessage(message, freshResumeLiveMessageAfterMsBySessionId)
             && !shouldSuppressPriorEraFailedTurnVisibleReplay(message, lifecycleOwnedByCurrentRunner)

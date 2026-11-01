@@ -17,17 +17,27 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // A caller signal (for example a playback stop) cancels the request; it is reported as an
+  // AbortError, not as the timeout error code.
+  const callerSignal = init?.signal ?? null;
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal?.aborted) controller.abort();
+  callerSignal?.addEventListener('abort', onCallerAbort);
   try {
     return await runtimeFetch(input, {
       ...(init ?? {}),
       signal: controller.signal,
     });
   } catch (error) {
+    if (callerSignal?.aborted) {
+      throw error;
+    }
     if (isAbortError(error)) {
       throw new Error(timeoutErrorCode);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    callerSignal?.removeEventListener('abort', onCallerAbort);
   }
 }

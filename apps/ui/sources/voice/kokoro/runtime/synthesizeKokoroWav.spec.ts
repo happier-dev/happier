@@ -249,4 +249,109 @@ describe('synthesizeKokoroWav (web)', () => {
       }),
     ).rejects.toThrow(/timeout/i);
   });
+
+  it('surfaces worker errors for streaming requests instead of waiting for the timeout', async () => {
+    class FakeWorker {
+      onmessage: ((event: any) => void) | null = null;
+      constructor(_url: any, _opts?: any) {}
+      postMessage(message: any) {
+        if (message?.type === 'stream') {
+          setTimeout(() => this.onmessage?.({ data: { id: message.id, type: 'error', message: 'boom' } }), 0);
+        }
+      }
+      terminate() {}
+    }
+
+    (globalThis as any).Worker = FakeWorker;
+    const { streamKokoroWavSentences } = await import('@/voice/kokoro/runtime/synthesizeKokoroWav');
+
+    const consume = async () => {
+      for await (const _chunk of streamKokoroWavSentences({
+        text: 'hello',
+        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        voiceId: 'af_heart',
+        speed: 1,
+        timeoutMs: 200,
+        signal: new AbortController().signal,
+      })) {
+        // drain
+      }
+    };
+    await expect(consume()).rejects.toThrow(/boom/);
+  });
+
+  it('keeps a streaming request alive while the worker reports model download progress', async () => {
+    vi.useFakeTimers();
+    try {
+      class FakeWorker {
+        onmessage: ((event: any) => void) | null = null;
+        constructor(_url: any, _opts?: any) {}
+        postMessage(message: any) {
+          if (message?.type !== 'stream') return;
+          const id = message.id;
+          setTimeout(() => this.onmessage?.({ data: { id, type: 'progress', progress: { loaded: 1, total: 10 } } }), 40);
+          setTimeout(() => this.onmessage?.({ data: { id, type: 'progress', progress: { loaded: 6, total: 10 } } }), 80);
+          setTimeout(() => this.onmessage?.({ data: { id, type: 'stream_chunk', wavBytes: new ArrayBuffer(1), sentenceText: 'hello' } }), 120);
+          setTimeout(() => this.onmessage?.({ data: { id, type: 'stream_end' } }), 121);
+        }
+        terminate() {}
+      }
+
+      (globalThis as any).Worker = FakeWorker;
+      const { streamKokoroWavSentences } = await import('@/voice/kokoro/runtime/synthesizeKokoroWav');
+
+      const received: string[] = [];
+      const consume = (async () => {
+        for await (const chunk of streamKokoroWavSentences({
+          text: 'hello',
+          assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+          voiceId: 'af_heart',
+          speed: 1,
+          timeoutMs: 50,
+          signal: new AbortController().signal,
+        })) {
+          received.push(chunk.sentenceText);
+        }
+      })();
+
+      await vi.advanceTimersByTimeAsync(45);
+      await vi.advanceTimersByTimeAsync(45);
+      await vi.advanceTimersByTimeAsync(45);
+      await expect(consume).resolves.toBeUndefined();
+      expect(received).toEqual(['hello']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the kokoro-js default voice when the stored voice is not in the web catalog', async () => {
+    const generate = vi.fn(async () => ({ audio: new Float32Array([0]), sampling_rate: 24000 }));
+    vi.doMock('@/voice/kokoro/runtime/loadKokoroWebRuntime.web', () => ({
+      loadKokoroWebRuntime: async () => ({
+        KokoroTTS: {
+          from_pretrained: async () => ({ voices: { af_heart: {}, af_bella: {} }, generate }),
+        },
+        env: {},
+      }),
+    }));
+    (globalThis as any).caches = { open: async () => ({}) };
+    try {
+      const { synthesizeKokoroWav } = await import('@/voice/kokoro/runtime/synthesizeKokoroWav');
+
+      // A native pack voice synced from a phone.
+      await synthesizeKokoroWav({
+        text: 'hello',
+        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        voiceId: 'af_maple',
+        speed: 1,
+        timeoutMs: 10_000,
+        signal: new AbortController().signal,
+      });
+
+      expect(generate).toHaveBeenCalledWith('hello', expect.objectContaining({ voice: 'af_heart' }));
+    } finally {
+      vi.doUnmock('@/voice/kokoro/runtime/loadKokoroWebRuntime.web');
+      delete (globalThis as any).caches;
+    }
+  });
 });

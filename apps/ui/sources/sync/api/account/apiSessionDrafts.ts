@@ -27,7 +27,13 @@ async function postJson(params: Readonly<{
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(params.body),
-    }, { includeAuth: false });
+    }, {
+        includeAuth: false,
+        // POST list/read are read-only. Draft contents can be large, so native hydration remains
+        // cancellable without a total deadline until fetch exposes body progress.
+        recoveryRead: params.path === SESSION_DRAFT_ROUTE_READ || params.path === SESSION_DRAFT_ROUTE_LIST
+            ? 'unbounded' : false,
+    });
     let raw: unknown;
     try {
         raw = await response.json();

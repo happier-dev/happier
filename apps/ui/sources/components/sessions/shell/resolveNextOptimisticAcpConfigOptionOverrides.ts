@@ -40,9 +40,24 @@ export function resolveNextOptimisticAcpConfigOptionOverrides(params: Readonly<{
     current: ConfigOverrides;
     incoming: ConfigOverrides;
     sessionChanged: boolean;
+    rejected?: Readonly<{ configId: string; updatedAt: number }>;
 }>): ConfigOverrides {
     if (params.sessionChanged) {
         return params.incoming;
+    }
+
+    if (params.rejected) {
+        const { configId, updatedAt } = params.rejected;
+        if (!params.current || params.current.overrides?.[configId]?.updatedAt !== updatedAt) return params.current;
+        const overrides = { ...params.current.overrides };
+        const previous = params.incoming?.overrides?.[configId];
+        if (previous) overrides[configId] = previous;
+        else delete overrides[configId];
+        return {
+            ...params.current,
+            updatedAt: Object.values(overrides).reduce((latest, entry) => Math.max(latest, entry.updatedAt ?? 0), params.incoming?.updatedAt ?? 0),
+            overrides,
+        };
     }
 
     const currentUpdatedAt = params.current?.updatedAt ?? null;

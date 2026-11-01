@@ -7,7 +7,7 @@ import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from '@/api/encryption';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { configuration } from '@/configuration';
-import { readCredentials, writeCredentialsDataKey, writeCredentialsLegacy, type Credentials } from '@/persistence';
+import { readCredentials, writeCredentialsDataKey, writeCredentialsLegacy, writeCredentialsTokenOnly, type Credentials } from '@/persistence';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import {
@@ -133,7 +133,7 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
     await writeJsonStdout({
       success: true,
       token: existing.token,
-      encryptionType: existing.encryption.type,
+      encryptionType: existing.encryption?.type ?? 'tokenOnly',
       machineId,
     });
     return;
@@ -189,6 +189,20 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
             : 'Failed to decrypt auth response.',
         );
         process.exit(1);
+      }
+
+      if (opened.type === 'tokenOnly') {
+        const credentials = await writeCredentialsTokenOnly({ token });
+        const { machineId } = await ensureMachineIdForCredentials(credentials);
+        await unlink(statePath).catch(() => {});
+        await writeJsonStdout({
+          success: true,
+          token,
+          encryptionType: credentials.encryption?.type ?? 'tokenOnly',
+          pairingAuthentication: opened.authenticated ? 'v3' : 'legacy',
+          machineId,
+        });
+        return;
       }
 
       if (opened.type === 'legacy') {

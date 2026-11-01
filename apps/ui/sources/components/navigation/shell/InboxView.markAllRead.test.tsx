@@ -385,10 +385,7 @@ describe('InboxView mark as read', () => {
         const [serverRow] = nodesByTestId(tree, 'inbox.review_session.server-a.session-a');
         await press(serverRow!);
 
-        expect(navigation.navigate).toHaveBeenCalledWith(
-            '/session/session-a?serverId=server-a',
-            expect.any(Object),
-        );
+        expect(navigation.push).toHaveBeenCalledWith('/session/session-a?serverId=server-a');
     });
 
     it('opens payload-free background attention at its exact Home scope', async () => {
@@ -400,10 +397,7 @@ describe('InboxView mark as read', () => {
         expect(backgroundRow).toBeDefined();
         await press(backgroundRow!);
 
-        expect(navigation.navigate).toHaveBeenCalledWith(
-            '/session/session-background?serverId=server-background',
-            expect.any(Object),
-        );
+        expect(navigation.push).toHaveBeenCalledWith('/session/session-background?serverId=server-background');
     });
 
     it('shows a truthful busy state on the header while marks are still settling', async () => {

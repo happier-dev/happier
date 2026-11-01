@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_WORKSPACE_LOCATION_METADATA_KEY = 'sessionWorkspaceLocationV1' as const;
 
@@ -17,7 +18,7 @@ export function createSessionWorkspaceLocationV1Schema(zod: typeof z) {
   }).passthrough();
 }
 
-export const SessionWorkspaceLocationV1Schema = createSessionWorkspaceLocationV1Schema(z);
+export const SessionWorkspaceLocationV1Schema = lazySchema(() => createSessionWorkspaceLocationV1Schema(z));
 export type SessionWorkspaceLocationV1 = z.infer<typeof SessionWorkspaceLocationV1Schema>;
 
 export function buildSessionWorkspaceLocationV1(params: Readonly<{
@@ -44,8 +45,8 @@ export function readSessionWorkspaceLocationFromMetadata(params: Readonly<{
 }
 
 /**
- * Resolves only a workspace root that is proven to be the published agent root
- * for the same machine. Callers retain their existing path when the mapping is
+ * Resolves a published agent root, or recovers a missing root, for the same
+ * machine. Callers retain their existing path when the mapping is
  * absent, malformed, stale, or belongs to another machine.
  */
 export function resolveSessionWorkspaceRootForMachine(params: Readonly<{
@@ -57,7 +58,7 @@ export function resolveSessionWorkspaceRootForMachine(params: Readonly<{
   if (
     !location
     || location.machineId !== params.machineId.trim()
-    || location.agentPath !== params.candidatePath
+    || (params.candidatePath.trim().length > 0 && location.agentPath !== params.candidatePath)
   ) {
     return { machinePath: params.candidatePath };
   }

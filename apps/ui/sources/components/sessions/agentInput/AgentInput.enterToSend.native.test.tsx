@@ -175,7 +175,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentCore: () => ({ displayNameKey: 'agents.codex', ui: { agentPickerIconName: 'terminal-outline' }, toolRendering: { hideUnknownToolsByDefault: false } }),
     getAgentBehavior: (agentId: string) => ({
         sessionUsage: {
             contextUsageBadge: agentId === 'gemini' ? 'hidden' : agentId === 'codex' ? 'reportedOnly' : 'derived',
@@ -312,6 +312,24 @@ function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('AgentInput (enter to send on native)', () => {
+    it.each(['onSubmitEditing', 'onKeyPress'])('submits a blank armed continuation through %s', async (handler) => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value=""
+            onChangeText={mocks.onChangeText}
+            placeholder="p"
+            onSend={mocks.onSend}
+            armedContinuationTarget={{ agentId: 'claude', label: 'Claude' }}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const input = findMultiTextInput(screen);
+        await act(async () => { input.props[handler]?.({ key: 'Enter' }); });
+        expect(mocks.onSend).toHaveBeenCalled();
+        await screen.unmount();
+    });
+
     afterEach(() => {
         settingState.webEnterToSend = true;
         settingState.nativeEnterToSend = true;
@@ -645,7 +663,7 @@ describe('AgentInput (enter to send on native)', () => {
         });
 
         expect(mocks.onSend).toHaveBeenCalledTimes(2);
-        expect(mocks.onSend).toHaveBeenNthCalledWith(1, { forceImmediate: true });
-        expect(mocks.onSend).toHaveBeenNthCalledWith(2, { forceImmediate: true });
+        expect(mocks.onSend).toHaveBeenNthCalledWith(1, { deliveryIntent: 'agent_queue' });
+        expect(mocks.onSend).toHaveBeenNthCalledWith(2, { deliveryIntent: 'agent_queue' });
     });
 });

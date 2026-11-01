@@ -1,5 +1,8 @@
+import { requireEncryptedSessionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decodeBase64, decrypt } from '@/api/encryption';
-import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
+import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageBeforeSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
+import { MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE, resolveTranscriptFetchTimeoutMs } from '@/session/replay/fetchEncryptedTranscriptMessages';
+import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import {
     applySessionTurnLifecycleEvent,
     detectSessionTurnLifecycleEvent,
@@ -58,21 +61,27 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
     return pendingPermissionRequestCount + pendingUserActionRequestCount;
 }
 
+export function readSessionProjectedPendingInputCount(value: unknown): number | null {
+    const record = asRecord(value);
+    return record ? readNonnegativeInteger(record.pendingCount) : null;
+}
+
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
     const record = asRecord(value);
     if (!record) return null;
 
     const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
     const projectedPendingRequestCount = readSessionProjectedPendingRequestCount(record);
-    if (!latestTurnStatus || projectedPendingRequestCount === null) {
+    const pendingUserTurns = readSessionProjectedPendingInputCount(record);
+    if (!latestTurnStatus || projectedPendingRequestCount === null || pendingUserTurns === null) {
         return null;
     }
 
     const activeTaskInFlight = latestTurnStatus === 'in_progress';
     return {
-        pendingUserTurns: 0,
+        pendingUserTurns,
         activeTaskInFlight,
-        turnInFlight: activeTaskInFlight || projectedPendingRequestCount > 0,
+        turnInFlight: activeTaskInFlight || pendingUserTurns > 0 || projectedPendingRequestCount > 0,
     };
 }
 
@@ -90,11 +99,12 @@ export function isMemoryArtifactDecryptedRow(value: unknown): boolean {
 function tryDecryptTranscriptEnvelope(params: Readonly<{
     content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
     encryptionMode: SessionStoredContentEncryptionMode;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | 'plain';
 }>): unknown | null {
     if (params.content.t === 'plain') return params.content.v;
     try {
+        requireEncryptedSessionContext(params);
         return decrypt(
             params.encryptionKey,
             params.encryptionVariant,
@@ -114,61 +124,64 @@ export async function detectSessionTurnActivity(params: Readonly<{
     token: string;
     sessionId: string;
     encryptionMode: SessionStoredContentEncryptionMode;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     afterSeqExclusive?: number;
     sessionProjection?: unknown;
     transcriptFetchTimeoutMs?: number;
+    deadlineAtMs?: number;
+    signal?: AbortSignal;
 }>): Promise<SessionTurnActivity> {
+    if (params.signal?.aborted) throw new SessionTurnActivityUnavailableError(params.signal.reason);
     const projectedActivity = detectSessionTurnActivityFromProjection(params.sessionProjection);
     if (projectedActivity) {
         return projectedActivity;
     }
 
     try {
+        const timeoutMs = resolveTranscriptFetchTimeoutMs(params.transcriptFetchTimeoutMs);
+        const deadlineAtMs = params.deadlineAtMs ?? Date.now() + timeoutMs;
+        const assertReadActive = () => {
+            params.signal?.throwIfAborted();
+            if (Date.now() >= deadlineAtMs) throw new Error('Transcript read deadline exceeded');
+        };
+        assertReadActive();
+        const readOptions = { timeoutMs, deadlineAtMs, ...(params.signal ? { signal: params.signal } : {}) };
+        const afterSeq = typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
+            ? Math.max(0, Math.trunc(params.afterSeqExclusive))
+            : null;
         const rows =
-            typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
+            afterSeq !== null
                 ? await fetchEncryptedTranscriptPageAfterSeq({
                     token: params.token,
                     sessionId: params.sessionId,
-                    afterSeq: Math.max(0, Math.trunc(params.afterSeqExclusive)),
+                    afterSeq,
                     limit: 20,
-                    ...(typeof params.transcriptFetchTimeoutMs === 'number'
-                        ? { timeoutMs: params.transcriptFetchTimeoutMs }
-                        : {}),
+                    ...readOptions,
                 })
                 : await fetchEncryptedTranscriptPageLatest({
                     token: params.token,
                     sessionId: params.sessionId,
                     limit: 20,
-                    ...(typeof params.transcriptFetchTimeoutMs === 'number'
-                        ? { timeoutMs: params.transcriptFetchTimeoutMs }
-                        : {}),
+                    ...readOptions,
                 });
         const orderedRows = [...rows].sort((a, b) => a.seq - b.seq);
 
         let pendingUserTurns = 0;
         let activeTaskInFlight = false;
-
-        for (const row of orderedRows) {
-            const decrypted = tryDecryptTranscriptEnvelope({
-                content: row.content,
-                encryptionMode: params.encryptionMode,
-                encryptionKey: params.encryptionKey,
-                encryptionVariant: params.encryptionVariant,
-            });
-            if (!decrypted || isMemoryArtifactDecryptedRow(decrypted)) continue;
+        const applyDecryptedRow = (decrypted: unknown): boolean => {
+            if (!decrypted || isMemoryArtifactDecryptedRow(decrypted)) return false;
             const obj = decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)
                 ? (decrypted as Record<string, unknown>)
                 : null;
-            if (!obj) continue;
+            if (!obj) return false;
 
             if (isSessionUserMessage(obj)) {
                 pendingUserTurns += 1;
-                continue;
+                return true;
             }
             const lifecycleEvent = detectSessionTurnLifecycleEvent(obj);
-            if (!lifecycleEvent) continue;
+            if (!lifecycleEvent) return false;
             ({
                 pendingUserTurns,
                 activeTaskInFlight,
@@ -177,7 +190,55 @@ export async function detectSessionTurnActivity(params: Readonly<{
                 activeTaskInFlight,
                 event: lifecycleEvent,
             }));
+            return true;
+        };
+        const decryptRow = (row: (typeof rows)[number]) => tryDecryptTranscriptEnvelope({
+            content: row.content,
+            encryptionMode: params.encryptionMode,
+            encryptionKey: params.encryptionKey,
+            encryptionVariant: params.encryptionVariant,
+        });
+        let hasMaterialActivity = false;
+        for (const row of orderedRows) {
+            assertReadActive();
+            hasMaterialActivity = applyDecryptedRow(decryptRow(row)) || hasMaterialActivity;
         }
+
+        // Preserve the existing window reduction when it contains activity. A
+        // tool/checkpoint-only tail needs the preceding signal, not a replay of
+        // earlier prompts whose batching/consumption the legacy transcript omits.
+        if (!hasMaterialActivity && afterSeq === null) {
+            let beforeSeq = orderedRows[0]?.seq ?? 0;
+            while (beforeSeq > 0) {
+                assertReadActive();
+                const page = await fetchEncryptedTranscriptPageBeforeSeq({
+                    token: params.token,
+                    sessionId: params.sessionId,
+                    beforeSeq,
+                    limit: MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE,
+                    deadlineAtMs,
+                    ...(params.signal ? { signal: params.signal } : {}),
+                });
+                for (const row of [...page.rows].sort((a, b) => b.seq - a.seq)) {
+                    assertReadActive();
+                    const decrypted = decryptRow(row);
+                    // The server's main scope excludes materialized sidechains;
+                    // imported legacy rows can retain this identity only in meta.
+                    const meta = asRecord(asRecord(decrypted)?.meta);
+                    if (readNonBlankOpaqueIdentifier(row.sidechainId) || readNonBlankOpaqueIdentifier(meta?.sidechainId)) continue;
+                    if (applyDecryptedRow(decrypted)) {
+                        hasMaterialActivity = true;
+                        break;
+                    }
+                }
+                if (hasMaterialActivity || !page.hasMore) break;
+                if (page.nextBeforeSeq === null) throw new Error('Transcript page continuation cannot advance');
+                beforeSeq = page.nextBeforeSeq;
+            }
+        }
+        assertReadActive();
+
+        pendingUserTurns = Math.max(pendingUserTurns, readSessionProjectedPendingInputCount(params.sessionProjection) ?? 0);
 
         return {
             pendingUserTurns,
@@ -196,11 +257,13 @@ export async function detectSessionTurnInFlight(params: Readonly<{
     token: string;
     sessionId: string;
     encryptionMode: SessionStoredContentEncryptionMode;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     afterSeqExclusive?: number;
     sessionProjection?: unknown;
     transcriptFetchTimeoutMs?: number;
+    deadlineAtMs?: number;
+    signal?: AbortSignal;
 }>): Promise<boolean> {
     const activity = await detectSessionTurnActivity(params);
     return activity.turnInFlight;

@@ -6,9 +6,7 @@ import * as Fonts from 'expo-font';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import {
-    PUSH_NOTIFICATION_ACTION_IDS,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
-    PUSH_NOTIFICATION_CATEGORY_IDS,
 } from '@happier-dev/protocol';
 import { AuthProvider, useAuth } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -37,6 +35,7 @@ import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
+import { ThemeProfileRuntimeSync } from '@/theme/profiles/ThemeProfileRuntimeSync';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
 import { UpdatesSummaryProvider } from '@/updates/useUpdatesSummary';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
@@ -66,6 +65,8 @@ import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runt
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternalLinkClicks';
 import { useIsTablet } from '@/utils/platform/responsive';
+import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
+import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { useTauriMainWindowBackgroundColor } from '@/desktop/window/useTauriMainWindowBackgroundColor';
 import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
@@ -77,6 +78,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
+import { configureNotificationCategories } from '@/activity/notifications/runtime/configureNotificationCategories';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -363,39 +365,13 @@ function configureAndroidNotificationChannels(Notifications: ExpoNotificationsMo
     }).catch(() => {});
 }
 
-function configureNotificationCategories(Notifications: ExpoNotificationsModule): void {
-    if (Platform.OS === 'web') return;
-
-    // Expo docs recommend avoiding ':' and '-' in category identifiers.
-    // Our category ids live in `@happier-dev/protocol` so the CLI push payload and app registration stay in sync.
-    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1, [
-        {
-            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
-            buttonTitle: t('notifications.actions.allow'),
-            options: { opensAppToForeground: true },
-        },
-        {
-            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1,
-            buttonTitle: t('notifications.actions.deny'),
-            options: { opensAppToForeground: true, isDestructive: true },
-        },
-    ]).catch(() => {});
-
-    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1, [
-        {
-            identifier: PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1,
-            buttonTitle: t('notifications.actions.answer'),
-            options: { opensAppToForeground: true },
-        },
-    ]).catch(() => {});
-}
 
 void (async () => {
     try {
         const Notifications = await loadExpoNotifications();
         configureForegroundNotificationHandler(Notifications);
         configureAndroidNotificationChannels(Notifications);
-        configureNotificationCategories(Notifications);
+        await configureNotificationCategories(Notifications, Platform.OS);
     } catch {
         // Native notification modules are optional in local dev clients; startup must still render.
     }
@@ -430,19 +406,6 @@ if (shouldCaptureRnwUnexpectedTextNodeStacks()) {
 }
 
 // Component to apply horizontal safe area padding
-function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) {
-    const insets = useSafeAreaInsets();
-    return (
-        <View style={{
-            flex: 1,
-            paddingLeft: insets.left,
-            paddingRight: insets.right
-        }}>
-            {children}
-        </View>
-    );
-}
-
 function ChromeSafeAreaInsetsWarmup(): null {
     useChromeSafeAreaInsets();
     return null;
@@ -747,33 +710,36 @@ function AppBoot(props: {
             <ChromeSafeAreaInsetsWarmup />
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
-                    {/*
-                      * `authGeneration` is 0 for every normal boot, so this key never changes and the
-                      * tree never remounts. It only advances when a keychain read that missed its boot
-                      * deadline lands afterwards, which is exactly when the auth tree has to adopt the
-                      * recovered session instead of leaving the user signed out until the next launch.
-                      */}
-                    <AuthProvider key={initState.authGeneration} initialCredentials={initState.credentials}>
-                        <ThemeProvider value={props.navigationTheme}>
-                            <StatusBarProvider />
-                            <AppPaneModalProvider>
-                                <CommandPaletteProvider>
-                                    <RealtimeProvider>
-                                        <ThemePreferenceTransitionHost>
-                                            <HorizontalSafeAreaWrapper>
-                                                <RootAppShell
-                                                    isDesktopPetOverlayWindow={isDesktopPetOverlayWindow}
-                                                    isTablet={isTablet}
-                                                    isTerminalConnectRoute={isTerminalConnectRoute}
-                                                    safeArea={safeArea}
-                                                />
-                                            </HorizontalSafeAreaWrapper>
-                                        </ThemePreferenceTransitionHost>
-                                    </RealtimeProvider>
-                                </CommandPaletteProvider>
-                            </AppPaneModalProvider>
-                        </ThemeProvider>
-                    </AuthProvider>
+                    <WindowFoldMetricsProvider>
+                        {/*
+                          * `authGeneration` is 0 for every normal boot, so this key never changes and the
+                          * tree never remounts. It only advances when a keychain read that missed its boot
+                          * deadline lands afterwards, which is exactly when the auth tree has to adopt the
+                          * recovered session instead of leaving the user signed out until the next launch.
+                          */}
+                        <AuthProvider key={initState.authGeneration} initialCredentials={initState.credentials}>
+                            <ThemeProvider value={props.navigationTheme}>
+                                <StatusBarProvider />
+                                <ThemeProfileRuntimeSync />
+                                <AppPaneModalProvider>
+                                    <CommandPaletteProvider>
+                                        <RealtimeProvider>
+                                            <ThemePreferenceTransitionHost>
+                                                <HorizontalSafeAreaRoot>
+                                                    <RootAppShell
+                                                        isDesktopPetOverlayWindow={isDesktopPetOverlayWindow}
+                                                        isTablet={isTablet}
+                                                        isTerminalConnectRoute={isTerminalConnectRoute}
+                                                        safeArea={safeArea}
+                                                    />
+                                                </HorizontalSafeAreaRoot>
+                                            </ThemePreferenceTransitionHost>
+                                        </RealtimeProvider>
+                                    </CommandPaletteProvider>
+                                </AppPaneModalProvider>
+                            </ThemeProvider>
+                        </AuthProvider>
+                    </WindowFoldMetricsProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>
         </SafeAreaProvider>

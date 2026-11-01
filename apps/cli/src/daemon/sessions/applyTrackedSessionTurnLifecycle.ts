@@ -1,10 +1,11 @@
 import type { TrackedSession } from '../types';
 import { updateSessionMarkerActiveTurn } from '../sessionRegistry';
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 type TurnLifecycleEvent = 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
 
-export const TrackedSessionTurnLifecycleResultSchema = z.object({
+export const TrackedSessionTurnLifecycleResultSchema = lazySchema(() => z.object({
   status: z.enum([
     'recorded',
     'ignored_missing_exact_turn',
@@ -14,7 +15,7 @@ export const TrackedSessionTurnLifecycleResultSchema = z.object({
     'ignored_marker_not_updated',
   ]),
   activeTurnId: z.string().nullable(),
-}).strict();
+}).strict());
 
 export type TrackedSessionTurnLifecycleResult =
   z.infer<typeof TrackedSessionTurnLifecycleResultSchema>;

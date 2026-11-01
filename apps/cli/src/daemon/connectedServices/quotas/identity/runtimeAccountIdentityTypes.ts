@@ -5,6 +5,7 @@ import {
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
 export type RuntimeAccountIdentityProofStrength = 'exact' | 'weak';
 
@@ -72,7 +73,7 @@ export type RuntimeAccountIdentitySelectionInput = Readonly<{
   >;
 }>;
 
-export const RuntimeAccountIdentitySelectionFactV1Schema = z.object({
+export const RuntimeAccountIdentitySelectionFactV1Schema = lazySchema(() => z.object({
   serviceId: ConnectedServiceIdSchema,
   profileId: z.string().trim().min(1),
   groupId: z.string().trim().min(1).nullable(),
@@ -80,7 +81,7 @@ export const RuntimeAccountIdentitySelectionFactV1Schema = z.object({
   providerAccountId: z.string().trim().min(1),
   accountLabel: z.string().trim().min(1).nullable(),
   source: z.enum(['spawn_selection', 'group_switch_selection', 'codex_live_auth_apply']),
-}).strict();
+}).strict());
 
 /** Durable exact account identity without the credential/token material used to derive it. */
 export type RuntimeAccountIdentitySelectionFactV1 = z.infer<

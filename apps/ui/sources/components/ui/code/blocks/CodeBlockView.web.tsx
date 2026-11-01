@@ -121,6 +121,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         </View>
     ) : simpleEnabled ? (
         <SimpleSyntaxHighlighter
+            wrap={wrap}
             code={code}
             language={syntax.language}
             selectable={selectable}

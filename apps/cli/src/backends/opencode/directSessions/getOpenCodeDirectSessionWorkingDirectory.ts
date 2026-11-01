@@ -1,6 +1,6 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
+import { withOpenCodeDirectClient } from './createOpenCodeDirectClient';
 
 export async function getOpenCodeDirectSessionWorkingDirectory(params: Readonly<{
   source: DirectSessionsSource;
@@ -11,7 +11,7 @@ export async function getOpenCodeDirectSessionWorkingDirectory(params: Readonly<
     if (fromSource.length > 0) return fromSource;
   }
 
-  const client = await createOpenCodeDirectClient(params.source);
+  return await withOpenCodeDirectClient(params.source, async (client) => {
   try {
     const session = await client.sessionGet({ sessionId: params.remoteSessionId });
     const directory = typeof (session as Record<string, unknown>).directory === 'string'
@@ -20,7 +20,6 @@ export async function getOpenCodeDirectSessionWorkingDirectory(params: Readonly<
     return directory.length > 0 ? directory : null;
   } catch {
     return null;
-  } finally {
-    await client.dispose().catch(() => {});
   }
+  });
 }

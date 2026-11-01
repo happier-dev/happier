@@ -84,7 +84,8 @@ export type PopoverBackdropOptions = Readonly<{
     effect?: PopoverBackdropEffect;
     /**
      * Web-only options for `effect="blur"` (CSS `backdrop-filter`).
-     * This does not affect native, where `expo-blur` controls intensity/tint.
+     * This does not affect native: iOS uses `expo-blur` for intensity/tint, and Android renders
+     * the dim fallback (no native blur is mounted there; see `isNativeBlurAvailable`).
      */
     blurOnWeb?: Readonly<{ px?: number; tintColor?: string }>;
     /**

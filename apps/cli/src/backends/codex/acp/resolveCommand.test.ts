@@ -90,6 +90,19 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     expect(spawn.args).toEqual([]);
   }, 15_000);
 
+  it.each(['auto', 'none', undefined] as const)('applies explicit reasoning summary %s after user overrides', async (reasoningSummary) => {
+    const { bin } = await createFakeCodexAcpBinary();
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn({
+      env: { HAPPIER_CODEX_ACP_BIN: bin, HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: 'model_reasoning_summary="detailed"' },
+      ...{ reasoningSummary },
+    });
+    expect(spawn.args).toEqual([
+      '-c', 'model_reasoning_summary="detailed"',
+      ...(reasoningSummary === undefined ? [] : ['-c', `model_reasoning_summary="${reasoningSummary}"`]),
+    ]);
+  });
+
   it('can disable Codex MCP servers explicitly for probe-style spawns', async () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
     process.env.CODEX_HOME = codexHome;

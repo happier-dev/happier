@@ -59,6 +59,7 @@ export type ResolveSessionListDragPointerParams = Readonly<{
 }>;
 
 export type ResolveSessionListDragPointerResult = Readonly<{
+    destinationKey: string | null;
     /** Resolved instruction + visual (visual targets agree with the instruction). */
     result: SessionListTreeDropResult;
     /** Numeric viewport-coordinate overlay geometry, or `{ kind: 'none' }`. */
@@ -109,12 +110,12 @@ export function resolveSessionListDragPointer(
     const { snapshot, registry, pointer, viewport } = params;
 
     if (!pointer) {
-        return { result: IDLE_RESULT, geometry: NONE_GEOMETRY };
+        return { result: IDLE_RESULT, geometry: NONE_GEOMETRY, destinationKey: null };
     }
 
     const contentPointer = windowPointerToContentPointer(pointer, viewport);
     if (!contentPointer) {
-        return { result: IDLE_RESULT, geometry: NONE_GEOMETRY };
+        return { result: IDLE_RESULT, geometry: NONE_GEOMETRY, destinationKey: null };
     }
 
     const geometry = registry.getContentGeometry();
@@ -150,5 +151,18 @@ export function resolveSessionListDragPointer(
         viewport,
     });
 
-    return { result, geometry: overlayGeometry };
+    let destinationKey: string | null = null;
+    const instruction = result.instruction;
+    if (instruction.kind !== 'idle' && instruction.kind !== 'blocked') {
+        const positions = snapshot.topology.insertionPositionsByContainerId.get(instruction.containerId);
+        let insertionIndex = positions?.get(null) ?? 0;
+        if (instruction.kind === 'reorder-before' || instruction.kind === 'reorder-after') {
+            const targetIndex = positions?.get(instruction.targetId);
+            if (targetIndex != null) insertionIndex = targetIndex + (instruction.kind === 'reorder-after' ? 1 : 0);
+        } else if (instruction.kind === 'move-to-root' && instruction.placement === 'before-first') {
+            insertionIndex = 0;
+        }
+        destinationKey = JSON.stringify([instruction.containerId, insertionIndex]);
+    }
+    return { result, geometry: overlayGeometry, destinationKey };
 }

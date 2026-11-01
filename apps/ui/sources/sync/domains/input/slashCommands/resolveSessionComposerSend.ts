@@ -45,11 +45,16 @@ function resolveGoalCommand(input: string): SessionComposerSendResolution | null
 
 export function resolveSessionComposerSend(args: {
     input: string;
+    /** Prompt for an explicit empty-composer action, without changing its draft. */
+    emptyInputFallback?: string;
     executionRunsEnabled: boolean;
     goalControlsAvailable?: boolean;
     promptInvocationsV1?: PromptInvocationsV1 | null;
 }): SessionComposerSendResolution {
     const trimmedStart = args.input.trimStart();
+    if (trimmedStart.length === 0 && args.emptyInputFallback) {
+        return { kind: 'send', text: args.emptyInputFallback };
+    }
 
     if (trimmedStart.startsWith('//')) {
         // Escape hatch: `//cmd` should send `/cmd` to the agent unchanged, bypassing local interception.

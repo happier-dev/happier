@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 const startHappyHeadlessInTmux = vi.fn(async () => {});
 
@@ -30,6 +31,22 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
     exitSpy.mockRestore();
   });
 
+  it('leaves implicit profile terminal policy to the tmux child invocation', async () => {
+    const original = process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+    try {
+      delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+      await dispatchCli({ args: ['--profile', 'codex', '--tmux'], rawArgv: [], terminalRuntime: null });
+      expect(startHappyHeadlessInTmux).toHaveBeenCalledWith(['--profile', 'codex', '--tmux']);
+      expect(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
+      process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
+      await dispatchCli({ args: ['--profile', 'codex', '--tmux'], rawArgv: [], terminalRuntime: null });
+      expect(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('1');
+    } finally {
+      if (original === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+      else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = original;
+    }
+  });
+
   it('rejects --tmux for session controller commands', async () => {
     await expect(
       dispatchCli({
@@ -39,6 +56,21 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
       }),
     ).rejects.toThrow('process.exit(1)');
     expect(startHappyHeadlessInTmux).not.toHaveBeenCalled();
+  });
+
+  it('does not interpret literal --tmux after the option terminator', async () => {
+    const output = captureStdoutJsonOutput<{ kind: string }>();
+    try {
+      await dispatchCli({
+        args: ['capabilities', '--json', '--', '--tmux'],
+        rawArgv: ['happier', 'capabilities', '--json', '--', '--tmux'],
+        terminalRuntime: null,
+      });
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(output.json().kind).toBe('capabilities_describe');
+    } finally {
+      output.restore();
+    }
   });
 
   it('does not start tmux when process.exit is mocked to no-op', async () => {

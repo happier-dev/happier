@@ -27,5 +27,11 @@ describe('accountConnectUrl scheme override', () => {
         expect(parseAccountConnectDeepLink('happier-internaldev:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
         expect(parseAccountConnectDeepLink('happier-custom:///account?abc123')).toEqual({ publicKeyB64Url: 'abc123' });
         expect(parseAccountConnectDeepLink('otherapp:///account?abc123')).toBeNull();
+
+        const modern = { publicKeyB64Url: 'abc123', supportsCredentialVariants: true };
+        const modernLink = buildAccountConnectDeepLink(modern);
+        expect(modernLink).toBe('happier-dev:///account?abc123#supportsCredentialVariants=1');
+        expect(parseAccountConnectDeepLink(modernLink)).toEqual(modern);
+        expect(buildAccountConnectRoutePath(modern)).toBe('/account?accountConnectKey=abc123&supportsCredentialVariants=1');
     });
 });

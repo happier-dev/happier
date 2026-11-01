@@ -8,6 +8,7 @@ import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { useActionOperationActivitySummary } from '@/sync/domains/actionOperations/useActionOperations';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -48,6 +49,7 @@ type ActionOperationActivityPopoverPlacement = Readonly<{
 type ActionOperationActivityButtonChromeProps = Readonly<{
     activeCount: number;
     hasAttention: boolean;
+    onOpen: () => void;
     renderDetails: (placement: ActionOperationActivityPopoverPlacement) => React.ReactNode;
     tintColor?: string;
     buttonSize?: number;
@@ -81,6 +83,7 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                 accessibilityLabel={t('inbox.updates')}
                 accessibilityState={{ expanded: open }}
                 onPress={(event) => {
+                    if (!open) props.onOpen();
                     if (!open && Platform.OS === 'web') {
                         const target = event?.currentTarget as unknown as {
                             getBoundingClientRect?: () => Readonly<{
@@ -141,7 +144,6 @@ type ActionOperationActivityDetailsViewProps = Pick<
     | 'observationForOperation'
     | 'contextForOperation'
     | 'onOpenOperation'
-    | 'onMarkVisibleTerminalSeen'
     | 'onClearRecent'
     | 'canDismissOperation'
     | 'onDismissOperation'
@@ -150,10 +152,6 @@ type ActionOperationActivityDetailsViewProps = Pick<
 const ActionOperationActivityDetailsView = React.memo(function ActionOperationActivityDetailsView(
     props: ActionOperationActivityDetailsViewProps,
 ) {
-    React.useEffect(() => {
-        props.onMarkVisibleTerminalSeen();
-    }, [props.onMarkVisibleTerminalSeen, props.operations]);
-
     const handleOpenOperation = React.useCallback((operationId: string) => {
         props.onRequestClose();
         props.onOpenOperation(operationId);
@@ -228,7 +226,6 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
             observationForOperation={props.observationForOperation}
             contextForOperation={props.contextForOperation}
             onOpenOperation={props.onOpenOperation}
-            onMarkVisibleTerminalSeen={props.onMarkVisibleTerminalSeen}
             onClearRecent={props.onClearRecent}
             canDismissOperation={props.canDismissOperation}
             onDismissOperation={props.onDismissOperation}
@@ -239,7 +236,6 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
         props.observationForOperation,
         props.onClearRecent,
         props.onDismissOperation,
-        props.onMarkVisibleTerminalSeen,
         props.onOpenOperation,
         props.operations,
         props.preferredSessionId,
@@ -248,6 +244,7 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
         <ActionOperationActivityButtonChrome
             activeCount={activeCount}
             hasAttention={props.hasAttention}
+            onOpen={props.onMarkVisibleTerminalSeen}
             renderDetails={renderDetails}
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}
@@ -269,7 +266,6 @@ const ActionOperationActivityDetails = React.memo(function ActionOperationActivi
             observationForOperation={model.observationForOperation}
             contextForOperation={model.contextForOperation}
             onOpenOperation={openActionOperationDetail}
-            onMarkVisibleTerminalSeen={model.markVisibleTerminalSeen}
             onClearRecent={model.clearRecent}
             canDismissOperation={model.canDismissOperation}
             onDismissOperation={model.dismissOperation}
@@ -286,12 +282,16 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
 }>) {
     const accountId = useActiveServerAccountScope()?.accountId ?? '';
     const summary = useActionOperationActivitySummary(accountId);
+    const handleOpen = React.useCallback(() => {
+        actionOperationStore.markAccountTerminalSeen(accountId);
+    }, [accountId]);
     const renderDetails = React.useCallback((placement: ActionOperationActivityPopoverPlacement) => (
         <ActionOperationActivityDetails {...placement} preferredSessionId={props.preferredSessionId} />
     ), [props.preferredSessionId]);
     return (
         <ActionOperationActivityButtonChrome
             {...summary}
+            onOpen={handleOpen}
             renderDetails={renderDetails}
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}

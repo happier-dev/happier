@@ -93,7 +93,9 @@ describe('createCodexAppServerSessionTurnTracker', () => {
         expect(waitForCommittedUserMessageSeq).toHaveBeenCalledWith('prompt-local-slow', {
             timeoutMs: 10_000,
         });
-        expect(lifecycle.beginTurn).toHaveBeenCalledWith({ provider: 'codex' });
+        expect(lifecycle.beginTurn).toHaveBeenCalledWith({
+            provider: 'codex', startingInputLocalIds: ['prompt-local-slow'],
+        });
         expect(lifecycle.appendTranscriptAnchors).not.toHaveBeenCalled();
 
         resolveCommittedSeq(10);

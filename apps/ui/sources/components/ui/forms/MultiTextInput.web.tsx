@@ -12,6 +12,7 @@ import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 import {
     WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT,
     TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
+    containsLikelyNonWhitespace,
     isLargeTextInputValueLength,
 } from './largeTextInputPolicy';
 
@@ -103,6 +104,12 @@ type WebTextStyleOverride = Readonly<{
 
 type WebTextareaStyle = CSSProperties;
 
+type TextareaMeasurementKey = Readonly<{
+    text: string;
+    textareaStyle: WebTextareaStyle;
+    maxHeight: number;
+}>;
+
 function toCssLength(value: TextStyle['fontSize'] | TextStyle['lineHeight'] | TextStyle['letterSpacing']) {
     if (typeof value === 'number') return `${value}px`;
     if (typeof value === 'string') return value;
@@ -121,6 +128,12 @@ function clampTextSelection(selection: { start: number; end: number }, textLengt
         ? Math.min(Math.max(0, Math.trunc(selection.end)), textLength)
         : start;
     return { start, end };
+}
+
+/** The browser's own composition flag for an input event, when it reports one. */
+function readEventIsComposing(event: unknown): boolean | undefined {
+    if (typeof event !== 'object' || event === null || !('isComposing' in event)) return undefined;
+    return typeof event.isComposing === 'boolean' ? event.isComposing : undefined;
 }
 
 function resolveWebTextStyle(textStyle: TextStyle | undefined, uiFontScale: number): WebTextStyleOverride {
@@ -166,6 +179,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const pendingChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastScrollRestoreKeyRef = React.useRef<string | null>(null);
     const lastReportedContentHeightRef = React.useRef<number | null>(null);
+    const lastMeasuredKeyRef = React.useRef<TextareaMeasurementKey | null>(null);
     const normalizedMaxHeight = normalizeWebTextareaMaxHeight(maxHeight);
     const [textareaHeight, setTextareaHeight] = React.useState<number | undefined>(
         () => (value.length > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT ? normalizedMaxHeight : undefined),
@@ -249,6 +263,10 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onContentHeightChange(height);
     }, [onContentHeightChange]);
 
+    // Invariant for the measurement key recorded below: it stores liveValueRef.current's
+    // text while the branch decision reads nextValueLength — every current call site
+    // passes the live value's length, and a future caller that diverges them would
+    // record a misleading key. Keep the two in sync if new call sites are added.
     const applyTextareaHeight = React.useCallback((node: HTMLTextAreaElement, nextValueLength = liveValueRef.current.length) => {
         if (nextValueLength > WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT) {
             // No collapse-to-measure for oversized text (that double reflow is
@@ -265,6 +283,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             notifyContentHeightChange(Math.max(measuredContentHeight, normalizedMaxHeight));
             node.style.height = `${normalizedMaxHeight}px`;
             setTextareaHeight((current) => (current === normalizedMaxHeight ? current : normalizedMaxHeight));
+            lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
             return;
         }
 
@@ -305,7 +324,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 node.scrollTop = previousScrollTop;
             }
         }
-    }, [normalizedMaxHeight, notifyContentHeightChange]);
+        lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
+    }, [normalizedMaxHeight, notifyContentHeightChange, textareaStyle]);
 
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
@@ -314,7 +334,20 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (value === lastEmittedValueRef.current) {
                 hasUnconfirmedEmissionRef.current = false;
             }
-            applyTextareaHeight(node);
+            // The change handler measured this exact text/style/maxHeight in
+            // the same task, so the confirm render's pass would be a pure
+            // duplicate collapse with its own forced layout flushes. Pure ref
+            // compares only (a clientWidth read would refund part of the win);
+            // width-only changes were never covered by this effect's deps, so
+            // skipping preserves parity.
+            const lastMeasuredKey = lastMeasuredKeyRef.current;
+            const alreadyMeasured = lastMeasuredKey !== null
+                && lastMeasuredKey.text === liveValueRef.current
+                && lastMeasuredKey.textareaStyle === textareaStyle
+                && lastMeasuredKey.maxHeight === normalizedMaxHeight;
+            if (!alreadyMeasured) {
+                applyTextareaHeight(node);
+            }
             return;
         }
 
@@ -436,15 +469,18 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
     }, [onKeyPress]);
 
-    const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        const text = e.target.value;
-        const selection = { 
-            start: e.target.selectionStart, 
-            end: e.target.selectionEnd 
+    // Emits the textarea's committed state to the parent. Identical text is not re-emitted: an
+    // emission the parent already holds would never be confirmed by a differing `value`, leaving
+    // `hasUnconfirmedEmissionRef` armed so the next genuine external value is skipped as stale.
+    const emitInputState = React.useCallback((node: HTMLTextAreaElement) => {
+        const text = node.value;
+        const selection = {
+            start: node.selectionStart,
+            end: node.selectionEnd,
         };
-        liveValueRef.current = text;
-        applyTextareaHeight(e.currentTarget, text.length);
-        scheduleChangeText(text);
+        if (text !== lastEmittedValueRef.current || pendingChangeTextRef.current !== null) {
+            scheduleChangeText(text);
+        }
         recordLargeTextInputDiagnostic({
             phase: 'web-change',
             platform: 'web',
@@ -455,16 +491,39 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             liveTextLength: text.length,
             pendingTextLength: isLargeTextInputValueLength(text.length) ? text.length : undefined,
         });
-        
+
         if (onStateChange) {
             onStateChange({ text, selection });
         }
         if (onSelectionChange) {
             onSelectionChange(selection);
         }
-    }, [applyTextareaHeight, onStateChange, onSelectionChange, scheduleChangeText]);
+    }, [onStateChange, onSelectionChange, scheduleChangeText, value.length]);
+
+    const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const text = e.target.value;
+        liveValueRef.current = text;
+        applyTextareaHeight(e.currentTarget, text.length);
+        // An input the browser reports as non-composing proves no composition is active, even
+        // if its compositionend never reached us (e.g. a script value write cancelled it).
+        if (readEventIsComposing(e.nativeEvent) === false) {
+            isComposingRef.current = false;
+        }
+        // Uncommitted IME text (pinyin, kana, hangul jamo) stays inside the DOM-owned textarea:
+        // emitting each update re-rendered the whole session screen per composition keystroke.
+        // compositionend emits the committed result once. The exception is a composition that
+        // crosses the emptiness edge the send button uses (`containsLikelyNonWhitespace`, via
+        // `resolveLiveInputTextStatus`): Gboard composes every word, so holding the first word
+        // into an empty field would keep send disabled until the word commits.
+        if (isComposingRef.current) {
+            const parentText = pendingChangeTextRef.current ?? lastEmittedValueRef.current;
+            if (containsLikelyNonWhitespace(text) === containsLikelyNonWhitespace(parentText)) return;
+        }
+        emitInputState(e.target);
+    }, [applyTextareaHeight, emitInputState]);
 
     const handleSelect = React.useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+        if (isComposingRef.current) return;
         const target = e.target as HTMLTextAreaElement;
         const selection = { 
             start: target.selectionStart, 
@@ -489,9 +548,15 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         isComposingRef.current = true;
     }, []);
 
-    const handleCompositionEnd = React.useCallback(() => {
+    // Reads the committed text from the DOM rather than the last input event: Chromium fires the
+    // final input before compositionend, WebKit after it (that later input is then deduped by
+    // `emitInputState`). A cancelled composition restores the prior text and emits selection only.
+    const handleCompositionEnd = React.useCallback((e: React.CompositionEvent<HTMLTextAreaElement>) => {
         isComposingRef.current = false;
-    }, []);
+        const node = textareaRef.current ?? e.currentTarget;
+        liveValueRef.current = node.value;
+        emitInputState(node);
+    }, [emitInputState]);
 
     const handlePaste = React.useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
         const cb = props.onFilesPasted;

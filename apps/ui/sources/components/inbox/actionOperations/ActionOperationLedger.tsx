@@ -49,8 +49,6 @@ export type ActionOperationRowsProps = Readonly<{
     onCancelOperation?: (operationId: string) => Promise<void> | void;
     canDismissOperation?: (operation: ActionOperationSnapshotV1) => boolean;
     onDismissOperation?: (operationId: string) => void;
-    /** Inbox admits terminal failures that must remain explicitly dismissible. */
-    allowTerminalDismissal?: boolean;
     /** Inbox moves status into the subtitle and omits Activity's status glyph. */
     presentationMode?: 'activity' | 'inbox';
     /** Supplied by ItemGroup when this row collection sits among sibling rows. */
@@ -106,7 +104,6 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     onCancelOperation?: (operationId: string) => Promise<void> | void;
     canDismissOperation?: (operation: ActionOperationSnapshotV1) => boolean;
     onDismissOperation?: (operationId: string) => void;
-    allowTerminalDismissal?: boolean;
     presentationMode?: 'activity' | 'inbox';
     showDivider?: boolean;
 }>) {
@@ -117,11 +114,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     const subtitle = props.presentationMode === 'inbox'
         ? [[status, props.context].filter(Boolean).join(' · '), progress].filter(Boolean).join('\n')
         : [props.context, progress].filter(Boolean).join('\n');
-    const canDismiss = (
-        (presentation.status === 'status_unavailable' && !presentation.terminal)
-        || (props.allowTerminalDismissal === true && presentation.terminal)
-    )
-        && props.canDismissOperation?.(props.operation) === true;
+    const canDismiss = props.canDismissOperation?.(props.operation) === true;
     const canStop = !canDismiss && !presentation.terminal && props.operation.cancellation === 'supported';
     const [stopRequestPending, setStopPending] = React.useState(false);
     const stopPending = stopRequestPending || isActionOperationCancellationRequested(props.operation);
@@ -239,7 +232,6 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
                             onCancelOperation={props.onCancelOperation}
                             canDismissOperation={props.canDismissOperation}
                             onDismissOperation={props.onDismissOperation}
-                            allowTerminalDismissal={props.allowTerminalDismissal}
                             presentationMode={props.presentationMode ?? 'activity'}
                             showDivider={isLast ? props.showDivider : true}
                         />

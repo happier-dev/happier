@@ -31,6 +31,7 @@ describe("oidcProviderModuleFactory", () => {
             },
             fetchUserInfo: false,
             storeRefreshToken: true,
+            tokenExchange: null,
             ui: { buttonColor: "#111111", iconHint: "okta" },
         });
 

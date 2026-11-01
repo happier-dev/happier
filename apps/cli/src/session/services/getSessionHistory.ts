@@ -1,3 +1,4 @@
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { Credentials } from '@/persistence';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
@@ -34,7 +35,7 @@ function sortHistoryRowsByTranscriptOrder<Row>(
 async function readSessionHistoryRows(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
   limit: number;
   format: 'compact' | 'raw';
   includeMeta: boolean;
@@ -102,7 +103,7 @@ async function readSessionHistoryRows(params: Readonly<{
 export async function readRawSessionHistoryRows(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
   limit: number;
   includeMeta?: boolean;
   includeStructuredPayload?: boolean;

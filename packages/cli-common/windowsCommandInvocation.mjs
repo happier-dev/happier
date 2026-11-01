@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { delimiter as pathDelimiter, join, normalize as normalizePath } from 'node:path';
+import { closeSync, existsSync, openSync, readFileSync, readSync } from 'node:fs';
+import { delimiter as pathDelimiter, dirname, join, normalize as normalizePath } from 'node:path';
 function asNonEmptyString(value) {
   const trimmed = String(value ?? '').trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -69,11 +69,34 @@ function buildWindowsCommandCandidates(commandLike, env) {
   const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
   return hasKnownExt ? [cmd] : [...exts.map((ext) => `${cmd}${ext}`), cmd];
 }
+function resolveNativeNpmShimTarget(command) {
+  if (process.platform !== 'win32' || !/\.cmd$/i.test(command)) return command;
+  try {
+    // npm cmd-shim 7's no-shebang template only computes its directory and
+    // forwards argv. Match the whole script so custom auth/env/argument work
+    // is never bypassed. Claude Code 2.1.270 uses this for bin/claude.exe.
+    const script = readFileSync(command, 'utf8').replace(/\r\n/g, '\n');
+    const match = /^@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT \/b\n:start\nSETLOCAL\nCALL :find_dp0\n"%dp0%[\\/]([^"\r\n%!^]+\.exe)"[ \t]+%\*\n?$/.exec(script);
+    if (!match) return command;
+    const target = join(dirname(command), ...match[1].split(/[\\/]/));
+    // npm can leave a text placeholder when native installation did not run.
+    const fd = openSync(target, 'r');
+    try {
+      const magic = Buffer.alloc(2);
+      if (readSync(fd, magic, 0, magic.length, 0) === 2 && magic[0] === 0x4d && magic[1] === 0x5a) return target;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // An unproven delegate retains normal shell launch and its failure reporting.
+  }
+  return command;
+}
 export function resolveWindowsCommandPath(commandPath, env = process.env) {
   for (const candidate of buildWindowsCommandCandidates(commandPath, env)) {
     try {
       if (existsSync(candidate))
-        return candidate;
+        return resolveNativeNpmShimTarget(candidate);
     }
     catch {
       // ignore
@@ -102,7 +125,7 @@ export function resolveWindowsCommandOnPath(command, env = process.env, accept =
       const full = join(trimmedDir, name);
       try {
         if (existsSync(full) && accept(full))
-          return full;
+          return resolveNativeNpmShimTarget(full);
       }
       catch {
         // ignore

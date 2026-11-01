@@ -4,6 +4,8 @@ This document maps the current low-level OpenCode implementation across the CLI,
 
 In current development source, automatic server readiness and request dialect detection prefer authenticated V1 `/global/health` before the V2 surfaces. OpenCode 1.18.35 also answers `/api/health` with `{ healthy: true }`, so that marker alone cannot identify V2 when the V1 route exists. Preview V2 keeps its health-marker contract; released V2 keeps `/api/info`. Runtime clients re-detect the dialect instead of trusting a persisted V2 readiness hint from an older Happier client, while retaining the same live server and its credential. Explicit V2 executable selection remains authoritative. These corrections are not a claim about an already published Happier release.
 
+In current development source, the OpenCode ACP backend leaves log-level selection to the executable by default. `HAPPIER_OPENCODE_ACP_LOG_LEVEL` supplies an optional native value, trimmed without changing its case: OpenCode 1.2.27 accepts uppercase values such as `ERROR`, while OpenCode 2.0.26 accepts lowercase values such as `error`. An unset or blank override omits `--log-level`; OpenCode validates explicit values. `HAPPIER_OPENCODE_ACP_PRINT_LOGS` still controls stderr log printing independently. This correction is not a claim about an already published Happier release.
+
 ## Status legend
 
 - `supported`: primary current path

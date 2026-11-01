@@ -5,7 +5,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import {
+  buildLaunchdPlistXml,
+  buildWindowsScheduledTaskLauncherAction,
+  renderSystemdServiceUnit,
+  renderWindowsScheduledTaskWrapperPs1,
+} from '@happier-dev/cli-common/service';
 import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -24,13 +29,20 @@ vi.mock('@/daemon/doctor', async (importOriginal) => {
 });
 
 function doMockChildProcessSpawnSync(
-  spawnSyncImpl: (command: string, args?: readonly string[]) => unknown,
+  spawnSyncImpl: (command: string, args?: readonly string[], options?: { encoding?: BufferEncoding | 'buffer'; timeout?: number }) => unknown,
 ): void {
   vi.doMock('node:child_process', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:child_process')>();
     return {
       ...actual,
-      spawnSync: vi.fn(spawnSyncImpl),
+      // Like the real spawnSync, return strings when the caller requests an encoding.
+      spawnSync: vi.fn((command: string, args?: readonly string[], options?: { encoding?: BufferEncoding | 'buffer'; timeout?: number }) => {
+        const result = spawnSyncImpl(command, args, options) as { stdout?: unknown; stderr?: unknown } | null;
+        const encoding = options?.encoding;
+        if (!encoding || encoding === 'buffer' || !result || typeof result !== 'object') return result;
+        const decode = (value: unknown) => (Buffer.isBuffer(value) ? value.toString(encoding) : value);
+        return { ...result, stdout: decode(result.stdout), stderr: decode(result.stderr) };
+      }),
     };
   });
 }
@@ -39,6 +51,34 @@ function isHappierTaskFolderListing(command: string, args: readonly string[]): b
   return command === 'powershell.exe' && args.some((arg) => arg.includes('.GetFolder("\\Happier")'));
 }
 
+function isWindowsScheduledTaskStatusRead(command: string, args: readonly string[]): boolean {
+  return command === 'powershell.exe' && args.some((arg) => arg.includes('Get-ScheduledTaskInfo'));
+}
+
+type WindowsNativeTaskPaths = Readonly<{
+  installedPath: string;
+  launcherPath: string;
+  launcherDiagnosticLogPath: string;
+}>;
+
+/** What the ScheduledTasks status read reports for a task registered with the native launcher action. */
+function windowsNativeLauncherTaskStatusStdout(paths: WindowsNativeTaskPaths): Buffer {
+  const action = buildWindowsScheduledTaskLauncherAction({
+    launcherPath: paths.launcherPath,
+    definitionPath: paths.installedPath,
+    diagnosticLogPath: paths.launcherDiagnosticLogPath,
+  });
+  return Buffer.from(JSON.stringify({
+    exists: true,
+    enabled: true,
+    active: true,
+    stateLabel: 'running',
+    stateValue: 4,
+    lastRunTime: '',
+    lastTaskResult: 0,
+    taskToRun: `${action.executable} ${action.arguments}`,
+  }));
+}
 const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_PLATFORM',
   'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
@@ -51,6 +91,7 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_CHANNEL',
   'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
   'HAPPIER_DAEMON_SERVICE_AUTOSTART',
+  'HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS',
   'HAPPIER_PUBLIC_RELEASE_CHANNEL',
   'HAPPIER_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
@@ -2023,10 +2064,13 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
-  it('preserves a running Windows service across install and retry', async () => {
+  it.each([false, true])('bounds native Windows action verification across install and retry (query timeout: %s)', async (queryTimesOut) => {
     await withTempDir('happier-service-install-win32-same-owner-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;
       const lifecycleEvents: string[] = [];
+      const observedQueryTimeouts: Array<number | undefined> = [];
+      const observedTaskStatusTimeouts: Array<number | undefined> = [];
+      const expectedQueryTimeout = queryTimesOut ? 7_300 : 15_000;
       let writeDaemonStateImpl: ((state: DaemonLocallyPersistedState) => void) | null = null;
       envScope.patch({
         HAPPIER_HOME_DIR: happierHomeDir,
@@ -2034,49 +2078,56 @@ describe('runDaemonServiceCliCommand', () => {
         HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
         HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
         HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS: queryTimesOut ? String(expectedQueryTimeout) : undefined,
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '120',
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '10',
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '20',
       });
       vi.resetModules();
-      vi.doMock('node:child_process', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('node:child_process')>();
-        return {
-          ...actual,
-          spawnSync: vi.fn((command: string, args: readonly string[] = []) => {
-            if (isHappierTaskFolderListing(command, args)) {
-              return { status: 0, stdout: Buffer.from('[]'), stderr: Buffer.from('') };
-            }
-            if (command === 'powershell.exe' && args.some((arg) => arg.includes('.RegisterTask('))) {
-              lifecycleEvents.push('registerTask');
-            }
-            if (command !== 'schtasks') {
-              return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
-            }
-            const action = String(args[0] ?? '');
-            lifecycleEvents.push(action);
-            if (action === '/Run' && writeDaemonStateImpl) {
-              writeDaemonStateImpl({
-                pid: process.pid,
-                httpPort: 43141,
-                startedAt: Date.now(),
-                startedWithCliVersion: configuration.currentCliVersion,
-                startedWithPublicReleaseChannel: currentPublicReleaseChannel,
-                startupSource: 'background-service',
-                serviceLabel: paths.label,
-                runtimeId: 'runtime-win32-install',
-              });
-            }
-            if (action === '/Query') {
-              return {
-                status: 0,
-                stdout: Buffer.from('Status: Running\nScheduled Task State: Enabled\n'),
-                stderr: Buffer.from(''),
-              };
-            }
-            return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
-          }),
-        };
+      doMockChildProcessSpawnSync((command: string, args: readonly string[] = [], options?: { timeout?: number }) => {
+        if (isHappierTaskFolderListing(command, args)) {
+          return { status: 0, stdout: Buffer.from('[]'), stderr: Buffer.from('') };
+        }
+        if (command === 'powershell.exe' && args.some((arg) => arg.includes('.RegisterTask('))) {
+          lifecycleEvents.push('registerTask');
+        }
+        if (isWindowsScheduledTaskStatusRead(command, args)) {
+          observedQueryTimeouts.push(options?.timeout);
+          if (queryTimesOut && options?.timeout) {
+            return {
+              status: null,
+              error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' }),
+              stdout: Buffer.from(''), stderr: Buffer.from(''),
+            };
+          }
+          return { status: 0, stdout: windowsNativeLauncherTaskStatusStdout(paths), stderr: Buffer.from('') };
+        }
+        if (command !== 'schtasks') {
+          return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+        }
+        const action = String(args[0] ?? '');
+        lifecycleEvents.push(action);
+        if (action === '/Run' && writeDaemonStateImpl) {
+          writeDaemonStateImpl({
+            pid: process.pid,
+            httpPort: 43141,
+            startedAt: Date.now(),
+            startedWithCliVersion: configuration.currentCliVersion,
+            startedWithPublicReleaseChannel: currentPublicReleaseChannel,
+            startupSource: 'background-service',
+            serviceLabel: paths.label,
+            runtimeId: 'runtime-win32-install',
+          });
+        }
+        if (action === '/Query') {
+          observedTaskStatusTimeouts.push(options?.timeout);
+          return {
+            status: 0,
+            stdout: Buffer.from('Status: Running\nScheduled Task State: Enabled\n'),
+            stderr: Buffer.from(''),
+          };
+        }
+        return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
       });
       vi.doMock('./commandExistsInPath', () => ({
         commandExistsInPath: vi.fn(() => true),
@@ -2116,6 +2167,15 @@ describe('runDaemonServiceCliCommand', () => {
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
+        if (queryTimesOut) {
+          await expect(runDaemonServiceCliCommand({ argv: ['install', '--yes', '--json'] }))
+            .rejects.toThrow(/did not become the active daemon/i);
+          expect(observedQueryTimeouts.length).toBeGreaterThan(0);
+          expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
+          expect(observedTaskStatusTimeouts).not.toContain(undefined);
+          expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
+          return;
+        }
         await runDaemonServiceCliCommand({ argv: ['install', '--yes', '--json'] });
         const payload = output.json();
         expect(payload.ok).toBe(true);
@@ -2140,6 +2200,10 @@ describe('runDaemonServiceCliCommand', () => {
       } finally {
         repeated.restore();
       }
+      expect(observedQueryTimeouts.length).toBeGreaterThan(0);
+      expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
+      expect(observedTaskStatusTimeouts).not.toContain(undefined);
+      expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
     });
   });
 

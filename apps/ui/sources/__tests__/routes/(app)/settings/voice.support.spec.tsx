@@ -209,7 +209,7 @@ afterEach(() => {
 });
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
-    it('hides Happier Voice option and coerces mode to off', async () => {
+    it('hides the unsupported Happier Voice option', async () => {
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
@@ -217,7 +217,6 @@ describe('VoiceSettingsScreen (server voice unsupported)', () => {
         expect(screen.findRowByTitle('settingsVoice.mode.local')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.mode.byo')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.mode.happier')).toBeNull();
-        expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'off' }));
     });
 });
 

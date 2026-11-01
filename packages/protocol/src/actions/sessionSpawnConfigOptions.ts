@@ -4,8 +4,9 @@ import {
   buildAcpConfigOptionOverridesV1,
   type AcpConfigOptionOverridesV1,
 } from '../sessionMetadata/metadataOverridesV1.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const SpawnConfigOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export const SpawnConfigOptionValueSchema = lazySchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
 export type SpawnConfigOptionValue = z.infer<typeof SpawnConfigOptionValueSchema>;
 
 /**

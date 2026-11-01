@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
@@ -249,7 +250,7 @@ describe('/oauth/[provider] (connect flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url, init) => {
-            if (url.endsWith('/v1/connect/external/github/finalize')) {
+            if (getServerFetchUrl(url).pathname === '/v1/connect/external/github/finalize') {
                 expect(init?.method).toBe('POST');
                 const body = JSON.parse(String(init?.body ?? '{}'));
                 expect(body).toEqual({ pending: 'p1', username: 'octocat_2' });
@@ -286,9 +287,9 @@ describe('/oauth/[provider] (connect flow)', () => {
         });
 
         const fetchMock = stubFetch(async (url) => {
-            if (url.endsWith('/v1/connect/external/github/finalize')) {
+            if (getServerFetchUrl(url).pathname === '/v1/connect/external/github/finalize') {
                 const callCount = fetchMock.mock.calls.filter((call) =>
-                    String(call[0]).endsWith('/v1/connect/external/github/finalize'),
+                    getServerFetchUrl(call[0]).pathname === '/v1/connect/external/github/finalize',
                 ).length;
                 if (callCount === 1) {
                     return {

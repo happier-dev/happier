@@ -23,14 +23,15 @@ import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
+import { lazySchema } from '@happier-dev/protocol';
 
-const EnsureUpToDateParamsSchema = z
+const EnsureUpToDateParamsSchema = lazySchema(() => z
   .object({
     sessionId: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const GetWindowParamsSchema = z
+const GetWindowParamsSchema = lazySchema(() => z
   .object({
     v: z.literal(1).optional(),
     sessionId: z.string().min(1),
@@ -42,7 +43,7 @@ const GetWindowParamsSchema = z
     if (value.seqFrom > value.seqTo) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
     }
-  });
+  }));
 
 function disabledResult(): MemorySearchResultV1 {
   return { v: 1, ok: false, errorCode: 'memory_disabled', error: 'memory_disabled' };

@@ -2,8 +2,9 @@ import { z } from 'zod';
 
 import { ConnectedServiceBindingsV1Schema, type ConnectedServiceBindingsV1 } from '../../connect/connectedServiceBindings.js';
 import { RELEASED_CONNECTED_SERVICE_IDS } from '../../connect/connectedServiceReaderSupport.js';
+import { lazySchema } from '../../lazySchema.js';
 
-const AgentIdSettingsKeySchema = z.string().trim().min(1);
+const AgentIdSettingsKeySchema = lazySchema(() => z.string().trim().min(1));
 
 function defaultAuthSchema(acceptsService: (serviceId: string) => boolean) {
   return z
@@ -22,13 +23,13 @@ function defaultAuthSchema(acceptsService: (serviceId: string) => boolean) {
 // (df8241c8) have a closed service enum here. Keep new services out
 // until those readers retire.
 const releasedDefaultServiceIds: ReadonlySet<string> = new Set(RELEASED_CONNECTED_SERVICE_IDS);
-export const ConnectedServicesDefaultAuthByAgentIdV1Schema = defaultAuthSchema((id) => releasedDefaultServiceIds.has(id))
+export const ConnectedServicesDefaultAuthByAgentIdV1Schema = lazySchema(() => defaultAuthSchema((id) => releasedDefaultServiceIds.has(id))
   .catch({
     v: 1,
     bindingsByAgentId: {},
-  });
+  }));
 
-export const ConnectedServicesAdditionalDefaultAuthByAgentIdV1Schema = defaultAuthSchema((id) => !releasedDefaultServiceIds.has(id));
+export const ConnectedServicesAdditionalDefaultAuthByAgentIdV1Schema = lazySchema(() => defaultAuthSchema((id) => !releasedDefaultServiceIds.has(id)));
 
 export type ConnectedServicesDefaultAuthByAgentIdV1 = z.infer<
   typeof ConnectedServicesDefaultAuthByAgentIdV1Schema
@@ -75,26 +76,26 @@ export function buildConnectedServicesDefaultAuthSettingsPatch(defaults: Connect
   };
 }
 
-export const ConnectedServicesProviderConfigSharingModeV1Schema = z.enum([
+export const ConnectedServicesProviderConfigSharingModeV1Schema = lazySchema(() => z.enum([
   'linked',
   'copied',
   'isolated',
-]);
+]));
 
 export type ConnectedServicesProviderConfigSharingModeV1 = z.infer<
   typeof ConnectedServicesProviderConfigSharingModeV1Schema
 >;
 
-export const ConnectedServicesProviderStateSharingModeV1Schema = z.enum([
+export const ConnectedServicesProviderStateSharingModeV1Schema = lazySchema(() => z.enum([
   'isolated',
   'shared',
-]);
+]));
 
 export type ConnectedServicesProviderStateSharingModeV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingModeV1Schema
 >;
 
-export const ConnectedServicesProviderStateSharingPolicyV1Schema = z
+export const ConnectedServicesProviderStateSharingPolicyV1Schema = lazySchema(() => z
   .object({
     configMode: ConnectedServicesProviderConfigSharingModeV1Schema.default('linked'),
     // Default to shared session state: most users connect multiple accounts for
@@ -104,27 +105,27 @@ export const ConnectedServicesProviderStateSharingPolicyV1Schema = z
     // `state.supported: false` ignore `shared` and stay isolated.
     stateMode: ConnectedServicesProviderStateSharingModeV1Schema.default('shared'),
   })
-  .strict();
+  .strict());
 
 export type ConnectedServicesProviderStateSharingPolicyV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingPolicyV1Schema
 >;
 
-const ConnectedServicesProviderStateSharingOverrideV1Schema = z
+const ConnectedServicesProviderStateSharingOverrideV1Schema = lazySchema(() => z
   .object({
     configMode: ConnectedServicesProviderConfigSharingModeV1Schema.optional(),
     stateMode: ConnectedServicesProviderStateSharingModeV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
-const ConnectedServicesProviderStateSharingRiskAcknowledgementV1Schema = z
+const ConnectedServicesProviderStateSharingRiskAcknowledgementV1Schema = lazySchema(() => z
   .object({
     sharedStatePrivacy: z.boolean().optional(),
     symlinkUnavailable: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 
-export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
+export const ConnectedServicesProviderStateSharingSettingsV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1).default(1),
     defaults: ConnectedServicesProviderStateSharingPolicyV1Schema.default({
@@ -147,7 +148,7 @@ export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
     },
     byAgentId: {},
     acknowledgedRisksByAgentId: {},
-  });
+  }));
 
 export type ConnectedServicesProviderStateSharingSettingsV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingSettingsV1Schema

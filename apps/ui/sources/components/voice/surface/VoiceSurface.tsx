@@ -19,6 +19,8 @@ import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { toggleLocalVoiceTurn } from '@/voice/local/localVoiceEngine';
+import { formatLocalVoiceErrorMessage } from '@/voice/local/localVoiceErrorMessage';
+import { isVoiceBargeInEnabled } from '@/voice/local/localVoiceSettings';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
 import { hydrateVoiceAgentActivityFromCarrierSession } from '@/voice/persistence/hydrateVoiceAgentActivityFromCarrierSession';
@@ -232,8 +234,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
       ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
       : t('voiceSurface.selectSessionToStart'))
     : null;
-  const bargeInEnabled =
-    providerId === 'local_conversation' ? voice?.adapters?.local_conversation?.tts?.bargeInEnabled !== false : false;
+  const bargeInEnabled = providerId === 'local_conversation' ? isVoiceBargeInEnabled({ voice }) : false;
   const canBargeIn =
     providerId === 'local_conversation' &&
     isSpeaking &&
@@ -245,6 +246,9 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     typeof snap.sessionId === 'string' &&
     snap.sessionId.trim().length > 0 &&
     (snap.mode === 'thinking' || snap.mode === 'speaking');
+  const voiceError = typeof snap.errorCode === 'string' && snap.errorCode.trim().length > 0
+    ? formatLocalVoiceErrorMessage({ errorCode: snap.errorCode, errorMessage: snap.errorMessage })
+    : null;
   const targetLabel =
     props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
       ? (
@@ -327,6 +331,20 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             ) : toggleDisabledReason ? (
               <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} numberOfLines={1}>
                 {toggleDisabledReason}
+              </Text>
+            ) : null}
+            {voiceError ? (
+              <Text
+                accessibilityRole="alert"
+                style={[styles.targetText, { color: theme.colors.status.error }]}
+                selectable
+              >
+                {voiceError.message}
+              </Text>
+            ) : null}
+            {voiceError?.detail ? (
+              <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} selectable>
+                {voiceError.detail}
               </Text>
             ) : null}
           </View>

@@ -1,3 +1,4 @@
+import type { SessionListBackgroundWorkAttentionMode } from './sessionListBackgroundWorkAttention';
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
@@ -73,6 +74,7 @@ export type ComputeVisibleSessionListIndexParams = Readonly<{
     storageFilterApplied?: boolean;
     attentionPromotion?: SessionListAttentionPromotionOptions;
     workingPlacement?: SessionListWorkingPlacementOptions;
+    backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
     retainWorkingSessionKeys?: SessionListWorkingRetentionKeySource;
     nowMs?: number;
 }>;
@@ -461,6 +463,7 @@ function computeVisibleSessionListIndexUnmeasured(
 
     const globalAttentionSource = pruneOrphanSessionListIndexHeaders(orderedWithPinnedFlags);
     const globalPlacements = buildSessionListIndexGlobalPlacements({
+        backgroundWorkAttentionMode: params.backgroundWorkAttentionMode,
         source: globalAttentionSource,
         attentionOptions: params.attentionPromotion,
         workingOptions: params.workingPlacement,
@@ -503,6 +506,7 @@ function computeVisibleSessionListIndexUnmeasured(
     const remainderPruned = pruneOrphanSessionListIndexHeaders(nonPinnedRemainder);
     const remainderAfterWorking = workingPlacementMode === 'withinGroups'
         ? applySessionListIndexWorkingPlacementWithinGroups({
+            backgroundWorkAttentionMode: params.backgroundWorkAttentionMode,
             source: remainderPruned,
             options: params.workingPlacement,
             retainedKeys: params.retainWorkingSessionKeys,
@@ -512,6 +516,7 @@ function computeVisibleSessionListIndexUnmeasured(
         : remainderPruned;
     const remainderAfterAttention = attentionPromotionMode === 'withinGroups'
         ? applySessionListIndexAttentionPromotionWithinGroups({
+            backgroundWorkAttentionMode: params.backgroundWorkAttentionMode,
             source: remainderAfterWorking,
             options: params.attentionPromotion,
             resolveSessionRow: params.resolveSessionRow,

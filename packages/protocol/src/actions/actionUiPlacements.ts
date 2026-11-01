@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * UI placement IDs are used to deterministically map actions into UI surfaces
@@ -16,5 +17,5 @@ export const ACTION_UI_PLACEMENTS = [
   'run_card',
 ] as const;
 
-export const ActionUiPlacementSchema = z.enum(ACTION_UI_PLACEMENTS);
+export const ActionUiPlacementSchema = lazySchema(() => z.enum(ACTION_UI_PLACEMENTS));
 export type ActionUiPlacement = z.infer<typeof ActionUiPlacementSchema>;

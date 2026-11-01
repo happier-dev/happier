@@ -3,9 +3,10 @@ import {
   type AccountScopedCryptoMaterial,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
 function resolveSettingsSecretsMaterial(credentials: Credentials): AccountScopedCryptoMaterial {
+  requireEncryptionCredentials(credentials);
   return credentials.encryption.type === 'legacy'
     ? { type: 'legacy', secret: credentials.encryption.secret }
     : { type: 'dataKey', machineKey: credentials.encryption.machineKey };

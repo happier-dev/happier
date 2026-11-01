@@ -5,13 +5,13 @@ import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanoni
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 import { applyUiClientUpgradeRequired } from '@/sync/runtime/clientCompatibility/uiClientUpgradeRequired';
 import {
-    reportServerUnreachable,
     startServerReachabilitySupervisor,
     subscribeServerReachabilityNetworkAllowed,
     waitForServerReachable,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 
 import type { ScopedSocketClient, ScopedSocketConnectParams } from './serverScopedRpcTypes';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
 type SocketLike = Readonly<{
     connected: boolean;
@@ -27,7 +27,6 @@ type SocketLike = Readonly<{
 type ReachabilityDeps = Readonly<{
     startReachability: (params: Readonly<{ serverUrl: string; token: string }>) => Promise<void>;
     waitForReachable: (params: Readonly<{ serverUrl: string; token: string; timeoutMs: number }>) => Promise<void>;
-    reportUnreachable: (serverUrl: string, error: unknown) => void;
     subscribeNetworkAllowed: (listener: (allowed: boolean) => void) => () => void;
 }>;
 
@@ -44,11 +43,8 @@ type PoolEntry = {
     socket: SocketLike;
     inUseCount: number;
     connectInFlight: Promise<void> | null;
-    intentionalDisconnect: boolean;
     idleDisconnectTimer: ReturnType<typeof setTimeout> | null;
 };
-
-const INTENTIONAL_DISCONNECT_FLAG_RESET_MS = 1_000;
 
 const GLOBAL_TOKEN_CACHE_KEY_BY_TOKEN_KEY = '__HAPPIER_GLOBAL_SCOPED_RPC_TOKEN_CACHE_KEY_BY_TOKEN__';
 const GLOBAL_TOKEN_CACHE_KEY_MAX_ENTRIES = 512;
@@ -112,7 +108,8 @@ function readScopedRpcSocketIdleDisconnectMsFromEnv(): number {
     return parsed;
 }
 
-async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number): Promise<void> {
+async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('Scoped RPC socket connection aborted');
     if (socket.connected) return;
     await new Promise<void>((resolve, reject) => {
         let settled = false;
@@ -127,6 +124,7 @@ async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number): 
             clearTimeout(timeoutId);
             socket.off('connect', onConnect);
             socket.off('connect_error', onConnectError);
+            signal?.removeEventListener('abort', onAbort);
         };
 
         const onConnect = () => {
@@ -144,8 +142,16 @@ async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number): 
             reject(error instanceof Error ? error : new Error('Scoped RPC socket connection failed'));
         };
 
+        const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(new Error('Scoped RPC socket connection aborted'));
+        };
+
         socket.on('connect', onConnect);
         socket.on('connect_error', onConnectError);
+        signal?.addEventListener('abort', onAbort, { once: true });
         try {
             socket.connect();
         } catch (error) {
@@ -188,7 +194,6 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                     timeoutMs: params.timeoutMs,
                 });
             },
-            reportUnreachable: reportServerUnreachable,
             subscribeNetworkAllowed: subscribeServerReachabilityNetworkAllowed,
         },
         now: overrides?.now ?? (() => Date.now()),
@@ -205,18 +210,11 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             clearTimeout(entry.idleDisconnectTimer);
             entry.idleDisconnectTimer = null;
         }
-        entry.intentionalDisconnect = true;
         try {
             entry.socket.disconnect();
         } catch {
             // ignore
         }
-        // socket.io-client disconnect events are not guaranteed to be synchronous; keep the
-        // intentional disconnect flag set briefly so we don't report an expected disconnect
-        // as an unreachable server signal.
-        setTimeout(() => {
-            entry.intentionalDisconnect = false;
-        }, INTENTIONAL_DISCONNECT_FLAG_RESET_MS);
     };
 
     const scheduleIdleDisconnect = (entry: PoolEntry): void => {
@@ -249,23 +247,11 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
             socket,
             inUseCount: 0,
             connectInFlight: null,
-            intentionalDisconnect: false,
             idleDisconnectTimer: null,
         };
 
-        socket.on('disconnect', (reason: unknown) => {
-            if (entry.intentionalDisconnect) {
-                entry.intentionalDisconnect = false;
-                return;
-            }
-            deps.reachability.reportUnreachable(serverUrl, new Error(typeof reason === 'string' ? reason : 'socket disconnect'));
-        });
         socket.on('connect_error', (error: unknown) => {
-            if (applyUiClientUpgradeRequired(error)) return;
-            deps.reachability.reportUnreachable(serverUrl, error);
-        });
-        socket.on('error', (error: unknown) => {
-            deps.reachability.reportUnreachable(serverUrl, error);
+            applyUiClientUpgradeRequired(error);
         });
 
         entriesByKey.set(key, entry);
@@ -296,12 +282,43 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
     const acquire = async (params: ScopedSocketConnectParams): Promise<ScopedSocketClient> => {
         const serverUrl = normalizeServerUrl(params.serverUrl);
         const token = String(params.token ?? '');
-        const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
+        const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
         if (!serverUrl) {
             throw new Error('Missing server URL');
         }
         if (!token) {
             throw new Error('Missing token');
+        }
+
+        if (params.networkMode === 'background-task') {
+            // OS-dispatched work owns this socket until the caller's finally block.
+            // Reuse authentication/connection setup, but not foreground supervision
+            // or pooled idle retention. Never toggle the app-wide network gate.
+            if (params.signal?.aborted) throw new Error('Scoped RPC socket connection aborted');
+            const socket = deps.createSocket({ serverUrl, token });
+            let disconnected = false;
+            const disconnect = () => {
+                if (disconnected) return;
+                disconnected = true;
+                params.signal?.removeEventListener('abort', disconnect);
+                socket.disconnect();
+            };
+            // Attach for the whole caller-owned lifetime, not just connection.
+            // A stalled encryption await must not keep this socket alive.
+            params.signal?.addEventListener('abort', disconnect, { once: true });
+            try {
+                await connectSocketWithTimeout(socket, timeoutMs, params.signal);
+                if (params.signal?.aborted) throw new Error('Scoped RPC socket connection aborted');
+            } catch (error) {
+                disconnect();
+                throw error;
+            }
+            return {
+                timeout: (ms: number) => socket.timeout(ms),
+                emitWithAck: (event: string, payload: any) => socket.emitWithAck(event, payload),
+                emit: (event: string, payload: any) => socket.emit(event, payload),
+                disconnect,
+            };
         }
 
         const entry = getOrCreateEntry(serverUrl, token);

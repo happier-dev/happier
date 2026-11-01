@@ -12,8 +12,7 @@ export function LocalNeuralSttSettings(_props: {
   return (
     <Item
       title={t('settingsVoice.local.neuralStt.title')}
-      subtitle={t('settingsVoice.local.neuralStt.webNotAvailableSubtitle')}
-      detail={t('common.unavailable')}
+      subtitle={t('settingsVoice.local.neuralStt.webFallbackSubtitle')}
       showChevron={false}
       selected={false}
     />

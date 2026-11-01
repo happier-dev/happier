@@ -50,7 +50,6 @@ export function buildSessionBulkActionTargetFromSessionItem(
         hasAdminAccess: actionTarget.hasAdminAccess,
         canStop: actionTarget.canStop,
         canArchive: actionTarget.canArchive,
-        canMoveToFolder: actionTarget.canMoveToFolder,
         pinned: actionTarget.isPinned,
         tags: settings.sessionTagsByKey[rowKey] ?? [],
         readState,

@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 
-import { getBlurViewComponent } from './blurMaterial';
+import { getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
 
@@ -17,7 +17,7 @@ export type GlassSurfaceProps = Readonly<{
      * is more transparent. Ignored when falling back to blur/solid.
      */
     glassEffectStyle?: 'regular' | 'clear';
-    /** Blur intensity used by the `expo-blur` fallback. */
+    /** Blur intensity used by the `expo-blur` / web blur tiers (the Android tint has no blur). */
     blurIntensity?: number;
     /** When false, renders an opaque solid surface instead of glass/blur. */
     enabled?: boolean;
@@ -30,8 +30,11 @@ export type GlassSurfaceProps = Readonly<{
  * Tiered "glass" chrome material used by the bottom tab bars.
  *
  * - iOS 26 with Liquid Glass → real `GlassView` (`expo-glass-effect`).
- * - Other native builds        → translucent `expo-blur` `BlurView`.
- * - Web / Reduce Transparency  → opaque `surface.base` (today's look).
+ * - Other iOS builds           → translucent `expo-blur` `BlurView`.
+ * - Web                        → CSS `backdrop-filter` blur over `glass.webBlurTint`.
+ * - Android                    → `glass.webBlurTint` with no blur (no BlurView is safe to mount
+ *                                there; see `isNativeBlurAvailable`).
+ * - Disabled / Reduce Transparency → opaque solid surface.
  *
  * Callers pass layout style (padding, border) only; the background/material is
  * owned here so each tier renders correctly. Do not pass an opaque
@@ -46,8 +49,9 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         ? 'solid'
         : resolveGlassCapability({
             liquidGlassAvailable,
-            blurAvailable: Platform.OS !== 'web',
+            blurAvailable: isNativeBlurAvailable(),
             webBlurAvailable: Platform.OS === 'web',
+            tintAvailable: Platform.OS === 'android',
             reduceTransparency,
         });
 
@@ -74,7 +78,6 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                     testID={props.testID}
                     tint={theme.dark ? 'dark' : 'light'}
                     intensity={props.blurIntensity ?? 50}
-                    experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
                     style={props.style}
                 >
                     {props.children}
@@ -101,6 +104,14 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                     props.style,
                 ]}
             >
+                {props.children}
+            </View>
+        );
+    }
+
+    if (capability === 'tint') {
+        return (
+            <View testID={props.testID} style={[{ backgroundColor: theme.colors.glass.webBlurTint }, props.style]}>
                 {props.children}
             </View>
         );

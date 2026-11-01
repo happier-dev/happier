@@ -53,6 +53,7 @@ export function createCoalescedWorkflowActivityPublisher(params: Readonly<{
     const now = performance.now();
     const changedRunIds = [...pendingChangedRunIds].filter((runId) => isReady(runId, now));
     if (changedRunIds.length === 0) {
+      // Native timers truncate fractional delays and may wake before a monotonic deadline.
       scheduleRetryTimer();
       return;
     }

@@ -55,6 +55,8 @@ import {
   type SpawnConfigOptionValue,
 } from './sessionSpawnConfigOptions.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from './executionRunActionPermissionMode.js';
+import { isRpcError, readRpcErrorCode } from '../rpcErrors.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Resolve the canonical run-start model + config-option selection from an agent-facing action
@@ -268,6 +270,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionSendMessage: (args: Readonly<{
     sessionId: string;
     message: string;
+    kind?: 'user' | 'notice';
+    from?: string;
     localId?: string;
     requestedAction: PendingRequestedActionV1;
     permissionModeOverride?: string;
@@ -288,6 +292,7 @@ export type ActionExecutorDeps = Readonly<{
     callerPermissionMode?: string | null;
   }>) => Promise<unknown>;
   sessionModelSet?: (args: Readonly<{ sessionId: string; modelId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionArchiveSet?: (args: Readonly<{ sessionId: string; archived: boolean; serverId?: string | null }>) => Promise<unknown>;
   sessionStatusGet?: (args: Readonly<{ sessionId: string; live?: boolean; serverId?: string | null }>) => Promise<unknown>;
   sessionWorkStateGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
@@ -608,7 +613,7 @@ function hasOwn(input: any, key: string): boolean {
   return Boolean(input && Object.prototype.hasOwnProperty.call(input, key));
 }
 
-const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
+const ActionSurfaceKeySchema = lazySchema(() => ActionSurfaceSchema.keyof());
 
 function parseActionSurfaceKey(value: unknown): keyof ActionSurfaces | null {
   const parsed = ActionSurfaceKeySchema.safeParse(value);
@@ -1229,6 +1234,15 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
         : typeof anyErr?.message === 'string'
           ? String(anyErr.message)
         : '';
+
+  const rpcErrorCode = isRpcError(error) ? readRpcErrorCode(error)?.trim() : undefined;
+  if (rpcErrorCode) {
+    return {
+      errorCode: rpcErrorCode,
+      error: message || rpcErrorCode,
+      ...(details !== undefined ? { details } : {}),
+    };
+  }
 
   if (rawCode && SessionControlErrorCodeSchema.safeParse(rawCode).success) {
     return {
@@ -2233,6 +2247,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'session.message.send') {
+          const messageKind = parsed.data.kind === 'notice' ? 'notice' : parsed.data.kind === 'user' ? 'user' : undefined;
+          const from = typeof parsed.data.from === 'string' ? parsed.data.from : undefined;
+          // Only the CLI surface exposes display-only notice authoring in 0.2.
+          // Other surfaces must not silently reinterpret it as a prompt.
+          if ((messageKind === 'notice' || from !== undefined) && ctx.surface !== 'cli') {
+            return { ok: false, errorCode: 'unsupported_action', error: 'Notices are currently CLI-only' };
+          }
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const localIdRaw = (parsed.data as Record<string, unknown>).localId;
@@ -2257,6 +2278,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionSendMessage({
             sessionId,
             message: (parsed.data as any).message,
+            ...(messageKind ? { kind: messageKind } : {}),
+            ...(from !== undefined ? { from } : {}),
             ...(localId !== null ? { localId } : {}),
             requestedAction: PendingRequestedActionV1Schema.parse(
               parsed.data.requestedAction ?? { v: 1, kind: 'steer_if_active' },
@@ -2354,6 +2377,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!modelId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionModelSet({ sessionId, modelId, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.config_option.set') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionConfigOptionSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.config_option.set' };
+          }
+          const data = parsed.data as Record<string, unknown>;
+          const configId = readOpaqueIdentifier(data.configId);
+          const valueId = readOpaqueIdentifier(data.valueId);
+          if (!configId || !valueId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionConfigOptionSet({ sessionId, configId, valueId, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 

@@ -229,6 +229,62 @@ describe('pendingQueueV2 error handling', () => {
         }
     });
 
+    it.each(['requested-action', 'enqueue', 'retry'] as const)(
+        'applies a removal snapshot started while the %s response body is loading', async (operation) => {
+            const sessionId = 's_pending_action_removal_during_body';
+            const localId = 'materialized-action-local-id';
+            storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: localId, localId, createdAt: 1, updatedAt: 1,
+                source: 'server_pending', deliveryStatus: 'accepted', pendingDeliveryStatus: 'server_queued',
+                text: 'already handled by the agent',
+                rawRecord: { role: 'user', content: { type: 'text', text: 'already handled by the agent' } },
+            });
+            const encryption = await createPendingQueueEncryption({ sessionId });
+            const bodyStarted = createDeferred<void>();
+            const payload = { didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' }, pending: { localId } };
+            const body = createDeferred<typeof payload>();
+            const snapshotStarted = createDeferred<void>();
+            const snapshot = createDeferred<Response>();
+            const successfulResponse = Response.json({ didUpdate: true });
+            successfulResponse.json = async () => {
+                bodyStarted.resolve();
+                return body.promise;
+            };
+            if (operation === 'retry') {
+                await enqueuePendingMessageV2({
+                    sessionId, localId, text: 'already handled by the agent', encryption, outboxScope,
+                    request: async () => { throw new Error('lost enqueue response'); },
+                }).catch(() => undefined);
+            }
+            const request = async () => successfulResponse;
+            const mutation = operation === 'requested-action'
+                ? updatePendingRequestedActionV2({
+                    sessionId, localId, requestedAction: { v: 1, kind: 'send_now' }, request,
+                })
+                : operation === 'enqueue'
+                    ? enqueuePendingMessageV2({
+                        sessionId, localId, text: 'already handled by the agent', encryption, outboxScope, request,
+                    })
+                    : retryPendingOutboxOperationV2({ sessionId, localId, outboxScope, request });
+            await bodyStarted.promise;
+            const refresh = fetchAndApplyPendingMessagesV2({
+                sessionId, encryption,
+                request: async () => {
+                    snapshotStarted.resolve();
+                    return snapshot.promise;
+                },
+            });
+            await snapshotStarted.promise;
+            body.resolve(payload);
+            await mutation;
+            snapshot.resolve(Response.json({ pending: [] }));
+            await refresh;
+
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([]);
+        },
+    );
+
     it('clears discarded messages when the pending fetch fails', async () => {
         const sessionId = 's_test';
         const encryption = await createPendingQueueEncryption({ sessionId });

@@ -5,14 +5,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { readTauriMainBinaryName } from './channel-config.mjs';
 
 const MAX_FILE_BYTES = 768 * 1024 * 1024;
 
 const PLATFORM_LAYOUTS = Object.freeze({
-  'linux-x86_64': { os: 'ubuntu-22.04', target: 'x86_64-unknown-linux-gnu', executable: 'app', sidecar: 'hsetup-x86_64-unknown-linux-gnu', gzip: true },
-  'windows-x86_64': { os: 'windows-latest', target: 'x86_64-pc-windows-msvc', executable: 'app.exe', sidecar: 'hsetup-x86_64-pc-windows-msvc.exe', gzip: false },
-  'darwin-aarch64': { os: 'macos-latest', target: 'aarch64-apple-darwin', executable: 'app', sidecar: 'hsetup-aarch64-apple-darwin', gzip: false },
-  'darwin-x86_64': { os: 'macos-latest', target: 'x86_64-apple-darwin', executable: 'app', sidecar: 'hsetup-x86_64-apple-darwin', gzip: false },
+  'linux-x86_64': { os: 'ubuntu-22.04', target: 'x86_64-unknown-linux-gnu', sidecar: 'hsetup-x86_64-unknown-linux-gnu', gzip: true },
+  'windows-x86_64': { os: 'windows-latest', target: 'x86_64-pc-windows-msvc', sidecar: 'hsetup-x86_64-pc-windows-msvc.exe', gzip: false },
+  'darwin-aarch64': { os: 'macos-latest', target: 'aarch64-apple-darwin', sidecar: 'hsetup-aarch64-apple-darwin', gzip: false },
+  'darwin-x86_64': { os: 'macos-latest', target: 'x86_64-apple-darwin', sidecar: 'hsetup-x86_64-apple-darwin', gzip: false },
 });
 
 export const BUNDLE_CANDIDATE_PLATFORMS = Object.freeze(Object.keys(PLATFORM_LAYOUTS));
@@ -50,9 +51,10 @@ function assertRegularBoundedFile(filePath) {
   return stat;
 }
 
-function expectedFiles(layout) {
+function expectedFiles(layout, options) {
+  const binaryName = readTauriMainBinaryName({ environment: options.environment, tauriDir: path.join(options.uiDir, 'src-tauri') });
   const files = [
-    { role: 'executable', name: layout.executable, executable: true },
+    { role: 'executable', name: `${binaryName}${options.platformKey.startsWith('windows-') ? '.exe' : ''}`, executable: true },
     { role: 'sidecar', name: layout.sidecar, executable: true },
   ];
   if (layout.gzip) files.push({ role: 'resource', name: `${layout.sidecar}.gz`, executable: false });
@@ -90,7 +92,7 @@ export function packBundleCandidate(options) {
   const filesDir = path.join(outDir, 'files');
   fs.mkdirSync(filesDir, { recursive: true });
 
-  const manifestFiles = expectedFiles(layout).map((entry) => {
+  const manifestFiles = expectedFiles(layout, options).map((entry) => {
     const source = entry.role === 'executable'
       ? path.join(releaseDir, entry.name)
       : path.join(binariesDir, entry.name);
@@ -132,7 +134,7 @@ export function materializeBundleCandidate(options) {
     if (manifest[field] !== expected) throw new Error(`candidate ${field} does not match the trusted workflow input`);
   }
 
-  const expected = expectedFiles(layout);
+  const expected = expectedFiles(layout, options);
   if (!Array.isArray(manifest.files) || manifest.files.length !== expected.length) throw new Error('candidate file list is not exact');
   const filesDir = path.join(candidateDir, 'files');
   const onDiskNames = fs.readdirSync(filesDir).sort();

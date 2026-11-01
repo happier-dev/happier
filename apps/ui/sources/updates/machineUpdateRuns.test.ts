@@ -21,6 +21,7 @@ vi.mock('@/sync/ops', () => ({
     machineCapabilitiesDetect: (...args: unknown[]) => rpc.detect(...args),
 }));
 
+import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { UpdateItem } from './items/updateItem';
 import * as runs from './machineUpdateRuns';
 import { buildRemoteCliUpdateItem } from './items/buildMachineUpdateItems';
@@ -188,6 +189,24 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         expect(runs.readUnseenUpdateCompletions(accountA).size).toBe(0);
     });
 
+    it.each([
+        '[release-runtime] archive exceeds expanded-byte limit',
+        'Extraction failed in C:\\private\\install.log.',
+    ])('shows structured extraction guidance instead of raw runtime output: %s', async (message) => {
+        rpc.invoke.mockResolvedValue({
+            supported: true,
+            response: { ok: false, error: { code: 'archive-expanded-byte-limit', message }, logPath: '/logs/codex.log' },
+        });
+        const codex: UpdateItem = { ...remoteCli, id: 'studio:agent:codex', subject: { kind: 'agent-cli', agentId: 'codex' }, title: 'Codex' };
+        await runs.runMachineItemUpdate(codex, { scope: accountA });
+        expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns('server-a'), codex.id)).toMatchObject({
+            running: false,
+            errorMessage: 'updates.row.archiveExpandedByteLimit',
+            logPath: '/logs/codex.log',
+        });
+        expect(runs.readUnseenUpdateCompletions(accountA).has(codex.id)).toBe(false);
+    });
+
     it('raw installer output never becomes the row\'s sentence; its log stays behind View log', async () => {
         rpc.invoke.mockImplementation(async () => ({
             supported: true,
@@ -233,6 +252,41 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
             running: false,
             errorMessage: 'npm won’t install a release less than a day old.',
         });
+    });
+
+    it.each(['agent-cli', 'installable'] as const)('keeps %s and Update All busy until refreshed facts replace the old version', async (kind) => {
+        vi.useRealTimers();
+        const machineId = `refresh-${kind}`;
+        const item: UpdateItem = { ...remoteCli, id: `${machineId}:tool`, machineId,
+            subject: kind === 'agent-cli' ? { kind, agentId: 'codex' } : { kind, key: 'gh' } };
+        let release!: () => void;
+        let entered!: () => void;
+        const detecting = new Promise<void>((resolve) => { entered = resolve; });
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        rpc.invoke.mockResolvedValue({ supported: true, response: { ok: true, result: { version: '2' } } });
+        rpc.detect.mockImplementationOnce(async () => {
+            entered(); await pending;
+            const id = kind === 'agent-cli' ? 'cli.codex' : 'dep.gh';
+            return { supported: true, response: { protocolVersion: 1, results: {
+                [id]: { ok: true, checkedAt: Date.now(), data: kind === 'agent-cli'
+                    ? { available: true, version: '2', latestVersion: '2', updateSupported: true }
+                    : { installed: true, installedVersion: '2', latestVersionCheck: { ok: true, latestVersion: '2' } } },
+            } } };
+        });
+        const updating = runs.runUpdateBatch(accountA, [item], (next) => runs.runMachineItemUpdate(next, { scope: accountA }));
+        await detecting;
+        const duringRefresh = runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(accountA.serverId), item.id);
+        const batchDuringRefresh = runs.readUpdateBatch(accountA);
+        const completionDuringRefresh = runs.readUnseenUpdateCompletions(accountA).has(item.id);
+        release();
+        await updating;
+        expect(duringRefresh.running).toBe(true);
+        expect(batchDuringRefresh).toEqual({ done: 0, total: 1, stopping: false });
+        expect(completionDuringRefresh).toBe(false);
+        expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(accountA.serverId), item.id).running).toBe(false);
+        expect(runs.readUnseenUpdateCompletions(accountA).has(item.id)).toBe(true);
+        const result = getMachineCapabilitiesSnapshot(machineId, accountA.serverId)?.response.results[kind === 'agent-cli' ? 'cli.codex' : 'dep.gh'];
+        expect(result).toMatchObject({ ok: true, data: kind === 'agent-cli' ? { version: '2' } : { installedVersion: '2' } });
     });
 
     it('after an agent update the machine\'s facts are re-read fresh, with the latest version, through the capability cache', async () => {

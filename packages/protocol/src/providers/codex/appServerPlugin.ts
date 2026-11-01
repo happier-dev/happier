@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import type { SessionVendorPluginSummaryV1 } from '../../sessionWorkState/sessionWorkStateRpc.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const CodexAppServerPluginSummarySchema = z
+export const CodexAppServerPluginSummarySchema = lazySchema(() => z
   .object({
     id: z.string().min(1).optional(),
     name: z.string().min(1).optional(),
@@ -13,7 +14,7 @@ export const CodexAppServerPluginSummarySchema = z
     enabled: z.boolean().optional(),
     installPolicy: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type CodexAppServerPluginSummary = z.infer<typeof CodexAppServerPluginSummarySchema>;
 
 function readString(value: unknown): string | null {

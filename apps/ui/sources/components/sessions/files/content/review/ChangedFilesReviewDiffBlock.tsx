@@ -1,9 +1,10 @@
 import type { CodeLinesExternalScrollView } from '@/components/ui/code/view/CodeLinesViewCore';
 import * as React from 'react';
-import { Image, Platform, View, useWindowDimensions } from 'react-native';
+import { Image, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { SafeNativeSvgXml } from '@/components/ui/media/SafeNativeSvgXml';
+import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -189,7 +190,17 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             if (imagePreview.status === 'loaded') {
                 return (
                     <View testID={blockTestId} style={[{ paddingHorizontal: 16, paddingVertical: 12, gap: 10 }, noOverflowAnchor]}>
-                        <View
+                        <Pressable
+                            testID="scm-review-image-preview"
+                            accessibilityRole="imagebutton"
+                            accessibilityLabel={`${t('common.open')}: ${filePath}`}
+                            onPress={async () => {
+                                const { AttachmentImagePreviewModal } = await import('@/components/sessions/attachments/preview/AttachmentImagePreviewModal');
+                                Modal.show({
+                                    component: AttachmentImagePreviewModal,
+                                    props: { images: [{ kind: 'session-image', sessionId, filePath, title: filePath, cacheKey: snapshotSignature }] },
+                                });
+                            }}
                             style={{
                                 width: '100%',
                                 maxWidth: 860,
@@ -211,7 +222,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                                     accessibilityLabel={t('files.binaryFile')}
                                 />
                             )}
-                        </View>
+                        </Pressable>
                         <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                             {t('files.binaryFile')}
                         </Text>

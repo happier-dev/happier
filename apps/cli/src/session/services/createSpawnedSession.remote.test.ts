@@ -1,13 +1,17 @@
 import { EventEmitter } from 'node:events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { Credentials } from '@/persistence';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { AccountMachineInventoryRow } from '@/api/machine/fetchAccountMachines';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
-const boundary = vi.hoisted(() => ({ get: vi.fn(), spawn: vi.fn(), resolve: vi.fn(), io: vi.fn() }));
+const boundary = vi.hoisted(() => ({ spawn: vi.fn(), resolve: vi.fn(), io: vi.fn() }));
 // HTTP, local daemon control, and Socket.IO are the actual process/network boundaries.
-vi.mock('axios', () => ({ default: { get: boundary.get } }));
 vi.mock('socket.io-client', () => ({ io: boundary.io }));
 vi.mock('@/daemon/controlClient', async (original) => ({
   ...await original<typeof import('@/daemon/controlClient')>(),
@@ -19,24 +23,38 @@ import { createSpawnedSession } from './createSpawnedSession';
 
 const key = new Uint8Array(32).fill(7);
 const credentials: Credentials = { token: 'account-token', encryption: { type: 'legacy', secret: key } };
-const session = {
+const session = createSessionRecordFixture({
   id: 'remote-session', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
   encryptionMode: 'plain', metadata: JSON.stringify({ path: '/remote-only/repo', host: 'remote', machineId: 'remote' }),
   metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
-};
+});
+const machine = { id: 'remote', replacedByMachineId: 'local', dataEncryptionKey: null } satisfies AccountMachineInventoryRow;
 
 describe('createSpawnedSession exact remote routing', () => {
   let calls: Array<{ method: string; request: unknown }>;
   let answer: (method: string, request: unknown) => unknown;
   let disconnectNextSpawn: boolean;
-  beforeEach(() => {
+  let relay: FastifyInstance;
+  let restoreHttp: () => void;
+  let httpPaths: string[];
+  beforeEach(async () => {
     vi.clearAllMocks();
     calls = [];
     disconnectNextSpawn = false;
     boundary.spawn.mockResolvedValue({ success: true, sessionId: 'local-session' });
-    boundary.get.mockImplementation(async (url: string) => url.endsWith('/v1/machines')
-      ? { status: 200, data: [{ id: 'remote', replacedByMachineId: 'local' }] }
-      : { status: 200, data: { session } });
+    httpPaths = [];
+    relay = Fastify();
+    relay.addHook('onRequest', async (request) => {
+      expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+      httpPaths.push(new URL(request.url, 'http://relay.test').pathname);
+    });
+    relay.get('/v1/machines/remote', async () => ({ machine }));
+    relay.get('/v1/machines', async () => [machine]);
+    relay.get<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request) => ({
+      session: { ...session, id: request.params.sessionId },
+    }));
+    await relay.ready();
+    restoreHttp = installAxiosFastifyAdapter({ app: relay, origin: new URL(resolveServerHttpBaseUrl()).origin });
     answer = () => ({ type: 'success', sessionId: session.id });
     boundary.io.mockImplementation(() => {
       const events = new EventEmitter();
@@ -59,6 +77,11 @@ describe('createSpawnedSession exact remote routing', () => {
         },
       };
     });
+  });
+
+  afterEach(async () => {
+    restoreHttp?.();
+    await relay?.close();
   });
 
   it.each([false, true])('spawns on remote and resolves its nonce without local execution (legacy=%s)', async (legacy) => {
@@ -95,7 +118,7 @@ describe('createSpawnedSession exact remote routing', () => {
     })).rejects.toMatchObject({ code: 'DAEMON_RPC_UNAVAILABLE' });
     expect(calls.every((call) => call.method.startsWith('remote:'))).toBe(true);
     expect(boundary.spawn).not.toHaveBeenCalled();
-    expect(boundary.get).not.toHaveBeenCalled();
+    expect(new Set(httpPaths)).toEqual(new Set(['/v1/machines/remote']));
   });
 
   it('accepts a synchronous typed remote response without resolving a nonce', async () => {

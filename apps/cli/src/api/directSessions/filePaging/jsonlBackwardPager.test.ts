@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { withTempDir } from '@/testkit/fs/tempDir';
+
 import { readJsonlFileBackwardPage } from './jsonlBackwardPager';
 
 function buildJsonl(lines: unknown[], opts?: { trailingNewline?: boolean }): string {
@@ -13,6 +15,16 @@ function buildJsonl(lines: unknown[], opts?: { trailingNewline?: boolean }): str
 }
 
 describe('readJsonlFileBackwardPage', () => {
+  it('reads an intact record whose framing exactly fits the caller allowance', async () => withTempDir('happier-jsonl-boundary-', async (dir) => {
+    const filePath = join(dir, 't.jsonl');
+    const value = { text: 'é'.repeat(1024) };
+    const content = JSON.stringify(value) + '\n';
+    await writeFile(filePath, content);
+    const page = await readJsonlFileBackwardPage({ filePath, endOffsetBytes: null, maxBytes: 1024,
+      maxOversizeLineBytes: Buffer.byteLength(content), maxItems: 1 });
+    expect(page.items.map(line => line.value)).toEqual([value]);
+  }));
+
   it('pages backward from the end in stable order', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-jsonl-backward-'));
     const filePath = join(dir, 't.jsonl');
@@ -51,17 +63,14 @@ describe('readJsonlFileBackwardPage', () => {
     expect(page.tailOffsetBytes).toBe(Buffer.byteLength(complete));
   });
 
-  it('leaves the tail boundary unknown when the existing read budget cannot locate its line start', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-jsonl-backward-'));
+  it('fails explicitly when the existing read allowance cannot locate a record boundary', async () => withTempDir('happier-jsonl-backward-', async (dir) => {
     const filePath = join(dir, 't.jsonl');
     await writeFile(filePath, JSON.stringify({ text: 'x'.repeat(4096) }).slice(0, -1), 'utf8');
 
-    const page = await readJsonlFileBackwardPage({
+    await expect(readJsonlFileBackwardPage({
       filePath, endOffsetBytes: null, maxBytes: 1024, maxItems: 1, maxOversizeLineBytes: 1024,
-    });
-    expect(page.items).toEqual([]);
-    expect(page.tailOffsetBytes).toBeNull();
-  });
+    })).rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE', maxLineBytes: 1024 });
+  }));
 
   it('advances past complete malformed rows without stalling', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-jsonl-backward-'));
@@ -99,4 +108,37 @@ describe('readJsonlFileBackwardPage', () => {
     expect(page2.items.map((x) => (x.value as any).i)).toEqual([2]);
     expect(page2.nextEndOffsetBytes).toBeLessThan(page1.nextEndOffsetBytes);
   });
+
+  it('consumes filtered lines without parsing them and keeps each page within its byte allowance', async () => withTempDir('happier-jsonl-filter-', async (dir) => {
+    const filePath = join(dir, 't.jsonl');
+    const lines = [{ keep: 'first' }, ...Array.from({ length: 64 }, (_, i) => ({ skip: i, pad: 'x'.repeat(200) })), { keep: 'last' }];
+    await writeFile(filePath, buildJsonl(lines), 'utf8');
+    const lineFilter = (line: Buffer) => line.includes('"keep"');
+
+    const kept: unknown[] = [];
+    let endOffsetBytes: number | null = null;
+    let pages = 0;
+    for (;;) {
+      const page = await readJsonlFileBackwardPage({ filePath, endOffsetBytes, maxBytes: 1024, chunkBytes: 1024, maxItems: 1024, lineFilter });
+      pages += 1;
+      kept.unshift(...page.items.map((line) => line.value));
+      if (page.reachedStart) break;
+      expect(page.nextEndOffsetBytes).toBeLessThan(endOffsetBytes ?? Number.POSITIVE_INFINITY);
+      endOffsetBytes = page.nextEndOffsetBytes;
+    }
+    expect(kept).toEqual([{ keep: 'first' }, { keep: 'last' }]);
+    // ~14 KiB at 1 KiB per page: filtered pages must not read on as if one record were oversized.
+    expect(pages).toBeGreaterThan(10);
+  }));
+
+  it('still parses the terminal line under a filter so an incomplete record is left unread', async () => withTempDir('happier-jsonl-filter-tail-', async (dir) => {
+    const filePath = join(dir, 't.jsonl');
+    const complete = buildJsonl([{ keep: 1 }, { other: 2 }]);
+    await writeFile(filePath, `${complete}{"other":`, 'utf8');
+    const page = await readJsonlFileBackwardPage({ filePath, endOffsetBytes: null, maxBytes: 1024, maxItems: 1024,
+      lineFilter: (line) => line.includes('"keep"') });
+    expect(page.items.map((line) => line.value)).toEqual([{ keep: 1 }]);
+    expect(page.tailOffsetBytes).toBe(Buffer.byteLength(complete));
+    expect(page.reachedStart).toBe(true);
+  }));
 });

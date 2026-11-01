@@ -75,6 +75,12 @@ async function main() {
       buildTempDir: tempDir,
       outDir,
       compiledPath,
+      additionalStageEntries: target.os === 'windows' && target.arch === 'x64'
+        ? [{
+          sourcePath: join(repoRoot, 'packages', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe'),
+          targetPath: 'happier-service-launcher.exe',
+        }]
+        : [],
     });
     artifacts.push(artifact);
   }

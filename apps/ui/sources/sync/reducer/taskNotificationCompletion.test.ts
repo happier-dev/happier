@@ -50,6 +50,49 @@ const persistedCompletion = { type: 'user', uuid: 'completion', isMeta: true,
     message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: [{ type: 'text', text: 'final findings' }], is_error: false }] } };
 
 describe('native task completion through normalization and reducer', () => {
+    it('keeps a stopped child outcome separate from the SendMessage tool that reported it', () => {
+        const send = { type: 'assistant', uuid: 'send', message: { content: [
+            { type: 'tool_use', id: 'send-tool', name: 'SendMessage', input: { to: 'task', message: 'Continue' } },
+        ] } };
+        const stopped = { type: 'user', uuid: 'stopped', origin: {
+            kind: 'task-notification', taskId: 'task', toolUseId: 'tool', status: 'stopped', result: 'Partial findings',
+        }, message: { content: [
+            { type: 'tool_result', tool_use_id: 'send-tool', is_error: false,
+                content: { content: 'Agent was stopped', tool_use_result: { success: false, message: 'Agent was stopped' } } },
+            { type: 'tool_result', tool_use_id: 'tool', is_error: true,
+                content: { status: 'cancelled', result: 'Partial findings' } },
+        ] } };
+        const folded = fold([launch, ack, send, stopped]);
+        expect(folded.tool('send-tool')?.state).toBe('completed');
+        expect(folded.tool('tool')?.state).toBe('error');
+        expect(JSON.stringify(folded.tool('tool')?.result)).toContain('Partial findings');
+        expect(deriveSubAgentSidechainSubagents({ messages: folded.messages, flavor: 'claude' })[0]?.status).toBe('cancelled');
+    });
+
+    it('shows a delivered subagent hand-back report on its background Agent card', async () => {
+        // CLI projection publishes the buffered report when the native task settles.
+        const handback = { type: 'user', uuid: 'handback',
+            origin: { kind: 'task-notification', taskId: 'task', toolUseId: 'tool', status: 'completed' },
+            message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool',
+                content: [{ type: 'text', text: 'Verdict: fixed.' }], is_error: false }] } };
+        const backgroundLaunch = { type: 'assistant', uuid: 'launch', message: { content: [{ type: 'tool_use', id: 'tool', name: 'Agent',
+            input: { description: 'Diagnose issue', prompt: 'Diagnose it', subagent_type: 'general-purpose', run_in_background: true } }] } };
+        const folded = fold([backgroundLaunch, ack, handback]);
+        const tool = folded.tool('tool');
+        expect(tool?.state).toBe('completed');
+        expect(folded.messages.some(message => message.kind === 'user-text' || message.kind === 'agent-text')).toBe(false);
+        if (!tool) throw new Error('Expected settled native tool');
+        const { SubAgentView } = await import('@/components/tools/renderers/workflow/SubAgentView');
+        const screen = await renderScreen(React.createElement(SubAgentView, {
+            tool: normalizeToolCallForRendering(tool), metadata: null, messages: [], detailLevel: 'summary' }));
+        expect(collectHostText(screen.tree).join(' ')).toContain('Verdict: fixed.');
+        const pending = fold([backgroundLaunch, ack]).tool('tool');
+        if (!pending) throw new Error('Expected launched native tool');
+        const pendingScreen = await renderScreen(React.createElement(SubAgentView, {
+            tool: normalizeToolCallForRendering(pending), metadata: null, messages: [], detailLevel: 'summary' }));
+        expect(collectHostText(pendingScreen.tree).join(' ')).not.toContain('Async agent launched');
+    });
+
     // cli-v0.2.16 (b8d1c449c46ab4dfa8637db36b66f643d149e66d), sessionScanner.ts:
     // released task-notification rewrite preserved origin.status but always wrote is_error:false.
     it.each(['completed', 'failed', 'stopped'] as const)('preserves released native task status %s', async status => {

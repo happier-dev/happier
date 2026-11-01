@@ -1,3 +1,4 @@
+import { getServerFetchUrl, matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
 
@@ -141,7 +142,7 @@ function expectHeaderValue(headers: HeadersInit | undefined, key: string, value:
 }
 
 function findRuntimeFetchCall(url: string) {
-    const call = runtimeFetchMock.mock.calls.find(([input]) => String(input) === url);
+    const call = runtimeFetchMock.mock.calls.find(([input]) => matchServerFetchUrl(url).asymmetricMatch(input));
     expect(call, `expected runtimeFetch to be called with ${url}`).toBeTruthy();
     return call;
 }
@@ -570,7 +571,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(requestMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
-            `https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
+            matchServerFetchUrl(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`),
             expect.objectContaining({
                 method: 'GET',
             }),
@@ -713,7 +714,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             if (url.endsWith('/v1/features')) {
                 return Response.json(buildServerFeaturesResponse());
             }
-            if (url === `https://owner.example/v2/sessions/${sessionId}/pending/${localId}/action`) {
+            if (matchServerFetchUrl(`https://owner.example/v2/sessions/${sessionId}/pending/${localId}/action`).asymmetricMatch(url)) {
                 expect(init).toEqual(expect.objectContaining({
                     method: 'PATCH',
                     body: JSON.stringify({ requestedAction: { v: 1, kind: 'steer_now' } }),
@@ -859,11 +860,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockImplementation(async (input) => {
             const url = String(input);
-            if (url.endsWith(`/pending/${pendingId}/discard`)) {
+            if (getServerFetchUrl(input).pathname.endsWith(`/pending/${pendingId}/discard`)) {
                 getCredentialsForServerUrlMock.mockResolvedValue({ token: accountBToken, secret: 'owner-secret-b' });
                 return Response.json({ ok: true });
             }
-            if (url.endsWith('/pending?includeDiscarded=1')) {
+            if (matchServerFetchUrl(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`).asymmetricMatch(url)) {
                 return Response.json({ pending: [] });
             }
             return new Response(null, { status: 404 });
@@ -899,7 +900,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const ownerToken = buildTokenWithSub('owner-account-stable');
         getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockImplementation(async (input) => String(input).endsWith('/pending?includeDiscarded=1')
+        runtimeFetchMock.mockImplementation(async (input) => matchServerFetchUrl(`https://owner.example/v2/sessions/${sessionId}/pending?includeDiscarded=1`).asymmetricMatch(input)
             ? Response.json({ pending: [] })
             : Response.json({ ok: true }));
 

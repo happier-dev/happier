@@ -9,7 +9,8 @@ const readCredentialsMock = vi.fn<() => Promise<Credentials | null>>();
 const fetchSessionByIdMock = vi.fn();
 const fetchEncryptedTranscriptMessagesPageMock = vi.fn();
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   readCredentials: () => readCredentialsMock(),
 }));
 

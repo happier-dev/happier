@@ -293,6 +293,98 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
         }
     });
 
+    it('rejects recycled window ownership after the tmux server restarts', async () => {
+        const dir = mkShortTempDir('hp-tmux-recycle-');
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const { createTmuxTerminalHostAdapter } = await import('./adapter');
+        const adapter = createTmuxTerminalHostAdapter({ tmux: utils });
+        const options = {
+            workingDirectory: dir,
+            spawnArgv: [process.execPath, '-e', 'setInterval(()=>{},1000)'],
+            spawnEnv: {},
+            isolatedEnv: true,
+        };
+        try {
+            const stale = await adapter.createOrAttachHost({ ...options, sessionName: 'retired-owner' });
+            expect((await adapter.evaluateLiveness(stale)).paneAlive).toBe(true);
+            killIsolatedTmuxServer(socketPath);
+            await waitForCondition(() => runTmux(['-S', socketPath, 'has-session']).status !== 0, {
+                timeoutMs: 2_000, label: 'isolated tmux server exit',
+            });
+            const foreign = await adapter.createOrAttachHost({ ...options, sessionName: 'other-owner' });
+            expect(foreign.paneId).toBe(stale.paneId);
+
+            expect(await adapter.evaluateLiveness(stale)).toMatchObject({ paneAlive: false, paneDead: true });
+            await expect(adapter.adoptExistingHost!(stale)).rejects.toThrow();
+            expect(await adapter.injectUserPrompt(stale, {
+                text: 'must-not-reach-other-owner',
+                multiline: false,
+                origin: { kind: 'ui_pending', nonce: 'recycled-window' },
+                scheduling: {},
+            })).toMatchObject({ status: 'failed', reason: 'pane_dead' });
+            await expect(adapter.interruptTurn(stale)).rejects.toThrow();
+            const control = adapter.createControlPort!(stale);
+            expect(control).not.toBeNull();
+            expect(await control!.sendLiteralText('must-not-reach-other-owner')).toMatchObject({ status: 'host_dead' });
+            expect(await control!.captureScreen()).toMatchObject({ status: 'host_dead' });
+            for (const topology of ['exclusive', 'shared'] as const) {
+                await expect(adapter.dispose({
+                    ...stale, attachMetadata: { ...stale.attachMetadata, topology },
+                })).rejects.toThrow();
+                expect((await adapter.evaluateLiveness(foreign)).paneAlive).toBe(true);
+            }
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            removeIsolatedTmuxTempDir(dir);
+        }
+    });
+
+    it('does not adopt an absent window using another live window in the same session', async () => {
+        const dir = mkShortTempDir('hp-tmux-missing-');
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const { createTmuxTerminalHostAdapter } = await import('./adapter');
+        const adapter = createTmuxTerminalHostAdapter({ tmux: utils });
+        try {
+            const handle = await adapter.createOrAttachHost({
+                sessionName: 'live-owner', workingDirectory: dir,
+                spawnArgv: [process.execPath, '-e', 'setInterval(()=>{},1000)'],
+                spawnEnv: {}, isolatedEnv: true,
+            });
+            const absent = { ...handle, paneId: 'missing.0' };
+            expect(await adapter.evaluateLiveness(absent)).toMatchObject({ paneAlive: false, paneDead: true });
+            await expect(adapter.adoptExistingHost!(absent)).rejects.toThrow();
+            expect((await adapter.evaluateLiveness(handle)).paneAlive).toBe(true);
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            removeIsolatedTmuxTempDir(dir);
+        }
+    });
+
+    it('refuses stale foreground attach instead of linking another owners window', async () => {
+        const dir = mkShortTempDir('hp-tmux-attach-');
+        const socketPath = join(dir, 'tmux.sock');
+        const { runTmuxAttach } = await import('@/terminal/attachment/tmuxAttach');
+        try {
+            expect(runTmux(['-S', socketPath, 'new-session', '-d', '-s', 'retired-owner-new', 'sleep 120']).status).toBe(0);
+            const result = await runTmuxAttach({
+                sessionId: 'stale-attachment',
+                terminal: { mode: 'tmux', tmux: { target: 'retired-owner:@0' } },
+            }, {
+                isTmuxAvailableFn: async () => true,
+                insideTmux: false,
+                spawnTmuxFn: async ({ args, stdio }) => stdio === 'inherit' ? 0
+                    : runTmux(['-S', socketPath, ...args]).status ?? 1,
+            });
+            expect(result).not.toBe(0);
+            expect(runTmux(['-S', socketPath, 'has-session', '-t', '=retired-owner-new']).status).toBe(0);
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            removeIsolatedTmuxTempDir(dir);
+        }
+    });
+
     it('owns only the optional client window in an existing selected tmux session', async () => {
         const dir = mkShortTempDir('hp-tmux-presenter-');
         const socketPath = join(dir, 'tmux.sock');
@@ -431,7 +523,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(Number.parseInt(panes.stdout.trim(), 10)).toBe(result.pid);
         } finally {
             killIsolatedTmuxServer(socketPath);
-            rmSync(dir, { recursive: true, force: true });
+            removeIsolatedTmuxTempDir(dir);
         }
     });
 
@@ -455,7 +547,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(cursor).toEqual({ x: expect.any(Number), y: expect.any(Number) });
         } finally {
             killIsolatedTmuxServer(socketPath);
-            rmSync(dir, { recursive: true, force: true });
+            removeIsolatedTmuxTempDir(dir);
         }
     });
 
@@ -588,6 +680,61 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(existsSync(sentinelFile)).toBe(false);
         } finally {
             killIsolatedTmuxServer(socketPath);
+            removeIsolatedTmuxTempDir(dir);
+        }
+    });
+
+    it('creates native hosts in the requested socket root rather than the ambient server', async () => {
+        const ambientRoot = mkShortTempDir('hp-ambient-');
+        const dir = mkShortTempDir('hp-selected-');
+        const selectedRoot = join(dir, 'socket-root');
+        const sessionName = 'isolated-probe';
+        const { createTmuxTerminalHostAdapter } = await import('./adapter');
+        const adapter = createTmuxTerminalHostAdapter();
+        try {
+            await withCleanTmuxClientEnv(async () => {
+                process.env.TMUX_TMPDIR = ambientRoot;
+                expect(runTmux(['new-session', '-d', '-s', 'ambient-sentinel'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).toBe(0);
+                const ambientIdentity = runTmux(['display-message', '-p', '#{socket_path},#{pid},0'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                });
+                expect(ambientIdentity.status).toBe(0);
+                process.env.TMUX = ambientIdentity.stdout.trim();
+                process.env.TMUX_PANE = '%0';
+                const outFile = join(dir, 'native.json');
+                const handle = await adapter.createOrAttachHost({
+                    sessionName, label: 'native-client', workingDirectory: dir,
+                    spawnArgv: [process.execPath, writeDumpScript(dir), outFile, '60000', 'native-client'],
+                    spawnEnv: { TMUX_TMPDIR: selectedRoot }, isolatedEnv: true, topology: 'shared',
+                });
+                expect(handle.socketDir).toBe(selectedRoot);
+                await waitForFile(outFile, 2_000);
+                expect(readDumpPayload(outFile).argv).toEqual(['native-client']);
+                expect(runTmux(['has-session', '-t', `=${sessionName}`], {
+                    env: { TMUX_TMPDIR: selectedRoot },
+                }).status).toBe(0);
+                expect(runTmux(['has-session', '-t', `=${sessionName}`], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).not.toBe(0);
+                expect(await adapter.evaluateLiveness(handle)).toMatchObject({ paneAlive: true });
+                await adapter.dispose(handle);
+                const remainingWindows = runTmux(['list-windows', '-t', `=${sessionName}`, '-F', '#{window_id}'], {
+                    env: { TMUX_TMPDIR: selectedRoot },
+                });
+                expect(remainingWindows.status).toBe(0);
+                expect(handle.paneId).toMatch(/^@\d+$/);
+                expect(remainingWindows.stdout.trim().split(/\r?\n/)).not.toContain(handle.paneId);
+                expect(runTmux(['has-session', '-t', '=ambient-sentinel'], {
+                    env: { TMUX_TMPDIR: ambientRoot },
+                }).status).toBe(0);
+            });
+        } finally {
+            for (const root of [selectedRoot, ambientRoot]) {
+                runTmux(['kill-server'], { env: { TMUX_TMPDIR: root } });
+            }
+            removeIsolatedTmuxTempDir(ambientRoot);
             removeIsolatedTmuxTempDir(dir);
         }
     });

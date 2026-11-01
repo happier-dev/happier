@@ -177,7 +177,7 @@ describe('buildSessionListIndexFromViewData', () => {
 });
 
 describe('resolveSessionListIndexFolderDragEligibility', () => {
-    it('allows persisted session rows and folder headers only when the folders feature is enabled', () => {
+    it('allows both session storage kinds and folder headers only when the folders feature is enabled', () => {
         const persistedSession = {
             type: 'session' as const,
             sessionId: 'persisted-session',
@@ -202,8 +202,8 @@ describe('resolveSessionListIndexFolderDragEligibility', () => {
             storageKind: 'persisted',
         });
         expect(resolveSessionListIndexFolderDragEligibility(directSession, { foldersFeatureEnabled: true })).toMatchObject({
-            canUseSessionFolders: false,
-            reason: 'direct-session',
+            canUseSessionFolders: true,
+            reason: 'eligible',
             storageKind: 'direct',
         });
         expect(resolveSessionListIndexFolderDragEligibility(folderHeader, { foldersFeatureEnabled: true })).toMatchObject({
@@ -214,6 +214,10 @@ describe('resolveSessionListIndexFolderDragEligibility', () => {
         expect(resolveSessionListIndexFolderDragEligibility(persistedSession, { foldersFeatureEnabled: false })).toMatchObject({
             canUseSessionFolders: false,
             foldersFeatureEnabled: false,
+            reason: 'feature-disabled',
+        });
+        expect(resolveSessionListIndexFolderDragEligibility(directSession, { foldersFeatureEnabled: false })).toMatchObject({
+            canUseSessionFolders: false,
             reason: 'feature-disabled',
         });
     });

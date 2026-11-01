@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { BackgroundServiceRepairPlan } from '@/diagnostics/backgroundServiceRepair';
 
 import { buildDoctorRepairReport } from './buildDoctorRepairReport';
+import { renderDoctorRepairReport } from '@/cli/commands/serviceRepair/renderDoctorRepairReport';
 import type { AuthSignalsForProfile } from './classifyAuth';
 import type {
   AutomaticStartupEntry,
@@ -79,6 +80,33 @@ function basic(plan: BackgroundServiceRepairPlan, entries: readonly AutomaticSta
 // ────────── Tests ──────────
 
 describe('buildDoctorRepairReport — clean state', async () => {
+  it('does not classify a newer running service as an older CLI version', async () => {
+    const report = await basic(makePlan(), [makeAutomaticStartupEntry({ runningCliVersion: '0.12.4' })]);
+    expect(report.findings.map((finding) => finding.kind)).not.toContain('automatic_startup_version_stale');
+  });
+
+  it('renders the service inventory version used by its finding when a separate daemon snapshot differs', async () => {
+    const currentCli = makeCurrentCli({ releaseChannel: 'stable', ringId: 'stable', version: '0.2.17' });
+    const service = makeAutomaticStartupEntry({
+      releaseChannel: 'stable', ringId: 'stable', configuredCliVersion: '0.2.17',
+      runningCliVersion: '0.2.16', managedServerIds: ['cloud'],
+    });
+    const daemon: RunningDaemonEntry = {
+      serverId: 'cloud', pid: 4321, httpPort: 41234, startedBy: 'automatic-startup',
+      startedWithReleaseChannel: 'stable', startedWithCliVersion: '0.2.17',
+      matchesCurrentCli: true, staleStateFile: false,
+    };
+    const report = await buildDoctorRepairReport({
+      currentCli, automaticStartup: [service], currentlyRunning: [daemon],
+      localRelays: [], plan: makePlan({ currentReleaseChannel: 'stable' }), currentServerId: 'cloud',
+      preferredMode: 'user', latestRelayVersionForCurrentChannel: null, activeServerUrl: null,
+      authSignals: [], hasAnyServerProfile: true, platform: 'linux', uid: 1000,
+    });
+    expect(report.findings.map((finding) => finding.kind)).toContain('automatic_startup_version_stale');
+    const serviceRow = renderDoctorRepairReport(report).find((line) => line.includes(service.name));
+    expect(serviceRow).toContain('0.2.16');
+  });
+
   it('case #1 — dev CLI, dev startup matching, no findings', async () => {
     const entries = [makeAutomaticStartupEntry()];
     const report = await basic(makePlan({ existingServices: [] }), entries);

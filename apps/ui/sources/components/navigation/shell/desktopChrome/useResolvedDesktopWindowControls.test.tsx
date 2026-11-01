@@ -3,117 +3,104 @@ import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-
 import { installNavigationShellCommonModuleMocks } from '../navigationShellTestHelpers';
 import { useResolvedDesktopWindowControls } from './useResolvedDesktopWindowControls';
+import { Switch } from '@/components/ui/forms/Switch';
+import { DesktopWindowChromeSetting } from '@/components/settings/desktop/DesktopWindowChromeSetting';
+import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const desktopWindowBridgeState = vi.hoisted(() => ({
-    getDesktopWindowChromePolicy: vi.fn(),
-    getDesktopWindowState: vi.fn(),
-    listenDesktopWindowState: vi.fn(),
-    minimizeDesktopWindow: vi.fn(),
-    toggleDesktopWindowMaximize: vi.fn(),
-    closeDesktopWindow: vi.fn(),
-    startDesktopWindowDragging: vi.fn(),
+const native = vi.hoisted(() => ({
+    strategy: 'none', supported: false, persistenceError: false, failWrite: false,
+    invoke: vi.fn(),
+}));
+installNavigationShellCommonModuleMocks();
+// Native IPC is the system boundary; policy normalization, observers and consumers stay real.
+vi.mock('@/utils/platform/tauri', () => ({
+    isTauriDesktop: () => true,
+    invokeTauri: (command: string, args?: Record<string, unknown>) => native.invoke(command, args),
+    listenTauriEvent: async () => () => {},
 }));
 
-installNavigationShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-            },
-        });
-    },
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/utils/platform/desktopWindowBridge', () => ({
-    getDesktopWindowChromePolicy: () => desktopWindowBridgeState.getDesktopWindowChromePolicy(),
-    getDesktopWindowState: () => desktopWindowBridgeState.getDesktopWindowState(),
-    listenDesktopWindowState: (handler: (state: { isMaximized: boolean }) => void) =>
-        desktopWindowBridgeState.listenDesktopWindowState(handler),
-    minimizeDesktopWindow: () => desktopWindowBridgeState.minimizeDesktopWindow(),
-    toggleDesktopWindowMaximize: () => desktopWindowBridgeState.toggleDesktopWindowMaximize(),
-    closeDesktopWindow: () => desktopWindowBridgeState.closeDesktopWindow(),
-    startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
-}));
-
-function ResolvedDesktopWindowControlsHarness(props: Readonly<{
-    variant: 'expanded' | 'collapsed';
-    desktopWindowControls?: React.ReactNode;
+function Harness(props: Readonly<{
+    variant: 'expanded' | 'collapsed'; desktopWindowControls?: React.ReactNode;
 }>) {
     const controls = useResolvedDesktopWindowControls({
-        variant: props.variant,
-        desktopWindowControls: props.desktopWindowControls,
+        ...props,
         hasDesktopWindowControlsOverride: Object.prototype.hasOwnProperty.call(props, 'desktopWindowControls'),
     });
-
-    return <>{controls}</>;
+    const drag = useDesktopWindowDragMouseProps();
+    return <>{controls}<DesktopWindowChromeSetting /><View testID="drag-probe" {...drag} /></>;
 }
 
-describe('useResolvedDesktopWindowControls', () => {
+function policy() {
+    return {
+        strategy: native.strategy,
+        ...(native.supported ? { canSetNativeTitleBar: true } : {}),
+        ...(native.persistenceError ? { nativeTitleBarPersistenceError: true } : {}),
+    };
+}
+
+describe('desktop window chrome consumers', () => {
     beforeEach(() => {
-        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
-        desktopWindowBridgeState.getDesktopWindowState.mockReset();
-        desktopWindowBridgeState.listenDesktopWindowState.mockReset();
-        desktopWindowBridgeState.minimizeDesktopWindow.mockReset();
-        desktopWindowBridgeState.toggleDesktopWindowMaximize.mockReset();
-        desktopWindowBridgeState.closeDesktopWindow.mockReset();
-        desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
-        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'none' });
-        desktopWindowBridgeState.getDesktopWindowState.mockResolvedValue({ isMaximized: false });
-        desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
-    });
-
-    it('returns no controls when the desktop strategy is none', async () => {
-        const screen = await renderScreen(<ResolvedDesktopWindowControlsHarness variant="expanded" />);
-
-        await act(async () => {
-            await Promise.resolve();
+        native.strategy = 'none'; native.supported = false;
+        native.persistenceError = false; native.failWrite = false;
+        native.invoke.mockReset();
+        native.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_get_window_chrome_policy') return policy();
+            if (command === 'desktop_get_window_state') return { isMaximized: false };
+            if (command === 'desktop_set_native_title_bar') {
+                if (native.failWrite) throw new Error('OS rejected the change');
+                native.strategy = args?.useNativeTitleBar ? 'native-windows-frame' : 'custom-controls';
+                return policy();
+            }
+            return true;
         });
-
-        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(0);
-        expect(desktopWindowBridgeState.listenDesktopWindowState).not.toHaveBeenCalled();
     });
 
-    it('uses injected controls without consulting the bridge', async () => {
-        const screen = await renderScreen(
-            <ResolvedDesktopWindowControlsHarness
-                variant="expanded"
-                desktopWindowControls={<View testID="injected-window-controls" />}
-            />,
-        );
-
-        expect(screen.findByTestId('injected-window-controls')).toBeTruthy();
-        expect(desktopWindowBridgeState.getDesktopWindowChromePolicy).not.toHaveBeenCalled();
+    it('keeps controls and the Windows-only preference absent on unsupported hosts', async () => {
+        const screen = await renderScreen(<Harness variant="expanded" />);
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeNull();
+        expect(screen.findByTestId('settings-desktop-native-title-bar')).toBeNull();
     });
 
-    it('renders stacked custom-controls for the collapsed host', async () => {
-        desktopWindowBridgeState.getDesktopWindowChromePolicy.mockResolvedValue({ strategy: 'custom-controls' });
+    it('preserves injected controls', async () => {
+        const screen = await renderScreen(<Harness variant="expanded" desktopWindowControls={<View testID="injected" />} />);
+        expect(screen.findByTestId('injected')).toBeTruthy();
+    });
 
-        const screen = await renderScreen(<ResolvedDesktopWindowControlsHarness variant="collapsed" />);
+    it.each(['expanded', 'collapsed'] as const)('switches %s controls and drag regions together without remounting', async (variant) => {
+        native.strategy = 'custom-controls'; native.supported = true;
+        const screen = await renderScreen(<Harness variant={variant} />);
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeTruthy();
+        expect(screen.findByTestId('drag-probe')?.props.onMouseDown).toBeTypeOf('function');
+        const toggle = () => screen.findByType(Switch).props;
+        await act(async () => { await toggle().onValueChange(true); });
+        expect(toggle().value).toBe(true);
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeNull();
+        expect(screen.findByTestId('drag-probe')?.props.onMouseDown).toBeUndefined();
+        await act(async () => { await toggle().onValueChange(false); });
+        expect(toggle().value).toBe(false);
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeTruthy();
+        expect(screen.findByTestId('drag-probe')?.props.onMouseDown).toBeTypeOf('function');
+    });
 
-        await act(async () => {
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+    it('preserves the effective mode on a native failure and allows retry', async () => {
+        native.strategy = 'custom-controls'; native.supported = true; native.failWrite = true;
+        const screen = await renderScreen(<Harness variant="expanded" />);
+        const toggle = () => screen.findByType(Switch).props;
+        await act(async () => { await toggle().onValueChange(true); });
+        expect(toggle().value).toBe(false);
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeTruthy();
+        native.failWrite = false;
+        await act(async () => { await toggle().onValueChange(true); });
+        expect(toggle().value).toBe(true);
+    });
 
-        const minimizeButton = screen.findByTestId('desktop-window-controls-minimize');
-        const controlsGroup = minimizeButton?.parent;
-
-        expect(minimizeButton).toBeTruthy();
-        expect(screen.findByTestId('desktop-window-controls-toggle-maximize')).toBeTruthy();
-        expect(screen.findByTestId('desktop-window-controls-close')).toBeTruthy();
-        expect(controlsGroup?.props.style).toEqual(
-            expect.objectContaining({ flexDirection: 'column' }),
-        );
+    it('keeps native macOS traffic lights without custom buttons or a Windows switch', async () => {
+        native.strategy = 'native-macos-traffic-lights';
+        const screen = await renderScreen(<Harness variant="expanded" />);
+        expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
+        expect(screen.findByTestId('desktop-window-controls-minimize')).toBeNull();
+        expect(screen.findByTestId('settings-desktop-native-title-bar')).toBeNull();
     });
 });

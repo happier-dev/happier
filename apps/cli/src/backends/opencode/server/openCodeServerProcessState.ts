@@ -38,8 +38,10 @@ export function isOpenCodeServerPidAlive(
   if (!Number.isFinite(pid) || pid <= 0) return false;
   try {
     process.kill(Math.floor(pid), 0);
-  } catch {
-    return false;
+  } catch (error) {
+    // Only absence proves that a recorded owner is gone. Permission/probe failures must
+    // retain its custody so automatic cleanup cannot discard a potentially live resource.
+    return !(error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH');
   }
 
   const stat = readOpenCodeServerProcessStatBestEffort(pid, options.platform);

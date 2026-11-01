@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { StatusPill } from './StatusPill';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -10,8 +11,6 @@ vi.mock('react-native', async () => {
 
 describe('StatusPill', () => {
     it('renders a semantic status pill with a stable variant marker', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(<StatusPill variant="success" label="Online" testID="status-online" />);
 
         expect(screen.findByTestId('status-online')).not.toBeNull();
@@ -20,8 +19,6 @@ describe('StatusPill', () => {
     });
 
     it('keeps the variant marker out of flex layout', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(<StatusPill variant="success" label="Online" testID="status-online" />);
         const variantMarker = screen.findByTestId('status-online:variant:success');
         const flat = flattenStyle(variantMarker?.props.style);
@@ -32,8 +29,6 @@ describe('StatusPill', () => {
     });
 
     it('can hide the leading dot without hiding the label', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(<StatusPill variant="neutral" label="Clean" hideDot testID="status-clean" />);
 
         expect(screen.findByTestId('status-clean:dot')).toBeNull();
@@ -41,8 +36,6 @@ describe('StatusPill', () => {
     });
 
     it('can render without badge chrome for inline status rows', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(
             <StatusPill
                 variant="success"
@@ -65,8 +58,6 @@ describe('StatusPill', () => {
     });
 
     it('renders the default pill chrome as background-only with no border', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(<StatusPill variant="success" label="Online" testID="status-online" />);
         const container = screen.findByTestId('status-online');
         const flat = flattenStyle(container?.props.style);
@@ -79,8 +70,6 @@ describe('StatusPill', () => {
     });
 
     it('uses compact pill typography for the label', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(<StatusPill variant="info" label="Syncing" testID="status-sync" />);
         const textNode = screen.findByTestId('status-sync:label');
         const flat = flattenStyle(textNode?.props.style);
@@ -90,8 +79,6 @@ describe('StatusPill', () => {
     });
 
     it('uses regular untracked typography for phrase labels', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(
             <StatusPill variant="warning" label="Account rotation pending" labelVariant="phrase" testID="status-rotation" />,
         );
@@ -103,7 +90,6 @@ describe('StatusPill', () => {
     });
 
     it('paints a pill-chrome label with the on-tint ink while the dot keeps the glyph foreground', async () => {
-        const { StatusPill } = await import('./StatusPill');
         const { lightTheme } = await import('@/theme');
         const state = lightTheme.colors.state.success;
 
@@ -118,7 +104,6 @@ describe('StatusPill', () => {
     });
 
     it('keeps the glyph foreground for plain chrome, where no tint sits behind the label', async () => {
-        const { StatusPill } = await import('./StatusPill');
         const { lightTheme } = await import('@/theme');
         const state = lightTheme.colors.state.success;
 
@@ -132,8 +117,6 @@ describe('StatusPill', () => {
     });
 
     it('lets an explicit foreground color override both ink roles', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(
             <StatusPill variant="success" label="Online" foregroundColor="#123456" testID="status-override" />,
         );
@@ -145,8 +128,6 @@ describe('StatusPill', () => {
     });
 
     it('replaces the dot with a leading element and truncates constrained labels', async () => {
-        const { StatusPill } = await import('./StatusPill');
-
         const screen = await renderScreen(
             <StatusPill
                 variant="info"

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
+import { lazySchema } from '../lazySchema.js';
 
 const MAX_TRANSFER_ID_LENGTH = 512;
 const MAX_TRANSFER_MANIFEST_HASH_LENGTH = 256;
@@ -32,7 +33,7 @@ function boundedBase64String(maxLength: number) {
   });
 }
 
-const TransferUrlEndpointCandidateSchema = z
+const TransferUrlEndpointCandidateSchema = lazySchema(() => z
   .object({
     kind: z.enum(['tcp', 'http', 'https']),
     url: boundedString(MAX_TRANSFER_ENDPOINT_URL_LENGTH),
@@ -60,14 +61,14 @@ const TransferUrlEndpointCandidateSchema = z
       });
     }
   })
-  .strict();
+  .strict());
 
-export const TransferEndpointCandidateSchema = z.discriminatedUnion('kind', [
+export const TransferEndpointCandidateSchema = lazySchema(() => z.discriminatedUnion('kind', [
   TransferUrlEndpointCandidateSchema,
-]);
+]));
 export type TransferEndpointCandidate = z.infer<typeof TransferEndpointCandidateSchema>;
 
-const TransferOpenEnvelopeSchema = z
+const TransferOpenEnvelopeSchema = lazySchema(() => z
   .object({
     transferId: boundedString(MAX_TRANSFER_ID_LENGTH),
     kind: z.literal('open'),
@@ -79,9 +80,9 @@ const TransferOpenEnvelopeSchema = z
     // encoding large digest lists into transfer ids (which are capped at the transport layer).
     openPayloadBase64: boundedBase64String(MAX_TRANSFER_OPEN_PAYLOAD_BASE64_LENGTH).optional(),
   })
-  .strict();
+  .strict());
 
-export const TransferChunkEnvelopeSchema = z
+export const TransferChunkEnvelopeSchema = lazySchema(() => z
   .object({
     transferId: boundedString(MAX_TRANSFER_ID_LENGTH),
     kind: z.literal('chunk'),
@@ -89,56 +90,56 @@ export const TransferChunkEnvelopeSchema = z
     payloadBase64: boundedBase64String(MAX_TRANSFER_CHUNK_PAYLOAD_BASE64_LENGTH),
     encryptedDataKeyEnvelopeBase64: boundedBase64String(MAX_TRANSFER_CHUNK_PAYLOAD_BASE64_LENGTH).optional(),
   })
-  .strict();
+  .strict());
 export type TransferChunkEnvelope = z.infer<typeof TransferChunkEnvelopeSchema>;
 
-const TransferAckEnvelopeSchema = z
+const TransferAckEnvelopeSchema = lazySchema(() => z
   .object({
     transferId: boundedString(MAX_TRANSFER_ID_LENGTH),
     kind: z.literal('ack'),
     nextSequence: z.number().int().nonnegative(),
     windowBytes: z.number().int().nonnegative().optional(),
   })
-  .strict();
+  .strict());
 
-const TransferFinishEnvelopeSchema = z
+const TransferFinishEnvelopeSchema = lazySchema(() => z
   .object({
     transferId: boundedString(MAX_TRANSFER_ID_LENGTH),
     kind: z.literal('finish'),
     manifestHash: boundedString(MAX_TRANSFER_MANIFEST_HASH_LENGTH),
   })
-  .strict();
+  .strict());
 
-const TransferAbortEnvelopeSchema = z
+const TransferAbortEnvelopeSchema = lazySchema(() => z
   .object({
     transferId: boundedString(MAX_TRANSFER_ID_LENGTH),
     kind: z.literal('abort'),
     reason: boundedString(1024),
   })
-  .strict();
+  .strict());
 
-export const TransferStreamEnvelopeSchema = z.discriminatedUnion('kind', [
+export const TransferStreamEnvelopeSchema = lazySchema(() => z.discriminatedUnion('kind', [
   TransferOpenEnvelopeSchema,
   TransferChunkEnvelopeSchema,
   TransferAckEnvelopeSchema,
   TransferFinishEnvelopeSchema,
   TransferAbortEnvelopeSchema,
-]);
+]));
 export type TransferStreamEnvelope = z.infer<typeof TransferStreamEnvelopeSchema>;
 
-export const MachineTransferSendEnvelopeSchema = z
+export const MachineTransferSendEnvelopeSchema = lazySchema(() => z
   .object({
     targetMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
     envelope: TransferStreamEnvelopeSchema,
   })
-  .strict();
+  .strict());
 export type MachineTransferSendEnvelope = z.infer<typeof MachineTransferSendEnvelopeSchema>;
 
-export const MachineTransferReceiveEnvelopeSchema = z
+export const MachineTransferReceiveEnvelopeSchema = lazySchema(() => z
   .object({
     sourceMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
     targetMachineId: boundedString(MAX_MACHINE_ID_LENGTH),
     envelope: TransferStreamEnvelopeSchema,
   })
-  .strict();
+  .strict());
 export type MachineTransferReceiveEnvelope = z.infer<typeof MachineTransferReceiveEnvelopeSchema>;

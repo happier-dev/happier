@@ -256,4 +256,13 @@ describe('mapPiRpcEventToAgentMessages', () => {
   it('returns an empty list for unknown events', () => {
     expect(mapPiRpcEventToAgentMessages({ type: 'something_new' })).toEqual([]);
   });
+
+  it('does not infer user-input origin from native message_end events', () => {
+    for (const content of ['continue the work', [{ type: 'text', text: 'continue the work' }]]) {
+      expect(mapPiRpcEventToAgentMessages({
+        type: 'message_end',
+        message: { role: 'user', content },
+      })).toEqual([]);
+    }
+  });
 });

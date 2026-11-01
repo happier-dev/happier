@@ -25,22 +25,26 @@ import {
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import {
     buildSessionOrganizationListViewState,
+    applyWorkspaceDisplayToSessionListViewData,
     buildSessionOrganizationReorderRequestFromGroupOrder,
     buildSessionOrganizationReorderRequestFromWorkspaceOrder,
 } from '@/sync/domains/session/organization/viewState';
 import {
     deleteSessionFolder as deleteSessionOrganizationFolder,
-    deleteSessionLabel as deleteSessionOrganizationLabel,
     reorderSessionOrganization,
     setSessionPin as setSessionOrganizationPin,
     setSessionTagLabels as setSessionOrganizationTagLabels,
     upsertSessionFolder as upsertSessionOrganizationFolder,
-    upsertSessionLabel as upsertSessionOrganizationLabel,
+    setWorkspaceDisplay,
+    setSessionAppearanceForServer,
 } from '@/sync/ops/sessionOrganization';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import { useSessionAppearancesSupported } from '@/hooks/session/useSessionAppearance';
+import { storage } from '@/sync/domains/state/storageStore';
 
 import {
     countCollapsedSessionListGroups,
@@ -61,7 +65,6 @@ import {
 import { getAllKnownTags } from '../sessionTagUtils';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
 import { useSessionListFocusedFolderState } from './useSessionListFocusedFolderState';
-import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import {
     filterSessionListItemsForHeaderControls,
     hasActiveSessionListHeaderFilters,
@@ -145,7 +148,6 @@ function measureSessionListRenderDerivation<T>(
 export type UseSessionListViewStateInput = Readonly<{
     data: SessionListViewItem[] | null;
     pathname: string;
-    storageKind?: SessionListStorageFilter;
     headerFilters?: SessionListHeaderFilterInput;
     sessionListSurfaceDataActive?: boolean;
 }>;
@@ -155,7 +157,6 @@ export function useSessionListViewState({
     headerFilters,
     pathname,
     sessionListSurfaceDataActive = true,
-    storageKind,
 }: UseSessionListViewStateInput) {
     const isTablet = useIsTablet();
     const [sessionMruOrderV1, setSessionMruOrderV1] = useLocalSettingMutable('sessionMruOrderV1');
@@ -192,7 +193,7 @@ export function useSessionListViewState({
     const showServerBadge = selection.enabled && selection.presentation === 'flat-with-badge' && selectedServerCount > 1;
     const showPinnedServerBadge = selection.enabled && selectedServerCount > 1;
     const selectable = isTablet;
-    const folderActionsEnabled = storageKind !== 'direct' && sessionFoldersDecision?.state === 'enabled';
+    const folderActionsEnabled = sessionFoldersDecision?.state === 'enabled';
     const sessionFolderViewMode: SessionFolderViewModeV1 = sessionFolderViewModeRaw === 'tree' ? 'tree' : 'off';
     const sessionListSavedFolderSortMode = normalizeSessionListFolderSortMode(sessionListFolderSortModeRaw);
     const sessionListOrderingMode = normalizeSessionListOrderingModeV1(sessionListOrderingModeRaw);
@@ -213,6 +214,9 @@ export function useSessionListViewState({
     const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1;
     const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1;
     const workspaceLabelsV1 = organizationListViewState.workspaceLabelsV1;
+    const workspaceColorsV1 = organizationListViewState.workspaceColorsV1;
+    const workspaceLabelsByLabelKey = storage((state) => state.sessionOrganizationLabelsByLabelKey);
+    const sessionAppearancesSupported = useSessionAppearancesSupported(activeOrganizationServerId);
     const currentGroupOrderMap = sessionListGroupOrderV1 ?? EMPTY_SESSION_LIST_GROUP_ORDER;
     const currentWorkspaceOrderMap = sessionWorkspaceOrderV1 ?? EMPTY_SESSION_WORKSPACE_ORDER;
 
@@ -222,8 +226,8 @@ export function useSessionListViewState({
 
     const allKnownTags = React.useMemo(() => getAllKnownTags(sessionTagsV1), [sessionTagsV1]);
 
-    const getOrganizationMutationContext = React.useCallback(async (): Promise<SessionOrganizationMutationScope | null> => {
-        const resolved = await resolveSessionOrganizationMutationScope(activeOrganizationServerId);
+    const getOrganizationMutationContext = React.useCallback(async (serverId?: string | null): Promise<SessionOrganizationMutationScope | null> => {
+        const resolved = await resolveSessionOrganizationMutationScope(serverId ?? activeOrganizationServerId);
         return resolved.ok ? resolved.scope : null;
     }, [activeOrganizationServerId]);
 
@@ -366,37 +370,35 @@ export function useSessionListViewState({
                     ? nextLabelsRaw[scopeKey].trim()
                     : '';
                 if (current === next) continue;
-                if (next) {
-                    tasks.push(upsertSessionOrganizationLabel({
-                        ...mutation,
-                        request: {
-                            labelKind: 'workspace',
-                            scopeKey,
-                            display: { t: 'plain', v: { label: next } },
-                        },
-                    }));
-                } else {
-                    tasks.push(deleteSessionOrganizationLabel({
-                        ...mutation,
-                        request: {
-                            labelKind: 'workspace',
-                            scopeKey,
-                        },
-                    }));
-                }
+                tasks.push(setWorkspaceDisplay({ ...mutation, workspaceKey: scopeKey, patch: { label: next || null } }));
             }
             await Promise.all(tasks);
         });
     }, [getOrganizationMutationContext, runOrganizationMutation, workspaceLabelsV1]);
 
+    const setWorkspaceColor = React.useCallback((workspaceKey: string, color: SessionAppearanceColor | null, opts?: Readonly<{ serverId?: string | null }>) => {
+        runOrganizationMutation(async () => {
+            const mutation = await getOrganizationMutationContext(opts?.serverId);
+            if (mutation) await setWorkspaceDisplay({ ...mutation, workspaceKey, patch: { color } });
+        });
+    }, [getOrganizationMutationContext, runOrganizationMutation]);
+
+    /** Raw session id (not server:session); pass the row's server in a multi-server list. */
+    const setSessionAppearance = React.useCallback((sessionId: string, color: SessionAppearanceColor | null, opts?: Readonly<{ serverId?: string | null }>) => {
+        runOrganizationMutation(async () => {
+            await setSessionAppearanceForServer({ serverId: opts?.serverId ?? activeOrganizationServerId, sessionId, color });
+        });
+    }, [activeOrganizationServerId, runOrganizationMutation]);
+
     const folderPresentedData = React.useMemo(() => {
-        if (!data || !folderViewEnabled) return data;
-        return applySessionFoldersToSessionListViewData(data, {
+        const coloredData = applyWorkspaceDisplayToSessionListViewData(data, workspaceLabelsByLabelKey);
+        if (!coloredData || !folderViewEnabled) return coloredData;
+        return applySessionFoldersToSessionListViewData(coloredData, {
             enabled: true,
             folders: sessionFoldersV1,
             assignmentsBySessionKey: sessionFolderAssignmentsBySessionKey,
         });
-    }, [data, folderViewEnabled, sessionFolderAssignmentsBySessionKey, sessionFoldersV1]);
+    }, [data, folderViewEnabled, sessionFolderAssignmentsBySessionKey, sessionFoldersV1, workspaceLabelsByLabelKey]);
 
     const headerFiltersActive = hasActiveSessionListHeaderFilters(headerFilters);
 
@@ -465,11 +467,12 @@ export function useSessionListViewState({
             () => buildSessionListReachabilityModels({
                 cache: reachabilityModelsCacheRef.current,
                 items: filteredListItems,
+                activeServerId: activeOrganizationServerId,
                 machinesById: renderMachineDisplayById,
-                workspaceLabelsV1,
+                workspaceLabelsByLabelKey,
             }),
         );
-    }, [filteredListItems, renderMachineDisplayById, workspaceLabelsV1]);
+    }, [activeOrganizationServerId, filteredListItems, renderMachineDisplayById, workspaceLabelsByLabelKey]);
 
     const selectedItemsRef = React.useRef<ReadonlyArray<SessionListSelectedItem> | null>(null);
     const visibleListItems = React.useMemo(() => {
@@ -527,6 +530,10 @@ export function useSessionListViewState({
         rememberLastProjectSessionSelections,
         workspaceLabelsV1,
         setWorkspaceLabelsV1,
+        workspaceColorsV1,
+        setWorkspaceColor,
+        setSessionAppearance,
+        sessionAppearancesSupported,
         workspaceFaviconsEnabled,
         workspaceMachineSubtitlesEnabled,
         collapsedGroupKeysV1,

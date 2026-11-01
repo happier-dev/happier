@@ -119,6 +119,16 @@ Happier supports:
 
 For local command servers, the main field is a command line so you can paste common README examples directly. Happier then splits that into command + arguments internally.
 
+In current development source (not yet released), local package-runner commands
+such as `npx`, `npm`, `yarn`, `pnpm`, and `bunx` use the executable you configure,
+including a specific executable path. Install that tool on the machine running
+the session. Happier preserves its arguments, applies the configured environment
+values, and runs it from the session's workspace directory.
+
+If the configured tool is missing, Happier reports the prerequisite instead of
+substituting another package runner. An execution error is reported without
+retrying through a different runner.
+
 For remote servers, you provide:
 
 - the URL
@@ -353,6 +363,38 @@ Use strict mode when you want the startup behavior to be fail-closed instead of 
 4. Select an additional Happier-managed server you want for this session only
 5. Start the session
 
+### Select tools when creating a session from the CLI
+
+`happier session create --mcp-selection-json <json>` accepts a selection object.
+For example, start with saved MCP defaults disabled and include one saved server:
+
+```bash
+happier session create --mcp-selection-json '{"v":1,"managedServersEnabled":false,"forceIncludeServerIds":["repo-tools"],"forceExcludeServerIds":[]}'
+```
+
+Use saved server IDs in the include and exclude arrays. Exclusion wins when an ID
+appears in both. All fields are optional: the version defaults to `1`, managed
+servers default to enabled, and the arrays default to empty. Disabling managed
+defaults still allows explicitly included servers. It also leaves the built-in
+Happier tools enabled and leaves agent-native MCP configuration unchanged.
+
+In **unreleased development source**, set `happierToolsEnabled` to `false` to omit
+the built-in Happier server and Pi tools extension, along with their tool guidance:
+
+```bash
+happier session create --mcp-selection-json '{"v":1,"managedServersEnabled":false,"happierToolsEnabled":false}'
+```
+
+Omitting `happierToolsEnabled` preserves enabled built-in tools. The opt-out needs
+an updated CLI **and the updated daemon on the target machine**; older runners
+ignore this field and still expose built-in tools. It controls tool delivery for
+the session, rather than restricting the agent's native tools, filesystem,
+network, or ability to invoke an installed CLI.
+
+The development CLI rejects unknown fields such as `{"servers":[]}` and values
+that are not objects, instead of silently selecting defaults. Run
+`happier session create --help` to see the accepted fields in your installed CLI.
+
 ## Troubleshooting
 
 ### “The server is saved, but it does not appear in my session”
@@ -385,6 +427,12 @@ The most common causes are:
 - the URL is wrong
 - a required token/header is missing
 - a machine env reference is not present on the daemon host
+
+For local package-runner commands in unreleased development source, install the
+configured runner on the selected machine, make it available in the daemon's
+environment, or configure its executable path. Test again after correcting the
+prerequisite. Happier's managed pnpm installation serves Happier-owned package
+installs; it does not replace the runner in your MCP command.
 
 ### “I changed MCP settings, but my current session did not change”
 

@@ -12,6 +12,10 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import type { AgentInputSendIntentOptions } from '../agentInputSendOptions';
 
 import {
     resolveAgentContinuationSubmitPresentation,
@@ -124,24 +128,42 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
      * says so, at the moment of consequence.
      */
     armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
-    onSend: () => void;
+    onSend: (options?: AgentInputSendIntentOptions) => void;
+    sendMenuModes?: readonly MessageSendMode[];
+    sendMenuShortcuts?: Partial<Record<MessageSendMode, string>>;
     onStop?: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const showStopWhenEmpty = !props.hasSendableContent && !props.micPressHandler && props.canStop === true;
+    const sendMenuAnchorRef = React.useRef<View>(null);
+    const [sendMenuOpen, setSendMenuOpen] = React.useState(false);
+    const [sendTooltipOpen, setSendTooltipOpen] = React.useState(false);
+    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null;
+    const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
+        && !props.armedContinuationTarget && Boolean(props.sendMenuModes?.length);
+    const getSendModeTitle = (mode: MessageSendMode) => mode === 'agent_queue'
+        ? t('session.pendingMessages.actions.steerNow')
+        : mode === 'interrupt' ? t('session.pendingMessages.actions.sendNowInterrupt') : t('agentInput.sendOptions.queue');
+    const openSendMenu = () => {
+        if (!sendMenuEnabled) return;
+        hapticsLight();
+        setSendMenuOpen(true);
+    };
+
+    React.useEffect(() => { setSendMenuOpen(false); }, [props.sessionId, sendMenuEnabled]);
+    const showStopWhenEmpty = !hasSendIntent && !props.micPressHandler && props.canStop === true;
     /*
      * With nothing to send, a composer that has Voice hands this button to the
      * microphone — `submitPress` routes there before it ever reaches Stop, whether
      * or not the mic is already listening. Text takes the button back.
      */
-    const micHoldsSubmit = Boolean(props.micPressHandler) && !props.hasSendableContent;
+    const micHoldsSubmit = Boolean(props.micPressHandler) && !hasSendIntent;
+    const disabled = props.disabled || (!hasSendIntent && !micHoldsSubmit && !showStopWhenEmpty);
 
     // The armed switch only reaches the button while the button is actually a
     // send. The mic and Stop are other actions, and labelling either
     // "Continue with {Agent}" would promise something that press does not do.
-    // An empty composer is NOT one of those: with no mic and no running turn the
-    // control is still the send, just an inert one, so it keeps naming the switch
-    // it would take.
+    // An armed continuation is sendable even without text, and takes precedence
+    // over the empty composer's microphone and Stop actions.
     // The composer's engine chip reads the SAME armed target and only skips this
     // narrowing, so the two cannot name different Agents.
     const armedTarget = resolveArmedSubmitContinuation({
@@ -157,14 +179,14 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
 
     const submitPress = React.useCallback(() => {
         hapticsLight();
-        if (props.hasSendableContent) {
+        if (hasSendIntent) {
             props.onSend();
         } else if (props.micPressHandler) {
             props.micPressHandler();
         } else if (showStopWhenEmpty) {
             props.onStop?.();
         }
-    }, [props.hasSendableContent, props.micPressHandler, props.onSend, props.onStop, showStopWhenEmpty]);
+    }, [hasSendIntent, props.micPressHandler, props.onSend, props.onStop, showStopWhenEmpty]);
 
     if (armedContinuation) {
         const mark = armedContinuation.markAgentId ? (
@@ -192,15 +214,10 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     // The full sentence, always in words: this press commits an Agent
                     // switch, and a glyph reads as nothing to a screen reader.
                     accessibilityLabel={armedContinuation.accessibilityLabel}
-                    // Named but not yet pressable. The circular send explains that
-                    // same state with this exact hint, and the armed shape is the
-                    // same control, so it says the same thing rather than leaving a
-                    // screen reader with a disabled button and no reason.
-                    accessibilityHint={props.hasSendableContent ? undefined : t('session.inputPlaceholder')}
                     leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
                     trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
                     loading={props.isSending}
-                    disabled={props.disabled}
+                    disabled={disabled}
                     onPress={submitPress}
                 />
             </AgentInputSubmitShape>
@@ -208,12 +225,28 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     }
 
     return (
-        <AgentInputSubmitShape>
+        <View
+            ref={sendMenuAnchorRef}
+            collapsable={false}
+            {...(Platform.OS === 'web' && sendMenuEnabled ? {
+                onContextMenu: (event: React.MouseEvent) => {
+                    event.preventDefault();
+                    openSendMenu();
+                },
+                onKeyDown: (event: React.KeyboardEvent) => {
+                    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10') && !(event.altKey && event.key === 'ArrowDown')) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openSendMenu();
+                },
+            } : {})}
+        >
+          <AgentInputSubmitShape>
             <PrimaryCircleIconButton
                 testID={props.testID}
                 active={props.hasSendableContent || props.isSending || Boolean(props.micPressHandler) || showStopWhenEmpty}
                 loading={props.isSending || (showStopWhenEmpty && props.isStopping)}
-                disabled={props.disabled}
+                disabled={disabled}
                 accessibilityLabel={
                     props.hasSendableContent
                         ? (props.submitAccessibilityLabel ?? (props.sessionId ? t('common.send') : t('newSession.title')))
@@ -228,13 +261,23 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 accessibilityHint={
                     (!props.hasSendableContent && !props.micPressHandler && !showStopWhenEmpty)
                         ? t('session.inputPlaceholder')
-                        : undefined
+                        : sendMenuEnabled ? t('agentInput.sendOptions.hint') : undefined
                 }
                 accessibilityState={{
-                    disabled: Boolean(props.disabled),
+                    disabled,
+                    ...(sendMenuEnabled ? { expanded: sendMenuOpen } : {}),
                 }}
                 hitSlop={SUBMIT_HIT_SLOP}
                 onPress={submitPress}
+                onLongPress={sendMenuEnabled ? openSendMenu : undefined}
+                onHoverIn={sendMenuEnabled ? () => setSendTooltipOpen(true) : undefined}
+                onHoverOut={() => setSendTooltipOpen(false)}
+                onFocus={sendMenuEnabled ? () => setSendTooltipOpen(true) : undefined}
+                onBlur={() => setSendTooltipOpen(false)}
+                accessibilityActions={sendMenuEnabled ? [{ name: 'longpress', label: t('agentInput.sendOptions.title') }] : undefined}
+                onAccessibilityAction={sendMenuEnabled ? (event) => {
+                    if (event.nativeEvent.actionName === 'longpress') openSendMenu();
+                } : undefined}
             >
                 {props.hasSendableContent ? (
                     <Icon
@@ -264,6 +307,37 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     />
                 )}
             </PrimaryCircleIconButton>
-        </AgentInputSubmitShape>
+          </AgentInputSubmitShape>
+          {Platform.OS === 'web' && sendMenuEnabled && sendTooltipOpen && !sendMenuOpen ? (
+            <DeferredAnchoredTooltip activationKey="send" anchorRef={sendMenuAnchorRef} placement="top"
+                label={(props.sendMenuModes ?? []).map((mode) => {
+                    const title = getSendModeTitle(mode);
+                    return props.sendMenuShortcuts?.[mode] ? `${title} (${props.sendMenuShortcuts[mode]})` : title;
+                }).join('\n')} />
+          ) : null}
+          {sendMenuOpen && sendMenuEnabled ? (
+            <DropdownMenu
+                open
+                onOpenChange={setSendMenuOpen}
+                popoverAnchorRef={sendMenuAnchorRef}
+                placement="top"
+                popoverAnchorAlign="end"
+                matchTriggerWidth={false}
+                closeOnSelect={false}
+                items={(props.sendMenuModes ?? []).map((mode) => ({
+                    id: mode,
+                    shortcut: props.sendMenuShortcuts?.[mode],
+                    testID: `agent-input-send-option-${mode}`,
+                    title: getSendModeTitle(mode),
+                }))}
+                onSelect={(id) => {
+                    const mode = props.sendMenuModes?.find((mode) => mode === id);
+                    if (!mode) return;
+                    setSendMenuOpen(false);
+                    props.onSend({ deliveryIntent: mode });
+                }}
+            />
+          ) : null}
+        </View>
     );
 });

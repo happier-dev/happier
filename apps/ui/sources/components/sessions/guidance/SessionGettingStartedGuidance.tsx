@@ -685,20 +685,6 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
     }, [machineListByServerId, machineListStatusByServerId, selection, serverSelectionGroups, sessionSummary]);
 }
 
-export function useShouldBlockNewSessionWithGettingStartedGuidance(): boolean {
-    const selection = useResolvedActiveServerSelection();
-    const machineListByServerId = useMachineListByServerId();
-
-    return React.useMemo(() => {
-        const machines = computeMachinesSummaryForServerIds({
-            allowedServerIds: selection.allowedServerIds,
-            machineListByServerId,
-        });
-
-        return machines.machineCount === 0 && !machines.hasUnknownServers;
-    }, [machineListByServerId, selection.allowedServerIds]);
-}
-
 function useSessionGettingStartedGuidanceViewModelBase(): SessionGettingStartedGuidanceViewModel {
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();

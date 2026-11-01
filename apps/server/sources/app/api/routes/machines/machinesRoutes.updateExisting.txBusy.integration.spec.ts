@@ -100,7 +100,7 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
         );
     });
 
-    it("does not silently succeed when a dataEncryptionKey update is skipped by transaction contention", async () => {
+    it("returns the incumbent content without attempting an independent dataEncryptionKey change", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
         dbMocks.reset();
         dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
@@ -113,8 +113,7 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
             },
         });
 
-        await expect(
-            route.handler(
+        const response = await route.handler(
                 {
                     userId: "u1",
                     body: {
@@ -125,7 +124,7 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
                     },
                 },
                 route.createReply(),
-            ),
-        ).rejects.toMatchObject({ code: "P2028" });
+        );
+        expect(response).toMatchObject({ machine: { dataEncryptionKey: null, metadata: 'meta-old' } });
     });
 });

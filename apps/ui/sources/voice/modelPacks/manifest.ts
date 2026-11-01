@@ -21,6 +21,8 @@ export const ModelPackManifestSchema = z.object({
   publishedAt: z.string().min(1).optional(),
   licenseNotices: z.array(z.string().min(1)).optional(),
   voices: z.array(ModelPackVoiceCatalogEntrySchema).optional(),
+  /** Voice used when the requested voice is unset or not in `voices` (TTS packs). */
+  defaultVoiceId: z.string().min(1).optional(),
   files: z
     .array(
       z.object({

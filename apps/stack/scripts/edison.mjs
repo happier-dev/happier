@@ -208,7 +208,7 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
       // - If the prior ephemeral port is still occupied (common after a crash), `--restart` fails closed.
       // - For validation we prefer to bring up the stack on a fresh port rather than fail preflight.
       [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', stackName],
-      { cwd: rootDir, env, stdio: 'ignore', detached: true }
+      { cwd: rootDir, env, stdio: 'ignore', detached: true, windowsHide: true }
     );
     child.unref();
   } catch {

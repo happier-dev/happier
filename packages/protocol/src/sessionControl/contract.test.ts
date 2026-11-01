@@ -3,6 +3,20 @@ import { describe, expect, it } from 'vitest';
 import * as protocol from '../index.js';
 
 describe('sessionControl contract exports', () => {
+  it('reports token-only authentication separately from Session storage mode', () => {
+    const status = {
+      authenticated: true, encryption: { type: 'tokenOnly' }, machineRegistered: false,
+      host: 'dev', happyHomeDir: '/home/dev/.happier', daemonRunning: false,
+    };
+    expect(protocol.AuthStatusResultSchema.parse(status)).toEqual(status);
+  });
+  it('represents a plain Session without inventing an encryption key variant', () => {
+    const session = {
+      id: 'plain-session', createdAt: 1, updatedAt: 2, active: false, activeAt: 0,
+      encryptionMode: 'plain', encryption: { type: 'plain' },
+    };
+    expect(protocol.SessionSummarySchema.parse(session)).toEqual(session);
+  });
   it('exports base and per-command envelope schemas', () => {
     expect(typeof (protocol as any).SessionControlEnvelopeBaseSchema).toBe('object');
     expect(typeof (protocol as any).AuthStatusEnvelopeSchema).toBe('object');

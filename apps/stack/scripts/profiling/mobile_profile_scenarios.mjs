@@ -410,7 +410,7 @@ export async function writeArgentFlowFile({
 
 function runJsonCommand(command, args, { cwd, env = process.env, timeoutMs = 0 } = {}) {
   return new Promise((resolvePromise) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';
     let stderr = '';
     let didTimeout = false;

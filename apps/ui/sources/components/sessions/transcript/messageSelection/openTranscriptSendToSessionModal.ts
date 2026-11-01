@@ -5,10 +5,10 @@ import { t } from '@/text';
 
 import { TranscriptSendToSessionModal } from './TranscriptSendToSessionModal';
 import {
-    TRANSCRIPT_SEND_TO_SESSION_MODAL_DEFAULT_MAX_HEIGHT_RATIO,
-    TRANSCRIPT_SEND_TO_SESSION_MODAL_SIZE,
-    TRANSCRIPT_SEND_TO_SESSION_MODAL_WIDTH,
-} from './resolveTranscriptSendToSessionModalLayout';
+    SESSION_SELECTION_MODAL_DEFAULT_MAX_HEIGHT_RATIO,
+    SESSION_SELECTION_MODAL_SIZE,
+    SESSION_SELECTION_MODAL_WIDTH,
+} from '@/components/sessions/selection/resolveSessionSelectionModalLayout';
 import type { SendTranscriptSelectionDestination } from './sendTranscriptSelectionToSession';
 
 export async function openTranscriptSendToSessionModal(params: Readonly<{
@@ -34,9 +34,9 @@ export async function openTranscriptSendToSessionModal(params: Readonly<{
             testID: 'transcript-send-to-session-modal',
             layout: 'fill',
             dimensions: {
-                width: TRANSCRIPT_SEND_TO_SESSION_MODAL_WIDTH,
-                maxHeightRatio: TRANSCRIPT_SEND_TO_SESSION_MODAL_DEFAULT_MAX_HEIGHT_RATIO,
-                size: TRANSCRIPT_SEND_TO_SESSION_MODAL_SIZE,
+                width: SESSION_SELECTION_MODAL_WIDTH,
+                maxHeightRatio: SESSION_SELECTION_MODAL_DEFAULT_MAX_HEIGHT_RATIO,
+                size: SESSION_SELECTION_MODAL_SIZE,
             },
         },
         closeOnBackdrop: true,

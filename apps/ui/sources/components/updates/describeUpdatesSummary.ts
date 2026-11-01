@@ -21,7 +21,7 @@ export type UpdatesHeaderPresentation = Readonly<{
 export function describeUpdatesHeader(
     summary: UpdatesSummary,
     batch: UpdateAllProgress | null,
-    facts: Readonly<{ checkedAt: number | null; uncheckedMachineCount: number }>,
+    facts: Readonly<{ checkedAt: number | null; uncheckedMachineCount: number; checking?: boolean }>,
 ): UpdatesHeaderPresentation {
     // Under a result: which machines were not asked yet when some were not, otherwise when things
     // were last checked; "Not checked yet" only when nothing has been checked at all.
@@ -39,6 +39,7 @@ export function describeUpdatesHeader(
             showStop: !batch.stopping,
         };
     }
+    if (facts.checking) return { ...base, title: t('updates.summary.checking'), meta: checked };
     const showUpdateAll = summary.actionableCount >= 2;
     switch (summary.phase) {
         case 'required':

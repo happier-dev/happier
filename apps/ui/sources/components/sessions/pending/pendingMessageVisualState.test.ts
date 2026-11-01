@@ -4,6 +4,7 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import {
     getPendingMessageVisualState,
+    canUseDirectPendingDeliveryActions,
     paintsPendingMessageActionRow,
     resolvePendingMessageHeightBearingChrome,
     type PendingMessageVisualStateKind,
@@ -511,5 +512,16 @@ describe('pending message in-flow action row', () => {
     it('is painted on native only when the queue can be reordered', () => {
         expect(paintsPendingMessageActionRow({ platformIsWeb: false, canReorderPendingMessages: true })).toBe(true);
         expect(paintsPendingMessageActionRow({ platformIsWeb: false, canReorderPendingMessages: false })).toBe(false);
+    });
+});
+
+describe('pending direct-delivery eligibility shared by composer and rows', () => {
+    it('allows the queued row and retains custody restrictions', () => {
+        expect(canUseDirectPendingDeliveryActions(pendingMessage())).toBe(true);
+        expect(canUseDirectPendingDeliveryActions(pendingMessage({ source: 'local_outbound', deliveryStatus: 'queued' }))).toBe(false);
+        expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingOutboxOperation: 'cancel' }))).toBe(false);
+        expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingOutboxOperation: 'enqueue' }))).toBe(false);
+        expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDecryptFailure: { kind: 'decrypt_failed' } }))).toBe(false);
+        expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDeliveryStatus: 'server_delivering' }))).toBe(false);
     });
 });

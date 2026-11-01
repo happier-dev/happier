@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { PendingProviderAction } from './pendingProviderAction.js';
 import type { PendingRequestedActionV1 } from './pendingRequestedActionV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const PENDING_DELIVERY_BLOCKED_REASONS = [
   'terminal_composer_draft',
@@ -24,7 +25,7 @@ export const PENDING_DELIVERY_BLOCKED_REASONS = [
   'unknown',
 ] as const;
 
-export const PendingDeliveryBlockedReasonSchema = z.enum(PENDING_DELIVERY_BLOCKED_REASONS);
+export const PendingDeliveryBlockedReasonSchema = lazySchema(() => z.enum(PENDING_DELIVERY_BLOCKED_REASONS));
 
 export type PendingDeliveryBlockedReason = z.infer<typeof PendingDeliveryBlockedReasonSchema>;
 

@@ -20,6 +20,11 @@ export {
   type ClaudeTodoWriteTodo,
 } from './sessionTasks.js';
 export {
+  formatClaudePeerMessageText,
+  readClaudePeerMessage,
+  type ClaudePeerMessage,
+} from './peerMessages.js';
+export {
   ClaudeSdkSkillsOptionSchema,
   normalizeClaudeSdkInitSkills,
   type ClaudeSdkSkillsOption,
@@ -29,3 +34,10 @@ export {
   normalizeClaudeSlashCommandName,
   readClaudeSlashCommandNames,
 } from './slashCommands.js';
+export {
+  normalizeClaudeOauthProfileEntitlement,
+  readClaudeOauthCredentialMetadata,
+  readClaudeOauthCredentialOrganizationId,
+  type ClaudeOauthCredentialMetadata,
+  type ClaudeOauthEntitlementMetadata,
+} from './oauthProfile.js';

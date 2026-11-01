@@ -4,6 +4,7 @@ import {
 } from '../storage/storedJsonContentEnvelope.js';
 
 import { SESSION_ORGANIZATION_MAX_DISPLAY_ENVELOPE_BYTES } from './constants.js';
+import { lazySchema } from '../lazySchema.js';
 
 const textEncoder = new TextEncoder();
 
@@ -16,7 +17,7 @@ function measureJsonUtf8Bytes(value: unknown): number | null {
   }
 }
 
-export const SessionOrganizationContentEnvelopeSchema = StoredJsonContentEnvelopeSchema.superRefine((value, ctx) => {
+export const SessionOrganizationContentEnvelopeSchema = lazySchema(() => StoredJsonContentEnvelopeSchema.superRefine((value, ctx) => {
   const byteLength = measureJsonUtf8Bytes(value);
   if (byteLength === null) {
     ctx.addIssue({
@@ -32,5 +33,5 @@ export const SessionOrganizationContentEnvelopeSchema = StoredJsonContentEnvelop
       message: 'Session organization display envelope exceeds the maximum serialized size.',
     });
   }
-});
+}));
 export type SessionOrganizationContentEnvelope = StoredJsonContentEnvelope;

@@ -1,3 +1,4 @@
+import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { File } from 'expo-file-system';
@@ -9,7 +10,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
@@ -28,7 +28,7 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
-    const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
+    const [themeProfiles, setThemeProfiles] = useThemeProfilesMutable();
     const [json, setJson] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
     const [warnings, setWarnings] = React.useState(0);

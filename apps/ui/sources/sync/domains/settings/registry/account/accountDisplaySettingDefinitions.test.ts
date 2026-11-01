@@ -6,8 +6,20 @@ import {
 } from '@happier-dev/protocol';
 
 import { ACCOUNT_DISPLAY_SETTING_DEFINITIONS } from './accountDisplaySettingDefinitions';
+import { applySettings, settingsParse } from '../../settings';
 
 describe('ACCOUNT_DISPLAY_SETTING_DEFINITIONS', () => {
+    it('reads missing chat wrapping preferences with backwards-compatible defaults and preserves explicit choices', () => {
+        const oldSettings = settingsParse({ wrapLinesInDiffs: true });
+        expect(oldSettings.showChatCodeBlockWrapControls).toBe(true);
+        expect(oldSettings.wrapChatCodeBlocks).toBe(false);
+        const configured = applySettings(oldSettings, { showChatCodeBlockWrapControls: false, wrapChatCodeBlocks: true });
+        const reread = settingsParse(configured);
+        expect(reread.showChatCodeBlockWrapControls).toBe(false);
+        expect(reread.wrapChatCodeBlocks).toBe(true);
+        expect(reread.wrapLinesInDiffs).toBe(true);
+    });
+
     it('defaults Happier run instructions on while preserving an explicit opt-out', () => {
         const definition = ACCOUNT_DISPLAY_SETTING_DEFINITIONS.executionRunsGuidanceEnabled;
 

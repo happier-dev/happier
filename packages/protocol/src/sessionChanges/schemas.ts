@@ -1,26 +1,27 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ChangeEvidenceSourceSchema = z.enum([
+export const ChangeEvidenceSourceSchema = lazySchema(() => z.enum([
   'provider_native',
   'provider_tool',
   'canonical_diff_tool',
   'canonical_patch_tool',
   'scm_reconciled',
   'inferred',
-]);
+]));
 
-export const ChangeConfidenceSchema = z.enum(['exact', 'strong', 'best_effort']);
+export const ChangeConfidenceSchema = lazySchema(() => z.enum(['exact', 'strong', 'best_effort']));
 
-export const FileChangeKindSchema = z.enum([
+export const FileChangeKindSchema = lazySchema(() => z.enum([
   'added',
   'modified',
   'deleted',
   'renamed',
   'copied',
   'unknown',
-]);
+]));
 
-export const FileChangeEvidenceSchema = z.object({
+export const FileChangeEvidenceSchema = lazySchema(() => z.object({
   filePath: z.string().min(1),
   previousFilePath: z.string().min(1).nullable().optional(),
   changeKind: FileChangeKindSchema,
@@ -34,9 +35,9 @@ export const FileChangeEvidenceSchema = z.object({
   providerTurnId: z.string().min(1).nullable().optional(),
   providerMessageId: z.string().min(1).nullable().optional(),
   description: z.string().nullable().optional(),
-}).strict();
+}).strict());
 
-export const TurnChangeSetSchema = z.object({
+export const TurnChangeSetSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
   seqRange: z.object({
@@ -50,26 +51,26 @@ export const TurnChangeSetSchema = z.object({
   files: z.array(FileChangeEvidenceSchema),
   provider: z.string().min(1),
   derivedAt: z.number().finite(),
-}).strict();
+}).strict());
 
-export const SessionChangeSetFileSchema = FileChangeEvidenceSchema.extend({
+export const SessionChangeSetFileSchema = lazySchema(() => FileChangeEvidenceSchema.extend({
   turns: z.array(z.string().min(1)),
-}).strict();
+}).strict());
 
-export const ChangeSetConfidenceSummarySchema = z.object({
+export const ChangeSetConfidenceSummarySchema = lazySchema(() => z.object({
   source: ChangeEvidenceSourceSchema,
   confidence: ChangeConfidenceSchema,
-}).strict();
+}).strict());
 
-export const SessionChangeSetSchema = z.object({
+export const SessionChangeSetSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   turns: z.array(TurnChangeSetSchema),
   files: z.array(SessionChangeSetFileSchema),
   rolledBackTurnIds: z.array(z.string().min(1)),
   confidenceSummary: ChangeSetConfidenceSummarySchema,
-}).strict();
+}).strict());
 
-export const SessionWorkingTreeMatchedFileSchema = z.object({
+export const SessionWorkingTreeMatchedFileSchema = lazySchema(() => z.object({
   filePath: z.string().min(1),
   repositoryPath: z.string().min(1),
   sessionChange: SessionChangeSetFileSchema,
@@ -78,9 +79,9 @@ export const SessionWorkingTreeMatchedFileSchema = z.object({
     previousPath: z.string().nullable(),
     kind: z.string().min(1),
   }).strict(),
-}).strict();
+}).strict());
 
-export const SessionWorkingTreeProjectionSchema = z.object({
+export const SessionWorkingTreeProjectionSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   matchedFiles: z.array(SessionWorkingTreeMatchedFileSchema),
   unmatchedSessionFiles: z.array(SessionChangeSetFileSchema),
@@ -90,7 +91,7 @@ export const SessionWorkingTreeProjectionSchema = z.object({
     kind: z.string().min(1),
   }).strict()),
   projectionReliability: ChangeConfidenceSchema,
-}).strict();
+}).strict());
 
 export type ChangeEvidenceSource = z.infer<typeof ChangeEvidenceSourceSchema>;
 export type ChangeConfidence = z.infer<typeof ChangeConfidenceSchema>;

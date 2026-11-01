@@ -1,7 +1,7 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { isRpcMethodNotAvailableError, readRpcErrorCode, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
-import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 
 const TERMINAL_AUTO_RETRY_BASE_DELAY_MS = 250;
 const TERMINAL_AUTO_RETRY_MAX_DELAY_MS = 4_000;

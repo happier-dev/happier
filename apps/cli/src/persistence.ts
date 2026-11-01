@@ -20,6 +20,7 @@ import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/serve
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
@@ -28,6 +29,7 @@ import { isPidAliveBySignal } from '@/daemon/processRunState';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -352,7 +354,7 @@ export type DaemonStateCleanupOwner = Readonly<{
   startedAt: number;
 }>;
 
-const DaemonLocallyPersistedStateSchemaV2 = z.object({
+const DaemonLocallyPersistedStateSchemaV2 = lazySchema(() => z.object({
   pid: z.number().int().positive(),
   httpPort: z.number().int().positive(),
   startedAt: z.number().int().nonnegative(),
@@ -367,22 +369,22 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   daemonLogPath: z.string().optional(),
   controlToken: z.string().optional(),
-});
+}));
 
 // Legacy format (string timestamps, no control token).
-const DaemonLocallyPersistedStateSchemaLegacy = z.object({
+const DaemonLocallyPersistedStateSchemaLegacy = lazySchema(() => z.object({
   pid: z.number().int().positive(),
   httpPort: z.number().int().positive(),
   startTime: z.string(),
   startedWithCliVersion: z.string(),
   lastHeartbeat: z.string().optional(),
   daemonLogPath: z.string().optional(),
-});
+}));
 
-export const DaemonLocallyPersistedStateSchema = z.union([
+export const DaemonLocallyPersistedStateSchema = lazySchema(() => z.union([
   DaemonLocallyPersistedStateSchemaV2,
   DaemonLocallyPersistedStateSchemaLegacy,
-]);
+]));
 
 function parseDateToEpochMs(value: string): number | null {
   const ms = Date.parse(value);
@@ -654,14 +656,14 @@ export async function updateSettings(
 // Authentication
 //
 
-const credentialsSchema = z.object({
+const credentialsSchema = lazySchema(() => z.object({
   token: z.string(),
   secret: z.string().base64().nullish(), // Legacy
   encryption: z.object({
     publicKey: z.string().base64(),
     machineKey: z.string().base64()
   }).nullish()
-})
+}))
 
 export type Credentials = {
   token: string,
@@ -669,10 +671,20 @@ export type Credentials = {
     type: 'legacy', secret: Uint8Array
   } | {
     type: 'dataKey', publicKey: Uint8Array, machineKey: Uint8Array
-  }
+  } | null
 }
 
 export type CredentialReadScope = Readonly<{ serverId?: string }>;
+
+export function requireEncryptionCredentials(credentials: Credentials): asserts credentials is Credentials & {
+  encryption: NonNullable<Credentials['encryption']>;
+} {
+  if (!credentials.encryption) {
+    throw Object.assign(new Error('This operation requires account encryption key material. Reauthenticate with the account recovery key.'), {
+      code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED',
+    });
+  }
+}
 
 export async function readCredentials(scope: CredentialReadScope = {}): Promise<Credentials | null> {
   const serverId = scope.serverId === undefined ? configuration.activeServerId : scope.serverId.trim();
@@ -708,6 +720,8 @@ export async function readCredentials(scope: CredentialReadScope = {}): Promise<
           machineKey: decodeBase64(credentials.encryption.machineKey)
         }
       }
+    } else if (credentials.encryption === null) {
+      return { token: credentials.token, encryption: null };
     }
   } catch {
     return null
@@ -736,6 +750,31 @@ export async function writeCredentialsDataKey(credentials: { publicKey: Uint8Arr
     encryption: { publicKey: encodeBase64(credentials.publicKey), machineKey: encodeBase64(credentials.machineKey) },
     token: credentials.token,
   });
+}
+
+export async function writeCredentialsTokenOnly(credentials: { token: string }): Promise<Credentials> {
+  const existing = await readCredentials();
+  // Reauthentication of the same Account must retain keys for historical encrypted records.
+  const accountId = (token: string): string | null => {
+    const subject = decodeJwtPayload(token)?.sub;
+    return typeof subject === 'string' && subject.trim() ? subject.trim() : null;
+  };
+  const incomingAccountId = accountId(credentials.token);
+  if (!incomingAccountId || (existing?.encryption && !accountId(existing.token))) {
+    throw Object.assign(new Error('Cannot establish the account identity for terminal credentials. Request authentication again.'), {
+      code: 'AUTH_CREDENTIAL_INVALID',
+    });
+  }
+  if (existing?.encryption && incomingAccountId && accountId(existing.token) === incomingAccountId) {
+    if (existing.encryption.type === 'legacy') {
+      await writeCredentialsLegacy({ token: credentials.token, secret: existing.encryption.secret });
+    } else {
+      await writeCredentialsDataKey({ token: credentials.token, publicKey: existing.encryption.publicKey, machineKey: existing.encryption.machineKey });
+    }
+    return { ...existing, token: credentials.token };
+  }
+  await writeStoredCredentialFile({ token: credentials.token, encryption: null });
+  return { token: credentials.token, encryption: null };
 }
 
 export async function clearCredentials(): Promise<void> {

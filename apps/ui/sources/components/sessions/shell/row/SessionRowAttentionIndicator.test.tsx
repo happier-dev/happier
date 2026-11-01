@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -110,6 +111,22 @@ describe('SessionRowAttentionIndicator', () => {
             throw new Error('Expected status dot to render');
         }
         expect(flattenStyle(dot.props.style).animationName).toBeUndefined();
+    });
+
+    it.each(['spinner', 'pulse'] as const)('keeps the %s working mark and shows unread only at its center until read', async (workingMode) => {
+        const { SessionRowAttentionIndicator } = await import('./SessionRowAttentionIndicator');
+        const element = (hasUnreadMessages: boolean) => <SessionRowAttentionIndicator indicator="working" attentionState="working"
+            sessionId="background-unread" hasUnreadMessages={hasUnreadMessages} workingMode={workingMode} workingSpinnerTone="neutral" animationEnabled={false} />;
+        const screen = await renderScreen(element(true));
+        const markColor = () => screen.tree.root.findAll(node =>
+            typeof node.props.color === 'string' && /^session-row-attention-indicator-(spinner|dot)-/.test(node.props.testID ?? ''))[0]?.props.color;
+        const normalColor = workingMode === 'spinner' ? lightTheme.colors.text.tertiary : lightTheme.colors.state.info.foreground;
+        expect(markColor()).toBe(normalColor);
+        expect(screen.findByTestId('session-row-unread-center-background-unread')).toBeTruthy();
+        expect(screen.findByTestId('session-row-unread-indicator-background-unread')).toBeNull();
+        await screen.update(element(false));
+        expect(markColor()).toBe(normalColor);
+        expect(screen.findByTestId('session-row-unread-center-background-unread')).toBeNull();
     });
 
 });

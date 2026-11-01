@@ -1,5 +1,7 @@
 import type { PermissionResult } from '@/agent/permissions/permissionResult';
 
+import { PI_BRIDGE_USER_INPUT_MARKER_TYPE } from '../bridgeExtension/piBridgeExtensionEnv';
+
 export type PiBlockingExtensionUiRequest = Readonly<{
   id: string;
   method: 'select' | 'confirm' | 'input' | 'editor';
@@ -31,6 +33,22 @@ function readString(value: unknown): string | null {
 
 function readTimeout(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Decode the session-bound bridge's submitted extension input, before diagnostic tracing. */
+export function parsePiExtensionUserInput(value: unknown): string | null {
+  const request = asRecord(value);
+  if (request?.type !== 'extension_ui_request' || request.method !== 'notify' || typeof request.message !== 'string') return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(request.message);
+  } catch {
+    return null;
+  }
+  const record = asRecord(payload);
+  return record?.type === PI_BRIDGE_USER_INPUT_MARKER_TYPE && typeof record.text === 'string' && record.text.length > 0
+    ? record.text
+    : null;
 }
 
 export function parsePiBlockingExtensionUiRequest(value: unknown): PiBlockingExtensionUiRequest | null {

@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { z } from 'zod/v4';
+import { lazySchema } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
 import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
@@ -17,12 +18,12 @@ import { getCodexElicitationToolCallId, getCodexEventToolCallId } from './mcp/el
 import { withCodexNativeStartupLock } from './utils/withCodexNativeStartupLock';
 
 const DEFAULT_TIMEOUT = 14 * 24 * 60 * 60 * 1000; // 14 days
-const CodexEventNotificationSchema = z.object({
+const CodexEventNotificationSchema = lazySchema(() => z.object({
     method: z.literal('codex/event'),
     params: z.object({
         msg: z.any()
     })
-}).passthrough() as any;
+}).passthrough()) as any;
 
 export { getCodexElicitationToolCallId, getCodexEventToolCallId };
 
@@ -39,12 +40,14 @@ export class CodexMcpClient {
     private mcpServerArgs: string[];
     private env?: NodeJS.ProcessEnv;
     private pendingAmendments = new Map<string, string[]>();
+    private readonly onProviderTurnEvent?: () => void;
 
-    constructor(options?: { command?: string; mode?: CodexMcpClientSpawnMode; args?: string[]; env?: NodeJS.ProcessEnv }) {
+    constructor(options?: { command?: string; mode?: CodexMcpClientSpawnMode; args?: string[]; env?: NodeJS.ProcessEnv; onProviderTurnEvent?: () => void }) {
         this.codexCommand = options?.command ?? requireProviderCliCommand('codex');
         this.mode = options?.mode ?? 'codex-cli';
         this.mcpServerArgs = options?.args ?? [];
         this.env = options?.env;
+        this.onProviderTurnEvent = options?.onProviderTurnEvent;
         this.client = this.createClient();
     }
 
@@ -56,7 +59,9 @@ export class CodexMcpClient {
 
         client.setNotificationHandler(CodexEventNotificationSchema, (data: any) => {
             const msg = data.params.msg as Record<string, unknown> | null;
-            this.updateIdentifiersFromEvent(msg);
+            if (this.updateIdentifiersFromEvent(msg)) {
+                this.onProviderTurnEvent?.();
+            }
             this.handler?.(msg);
 
             if (msg && msg.type === 'exec_approval_request') {
@@ -95,6 +100,7 @@ export class CodexMcpClient {
             versionInfo,
             getPermissionHandler: () => this.permissionHandler,
             pendingAmendments: this.pendingAmendments,
+            onProviderTurnEvent: this.onProviderTurnEvent,
         });
 
         await withCodexNativeStartupLock(DEFAULT_REQUEST_TIMEOUT_MSEC, async () => {
@@ -192,33 +198,41 @@ export class CodexMcpClient {
         return response as CodexToolResponse;
     }
 
-    private updateIdentifiersFromEvent(event: any): void {
-        if (!event || typeof event !== 'object') {
-            return;
+    private updateIdentifiersFromEvent(event: unknown): boolean {
+        if (!event || typeof event !== 'object' || Array.isArray(event)) {
+            return false;
         }
 
-        const candidates: any[] = [event];
-        if (event.data && typeof event.data === 'object') {
-            candidates.push(event.data);
+        const record = event as Record<string, unknown>;
+        const candidates = [record];
+        if (record.data && typeof record.data === 'object' && !Array.isArray(record.data)) {
+            candidates.push(record.data as Record<string, unknown>);
+        }
+        // Explicit thread identity takes precedence over the legacy session-id
+        // fallback. SessionId and ThreadId are distinct in newer native protocols.
+        const threadIds = candidates.flatMap((candidate) => [candidate.thread_id, candidate.threadId])
+            .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        const identifiers = threadIds.length > 0 ? threadIds : candidates
+            .flatMap((candidate) => [candidate.session_id, candidate.sessionId])
+            .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        const threadId = identifiers[0];
+        // One normalization decision governs both selection and primary backflow.
+        if (identifiers.some((id) => id !== threadId || (this.threadId !== null && id !== this.threadId))) {
+            return false;
+        }
+        if (threadId) {
+            this.threadId = threadId;
+            logger.debug('[CodexMCP] Thread ID extracted from event:', this.threadId);
         }
 
         for (const candidate of candidates) {
-            const threadId =
-                candidate.thread_id
-                ?? candidate.threadId
-                ?? candidate.session_id
-                ?? candidate.sessionId;
-            if (threadId) {
-                this.threadId = threadId;
-                logger.debug('[CodexMCP] Thread ID extracted from event:', this.threadId);
-            }
-
             const conversationId = candidate.conversation_id ?? candidate.conversationId;
-            if (conversationId) {
+            if (typeof conversationId === 'string' && conversationId) {
                 this.conversationId = conversationId;
                 logger.debug('[CodexMCP] Conversation ID extracted from event:', this.conversationId);
             }
         }
+        return typeof record.type === 'string' && record.type.length > 0;
     }
 
     private extractIdentifiers(response: any): void {

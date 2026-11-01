@@ -1,3 +1,4 @@
+import type { SessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -7,6 +8,7 @@ import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import type { SessionAttentionStandingPolicy, SessionReminderPresentation } from '@/sync/domains/session/organization/attentionStanding';
 import type { SessionRowAttentionState, SessionRowDensity, SessionRowPresentation } from './resolveSessionRowPresentation';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 
 export type SessionListRowSessionItem = Extract<SessionListViewItem, { type: 'session' }>;
 export type SessionListSessionItem = SessionListRowSessionItem & { selected?: boolean };
@@ -16,6 +18,7 @@ export type SessionListRowStateSnapshot = Readonly<{
     renderable: SessionListRenderableSession | undefined;
     messages: SessionMessages | undefined;
     pending: SessionPending | undefined;
+    appearanceColor?: SessionAppearanceColor | null;
     /** Safe, one-line read projection from the canonical draft repository. */
     draft?: Readonly<{ preview: string }> | null;
 }>;
@@ -26,6 +29,7 @@ export type SessionListRowStoreState = Readonly<{
     sessionListRenderables?: Readonly<Record<string, SessionListRenderableSession | undefined>>;
     sessionMessages?: Readonly<Record<string, SessionMessages | undefined>>;
     sessionPending?: Readonly<Record<string, SessionPending | undefined>>;
+    appearanceColorsBySessionKey?: Readonly<Record<string, SessionAppearanceColor | null>>;
 }>;
 
 export type SessionListRowPresentationSettings = Readonly<{
@@ -37,6 +41,7 @@ export type SessionListRowPresentationSettings = Readonly<{
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     workingIndicatorMode: 'spinner' | 'pulse';
     workingTextMode: 'animated' | 'static';
+    backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
     statusColors: Readonly<{
         connected: string;
         connecting: string;
@@ -80,6 +85,7 @@ export type SessionListRowPresentationSettings = Readonly<{
 }>;
 
 export type SessionListRowModel = Readonly<{
+    appearanceColor: SessionAppearanceColor | null;
     rowKey: string;
     sessionId: string;
     serverId: string | null;

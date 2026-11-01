@@ -4,6 +4,8 @@ import { buildSettingArtifacts, type SettingDefinitionMap } from '@happier-dev/p
 import type { ProviderSettingsDefinition } from '../types.js';
 
 export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
+// Node timers use a signed 32-bit millisecond delay; larger delays fire immediately.
+export const MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000);
 
 const CLAUDE_SETTING_SOURCES_V2 = ['user', 'project', 'local'] as const;
 export type ClaudeSettingSourceV2 = (typeof CLAUDE_SETTING_SOURCES_V2)[number];
@@ -17,6 +19,24 @@ export const CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES = [
   'resume_full_session',
 ] as const;
 export type ClaudeUnifiedTerminalResumeChoice = (typeof CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES)[number];
+
+export const CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS = ['app_and_terminal', 'app_only', 'terminal_only'] as const;
+export type ClaudeUnifiedTerminalResponseLocation = (typeof CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS)[number];
+
+export function resolveClaudeUnifiedTerminalResponseLocations(settings: Readonly<Record<string, unknown>>): Readonly<{
+  question: ClaudeUnifiedTerminalResponseLocation;
+  permission: ClaudeUnifiedTerminalResponseLocation;
+}> {
+  const fallback = settings.claudeLocalPermissionBridgeEnabled === false ? 'terminal_only' : 'app_and_terminal';
+  const resolve = (value: unknown): ClaudeUnifiedTerminalResponseLocation =>
+    typeof value === 'string' && (CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS as readonly string[]).includes(value)
+      ? value as ClaudeUnifiedTerminalResponseLocation
+      : fallback;
+  return {
+    question: resolve(settings.claudeUnifiedTerminalQuestionResponseLocation),
+    permission: resolve(settings.claudeUnifiedTerminalPermissionResponseLocation),
+  };
+}
 
 export const CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES = [
   'ask_every_time',
@@ -141,6 +161,18 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
   },
+  claudeRemoteIdleReclaimEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Release idle Claude remote processes and resume the same session on the next prompt',
+    storageScope: 'account',
+  },
+  claudeRemoteIdleReclaimTimeoutMinutes: {
+    schema: z.number().int().positive().max(MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES),
+    default: 30,
+    description: 'Idle time in minutes before releasing an opted-in Claude remote process',
+    storageScope: 'account',
+  },
   claudeUnifiedTerminalEnabled: {
     schema: z.boolean(),
     default: false,
@@ -159,6 +191,20 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES),
     default: 'ask_every_time' as ClaudeUnifiedTerminalResumeChoice,
     description: 'How Claude unified terminal should answer heavy-session resume prompts',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalQuestionResponseLocation: {
+    schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS),
+    default: 'app_and_terminal' as ClaudeUnifiedTerminalResponseLocation,
+    description: 'Where users can answer Claude unified terminal questions',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeUnifiedTerminalPermissionResponseLocation: {
+    schema: z.enum(CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS),
+    default: 'app_and_terminal' as ClaudeUnifiedTerminalResponseLocation,
+    description: 'Where users can approve Claude unified terminal permission requests',
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
   },
@@ -332,10 +378,17 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
   const debugCategories =
     normalizeClaudeRemoteDebugCategories(settings.claudeRemoteDebugCategories)
     ?? (CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[]);
+  const responseLocations = resolveClaudeUnifiedTerminalResponseLocations(settings);
 
   return {
     claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
+    claudeRemoteIdleReclaimEnabled: readBoolean('claudeRemoteIdleReclaimEnabled'),
+    claudeRemoteIdleReclaimTimeoutMinutes:
+      CLAUDE_REMOTE_PROVIDER_FIELDS.claudeRemoteIdleReclaimTimeoutMinutes.schema.safeParse(settings.claudeRemoteIdleReclaimTimeoutMinutes).data
+      ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimTimeoutMinutes,
     claudeUnifiedTerminalEnabled: readBoolean('claudeUnifiedTerminalEnabled'),
+    claudeUnifiedTerminalQuestionResponseLocation: responseLocations.question,
+    claudeUnifiedTerminalPermissionResponseLocation: responseLocations.permission,
     claudeUnifiedTerminalHost:
       normalizeClaudeUnifiedTerminalHost(settings.claudeUnifiedTerminalHost)
       ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeUnifiedTerminalHost,

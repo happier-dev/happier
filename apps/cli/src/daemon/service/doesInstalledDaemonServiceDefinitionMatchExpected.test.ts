@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -85,6 +86,44 @@ function writePlistFile(dir: string, contents: string): string {
 }
 
 describe('doesInstalledDaemonServiceDefinitionMatchExpected', () => {
+  const systemdUnit = (path: string) => renderSystemdServiceUnit({
+    description: 'Happier CLI daemon (default)',
+    execStart: ['/home/test/.happier/bin/happier', 'daemon', 'start-sync', '--takeover'],
+    workingDirectory: '%h',
+    env: { PATH: path, HAPPIER_HOME_DIR: '/home/test/.happier', HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable' },
+    killMode: 'process',
+    restart: 'on-failure',
+  });
+
+  it('matches systemd units across inherited PATH changes, including quoted values', async () => {
+    await withTempDir('systemd-path-drift-', async (dir) => {
+      const installedPath = join(dir, 'happier-daemon.default.service');
+      writeFileSync(installedPath, systemdUnit('/home/test/.happier/bin:/usr/bin:/bin'));
+      expect(doesInstalledDaemonServiceDefinitionMatchExpected({
+        installedPath,
+        expectedContents: systemdUnit('/home/test/shell tools/bin:/usr/bin:/bin'),
+      })).toBe(true);
+    });
+  });
+
+  it.each([
+    ['launcher', (unit: string) => unit.replace('/bin/happier daemon', '/bin/hprev daemon')],
+    ['command', (unit: string) => unit.replace('--takeover', '--other')],
+    ['environment', (unit: string) => unit.replace('HAPPIER_PUBLIC_RELEASE_CHANNEL=stable', 'HAPPIER_PUBLIC_RELEASE_CHANNEL=preview')],
+    ['lifecycle', (unit: string) => unit.replace('KillMode=process', 'KillMode=control-group')],
+    ['missing PATH', (unit: string) => unit.replace(/^Environment=PATH=.*\n/m, '')],
+    ['extra assignment', (unit: string) => unit.replace(/^(Environment=PATH=.*)$/m, '$1 HAPPIER_HOME_DIR=/other')],
+  ])('still detects systemd %s drift alongside a different PATH', async (_name, change) => {
+    await withTempDir('systemd-real-drift-', async (dir) => {
+      const installedPath = join(dir, 'happier-daemon.default.service');
+      writeFileSync(installedPath, systemdUnit('/usr/bin:/bin'));
+      expect(doesInstalledDaemonServiceDefinitionMatchExpected({
+        installedPath,
+        expectedContents: change(systemdUnit('/home/test/shell tools/bin:/usr/bin:/bin')),
+      })).toBe(false);
+    });
+  });
+
   it('returns true when installed and expected are byte-identical', async () => {
     await withTempDir('plist-signature-', async (dir) => {
       const content = plist(PROGRAM_ARGS_SHIM, PATH_A);

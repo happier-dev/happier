@@ -16,13 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
-
-/** Mirrors the config each environment is built with (build-updater-artifacts.mjs). */
-const ENVIRONMENT_CONFIG = Object.freeze({
-  production: 'tauri.conf.json',
-  preview: 'tauri.preview.conf.json',
-  publicdev: 'tauri.publicdev.conf.json',
-});
+import { resolveTauriChannelConfigFile } from './channel-config.mjs';
 
 /**
  * The updater public key (minisign key line) an environment's app embeds.
@@ -30,7 +24,7 @@ const ENVIRONMENT_CONFIG = Object.freeze({
  */
 export function readUpdaterPublicKey({ tauriDir, environment }) {
   const read = (/** @type {string} */ name) => JSON.parse(fs.readFileSync(path.join(tauriDir, name), 'utf8'))?.plugins?.updater?.pubkey;
-  const encoded = read(ENVIRONMENT_CONFIG[environment]) ?? read(ENVIRONMENT_CONFIG.production);
+  const encoded = read(resolveTauriChannelConfigFile(environment)) ?? read('tauri.conf.json');
   if (typeof encoded !== 'string' || !encoded.trim()) throw new Error(`no updater pubkey configured for ${environment}`);
   const keyLine = Buffer.from(encoded, 'base64').toString('utf8').split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).at(-1);
   if (!keyLine || !/^RW[A-Za-z0-9+/=]{50,}$/u.test(keyLine)) throw new Error(`updater pubkey for ${environment} is not a minisign public key`);

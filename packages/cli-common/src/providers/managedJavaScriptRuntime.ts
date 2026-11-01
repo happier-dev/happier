@@ -1,7 +1,9 @@
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { chmod, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
+import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+
+import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
+import type { ManagedToolBootstrapOptions } from './managedToolBootstrap.js';
 
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
 
@@ -216,62 +218,14 @@ type EnsureManagedJavaScriptRuntimeDeps = Readonly<{
   extractGitHubReleaseAsset?: typeof extractGitHubReleaseAsset;
 }>;
 
-const JS_RUNTIME_BOOTSTRAP_LOCK_MAX_RETRIES = 40;
-const JS_RUNTIME_BOOTSTRAP_LOCK_BASE_DELAY_MS = 25;
 const JS_RUNTIME_BOOTSTRAP_LOCK_STALE_MS = 5 * 60 * 1000;
-
-function resolveManagedJavaScriptRuntimeBootstrapLockPath(processEnv: NodeJS.ProcessEnv): string {
-  return join(managedJavaScriptRuntimeInstallDir(processEnv), '.lock', 'bootstrap.lock');
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function acquireManagedJavaScriptRuntimeBootstrapLock(
-  processEnv: NodeJS.ProcessEnv,
-): Promise<FileHandle> {
-  const lockPath = resolveManagedJavaScriptRuntimeBootstrapLockPath(processEnv);
-  await mkdir(dirname(lockPath), { recursive: true });
-
-  for (let attempt = 0; attempt < JS_RUNTIME_BOOTSTRAP_LOCK_MAX_RETRIES; attempt += 1) {
-    try {
-      return await open(lockPath, 'wx');
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== 'EEXIST') {
-        throw error;
-      }
-
-      try {
-        const lockStats = await stat(lockPath);
-        if (Date.now() - lockStats.mtimeMs > JS_RUNTIME_BOOTSTRAP_LOCK_STALE_MS) {
-          await rm(lockPath, { force: true });
-          continue;
-        }
-      } catch (statError) {
-        const statErr = statError as NodeJS.ErrnoException;
-        if (statErr.code === 'ENOENT') {
-          continue;
-        }
-        throw statError;
-      }
-
-      if (attempt === JS_RUNTIME_BOOTSTRAP_LOCK_MAX_RETRIES - 1) {
-        throw new Error('Failed to acquire managed JavaScript runtime bootstrap lock');
-      }
-
-      await delay(Math.round(JS_RUNTIME_BOOTSTRAP_LOCK_BASE_DELAY_MS * Math.pow(1.5, attempt)));
-    }
-  }
-
-  throw new Error('Failed to acquire managed JavaScript runtime bootstrap lock');
-}
 
 export async function ensureManagedJavaScriptRuntimeCommand(
   processEnv: NodeJS.ProcessEnv = process.env,
   deps: EnsureManagedJavaScriptRuntimeDeps = {},
+  options: ManagedToolBootstrapOptions = {},
 ): Promise<string | null> {
+  options.signal?.throwIfAborted();
   const rawOverride = readExplicitJavaScriptRuntimeCommand(processEnv);
   if (rawOverride) {
     return resolveExplicitJavaScriptRuntimeCommand(processEnv);
@@ -286,69 +240,75 @@ export async function ensureManagedJavaScriptRuntimeCommand(
   const fetchNodeRelease = deps.fetchNodeRuntimeReleaseAsset ?? fetchNodeRuntimeReleaseAsset;
   const downloadAsset = deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset;
   const extractAsset = deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset;
-  let lockHandle: FileHandle | null = null;
 
   try {
-    lockHandle = await acquireManagedJavaScriptRuntimeBootstrapLock(processEnv);
-    const managedAfterLock = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
-    if (managedAfterLock) {
-      return managedAfterLock;
-    }
-
-    const release = await fetchNodeRelease({ processEnv });
-    const scratchDir = await createManagedToolScratchDir({
-      installDir,
-      prefix: 'bootstrap',
-    });
-    try {
-      const archivePath = join(scratchDir, release.name);
-      const extractDir = join(scratchDir, 'extract');
-      const nextRuntimeDir = join(nextDir, 'runtime');
-      const nextNodeBinaryPath = resolveNextManagedNodeBinaryPath(processEnv, release.binaryRelativePath);
-
-      await downloadAsset({
-        url: release.url,
-        destinationPath: archivePath,
-        digest: release.digest,
-        userAgent: 'happier-cli',
-      });
-
-      await rm(nextDir, { recursive: true, force: true });
-      await extractAsset({
-        archivePath,
-        archiveName: release.name,
-        extractDir,
-        outputPath: nextRuntimeDir,
-        skipTarLinks: true,
-      });
-
-      await mkdir(dirname(nextNodeBinaryPath), { recursive: true });
-      accessSync(nextNodeBinaryPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-      await writeManagedJavaScriptRuntimeWrapper({
-        outputPath: nextBinPath,
-        runtimeBinaryPath: process.platform === 'win32' ? '%~dp0..\\runtime\\node.exe' : '$(dirname "$0")/../runtime/bin/node',
-      });
-
-      await rm(join(installDir, 'current'), { recursive: true, force: true });
-      await mkdir(installDir, { recursive: true });
-      await rename(nextDir, join(installDir, 'current'));
-      return managedJavaScriptRuntimeBinPath(processEnv);
-    } finally {
-      await rm(scratchDir, { recursive: true, force: true });
-    }
-  } catch (error) {
-    throw new Error('Managed JavaScript runtime is unavailable: bootstrap failed', { cause: error });
-  } finally {
-    if (lockHandle) {
-      try {
-        await lockHandle.close();
-      } finally {
-        try {
-          await rm(resolveManagedJavaScriptRuntimeBootstrapLockPath(processEnv), { force: true });
-        } catch {
-          // Ignore best-effort lock cleanup failures after bootstrap completes.
-        }
+    return await withWorkspaceBundleLock(async () => {
+      const managedAfterLock = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+      if (managedAfterLock) {
+        return managedAfterLock;
       }
-    }
+
+      options.onProgress?.({ t: 'progress', phase: 'fetching-release' });
+      const release = await fetchNodeRelease({ processEnv, signal: options.signal });
+      const scratchDir = await createManagedToolScratchDir({
+        installDir,
+        prefix: 'bootstrap',
+      });
+      try {
+        const archivePath = join(scratchDir, release.name);
+        const extractDir = join(scratchDir, 'extract');
+        const nextRuntimeDir = join(nextDir, 'runtime');
+        const nextNodeBinaryPath = resolveNextManagedNodeBinaryPath(processEnv, release.binaryRelativePath);
+
+        options.signal?.throwIfAborted();
+        options.onProgress?.({ t: 'progress', phase: 'downloading', bytesDone: 0 });
+        await downloadAsset({
+          url: release.url,
+          destinationPath: archivePath,
+          digest: release.digest,
+          userAgent: 'happier-cli',
+          signal: options.signal,
+          onProgress: (event) => options.onProgress?.({ t: 'progress', phase: 'downloading', ...event }),
+        });
+
+        options.signal?.throwIfAborted();
+        options.onProgress?.({ t: 'progress', phase: 'installing' });
+        await rm(nextDir, { recursive: true, force: true });
+        await extractAsset({
+          archivePath,
+          archiveName: release.name,
+          extractDir,
+          outputPath: nextRuntimeDir,
+          skipTarLinks: true,
+          signal: options.signal,
+        });
+
+        await mkdir(dirname(nextNodeBinaryPath), { recursive: true });
+        accessSync(nextNodeBinaryPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+        await writeManagedJavaScriptRuntimeWrapper({
+          outputPath: nextBinPath,
+          runtimeBinaryPath: process.platform === 'win32' ? '%~dp0..\\runtime\\node.exe' : '$(dirname "$0")/../runtime/bin/node',
+        });
+
+        options.signal?.throwIfAborted();
+        await rm(join(installDir, 'current'), { recursive: true, force: true });
+        await mkdir(installDir, { recursive: true });
+        await rename(nextDir, join(installDir, 'current'));
+        return managedJavaScriptRuntimeBinPath(processEnv);
+      } finally {
+        await rm(nextDir, { recursive: true, force: true });
+        await rm(scratchDir, { recursive: true, force: true });
+      }
+    }, {
+      lockPath: join(installDir, '.lock', 'bootstrap.lock'),
+      timeoutMs: null,
+      staleAfterMs: JS_RUNTIME_BOOTSTRAP_LOCK_STALE_MS,
+      signal: options.signal,
+      errorLabel: 'managed JavaScript runtime bootstrap lock',
+      onWait: () => options.onProgress?.({ t: 'progress', phase: 'waiting-for-lock' }),
+    });
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    throw new Error('Managed JavaScript runtime is unavailable: bootstrap failed', { cause: error });
   }
 }

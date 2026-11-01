@@ -1,3 +1,6 @@
+import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { t } from '@/text';
+import { decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { MachineMetadata, MachineMetadataSchema } from '../domains/state/storageTypes';
 import { EncryptionCache } from './encryptionCache';
@@ -25,18 +28,46 @@ export async function measureMachineEncryptRawAttribution<T>(
 }
 
 export class MachineEncryption {
+    readonly mode: 'plain' | 'e2ee';
     private machineId: string;
-    private encryptor: Encryptor & Decryptor;
+    private encryptor: (Encryptor & Decryptor) | null;
     private cache: EncryptionCache;
 
     constructor(
         machineId: string,
-        encryptor: Encryptor & Decryptor,
+        encryptor: (Encryptor & Decryptor) | null,
         cache: EncryptionCache
     ) {
+        this.mode = encryptor ? 'e2ee' : 'plain';
         this.machineId = machineId;
         this.encryptor = encryptor;
         this.cache = cache;
+    }
+
+    private async encode(value: unknown): Promise<string> {
+        if (!this.encryptor) return encodePlainMachineStoredContent(value);
+        const encrypted = await this.encryptor.encrypt([value]);
+        return encodeBase64(encrypted[0], 'base64');
+    }
+
+    private async decode(value: string): Promise<unknown> {
+        if (!this.encryptor) return decodePlainMachineStoredContent(value);
+        const decrypted = await this.encryptor.decrypt([decodeBase64(value, 'base64')]);
+        return decrypted[0] ?? null;
+    }
+
+    async encodeRpcPayload(payload: unknown): Promise<unknown> {
+        return this.mode === 'plain' ? payload : await this.encryptRaw(payload);
+    }
+
+    async decodeRpcResult(value: unknown): Promise<unknown> {
+        if (this.mode === 'plain') return value;
+        const encrypted = Array.isArray(value) && value.length === 1 ? value[0] : value;
+        const decoded = typeof encrypted === 'string' ? await this.decryptRaw(encrypted) : null;
+        if (decoded === null || decoded === undefined) {
+            throw createRpcCallError({ error: t('errors.machineRpcDecryptionFailed'), errorCode: 'machine_rpc_decryption_failed' });
+        }
+        return decoded;
     }
 
     /**
@@ -47,8 +78,7 @@ export class MachineEncryption {
             'sync.encryption.machine.encryptMetadata',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([metadata]);
-                return encodeBase64(encrypted[0], 'base64');
+                return await this.encode(metadata);
             },
         );
     }
@@ -65,11 +95,10 @@ export class MachineEncryption {
 
         // Decrypt if not cached
         try {
-            const encryptedData = decodeBase64(encrypted, 'base64');
             const decrypted = await syncPerformanceTelemetry.measureAsync(
                 'sync.encryption.machine.decryptMetadata',
                 { items: 1 },
-                async () => this.encryptor.decrypt([encryptedData]),
+                async () => [await this.decode(encrypted)],
             );
             if (!decrypted[0]) {
                 return null;
@@ -98,8 +127,7 @@ export class MachineEncryption {
             'sync.encryption.machine.encryptDaemonState',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([state]);
-                return encodeBase64(encrypted[0], 'base64');
+                return await this.encode(state);
             },
         );
     }
@@ -120,11 +148,10 @@ export class MachineEncryption {
 
         // Decrypt if not cached
         try {
-            const encryptedData = decodeBase64(encrypted, 'base64');
             const decrypted = await syncPerformanceTelemetry.measureAsync(
                 'sync.encryption.machine.decryptDaemonState',
                 { items: 1 },
-                async () => this.encryptor.decrypt([encryptedData]),
+                async () => [await this.decode(encrypted)],
             );
             const result = decrypted[0] || null;
             
@@ -147,8 +174,7 @@ export class MachineEncryption {
             'sync.encryption.machine.encryptRaw',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([data]);
-                return encodeBase64(encrypted[0], 'base64');
+                return await this.encode(data);
             },
         );
     }
@@ -158,13 +184,12 @@ export class MachineEncryption {
      */
     async decryptRaw(encrypted: string): Promise<any | null> {
         try {
-            const encryptedData = decodeBase64(encrypted, 'base64');
             const decrypted = await syncPerformanceTelemetry.measureAsync(
                 'sync.encryption.machine.decryptRaw',
                 { items: 1 },
-                async () => this.encryptor.decrypt([encryptedData]),
+                async () => [await this.decode(encrypted)],
             );
-            return decrypted[0] || null;
+            return decrypted[0] ?? null;
         } catch (error) {
             console.error('Failed to decrypt raw data:', error);
             return null;

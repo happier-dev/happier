@@ -8,7 +8,7 @@ import {
     SessionListSelectionProvider,
     useSessionListSelectionActions,
 } from './selection/SessionListSelectionContext';
-import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionActionIds';
+import { SESSION_ACTION_PIN_ID, SESSION_ACTION_RENAME_ID, SESSION_ACTION_UNPIN_ID } from '@/components/sessions/actions/sessionActionIds';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,7 +22,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
@@ -86,7 +86,8 @@ function hasCopyDebugInformationMenuItem(items: unknown): boolean {
     if (!Array.isArray(items)) return false;
     return items.some((item: unknown) => {
         if (!item || typeof item !== 'object') return false;
-        return (item as { id?: unknown }).id === 'session.copyDebugInformation';
+        const entry = item as { id?: unknown; submenu?: { items?: unknown } };
+        return entry.id === 'session.copyDebugInformation' || hasCopyDebugInformationMenuItem(entry.submenu?.items);
     });
 }
 
@@ -324,7 +325,10 @@ describe('SessionItem context menu press suppression', () => {
         expect(hasRenameMenuItem(menus[0].props.items)).toBe(true);
     });
 
-    it('shows the copy information context menu item in developer-mode builds', async () => {
+    it.each(['ios', 'android', 'web'] as const)('copies session information outside developer mode on %s', async (platform) => {
+        platformOs = platform;
+        localDevModeEnabled = false;
+        const Clipboard = await import('expo-clipboard');
         const session = createSessionFixture({
             id: 'sess_debug_menu',
             active: false,
@@ -354,9 +358,30 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        let menus = screen.tree.root.findAllByType('DropdownMenu' as React.ElementType);
+        if (platform === 'web') {
+            const hoverContainer = screen.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
+            await act(async () => hoverContainer?.props.onPointerEnter());
+        }
+        const menus = screen.tree.root.findAllByType('DropdownMenu' as React.ElementType);
         expect(menus).toHaveLength(1);
         expect(hasCopyDebugInformationMenuItem(menus[0].props.items)).toBe(true);
+        await act(async () => {
+            await menus[0].props.onSelect('session.copyDebugInformation');
+        });
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('Happier session ID: sess_debug_menu'));
+        const copyMenu = menus[0].props.items.find((item: { id: string }) => item.id === 'session.copy');
+        expect(menus[0].props.items.at(-1)?.id).toBe('session.copy');
+        expect(copyMenu?.submenu?.items.map((item: { id: string }) => item.id)).toEqual([
+            'session.copyDebugInformation', 'session.copySessionId', 'session.copyProviderSessionId',
+        ]);
+        for (const [itemId, expected] of [
+            ['session.copySessionId', session.id],
+            ['session.copyProviderSessionId', 'claude-session-1'],
+        ]) {
+            await act(async () => { await menus[0].props.onSelect(itemId); });
+            expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
+        }
+
     });
 
     it('copies debug information from the full cached session when row metadata is list-projected', async () => {
@@ -405,6 +430,9 @@ describe('SessionItem context menu press suppression', () => {
         await act(async () => {
             await contextMenu.props.onSelect('session.copyDebugInformation');
         });
+
+        await act(async () => { await contextMenu.props.onSelect('session.copyProviderSessionId'); });
+        expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('claude-session-1');
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
             'Happier session ID: sess_debug_full',
@@ -620,44 +648,47 @@ describe('SessionItem context menu press suppression', () => {
         expect(screen.tree.root.findAllByType('Swipeable' as React.ElementType)).toHaveLength(0);
     });
 
-    it('disables row long-press actions on Android while the hotfix is active', async () => {
+    it('pins and unpins an Android session from its long-press menu without navigating', async () => {
         platformOs = 'android';
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_3',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
             active: true,
-            activeAt: 1,
             metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
+        });
 
-        const onNativeContextMenuOpenChange = vi.fn();
+        function PinnableSession() {
+            const [pinned, setPinned] = React.useState(false);
+            return (
+                <SessionItem
+                    session={session}
+                    selected={false}
+                    isFirst={true}
+                    isLast={true}
+                    isSingle={true}
+                    pinned={pinned}
+                    onTogglePinned={() => setPinned((current) => !current)}
+                />
+            );
+        }
 
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-                nativeInlineDragEnabled={false}
-                nativeContextMenuOpen={false}
-                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
-            />,
-        );
-
+        const screen = await renderScreen(<PinnableSession />);
         const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_3' });
-        expect(itemPressable.props.onLongPress).toBeUndefined();
+        expect(itemPressable.props.onLongPress).toEqual(expect.any(Function));
+
+        for (const actionId of [SESSION_ACTION_PIN_ID, SESSION_ACTION_UNPIN_ID]) {
+            await act(async () => { itemPressable.props.onLongPress(); });
+            const menu = screen.findByType('DropdownMenu' as React.ElementType);
+            expect(menu.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: actionId })]));
+            await act(async () => { await pressTestInstanceAsync(itemPressable, 'session list item'); });
+            expect(navigateToSessionSpy).not.toHaveBeenCalled();
+            await act(async () => { menu.props.onSelect(actionId); });
+            expect(screen.tree.root.findAllByType('DropdownMenu' as React.ElementType)).toHaveLength(0);
+        }
+
+        await act(async () => { itemPressable.props.onLongPress(); });
+        expect(screen.findByType('DropdownMenu' as React.ElementType).props.items)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ id: SESSION_ACTION_PIN_ID })]));
     });
 
     it('closes the native context menu before delegating the rename selection', async () => {

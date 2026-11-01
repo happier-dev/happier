@@ -99,4 +99,29 @@ describe("app/monitoring/sentry (init)", () => {
         const merged = initArg.integrations([]);
         expect(merged).toEqual([expect.objectContaining({ name: expect.stringMatching(/profil/i) })]);
     });
+    it("keeps error capture configured while declining native profiling under Bun", async () => {
+        const initSpy = vi.fn();
+        vi.stubGlobal("Bun", {});
+        try {
+            vi.doMock("@sentry/node", () => ({ getClient: () => null, init: initSpy }));
+            const { initializeServerSentry } = await import("./sentry");
+            initializeServerSentry({
+                SENTRY_DSN: "https://dsn@example/1",
+                SENTRY_PROFILE_SESSION_SAMPLE_RATE: "1",
+            });
+
+            const initArg = initSpy.mock.calls[0]?.[0] as InitArg;
+            expect(initArg).toEqual(expect.objectContaining({
+                dsn: "https://dsn@example/1",
+                sendDefaultPii: false,
+                beforeSend: expect.any(Function),
+            }));
+            const integrations = initArg.integrations;
+            if (typeof integrations !== "function") throw new Error("SDK integrations were not configured");
+            expect(integrations([])).toEqual([]);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
 });

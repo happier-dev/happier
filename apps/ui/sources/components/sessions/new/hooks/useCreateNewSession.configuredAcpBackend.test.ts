@@ -174,7 +174,8 @@ async function setupHarness() {
         normalizeAutomationName: vi.fn((value: string) => value),
         validateAutomationTemplateTarget: vi.fn(),
     }));
-    vi.doMock('@/utils/timing/time', () => ({
+    vi.doMock('@/utils/timing/time', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('@/utils/timing/time')>()),
         delay: vi.fn(async () => {}),
     }));
     vi.doMock('@/utils/errors/daemonUnavailableAlert', () => ({

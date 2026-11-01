@@ -4,6 +4,8 @@ import type { TranslationKeyNoParams } from '@/text';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
+export type SettingsStackScope = 'settings' | 'prompts';
+
 export type SettingsStackScreenDefinition = Readonly<{
     name: string;
     options: NativeStackNavigationOptions;
@@ -34,6 +36,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'connected-services/index', titleKey: 'settings.connectedServices' },
     { name: 'connected-services/[serviceId]', titleKey: 'connectedServices.fallbackName' },
     { name: 'connected-services/group', titleKey: 'connectedServices.detail.groupDetail.routeTitle' },
+    { name: 'connected-services/import', titleKey: 'connectedServices.importAccounts.title' },
     { name: 'connected-services/oauth', titleKey: 'connectedServices.detail.addOauthProfileTitle' },
     { name: 'connected-services/profile', titleKey: 'connectedServices.profile.profileId' },
     { name: 'connected-services/provider-state-sharing', titleKey: 'connectedServices.providerStateSharing.title' },
@@ -100,8 +103,18 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'voice', titleKey: 'settings.voiceAssistant' },
 ] as const;
 
-export function getSettingsStackScreenDefinitions(t: Translate): readonly SettingsStackScreenDefinition[] {
-    return SETTINGS_ROUTE_CHROME_DEFINITIONS.map((definition) => {
+export function getSettingsStackScreenDefinitions(
+    t: Translate,
+    scope: SettingsStackScope = 'settings',
+): readonly SettingsStackScreenDefinition[] {
+    const definitions: readonly SettingsRouteChromeDefinition[] = scope === 'prompts'
+        ? SETTINGS_ROUTE_CHROME_DEFINITIONS.filter((definition) => definition.name.startsWith('prompts/'))
+            .map((definition) => ({ ...definition, name: definition.name.slice('prompts/'.length) }))
+        : [
+            ...SETTINGS_ROUTE_CHROME_DEFINITIONS.filter((definition) => !definition.name.startsWith('prompts/')),
+            { name: 'prompts', headerShown: false },
+        ];
+    return definitions.map((definition) => {
         const options: NativeStackNavigationOptions = {
             headerShown: definition.headerShown ?? true,
             headerBackTitle: t(definition.headerBackTitleKey ?? 'common.back'),

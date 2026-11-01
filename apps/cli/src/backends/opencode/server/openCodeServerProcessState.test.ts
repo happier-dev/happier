@@ -50,10 +50,19 @@ describe('isOpenCodeServerPidAlive', () => {
 
   it('returns false when the pid does not exist', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw new Error('ESRCH');
+      throw Object.assign(new Error('No such process'), { code: 'ESRCH' });
     });
 
     expect(isOpenCodeServerPidAlive(1234, { platform: 'darwin' })).toBe(false);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('retains a pid when the OS denies its existence probe', () => {
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('Access denied'), { code: 'EPERM' });
+    });
+
+    expect(isOpenCodeServerPidAlive(1234, { platform: 'win32' })).toBe(true);
     expect(execFileSync).not.toHaveBeenCalled();
   });
 });

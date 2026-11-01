@@ -1,5 +1,6 @@
 import {
   ProviderSessionInfoV1Schema,
+  hasSessionTitleInMetadata,
   type ProviderSessionInfoV1,
 } from '@happier-dev/protocol';
 
@@ -12,10 +13,6 @@ export type ProviderSessionInfoUpdate = Readonly<{
 
 function hasOwn(record: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
-}
-
-function hasDurableHappierTitle(metadata: Metadata): boolean {
-  return typeof metadata.summary?.text === 'string' && metadata.summary.text.trim().length > 0;
 }
 
 export function applyProviderSessionInfoUpdate(params: Readonly<{
@@ -42,7 +39,7 @@ export function applyProviderSessionInfoUpdate(params: Readonly<{
   if (!parsed.success) return params.metadata;
 
   const providerTitle = parsed.data.title;
-  const shouldInitializeTitle = !hasDurableHappierTitle(params.metadata)
+  const shouldInitializeTitle = !hasSessionTitleInMetadata(params.metadata)
     && typeof providerTitle === 'string'
     && providerTitle.length > 0;
 

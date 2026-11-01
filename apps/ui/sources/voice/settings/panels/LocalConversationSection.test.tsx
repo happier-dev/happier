@@ -185,6 +185,24 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it.each([
+    ['device', true],
+    ['local_neural', true],
+    ['google_gemini', false],
+    ['openai_compat', false],
+  ] as const)('offers hands-free settings for %s STT only when it can end turns on its own (%s)', async (provider, handsFree) => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      stt: { ...voiceSettingsDefaults.adapters.local_conversation.stt, provider },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const titles = screen.findAll((node) => String(node.type) === 'Item').map((node) => node.props?.title);
+
+    expect(titles.includes(t('settingsVoice.local.conversation.handsFree.enableTitle'))).toBe(handsFree);
+    expect(titles.includes(t('settingsVoice.local.conversation.handsFree.pushToTalkTitle'))).toBe(!handsFree);
+  });
+
   it('does not crash when providerId toggles away from local_conversation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = () => {};

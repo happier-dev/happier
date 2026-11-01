@@ -1,5 +1,4 @@
 import { createCursorAcpRuntime } from '@/backends/cursor/acp/runtime';
-import { CursorTerminalDisplay } from '@/backends/cursor/ui/CursorTerminalDisplay';
 import type { PermissionMode } from '@/api/types';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
@@ -47,7 +46,7 @@ export async function runCursor(opts: StandardAcpProviderRunOptions & {
     // fork a fresh Cursor session when the load fails.
     declaredSessionLoadSupport: true,
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: CursorTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/cursor/ui/CursorTerminalDisplay')).CursorTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
     createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, startupOverrides, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createCursorAcpRuntime({
       directory,

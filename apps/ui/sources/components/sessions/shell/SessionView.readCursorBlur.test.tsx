@@ -46,7 +46,7 @@ function getStorageStateForTest() {
         sessions: { s1: sessionState.current },
         settings: {},
         localSettings: {},
-        sessionListViewDataByServerId: {},
+        sessionListRenderables: {}, sessionListViewDataByServerId: {},
     };
 }
 
@@ -431,9 +431,6 @@ vi.mock('@/sync/domains/session/resume/resumeSessionBase', () => ({
 }));
 vi.mock('@/sync/domains/session/resume/happierReplayPrompt', () => ({
     resolveHappierReplayConfig: () => null,
-}));
-vi.mock('@/sync/domains/session/control/submitMode', () => ({
-    chooseSubmitMode: () => 'submit',
 }));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
     supportsEffectiveLocalControlForSession: () => true,

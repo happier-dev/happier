@@ -14,6 +14,7 @@ import {
   ScmOperationErrorCodeSchema,
   type ScmOperationErrorCode,
 } from './scmErrorCodes.js';
+import { lazySchema } from './lazySchema.js';
 export {
   ScmBackendIdSchema,
   ScmBackendPreferenceSchema,
@@ -36,19 +37,19 @@ export const SCM_COMMIT_MESSAGE_MAX_LENGTH = 4096;
 export const SCM_COMMIT_PATCH_MAX_COUNT = 256;
 export const SCM_COMMIT_PATCH_MAX_LENGTH = 200_000;
 
-export const ScmRepoModeSchema = z.enum(['.git', '.sl']);
+export const ScmRepoModeSchema = lazySchema(() => z.enum(['.git', '.sl']));
 export type ScmRepoMode = z.infer<typeof ScmRepoModeSchema>;
 
-export const ScmDiffAreaSchema = z.enum(['included', 'pending', 'both']);
+export const ScmDiffAreaSchema = lazySchema(() => z.enum(['included', 'pending', 'both']));
 export type ScmDiffArea = z.infer<typeof ScmDiffAreaSchema>;
 
-export const ScmChangeSetModelSchema = z.enum(['index', 'working-copy']);
+export const ScmChangeSetModelSchema = lazySchema(() => z.enum(['index', 'working-copy']));
 export type ScmChangeSetModel = z.infer<typeof ScmChangeSetModelSchema>;
 
-export const ScmBranchIntegrationOperationSchema = z.enum(['merge', 'rebase']);
+export const ScmBranchIntegrationOperationSchema = lazySchema(() => z.enum(['merge', 'rebase']));
 export type ScmBranchIntegrationOperation = z.infer<typeof ScmBranchIntegrationOperationSchema>;
 
-const ScmCapabilitiesSchemaCore = z.object({
+const ScmCapabilitiesSchemaCore = lazySchema(() => z.object({
   readStatus: z.boolean(),
   readDiffFile: z.boolean(),
   readDiffCommit: z.boolean(),
@@ -99,8 +100,8 @@ const ScmCapabilitiesSchemaCore = z.object({
       push: z.string().optional(),
     })
     .optional(),
-});
-export const ScmCapabilitiesSchema = z.preprocess((value) => {
+}));
+export const ScmCapabilitiesSchema = lazySchema(() => z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
   }
@@ -112,10 +113,10 @@ export const ScmCapabilitiesSchema = z.preprocess((value) => {
     ...record,
     worktreeCreate: record.workspaceWorktreeCreate,
   };
-}, ScmCapabilitiesSchemaCore);
+}, ScmCapabilitiesSchemaCore));
 export type ScmCapabilities = z.infer<typeof ScmCapabilitiesSchema>;
 
-export const ScmEntryKindSchema = z.enum([
+export const ScmEntryKindSchema = lazySchema(() => z.enum([
   'modified',
   'added',
   'deleted',
@@ -123,10 +124,10 @@ export const ScmEntryKindSchema = z.enum([
   'copied',
   'untracked',
   'conflicted',
-]);
+]));
 export type ScmEntryKind = z.infer<typeof ScmEntryKindSchema>;
 
-export const ScmPathStatsSchema = z.object({
+export const ScmPathStatsSchema = lazySchema(() => z.object({
   includedAdded: z.number().int().nonnegative(),
   includedRemoved: z.number().int().nonnegative(),
   pendingAdded: z.number().int().nonnegative(),
@@ -134,10 +135,10 @@ export const ScmPathStatsSchema = z.object({
   isBinary: z.boolean(),
   // False means bounded enrichment could not measure all line counts.
   isComplete: z.boolean().optional(),
-});
+}));
 export type ScmPathStats = z.infer<typeof ScmPathStatsSchema>;
 
-export const ScmWorkingEntrySchema = z.object({
+export const ScmWorkingEntrySchema = lazySchema(() => z.object({
   path: z.string(),
   previousPath: z.string().nullable(),
   kind: ScmEntryKindSchema,
@@ -146,10 +147,10 @@ export const ScmWorkingEntrySchema = z.object({
   hasIncludedDelta: z.boolean(),
   hasPendingDelta: z.boolean(),
   stats: ScmPathStatsSchema,
-});
+}));
 export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
 
-export const ScmWorktreeSchema = z.object({
+export const ScmWorktreeSchema = lazySchema(() => z.object({
   path: z.string(),
   branch: z.string().nullable(),
   isCurrent: z.boolean(),
@@ -164,25 +165,25 @@ export const ScmWorktreeSchema = z.object({
    * path mtime). Optional for back-compat with older SCM backends.
    */
   lastActivityAt: z.number().int().nonnegative().optional(),
-});
+}));
 export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
 
-export const ScmRemoteInfoSchema = z.object({
+export const ScmRemoteInfoSchema = lazySchema(() => z.object({
   name: z.string().min(1),
   fetchUrl: z.string().optional(),
   pushUrl: z.string().optional(),
-});
+}));
 export type ScmRemoteInfo = z.infer<typeof ScmRemoteInfoSchema>;
 
-export const ScmOperationStateSchema = z.object({
+export const ScmOperationStateSchema = lazySchema(() => z.object({
   kind: ScmBranchIntegrationOperationSchema,
   sourceRef: z.string().nullable().optional(),
   canContinue: z.boolean(),
   canAbort: z.boolean(),
-});
+}));
 export type ScmOperationState = z.infer<typeof ScmOperationStateSchema>;
 
-export const ScmWorkingSnapshotSchema = z.object({
+export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
   projectKey: z.string(),
   fetchedAt: z.number().int(),
   repo: z.object({
@@ -218,13 +219,13 @@ export const ScmWorkingSnapshotSchema = z.object({
     pendingRemoved: z.number().int().nonnegative(),
     isComplete: z.boolean().optional(),
   }),
-});
+}));
 export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;
 
 export const ScmBackendDescribeRequestSchema = ScmRequestBaseSchema;
 export type ScmBackendDescribeRequest = z.infer<typeof ScmBackendDescribeRequestSchema>;
 
-export const ScmBackendDescribeResponseSchema = z.object({
+export const ScmBackendDescribeResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   backendId: ScmBackendIdSchema.optional(),
   repoMode: ScmRepoModeSchema.optional(),
@@ -232,10 +233,10 @@ export const ScmBackendDescribeResponseSchema = z.object({
   capabilities: ScmCapabilitiesSchema.optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmBackendDescribeResponse = z.infer<typeof ScmBackendDescribeResponseSchema>;
 
-export const ScmStatusSnapshotRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmStatusSnapshotRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   /**
    * Opt-in flag: when true, the cli git backend enriches each
    * `ScmWorktreeSchema` entry with `changeCount` + `lastActivityAt` (per the
@@ -250,7 +251,7 @@ export const ScmStatusSnapshotRequestSchema = ScmRequestBaseSchema.extend({
    * intentionally want a single round-trip (and accept the latency).
    */
   includeWorktreeStatus: z.boolean().optional(),
-});
+}));
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
 
 /**
@@ -299,106 +300,106 @@ export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSc
  */
 export const SCM_WORKTREES_ENRICHMENT_MAX_PATHS = 64;
 
-export const ScmWorktreesEnrichmentRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmWorktreesEnrichmentRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   worktreePaths: z
     .array(z.string().min(1))
     .min(0)
     .max(SCM_WORKTREES_ENRICHMENT_MAX_PATHS),
-});
+}));
 export type ScmWorktreesEnrichmentRequest = z.infer<typeof ScmWorktreesEnrichmentRequestSchema>;
 
-export const ScmWorktreeEnrichmentEntrySchema = z.object({
+export const ScmWorktreeEnrichmentEntrySchema = lazySchema(() => z.object({
   path: z.string(),
   changeCount: z.number().int().nonnegative().optional(),
   lastActivityAt: z.number().int().nonnegative().optional(),
-});
+}));
 export type ScmWorktreeEnrichmentEntry = z.infer<typeof ScmWorktreeEnrichmentEntrySchema>;
 
-export const ScmWorktreesEnrichmentResponseSchema = z.object({
+export const ScmWorktreesEnrichmentResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   worktrees: z.array(ScmWorktreeEnrichmentEntrySchema).optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmWorktreesEnrichmentResponse = z.infer<typeof ScmWorktreesEnrichmentResponseSchema>;
 
-export const ScmStatusSnapshotResponseSchema = z.object({
+export const ScmStatusSnapshotResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   snapshot: ScmWorkingSnapshotSchema.optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmStatusSnapshotResponse = z.infer<typeof ScmStatusSnapshotResponseSchema>;
 
-export const ScmDiffFileRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmDiffFileRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   path: z.string(),
   area: ScmDiffAreaSchema.optional(),
-});
+}));
 export type ScmDiffFileRequest = z.infer<typeof ScmDiffFileRequestSchema>;
 
-export const ScmDiffFileResponseSchema = z.object({
+export const ScmDiffFileResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   diff: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmDiffFileResponse = z.infer<typeof ScmDiffFileResponseSchema>;
 
-export const ScmDiffCommitRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmDiffCommitRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   commit: z.string(),
-});
+}));
 export type ScmDiffCommitRequest = z.infer<typeof ScmDiffCommitRequestSchema>;
 
-export const ScmDiffCommitResponseSchema = z.object({
+export const ScmDiffCommitResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   diff: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmDiffCommitResponse = z.infer<typeof ScmDiffCommitResponseSchema>;
 
-export const ScmChangeApplyRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmChangeApplyRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   paths: z.array(z.string()).optional(),
   patch: z.string().optional(),
-});
+}));
 export type ScmChangeApplyRequest = z.infer<typeof ScmChangeApplyRequestSchema>;
 
-export const ScmChangeApplyResponseSchema = z.object({
+export const ScmChangeApplyResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmChangeApplyResponse = z.infer<typeof ScmChangeApplyResponseSchema>;
 
-export const ScmChangeDiscardEntrySchema = z.object({
+export const ScmChangeDiscardEntrySchema = lazySchema(() => z.object({
   path: z.string(),
   kind: ScmEntryKindSchema,
-});
+}));
 export type ScmChangeDiscardEntry = z.infer<typeof ScmChangeDiscardEntrySchema>;
 
-export const ScmChangeDiscardRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmChangeDiscardRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   entries: z.array(ScmChangeDiscardEntrySchema).min(1),
-});
+}));
 export type ScmChangeDiscardRequest = z.infer<typeof ScmChangeDiscardRequestSchema>;
 
-export const ScmChangeDiscardResponseSchema = z.object({
+export const ScmChangeDiscardResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmChangeDiscardResponse = z.infer<typeof ScmChangeDiscardResponseSchema>;
 
-export const ScmCommitPatchSchema = z.object({
+export const ScmCommitPatchSchema = lazySchema(() => z.object({
   path: z.string(),
   patch: z.string().min(1).max(SCM_COMMIT_PATCH_MAX_LENGTH),
-});
+}));
 export type ScmCommitPatch = z.infer<typeof ScmCommitPatchSchema>;
 
-export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmCommitCreateRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   message: z.string().max(SCM_COMMIT_MESSAGE_MAX_LENGTH),
   scope: z
     .union([
@@ -413,15 +414,15 @@ export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
     ])
     .optional(),
   patches: z.array(ScmCommitPatchSchema).min(1).max(SCM_COMMIT_PATCH_MAX_COUNT).optional(),
-});
+}));
 export type ScmCommitCreateRequest = z.infer<typeof ScmCommitCreateRequestSchema>;
 
-export const ScmCommitCreateResponseSchema = z.object({
+export const ScmCommitCreateResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   commitSha: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmCommitCreateResponse = z.infer<typeof ScmCommitCreateResponseSchema>;
 
 function normalizeScmPatchPathToken(raw: string): string | null {
@@ -504,7 +505,7 @@ export function isScmPatchBoundToPath(path: string, patch: string): boolean {
   return parsedPaths.every((parsedPath) => parsedPath === normalizedPath);
 }
 
-export const ScmLogEntrySchema = z.object({
+export const ScmLogEntrySchema = lazySchema(() => z.object({
   sha: z.string(),
   shortSha: z.string(),
   authorName: z.string(),
@@ -512,50 +513,50 @@ export const ScmLogEntrySchema = z.object({
   timestamp: z.number().int(),
   subject: z.string(),
   body: z.string(),
-});
+}));
 export type ScmLogEntry = z.infer<typeof ScmLogEntrySchema>;
 
-export const ScmLogListRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmLogListRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   limit: z.number().int().min(1).max(500).optional(),
   skip: z.number().int().min(0).optional(),
-});
+}));
 export type ScmLogListRequest = z.infer<typeof ScmLogListRequestSchema>;
 
-export const ScmLogListResponseSchema = z.object({
+export const ScmLogListResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   entries: z.array(ScmLogEntrySchema).optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmLogListResponse = z.infer<typeof ScmLogListResponseSchema>;
 
-export const ScmCommitBackoutRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmCommitBackoutRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   commit: z.string(),
-});
+}));
 export type ScmCommitBackoutRequest = z.infer<typeof ScmCommitBackoutRequestSchema>;
 
-export const ScmCommitBackoutResponseSchema = z.object({
+export const ScmCommitBackoutResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmCommitBackoutResponse = z.infer<typeof ScmCommitBackoutResponseSchema>;
 
-export const ScmRemoteRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRemoteRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   remote: z.string().optional(),
   branch: z.string().optional(),
-});
+}));
 export type ScmRemoteRequest = z.infer<typeof ScmRemoteRequestSchema>;
 
-export const ScmRemoteResponseSchema = z.object({
+export const ScmRemoteResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmRemoteResponse = z.infer<typeof ScmRemoteResponseSchema>;
 
 export type ScmRemoteTarget = {
@@ -748,28 +749,28 @@ function createNormalizedStringSchema<TValue extends string>(
   });
 }
 
-export const ScmRemoteNameSchema = createNormalizedStringSchema((value) => {
+export const ScmRemoteNameSchema = lazySchema(() => createNormalizedStringSchema((value) => {
   const normalized = normalizeScmRemoteName(value);
   return normalized.ok
     ? { ok: true, value: normalized.name }
     : normalized;
-});
+}));
 export type ScmRemoteName = z.infer<typeof ScmRemoteNameSchema>;
 
-export const ScmRemoteUrlSchema = createNormalizedStringSchema((value) => {
+export const ScmRemoteUrlSchema = lazySchema(() => createNormalizedStringSchema((value) => {
   const normalized = normalizeScmRemoteUrl(value);
   return normalized.ok
     ? { ok: true, value: normalized.url }
     : normalized;
-});
+}));
 export type ScmRemoteUrl = z.infer<typeof ScmRemoteUrlSchema>;
 
-export const ScmBranchSourceRefSchema = createNormalizedStringSchema((value) => {
+export const ScmBranchSourceRefSchema = lazySchema(() => createNormalizedStringSchema((value) => {
   const normalized = normalizeScmBranchSourceRef(value);
   return normalized.ok
     ? { ok: true, value: normalized.sourceRef }
     : normalized;
-});
+}));
 export type ScmBranchSourceRef = z.infer<typeof ScmBranchSourceRefSchema>;
 
 export function normalizeScmRemoteRequest(
@@ -792,14 +793,14 @@ export function normalizeScmRemoteRequest(
   };
 }
 
-export const ScmRemoteAddRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRemoteAddRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   name: ScmRemoteNameSchema,
   fetchUrl: ScmRemoteUrlSchema,
   pushUrl: ScmRemoteUrlSchema.optional(),
-});
+}));
 export type ScmRemoteAddRequest = z.infer<typeof ScmRemoteAddRequestSchema>;
 
-export const ScmRemoteSetUrlRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRemoteSetUrlRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   name: ScmRemoteNameSchema,
   fetchUrl: ScmRemoteUrlSchema.optional(),
   pushUrl: ScmRemoteUrlSchema.nullable().optional(),
@@ -811,22 +812,22 @@ export const ScmRemoteSetUrlRequestSchema = ScmRequestBaseSchema.extend({
       path: ['fetchUrl'],
     });
   }
-});
+}));
 export type ScmRemoteSetUrlRequest = z.infer<typeof ScmRemoteSetUrlRequestSchema>;
 
-export const ScmRemoteRemoveRequestSchema = ScmRequestBaseSchema.extend({
+export const ScmRemoteRemoveRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   name: ScmRemoteNameSchema,
-});
+}));
 export type ScmRemoteRemoveRequest = z.infer<typeof ScmRemoteRemoveRequestSchema>;
 
-export const ScmRemoteManagementResponseSchema = z.object({
+export const ScmRemoteManagementResponseSchema = lazySchema(() => z.object({
   success: z.boolean(),
   remotes: z.array(ScmRemoteInfoSchema).optional(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
-});
+}));
 export type ScmRemoteManagementResponse = z.infer<typeof ScmRemoteManagementResponseSchema>;
 
 export function hasAnyPendingScmChanges(snapshot: Pick<ScmRemoteMutationSnapshot, 'totals'>): boolean {

@@ -17,6 +17,20 @@ type QuotaDescriptorModule = Readonly<{
 describe('createClaudeSubscriptionQuotaFetcher', () => {
   const claudeCodeScope = 'user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload';
 
+  it('preserves the attested credential organization without a second profile request', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ five_hour: { utilization: 40 } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth',
+      oauth: { accessToken: 'at', refreshToken: 'rt', idToken: null, scope: claudeCodeScope,
+        tokenType: null, providerAccountId: 'user-1', providerEmail: null,
+        raw: { claudeAiOauth: { organizationUuid: 'org-team' } } },
+    });
+    const snapshot = await createClaudeSubscriptionQuotaFetcher().fetch({ record, now: 1_000, signal: new AbortController().signal });
+    expect(snapshot).toMatchObject({ providerId: 'claude', activeAccountId: 'user-1', providerOrganizationId: 'org-team' });
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).endsWith('/profile'))).toBe(true);
+  });
+
   it('does not claim exact quota support for setup-token credentials', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);

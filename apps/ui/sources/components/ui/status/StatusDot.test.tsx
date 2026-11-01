@@ -1,6 +1,14 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
+const motionPreference = {
+    matches: false,
+    listeners: new Set<(event: { matches: boolean }) => void>(),
+    addEventListener(_event: string, listener: (event: { matches: boolean }) => void) {
+        this.listeners.add(listener);
+    },
+};
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -31,6 +39,56 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('StatusDot', () => {
+    beforeEach(async () => {
+        vi.stubGlobal('window', { matchMedia: () => motionPreference });
+        vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
+        await React.act(async () => {
+            motionPreference.matches = false;
+            for (const listener of motionPreference.listeners) listener({ matches: false });
+        });
+    });
+
+    afterEach(() => {
+        standardCleanup();
+        vi.unstubAllGlobals();
+    });
+
+    it('pauses a retained dot while hidden or reduced motion is requested and resumes when allowed', async () => {
+        const { StatusDot } = await import('./StatusDot');
+        const screen = await renderScreen(React.createElement(StatusDot, {
+            color: 'orange', isPulsing: true, testID: 'status-dot',
+        }));
+        const host = screen.findHostByTestId('status-dot');
+        const isAnimating = () => Boolean(flattenStyle(screen.findHostByTestId('status-dot')?.props.style).animationName);
+        expect(isAnimating()).toBe(true);
+
+        await React.act(async () => {
+            Object.assign(document, { visibilityState: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(screen.findHostByTestId('status-dot')).toBe(host);
+        expect(isAnimating()).toBe(false);
+
+        await React.act(async () => {
+            Object.assign(document, { visibilityState: 'visible' });
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        expect(isAnimating()).toBe(true);
+
+        await React.act(async () => {
+            motionPreference.matches = true;
+            for (const listener of motionPreference.listeners) listener({ matches: true });
+        });
+        expect(screen.findHostByTestId('status-dot')).toBe(host);
+        expect(isAnimating()).toBe(false);
+
+        await React.act(async () => {
+            motionPreference.matches = false;
+            for (const listener of motionPreference.listeners) listener({ matches: false });
+        });
+        expect(isAnimating()).toBe(true);
+    });
+
     it('uses a CSS pulse on web instead of a Reanimated view', async () => {
         const { StatusDot } = await import('./StatusDot');
         const screen = await renderScreen(React.createElement(StatusDot, {

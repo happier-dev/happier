@@ -35,7 +35,7 @@ describe('apiSessionDrafts', () => {
             method: 'POST',
             body: JSON.stringify({ address }),
             headers: expect.objectContaining({ Authorization: 'Bearer token-a' }),
-        }), { includeAuth: false });
+        }), { includeAuth: false, recoveryRead: 'unbounded' });
     });
 
     it('rejects malformed successful responses instead of materializing unvalidated bytes', async () => {

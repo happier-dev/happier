@@ -1,5 +1,6 @@
 import {
   ConnectedServiceCredentialRecordV1Schema,
+  buildConnectedServiceCredentialMetadata,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
@@ -7,7 +8,7 @@ import {
 import { randomBytes } from 'node:crypto';
 
 import type { ApiClient } from '@/api/api';
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import { resolveConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
 import { assertConnectedServiceCredentialRecordBinding } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
@@ -94,6 +95,7 @@ export async function persistRefreshedCredential(input: Readonly<{
     return result;
   }
 
+  requireEncryptionCredentials(input.credentials);
   const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
     material:
       input.credentials.encryption.type === 'legacy'
@@ -107,12 +109,7 @@ export async function persistRefreshedCredential(input: Readonly<{
     serviceId: input.binding.serviceId,
     profileId: input.binding.profileId,
     sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-    metadata: {
-      kind: input.updated.kind,
-      providerEmail: input.updated.kind === 'oauth' ? input.updated.oauth.providerEmail : null,
-      providerAccountId: input.updated.kind === 'oauth' ? input.updated.oauth.providerAccountId : null,
-      expiresAt: input.updated.expiresAt,
-    },
+    metadata: buildConnectedServiceCredentialMetadata(input.updated),
     expectedCredentialRevision: input.source.credentialRevision,
     refreshLeaseOwnerId: input.refreshLeaseOwnerId,
   });

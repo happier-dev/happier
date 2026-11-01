@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { CODEX_BACKEND_MODES, type CodexBackendMode } from '../providers/codex/backendMode.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Session metadata override payloads (V1).
@@ -23,7 +24,7 @@ export function createModelOverrideV1Schema(zod: typeof z) {
     .passthrough();
 }
 
-export const ModelOverrideV1Schema = createModelOverrideV1Schema(z);
+export const ModelOverrideV1Schema = lazySchema(() => createModelOverrideV1Schema(z));
 export type ModelOverrideV1 = z.infer<typeof ModelOverrideV1Schema>;
 
 export function buildModelOverrideV1(params: Readonly<{ updatedAt: number; modelId: string }>): ModelOverrideV1 {
@@ -45,7 +46,7 @@ export function createAcpSessionModeOverrideV1Schema(zod: typeof z) {
     .passthrough();
 }
 
-export const AcpSessionModeOverrideV1Schema = createAcpSessionModeOverrideV1Schema(z);
+export const AcpSessionModeOverrideV1Schema = lazySchema(() => createAcpSessionModeOverrideV1Schema(z));
 export type AcpSessionModeOverrideV1 = z.infer<typeof AcpSessionModeOverrideV1Schema>;
 
 export function buildAcpSessionModeOverrideV1(params: Readonly<{ updatedAt: number; modeId: string }>): AcpSessionModeOverrideV1 {
@@ -75,7 +76,7 @@ export function createAcpConfigOptionOverridesV1Schema(zod: typeof z) {
     .passthrough();
 }
 
-export const AcpConfigOptionOverridesV1Schema = createAcpConfigOptionOverridesV1Schema(z);
+export const AcpConfigOptionOverridesV1Schema = lazySchema(() => createAcpConfigOptionOverridesV1Schema(z));
 export type AcpConfigOptionOverridesV1 = z.infer<typeof AcpConfigOptionOverridesV1Schema>;
 
 export function buildAcpConfigOptionOverridesV1(params: Readonly<{
@@ -98,7 +99,7 @@ export function createCodexRuntimeDescriptorV1Schema(zod: typeof z) {
     .passthrough();
 }
 
-export const CodexRuntimeDescriptorV1Schema = createCodexRuntimeDescriptorV1Schema(z);
+export const CodexRuntimeDescriptorV1Schema = lazySchema(() => createCodexRuntimeDescriptorV1Schema(z));
 export type CodexRuntimeDescriptorV1 = z.infer<typeof CodexRuntimeDescriptorV1Schema>;
 
 export function buildCodexRuntimeDescriptorV1(params: Readonly<{

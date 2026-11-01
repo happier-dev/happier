@@ -11,6 +11,7 @@ import {
     type UseSessionInlineDragDropResultEvent,
     type UseSessionInlineDragResolveDropResultEvent,
     type UseSessionInlineDragResolvedDrop,
+    type UseSessionInlineDragParams,
 } from '../useSessionInlineDrag';
 import type {
     RegisterSessionListTreeRowBounds,
@@ -34,7 +35,7 @@ export type SessionListRowProps = Readonly<
         groupKey: string;
         onDragStart: (sessionKey: string) => void;
         resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
-        onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
+        onDropResult: UseSessionInlineDragParams['onDropResult'];
         onDragCancel: (event: UseSessionInlineDragCancelEvent) => void;
         isDragActive: boolean;
         isBeingDragged: boolean;
@@ -93,7 +94,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             cellWrapper.style.zIndex = '';
             cellWrapper.style.overflow = '';
         }
-        onDropResult(event);
+        return onDropResult(event);
     }, [getCellWrapper, onDropResult]);
 
     const handleDragCancel = React.useCallback((event: UseSessionInlineDragCancelEvent) => {

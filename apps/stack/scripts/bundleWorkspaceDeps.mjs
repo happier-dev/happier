@@ -302,7 +302,14 @@ function buildWorkspaceBundleSourceSignature({ bundles }) {
     bundles: bundles.map((bundle) => {
       const packageJsonPath = resolve(bundle.srcDir, 'package.json');
       const packageJson = JSON.parse(String(readFileSync(packageJsonPath, 'utf8')));
-      const expectedFiles = collectExpectedPackageFiles(packageJson, bundle.srcDir);
+      const expectedFiles = [...new Set([
+        ...collectExpectedPackageFiles(packageJson, bundle.srcDir),
+        // Declared files that are not built (the Windows launcher outside a Windows build) are
+        // skipped by the copy; expecting them would mark the bundle stale on every run.
+        ...(Array.isArray(bundle.includeFiles)
+          ? bundle.includeFiles.filter((relativePath) => existsSync(resolve(bundle.srcDir, relativePath)))
+          : []),
+      ])].sort();
       return {
         packageName: resolveBundlePackageName(bundle),
         packageJson: collectPathFingerprint(packageJsonPath),

@@ -1,24 +1,29 @@
-import sodium from '@/encryption/libsodium.lib';
-import { encodeBase64 } from '@/encryption/base64';
-import { getRandomBytesAsync } from '@/platform/cryptoRandom';
-import { TokenStorage, isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { readServerEnabledBit } from '@happier-dev/protocol';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { parseToken } from '@/utils/auth/parseToken';
 
 export async function buildDataKeyCredentialsForToken(token: string): Promise<AuthCredentials> {
     const normalizedToken = token.toString();
+    const accountId = parseToken(normalizedToken);
 
     const existing = await TokenStorage.getCredentials();
-    if (existing && !isLegacyAuthCredentials(existing)) {
-        return { token: normalizedToken, encryption: existing.encryption };
+    let existingAccountId: string | null = null;
+    if (existing) {
+        try {
+            existingAccountId = parseToken(existing.token);
+        } catch {
+            // An unreadable stored identity cannot authorize retaining its content keys.
+        }
+    }
+    if (existing && existingAccountId === accountId) {
+        return { ...existing, token: normalizedToken };
     }
 
-    const seed = await getRandomBytesAsync(32);
-    const keyPair = sodium.crypto_box_seed_keypair(seed);
-    return {
-        token: normalizedToken,
-        encryption: {
-            publicKey: encodeBase64(keyPair.publicKey),
-            machineKey: encodeBase64(keyPair.privateKey),
-        },
-    };
+    const serverFeatures = await getReadyServerFeatures();
+    if (!serverFeatures || readServerEnabledBit(serverFeatures, 'encryption.plaintextMachine') !== true) {
+        throw new Error('Authentication failed: this server does not support token-only login with plaintext Machine access.');
+    }
+    return { token: normalizedToken };
 }
 

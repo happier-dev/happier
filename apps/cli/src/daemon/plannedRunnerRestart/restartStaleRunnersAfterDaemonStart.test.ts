@@ -87,6 +87,28 @@ describe('restartStaleSessionRunnersAfterDaemonStart', () => {
     expect(signal.signalledSessionIds).toEqual([]);
   });
 
+  it('leaves a stale runner alone while the server projects background agents', async () => {
+    const signal = createSignalBoundary();
+    const logs = createLogSink();
+
+    const outcome = await restartStaleSessionRunnersAfterDaemonStart({
+      readSettings: async () => ({ restartSessionRunnersOnUpdate: true }),
+      isShuttingDown: () => false,
+      resolveCurrentIdentity: () => currentIdentity(),
+      trackedSessions: () => [trackedSession()],
+      requestRestart: signal.requestRestart,
+      readServerRuntimeActivity: async () => ({ runtimeActivityState: 'active', runtimeActivityActiveCount: 1 }),
+      logDebug: logs.logDebug,
+      logWarn: logs.logWarn,
+    });
+
+    expect(outcome).toEqual(expect.objectContaining({
+      status: 'completed',
+      result: expect.objectContaining({ restartedCount: 0, skippedCount: 1 }),
+    }));
+    expect(signal.signalledSessionIds).toEqual([]);
+  });
+
   it('restarts stale runners with the on-update config reason in if_stale mode when enabled', async () => {
     const signal = createSignalBoundary();
     const logs = createLogSink();

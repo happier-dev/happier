@@ -6,18 +6,19 @@ import type {
   SessionWorkStateStatusReasonV1,
   SessionWorkStateStatusV1,
 } from '../../sessionWorkState/sessionWorkStateV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const CodexAppServerGoalStatusSchema = z.enum([
+export const CodexAppServerGoalStatusSchema = lazySchema(() => z.enum([
   'active',
   'paused',
   'blocked',
   'usageLimited',
   'budgetLimited',
   'complete',
-]);
+]));
 export type CodexAppServerGoalStatus = z.infer<typeof CodexAppServerGoalStatusSchema>;
 
-export const CodexAppServerGoalSchema = z
+export const CodexAppServerGoalSchema = lazySchema(() => z
   .object({
     threadId: z.string().min(1),
     objective: z.string().trim().min(1).max(4000),
@@ -28,7 +29,7 @@ export const CodexAppServerGoalSchema = z
     createdAt: z.union([z.string(), z.number()]).optional(),
     updatedAt: z.union([z.string(), z.number()]),
   })
-  .passthrough();
+  .passthrough());
 export type CodexAppServerGoal = z.infer<typeof CodexAppServerGoalSchema>;
 
 function normalizeTimestampMs(value: unknown): number | null {

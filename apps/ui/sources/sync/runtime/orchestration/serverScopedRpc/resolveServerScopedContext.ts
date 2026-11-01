@@ -8,7 +8,7 @@ import {
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { parseToken } from '@/utils/auth/parseToken';
 
-import type { ResolvedServerRpcContext, ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, type ResolvedServerRpcContext, type ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
@@ -24,7 +24,7 @@ export async function resolveServerScopedContext(params: Readonly<{
     const machineId = normalizeId(params.machineId);
     const targetServerId = normalizeId(params.serverId);
     const expectedAccountId = normalizeId(params.accountId);
-    const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
+    const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
     const activeSnapshot = getActiveServerSnapshot();
     const activeServerId = normalizeId(activeSnapshot.serverId);
     const shouldForceScoped = params.forceScoped === true || Boolean(expectedAccountId);

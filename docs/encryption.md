@@ -4,6 +4,10 @@ This document details how client data is encrypted, how encrypted blobs are stru
 
 For transport and event shapes, see `protocol.md`. For HTTP endpoints, see `api.md`.
 
+The encryption layouts below describe E2EE content. Plaintext Session storage is
+described separately under **Session storage modes**; the unreleased development
+Machine format is described under **Plain Machines (development)**.
+
 ## Overview
 
 ```mermaid
@@ -230,6 +234,77 @@ sequenceDiagram
   - `POST /v1/machines`
   - WebSocket `machine-update-metadata` / `machine-update-state`
   - `update-machine` events
+
+In released 0.2, plaintext Account or Session storage does not disable encryption of Machine
+metadata, daemon state, or Machine RPC. Signing in independently through an identity
+provider can authorize devices for the same Account without giving them matching
+content keys. Machine control still requires key material that can open the target
+Machine's published data-encryption key. Genuine legacy records without a published
+key retain their credential-key path; a malformed or unopenable published key never
+falls back to a different local key.
+
+Development clients report target-key and response-decryption failures explicitly,
+rather than treating them as a missing Machine capability. Authentication success or
+plaintext Session access does not establish that encrypted Machine control is usable.
+The development-only plain Machine contract below is not a claim of availability
+in those released clients or servers.
+
+Development source records `rpc_params_decryption_failed` in the target's normal
+file log when RPC parameters cannot be decrypted, with the unprefixed method and
+encryption variant; it excludes payloads, ciphertext, keys, and Machine/Session
+identifiers. This is a diagnostic for rejected input, which can also be malformed,
+rather than proof of a key mismatch or a migration of existing device keys.
+
+#### Plain Machines (development)
+
+Current 0.2 development source adds genuine plain Machine metadata, daemon state,
+and RPC. Clients require the explicit `encryption.plaintextMachine` server feature
+bit; absent or false means unsupported. The server derives this bit from plaintext
+storage support, subject to the canonical build feature policy and its
+`encryption.plaintextStorage` dependency. Plain registration requires a plain
+Account. E2EE Machines retain their encrypted format and key requirements.
+
+The existing `dataEncryptionKey` carrier stores base64-encoded UTF-8 JSON
+`{ "t": "plain", "v": null }` as an explicit plain marker. An absent key retains
+its released meaning: legacy encryption using genuine Account credential material.
+Plain `metadata` and non-null `daemonState` are base64-encoded typed envelopes
+`{ "t": "plain", "v": <complete JSON document> }`. Base64 is encoding, not
+encryption. Plain Machine RPC parameters and responses are readable by the relay;
+deployments using it trust the server with Machine control content as well as
+plaintext stored content. It introduces no server-derived shared content key.
+
+Historical encrypted Machines remain encrypted after a released client's Account
+opt-out. A capable client with the genuine old key can decode both complete
+documents, preserve unknown fields, and convert the whole content triple through
+`POST /v1/machines/:id/content-key/transition`. The server compares the expected
+published key and both document versions before atomically replacing the key,
+metadata, and daemon state and clearing the content-key fingerprint. A stale basis
+returns a conflict; the caller refreshes before retrying. Ordinary registration
+never substitutes a newly supplied key for incumbent content: a key mismatch keeps
+the incumbent key, metadata, and daemon state together. Metadata/state updates must
+match the persisted row's mode, including encrypted history in a plain Account.
+
+The Account mode migration accepts a complete Machine census and converts all
+owned records in the same transaction as the Account mode, in either direction.
+Missing records or stale key/version preconditions abort that transition. Omission
+of the Machine directive preserves released-client opt-out behavior; enabling
+E2EE while an explicitly plain Machine remains returns `machines_require_upgrade`.
+After explicit conversion, an older running daemon must restart and refetch the
+new Machine context; ordinary encrypted Machines do not require a global restart.
+
+Token-only authentication carries authorization without invented encryption keys.
+Refreshing the same Account preserves any genuine locally held legacy or data-key
+material. A client without the old material cannot convert or control an encrypted
+historical Machine: it reports an operation failure rather than replacing stored
+documents with defaults. Restore the genuine key material to convert that history.
+
+The development CLI's private request-settlement journal remains encrypted even
+for token-only plain Accounts. It derives a scoped local key from the existing
+private installation identity; this does not fabricate Account encryption material
+or change Machine/Session storage mode. Existing account-key journal envelopes keep
+their original reader. Recovery requires the original installation identity and
+does not replace missing key material. The exact local envelope and derivation are
+documented in [CLI architecture](./cli-architecture.md).
 
 ### Artifacts
 - `header` and `body` are encrypted bytes encoded as base64 on the wire.
@@ -593,6 +668,7 @@ Feature gates:
 
 - `encryption.plaintextStorage`
 - `encryption.accountOptOut`
+- `encryption.plaintextMachine` (development Machine support)
 
 Do not gate plaintext behavior on raw env vars or `capabilities` fields.
 
@@ -629,8 +705,41 @@ because the secret travels camera-to-app. Web pairing cannot make the same guara
 hostile self-hosted relay: that relay also serves the JavaScript which receives the secret, so the
 web flow necessarily trusts its web origin.
 
+### Credential variants (development)
+
+The development terminal response parser distinguishes `dataKey` and `tokenOnly`.
+The data-key response keeps its existing bytes and v3 MAC contract; legacy v1/v2
+responses remain readable under the expansion policy above. An approver sends the
+new token-only response only when the terminal request explicitly advertises
+`supportsTokenOnly: true`. The token arrives through the existing authorized auth
+response; the sealed token-only payload supplies no fabricated content key.
+
+Account-link QR responses also distinguish legacy recovery secrets, data-key
+material, and token-only authorization. New readers advertise
+`supportsCredentialVariants`; reverse Add Phone pairing persists that boolean for
+the approver. A data-key machine key is never relabeled as a legacy recovery secret
+for an older reader. Unsupported credential variants fail explicitly rather than
+producing an unusable linked device.
+
+Before development clients release Account key material through terminal pairing or
+Account-link QR, they read the current Account mode. E2EE provisioning checks that
+the retained key matches the Account's published content public key and verifies
+its signature against the Account signing key. A valid Account token and retained
+key custody alone do not prove that this is still the active encryption key.
+
+Released legacy Accounts without a published content key remain provisionable when
+the recovery secret proves their unchanged signing identity. A data-key credential
+without a verifiable current binding, or a retained key that differs from the
+published key, cannot approve this operation; restore the Account's current key
+first. Plain Accounts retain their genuine historical key custody and token-only
+pairing behavior. These checks establish authority at the current read; they do
+not introduce a new ordering or revocation protocol for concurrent mode changes.
+
 ## Implementation references
 - Client crypto: `apps/cli/src/api/encryption.ts`
 - Session message format: `apps/cli/src/api/types.ts`
 - Server message ingestion: `apps/server/sources/app/api/socket/sessionUpdateHandler.ts`
 - Artifact/KV routes: `apps/server/sources/app/api/routes/artifactsRoutes.ts`, `apps/server/sources/app/kv/kvMutate.ts`
+- Plain Machine format: `packages/protocol/src/machines/machineStoredContent.ts`
+- Machine conversion: `apps/cli/src/api/machine/resolveMachineRegistrationContent.ts`, `apps/server/sources/app/machines/transitionMachineContentKey.ts`, `apps/server/sources/app/machines/migrateMachineAccountEncryptionInTx.ts`
+- Credential variants: `packages/protocol/src/crypto/terminalProvisioningV2.ts`, `apps/ui/sources/auth/flows/buildAccountLinkResponse.ts`

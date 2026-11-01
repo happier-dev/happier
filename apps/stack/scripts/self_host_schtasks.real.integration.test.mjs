@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
 const SELF_HOST_TEST_TIMEOUT_MS = 45 * 60_000;
 
-import { commandExists, extractBinaryFromArtifact, reserveLocalhostPort, run, waitForHealth } from './self_host_service_e2e_harness.mjs';
+import { commandExists, extractBinaryFromArtifact, reserveLocalhostPort, run, stageExtractedBinaryPayload, waitForHealth } from './self_host_service_e2e_harness.mjs';
 
 function currentTarget() {
   if (process.platform !== 'win32') return '';
@@ -29,6 +29,7 @@ test(
   'compiled hstack self-host install/uninstall works on Windows schtasks host without repo checkout',
   { timeout: SELF_HOST_TEST_TIMEOUT_MS },
   async (t) => {
+    const deadlineAtMs = Date.now() + SELF_HOST_TEST_TIMEOUT_MS;
     if (process.platform !== 'win32') {
       t.skip(`windows-only test (current: ${process.platform})`);
       return;
@@ -66,7 +67,7 @@ test(
         label: 'self-host-schtasks',
         cwd: repoRoot,
         env: { ...process.env },
-        timeoutMs: 10 * 60_000,
+        deadlineAtMs,
       }
     );
     run(
@@ -81,7 +82,7 @@ test(
         label: 'self-host-schtasks',
         cwd: repoRoot,
         env: { ...process.env },
-        timeoutMs: 10 * 60_000,
+        deadlineAtMs,
       }
     );
 
@@ -108,8 +109,7 @@ test(
     const logDir = join(sandboxDir, 'logs');
     await mkdir(binDir, { recursive: true });
 
-    const hstackPath = join(binDir, 'hstack.exe');
-    await cp(extractedHstack.binaryPath, hstackPath);
+    const hstackPath = await stageExtractedBinaryPayload(extractedHstack.binaryPath, binDir);
 
     const serviceName = `happier-server-e2e-${Date.now().toString(36).slice(-6)}`;
     const serverPort = await reserveLocalhostPort();

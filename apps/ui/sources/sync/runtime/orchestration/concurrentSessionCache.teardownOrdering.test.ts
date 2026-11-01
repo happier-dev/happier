@@ -43,7 +43,8 @@ describe('concurrentSessionCache teardown ordering', () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
         process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS = '600000';
 
-        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', () => ({
+        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>()),
             setServerReachabilityNetworkAllowed: (_next: boolean) => {},
             subscribeServerReachabilityNetworkAllowed: (listener: (allowed: boolean) => void) => {
                 listener(true);

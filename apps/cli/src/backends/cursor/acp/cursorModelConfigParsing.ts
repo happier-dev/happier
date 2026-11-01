@@ -74,7 +74,12 @@ function normalizeCursorReasoningValue(value: string | null | undefined): string
 }
 
 export function parseCursorCliTraits(modelId: string): CursorCliTraits {
-  const normalized = modelId.trim().toLowerCase();
+  const parsed = parseParameterizedModelValue(modelId);
+  const normalized = parsed.base.toLowerCase();
+  const explicitFast = parsed.params.get('fast');
+  const fastMode = explicitFast === 'true' || explicitFast === 'false'
+    ? explicitFast === 'true'
+    : normalized.endsWith('-fast') || normalized.includes('-fast-') ? true : undefined;
   const tokens = normalized.split('-').filter(Boolean);
   const isClaudeMaxContextAlias = normalized.startsWith('claude-') && tokens.some((token, index) =>
     token === 'max' && tokens[index - 1] !== 'thinking'
@@ -100,7 +105,7 @@ export function parseCursorCliTraits(modelId: string): CursorCliTraits {
     }
   }
   return {
-    ...(normalized.endsWith('-fast') || normalized.includes('-fast-') ? { fastMode: true } : {}),
+    ...(fastMode === undefined ? {} : { fastMode }),
     ...(normalized.endsWith('-thinking') || normalized.includes('-thinking-') ? { thinking: true } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(contextWindow ? { contextWindow } : {}),

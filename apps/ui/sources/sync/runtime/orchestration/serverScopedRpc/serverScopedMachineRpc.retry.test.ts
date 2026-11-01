@@ -60,7 +60,7 @@ describe('machineRpcWithServerScope (retry)', () => {
     listServerProfilesSpy.mockReset();
     getActiveServerSnapshotSpy.mockReset();
     runtimeFetchWithServerReachabilitySpy.mockReset();
-    runtimeFetchWithServerReachabilitySpy.mockResolvedValue(Response.json([
+    runtimeFetchWithServerReachabilitySpy.mockImplementation(async () => Response.json([
       { id: 'machine-1', dataEncryptionKey: null },
     ]));
     getActiveServerSnapshotSpy.mockReturnValue({
@@ -81,8 +81,8 @@ describe('machineRpcWithServerScope (retry)', () => {
     getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
 
     const machineEncryption = {
-      encryptRaw: vi.fn(async () => 'encrypted-payload'),
-      decryptRaw: vi.fn(async () => ({ ok: true })),
+      encodeRpcPayload: vi.fn(async () => 'encrypted-payload'),
+      decodeRpcResult: vi.fn(async () => ({ ok: true })),
     };
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),
@@ -143,8 +143,8 @@ describe('machineRpcWithServerScope (retry)', () => {
     getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
 
     const machineEncryption = {
-      encryptRaw: vi.fn(async () => 'encrypted-payload'),
-      decryptRaw: vi.fn(async () => ({ ok: true })),
+      encodeRpcPayload: vi.fn(async () => 'encrypted-payload'),
+      decodeRpcResult: vi.fn(async () => ({ ok: true })),
     };
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),

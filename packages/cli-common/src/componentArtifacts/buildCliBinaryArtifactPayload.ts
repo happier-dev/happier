@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
+import { WINDOWS_SERVICE_LAUNCHER_FILE_NAME } from '../service/windowsLauncher.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
 import {
   bundleInstalledPackageWithRuntimeDependencies,
@@ -18,6 +19,7 @@ import type {
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 import { ensureBundledWorkspacePackagesBuilt } from './ensureBundledWorkspacePackagesBuilt.js';
 import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
+import { resolveSharpRuntimeSidecarEntries } from './sharpRuntimeSidecars.js';
 import {
   recordCliBinaryArtifactRuntimeAssetBuildManifest,
   refreshCliBinaryArtifactClosureBuildManifest,
@@ -100,10 +102,7 @@ async function copyCliNodeRuntimePayload(
   payloadDir: string,
   distDir: string,
   workspaceBundles: readonly BundledWorkspacePackage[],
-  params: Readonly<{
-    yarn: Readonly<{ cmd: string; args: string[] }>;
-    runCommand: RunCommand;
-  }>,
+  target: BinaryTarget,
 ): Promise<void> {
   const cliDir = join(repoRoot, 'apps', 'cli');
 
@@ -111,13 +110,21 @@ async function copyCliNodeRuntimePayload(
   vendorBundledPackageRuntimeDependencies({
     srcPackageJsonPath: join(cliDir, 'package.json'),
     destPackageDir: payloadDir,
-    excludeRootDependencies: CLI_OPTIONAL_RUNTIME_PACKAGES,
+    excludeRootDependencies: [...CLI_OPTIONAL_RUNTIME_PACKAGES, 'sharp'],
   });
-  for (const { packageName, srcDir } of workspaceBundles) {
+  for (const entry of await resolveSharpRuntimeSidecarEntries({ resolveFromPackageJsonPath: join(cliDir, 'package.json'), target })) {
+    const destination = join(payloadDir, entry.targetPath);
+    await mkdir(join(destination, '..'), { recursive: true });
+    await cp(entry.sourcePath, destination, { recursive: true });
+  }
+  // The node-hosted package-dist resolves package assets (such as the Windows service launcher)
+  // from these bundled copies, so they carry the same declared files as the npm bundle.
+  for (const { packageName, srcDir, includeFiles } of workspaceBundles) {
     bundleWorkspacePackageWithRuntimeDependencies({
       packageName,
       srcDir,
       destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
+      includeFiles,
     });
   }
 }
@@ -275,15 +282,30 @@ export async function buildCliBinaryArtifactPayload({
         cwd: repoRoot,
         externals: mergedExternals,
         bunCommand,
-        // The standalone CLI must not inherit project-local dotenv files from
+        // The standalone CLI must not inherit project-local dotenv or bunfig files from
         // the directory where the user invokes it. Configuration is loaded by
         // the host runtime, and Bun's compiled-executable autoloader can abort
         // startup before the CLI installs its error reporting.
         autoloadDotenv: false,
+        buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildBunBinary.mjs'),
         runCommand,
       });
       await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
-      await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir, workspaceBundles, { yarn, runCommand });
+      await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir, workspaceBundles, target);
+      if (target.os === 'windows' && target.arch === 'x64') {
+        const launcherSource = join(
+          repoRoot,
+          'packages',
+          'cli-common',
+          'native',
+          'windows',
+          'bin',
+          'windows-x64',
+          WINDOWS_SERVICE_LAUNCHER_FILE_NAME,
+        );
+        await ensureFileExists(launcherSource);
+        await cp(launcherSource, join(payloadDir, WINDOWS_SERVICE_LAUNCHER_FILE_NAME));
+      }
     } finally {
       if (snapshotDistDir) {
         await rm(snapshotDistDir, { recursive: true, force: true }).catch(() => {});
@@ -299,6 +321,12 @@ export async function buildCliBinaryArtifactPayload({
     payloadDir,
     relativePath: executableName,
   });
+  if (target.os === 'windows' && target.arch === 'x64') {
+    recordCliBinaryArtifactRuntimeAssetBuildManifest({
+      payloadDir,
+      relativePath: WINDOWS_SERVICE_LAUNCHER_FILE_NAME,
+    });
+  }
 
   return {
     executableName,

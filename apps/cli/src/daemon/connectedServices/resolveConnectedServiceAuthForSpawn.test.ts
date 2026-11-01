@@ -177,10 +177,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -270,10 +270,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -361,10 +361,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -472,10 +472,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -568,10 +568,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -655,10 +655,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -731,10 +731,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -822,10 +822,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -908,10 +908,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1073,10 +1073,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1172,10 +1172,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1352,10 +1352,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         providerEmail: null,
       },
     });
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1507,10 +1507,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1733,10 +1733,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -1931,10 +1931,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -2189,10 +2189,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -2366,10 +2366,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -2549,10 +2549,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
 
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
@@ -2623,10 +2623,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) },
-    };
+    } satisfies Credentials;
 
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
@@ -2695,10 +2695,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) },
-    };
+    } satisfies Credentials;
 
     const api = {
       getConnectedServiceAuthGroup: async () => ({
@@ -2771,10 +2771,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
-    };
+    } satisfies Credentials;
 
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
@@ -2971,10 +2971,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(12) },
-    };
+    } satisfies Credentials;
 
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
@@ -3145,10 +3145,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(18) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -3308,10 +3308,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(18) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -3474,10 +3474,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(19) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -3750,10 +3750,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(23) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }
@@ -4040,10 +4040,10 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
 
-    const credentials: Credentials = {
+    const credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(10) },
-    };
+    } satisfies Credentials;
     if (credentials.encryption.type !== 'legacy') {
       throw new Error('test fixture expected legacy encryption');
     }

@@ -127,11 +127,8 @@ export function resolveArmedComposerContinuation<TTarget>(params: Readonly<{
  * be Dictation, the microphone or Stop, and "Continue with {Agent}" on any of
  * those would promise something press does not do.
  *
- * What it deliberately does NOT ask is whether the send would fire. An empty
- * composer disables the send; it does not turn it into a different control. The
- * button says what pressing it would do and is inert until there is something to
- * send — the same split every disabled action in the app already makes, and the
- * reason arming needs no confirm step: the control names the choice immediately.
+ * An armed continuation itself supplies a send intent on an empty composer.
+ * The send owner supplies the default prompt; presentation never edits the draft.
  *
  * Narrowing instead of re-deciding is what keeps the pair honest. The button may
  * be silent while the chip names the target — those are answers to two different

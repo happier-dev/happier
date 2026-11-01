@@ -49,6 +49,8 @@ export type ConnectedServiceCredentialRefreshResult = Readonly<{
   credential: ConnectedServiceCredentialRecordV1 | null;
   diagnostic: ConnectedServiceCredentialRefreshDiagnostic;
   credentialRevision?: string;
+  /** Metadata attestation changes revision without proving auth or quota recovery. */
+  mutationKind?: 'provider_context';
 }>;
 
 export type ConnectedServiceRuntimeAuthCredentialRefreshResult =
@@ -70,6 +72,7 @@ export type ConnectedServiceRuntimeAuthCredentialRefreshResult =
 export type ConnectedServiceQuotaCredentialRefreshOutcome = Readonly<{
   record: ConnectedServiceCredentialRecordV1 | null;
   reauthRequired: boolean;
+  credentialRevision?: string;
 }>;
 
 export type ConnectedServiceCredentialHealthNotificationStatus =

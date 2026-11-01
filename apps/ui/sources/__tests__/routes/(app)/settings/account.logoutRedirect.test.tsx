@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -9,7 +10,7 @@ import {
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
+import { createAccountFeaturesResponse, isFeaturesRequest } from './account.testHelpers';
 import {
     getAccountSettingsRouteModalMockRef,
     getAccountSettingsRouteRouterMockRef,
@@ -105,7 +106,7 @@ describe('Settings → Account logout redirect', () => {
         }));
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,
@@ -144,7 +145,7 @@ describe('Settings → Account logout redirect', () => {
         logoutMock.mockRejectedValueOnce(new Error('logout failed'));
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const url = getRequestUrl(input);
+            const url = getServerFetchUrl(input).pathname;
             if (isFeaturesRequest(url)) {
                 return {
                     ok: true,

@@ -10,6 +10,14 @@
 
 const http = require('http');
 
+function reportFailure(stage, error) {
+    // Error messages can contain secret-file paths or hook payloads; emit only OS codes.
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)
+        ? ` (${error.code})`
+        : '';
+    process.stderr.write(`[happier hook] ${stage}${code}\n`);
+}
+
 const port = parseInt(process.argv[2], 10);
 
 // Args after the port: an optional hook event name, then optional `--secret-file <path>`
@@ -33,13 +41,15 @@ let secret = '';
 if (secretFilePath) {
     try {
         secret = require('fs').readFileSync(secretFilePath, 'utf8').trim();
-    } catch {
+    } catch (error) {
+        reportFailure('Cannot read hook secret file', error);
         // Unreadable secret file: forward without a secret; the server rejects if it requires one.
         secret = '';
     }
 }
 
 if (!port || isNaN(port)) {
+    reportFailure('Invalid hook server port');
     process.exit(1);
 }
 
@@ -77,12 +87,14 @@ process.stdin.on('end', () => {
         res.resume(); // Drain response
         res.on('end', () => {
             if (res.statusCode < 200 || res.statusCode >= 300) {
+                reportFailure(`Hook server returned HTTP ${res.statusCode}`);
                 process.exitCode = 1;
             }
         });
     });
     
-    req.on('error', () => {
+    req.on('error', (error) => {
+        reportFailure('Hook request failed', error);
         // A failed observer delivery must be visible to Claude instead of looking successful.
         process.exitCode = 1;
     });

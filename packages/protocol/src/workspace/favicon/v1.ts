@@ -1,21 +1,22 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
-export const WorkspaceFaviconMimeTypeV1Schema = z.enum([
+export const WorkspaceFaviconMimeTypeV1Schema = lazySchema(() => z.enum([
   'image/gif',
   'image/jpeg',
   'image/png',
   'image/svg+xml',
   'image/webp',
   'image/x-icon',
-]);
+]));
 export type WorkspaceFaviconMimeTypeV1 = z.infer<typeof WorkspaceFaviconMimeTypeV1Schema>;
 
-export const WorkspaceFaviconResolveRequestV1Schema = z.object({
+export const WorkspaceFaviconResolveRequestV1Schema = lazySchema(() => z.object({
   workspacePath: z.string().min(1),
-});
+}));
 export type WorkspaceFaviconResolveRequestV1 = z.infer<typeof WorkspaceFaviconResolveRequestV1Schema>;
 
-export const WorkspaceFaviconResolveResponseV1Schema = z.union([
+export const WorkspaceFaviconResolveResponseV1Schema = lazySchema(() => z.union([
   z.object({
     success: z.literal(true),
     found: z.literal(true),
@@ -34,5 +35,5 @@ export const WorkspaceFaviconResolveResponseV1Schema = z.union([
     errorCode: z.string(),
     error: z.string(),
   }),
-]);
+]));
 export type WorkspaceFaviconResolveResponseV1 = z.infer<typeof WorkspaceFaviconResolveResponseV1Schema>;

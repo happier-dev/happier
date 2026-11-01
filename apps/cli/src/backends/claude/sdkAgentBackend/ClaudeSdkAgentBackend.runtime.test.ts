@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import type { SDKMessage } from '@/backends/claude/sdk/types';
 
 function noToolsPermissionHandler() {
   return createExecutionRunPermissionHandler({ backendId: 'claude', permissionMode: 'no_tools' });
@@ -43,6 +44,40 @@ describe('ClaudeSdkAgentBackend runtime bootstrap', () => {
     ensureJavaScriptRuntimeExecutableMock.mockReset();
     ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime');
     queryMock.mockReturnValue(createQueryResult());
+  });
+
+  it.each([
+    { error: { type: 'overloaded_error', message: 'API Error: 529 Overloaded.' }, kind: 'capacity', limitCategory: 'capacity' },
+    { error: { type: 'usage_limit_reached', message: 'Usage limit reached' }, kind: 'usage_limit', limitCategory: 'usage_limit' },
+    { error: { type: 'authentication_error', message: 'OAuth token has expired' }, kind: 'auth_expired', limitCategory: 'auth_invalid' },
+  ])('preserves $kind classification when an SDK result rejects the turn', async ({ error, kind, limitCategory }) => {
+    const releaseResult = createDeferred<void>();
+    // query is the Claude subprocess transport boundary; the provider classifiers stay real.
+    queryMock.mockImplementation((params: { prompt: AsyncIterable<SDKMessage> }) => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'system', subtype: 'init', session_id: 'sess_failure' };
+        for await (const _prompt of params.prompt) {
+          await releaseResult.promise;
+          yield { type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 1,
+            session_id: 'sess_failure', error };
+        }
+      },
+      interrupt: vi.fn(async () => {}),
+    }));
+    const { ClaudeSdkAgentBackend } = await import('./ClaudeSdkAgentBackend');
+    const backend = new ClaudeSdkAgentBackend({ cwd: '/tmp', modelId: 'default', permissionHandler: noToolsPermissionHandler() });
+    try {
+      const { sessionId } = await backend.startSession();
+      await backend.sendPrompt(sessionId, 'hi');
+      const failure = expect(backend.waitForResponseComplete()).rejects.toMatchObject({
+        runtimeAuthClassification: { kind, limitCategory, serviceId: 'claude-subscription' },
+      });
+      releaseResult.resolve();
+      await failure;
+    } finally {
+      releaseResult.resolve();
+      await backend.dispose();
+    }
   });
 
   it('bootstraps the managed JavaScript runtime before starting the SDK query', async () => {

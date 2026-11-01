@@ -19,9 +19,11 @@
     "src/**/*.d.mts",
     "src/**/*.d.cts",
     "suites/**/*.ts",
+    "fixtures/request-settlement-runtime.ts",
     "scripts/**/*.d.ts",
     "scripts/**/*.d.mts",
     "scripts/**/*.d.cts",
+    "scripts/network-transfer-report.ts",
     "vitest.*.ts"
   ],
   "exclude": ["node_modules", "dist"]

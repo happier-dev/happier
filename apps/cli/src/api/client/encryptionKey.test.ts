@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveSessionEncryptionContext } from './encryptionKey';
+import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './encryptionKey';
+
+describe('token-only encryption context', () => {
+  it('refuses encrypted operations without account key material', () => {
+    expect(() => resolveSessionEncryptionContext({ token: 'plain', encryption: null }))
+      .toThrowError(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
+    expect(() => resolveMachineEncryptionContext({ token: 'plain', encryption: null }))
+      .toThrowError(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
+  });
+});
 
 describe('resolveSessionEncryptionContext', () => {
   it('generates a per-session AES key and publishes an encrypted dataEncryptionKey bundle when credentials are dataKey', () => {

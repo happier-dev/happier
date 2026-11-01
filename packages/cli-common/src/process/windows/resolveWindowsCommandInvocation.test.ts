@@ -9,6 +9,55 @@ const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'pla
 describe('resolveWindowsCommandInvocation', () => {
     const tempDirs = new Set<string>();
 
+    // npm cmd-shim 7.0.0's no-shebang template; Claude Code 2.1.270 declares
+    // bin/claude.exe and its postinstall replaces that placeholder with native PE.
+    const nativeNpmShim = [
+        '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b',
+        ':start', 'SETLOCAL', 'CALL :find_dp0',
+        '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*', '',
+    ].join('\r\n');
+
+    it('discovers a native npm target and preserves arguments beyond the cmd.exe limit', async () => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        const root = mkdtempSync(join(tmpdir(), 'happier-native-npm-'));
+        tempDirs.add(root);
+        const target = join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+        mkdirSync(join(target, '..'), { recursive: true });
+        writeFileSync(target, Buffer.from([0x4d, 0x5a, 0x90, 0]));
+        const shim = join(root, 'claude.cmd');
+        writeFileSync(shim, nativeNpmShim);
+        const env = { PATH: root, PATHEXT: '.CMD;.EXE' };
+        const { resolveWindowsCommandOnPath, resolveWindowsCommandPath, resolveWindowsCommandInvocation } = await import('./resolveWindowsCommandInvocation.js');
+        expect(resolveWindowsCommandOnPath('claude', env)).toBe(target);
+        expect(resolveWindowsCommandPath(shim, env)).toBe(target);
+        const args = ['--append-system-prompt', 'x'.repeat(12_000), 'spaces & "quotes" %PATH% !literal!'];
+        for (const command of ['claude', shim]) {
+            expect(resolveWindowsCommandInvocation({ command, args, env })).toEqual({ command: target, args });
+        }
+    });
+
+    it.each(['custom-command', 'environment', 'extra-args', 'javascript', 'placeholder', 'missing'] as const)(
+        'preserves shell execution when native npm delegation is unproven (%s)', async (kind) => {
+            Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+            const root = mkdtempSync(join(tmpdir(), 'happier-preserved-npm-'));
+            tempDirs.add(root);
+            const target = join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+            mkdirSync(join(target, '..'), { recursive: true });
+            if (kind !== 'missing') writeFileSync(target, kind === 'placeholder' ? 'install the native package' : Buffer.from([0x4d, 0x5a, 0x90, 0]));
+            let script = nativeNpmShim;
+            if (kind === 'custom-command') script += 'echo additional work\r\n';
+            if (kind === 'environment') script = script.replace('CALL :find_dp0', 'CALL :find_dp0\r\nSET CUSTOM_AUTH=selected');
+            if (kind === 'extra-args') script = script.replace('%*', '--custom-flag %*');
+            if (kind === 'javascript') script = script.replace('"%dp0%\\node_modules', 'node "%dp0%\\node_modules').replace('claude.exe', 'cli.js');
+            const shim = join(root, 'claude.cmd');
+            writeFileSync(shim, script);
+            const env = { PATH: root, PATHEXT: '.CMD;.EXE' };
+            const { resolveWindowsCommandOnPath, resolveWindowsCommandInvocation } = await import('./resolveWindowsCommandInvocation.js');
+            expect(resolveWindowsCommandOnPath('claude', env)).toBe(shim);
+            expect(resolveWindowsCommandInvocation({ command: shim, args: ['test'], env }).command).toBe('cmd.exe');
+        },
+    );
+
     afterEach(() => {
         if (originalPlatformDescriptor) {
             Object.defineProperty(process, 'platform', originalPlatformDescriptor);

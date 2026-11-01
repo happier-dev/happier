@@ -86,11 +86,13 @@ describe('readLiveRelayRuntimeStatus', () => {
         };
       });
 
+      const capturedCommands: Array<{ command: string; options: import('node:child_process').SpawnSyncOptions | undefined }> = [];
       vi.doMock('node:child_process', async () => {
         const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
         return {
           ...actual,
-          spawnSync: (cmd: string) => {
+          spawnSync: (cmd: string, _args: readonly string[], options?: import('node:child_process').SpawnSyncOptions) => {
+            capturedCommands.push({ command: cmd, options });
             if (cmd === 'powershell.exe') {
               return {
                 status: 0,
@@ -141,6 +143,7 @@ describe('readLiveRelayRuntimeStatus', () => {
         homeDir: scopedHomeDir,
       });
 
+      expect(capturedCommands.find(({ command }) => command === 'powershell.exe')?.options?.windowsHide).toBe(true);
       expect(status.service.enabled).toBe(true);
       expect(status.service.active).toBe(true);
       expect(status.service.stateLabel).toBe('Running');

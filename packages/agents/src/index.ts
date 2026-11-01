@@ -152,6 +152,7 @@ export {
 export {
   BUILT_IN_ACP_CONFIG,
   getBuiltInAcpConfig,
+  resolveAcpPermissionModeId,
   hasBuiltInAcpConfig,
   isBuiltInAcpSessionListingDeclared,
   isAcpSessionListingDeclared,

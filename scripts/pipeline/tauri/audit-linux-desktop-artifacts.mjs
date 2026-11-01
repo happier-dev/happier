@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { isLinuxDesktopPackage, isLinuxHostGraphicsLibrary, validateLinuxPackageMetadata } from './linux-desktop-artifact-policy.mjs';
+import { isLinuxDesktopPackage, isLinuxHostGraphicsLibrary, validateLinuxPackageMetadata, validateLinuxAppImageRuntime } from './linux-desktop-artifact-policy.mjs';
 
 function fail(message) {
   throw new Error(`[linux-artifact-audit] ${message}`);
@@ -46,6 +46,7 @@ function main() {
     });
     const appDir = path.join(extractionRoot, 'squashfs-root');
     if (!fs.existsSync(appDir)) fail('AppImage extraction did not produce squashfs-root');
+    validateLinuxAppImageRuntime(appDir);
     const forbidden = listFiles(appDir).filter((file) => isLinuxHostGraphicsLibrary(path.relative(appDir, file)));
     if (forbidden.length) fail(`bundled host graphics libraries: ${forbidden.map((file) => path.relative(appDir, file)).join(', ')}`);
   } finally {

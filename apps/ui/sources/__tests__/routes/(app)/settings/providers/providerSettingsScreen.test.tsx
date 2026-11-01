@@ -556,6 +556,8 @@ describe('ProviderSettingsScreen', () => {
         settingsState.backendEnabledByTargetKey = {};
         settingsState.sessionDefaultPermissionModeByTargetKey = {};
         settingsState.backendCliSourcePreferenceById = {};
+        Reflect.deleteProperty(settingsState, 'claudeUnifiedTerminalQuestionResponseLocation');
+        Reflect.deleteProperty(settingsState, 'claudeUnifiedTerminalPermissionResponseLocation');
         settingsState.contextSelectionsV1 = undefined;
         settingsState.opencodeServerBaseUrl = '';
         settingsState.opencodeServerBaseUrlByServerIdV1 = {};
@@ -785,6 +787,29 @@ describe('ProviderSettingsScreen', () => {
         expect(defaultModelItem?.props?.subtitle).toBe('Sonnet 4.6');
     });
 
+    it('lets users opt in to idle Claude reclamation and edit its duration', async () => {
+        mockProviderId = 'claude';
+        const { CLAUDE_PROVIDER_SETTINGS_PLUGIN } = await import('@/agents/providers/claude/settings/plugin');
+        mockProviderSettingsPlugin.mockReturnValue(CLAUDE_PROVIDER_SETTINGS_PLUGIN);
+        const { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS } = await import('@happier-dev/agents');
+        // Storage normally supplies canonical defaults; this route harness uses a sparse boundary fixture.
+        Object.assign(settingsState, CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS);
+        const screen = await renderProviderSettingsScreen();
+        const toggle = screen.findByTestId('settings-provider-field-claudeRemoteIdleReclaimEnabled');
+        expect(toggle).toBeTruthy();
+        await screen.pressByTestIdAsync('settings-provider-field-claudeRemoteIdleReclaimEnabled');
+        expect(applySettingsMock).toHaveBeenCalledWith({ claudeRemoteIdleReclaimEnabled: true });
+        const field = screen.findByTestId('settings-provider-field-claudeRemoteIdleReclaimTimeoutMinutes');
+        if (!field) throw new Error('Idle duration field is missing');
+        const input = field.findByType('TextInput' as any);
+        expect(input.props.value).toBe('30');
+        await act(async () => { input.props.onChangeText('45'); });
+        expect(applySettingsMock).toHaveBeenCalledWith({ claudeRemoteIdleReclaimTimeoutMinutes: 45 });
+        applySettingsMock.mockClear();
+        await act(async () => { input.props.onChangeText('0'); });
+        expect(applySettingsMock).not.toHaveBeenCalled();
+    });
+
     it('hides feature-gated provider setting sections when the feature is disabled', async () => {
         mockProviderId = 'claude';
         mockProviderSettingsPlugin.mockReturnValue(createClaudeUnifiedTerminalSettingsPlugin());
@@ -824,6 +849,36 @@ describe('ProviderSettingsScreen', () => {
         expect(applySettingsMock).toHaveBeenCalledWith({
             claudeUnifiedTerminalHost: 'zellij',
         });
+    });
+
+    it('renders independent question and permission response choices from the Claude provider owner', async () => {
+        const { CLAUDE_PROVIDER_SETTINGS_PLUGIN } = await import('@/agents/providers/claude/settings/plugin');
+        mockProviderId = 'claude';
+        mockProviderSettingsPlugin.mockReturnValue(CLAUDE_PROVIDER_SETTINGS_PLUGIN);
+        featureEnabledById.set('providers.claude.unifiedTerminal', true);
+        Object.assign(settingsState, {
+            claudeUnifiedTerminalQuestionResponseLocation: 'terminal_only',
+            claudeUnifiedTerminalPermissionResponseLocation: 'app_only',
+        });
+
+        const screen = await renderProviderSettingsScreen();
+        for (const [key, expectedLocation] of [
+            ['claudeUnifiedTerminalQuestionResponseLocation', 'terminal_only'],
+            ['claudeUnifiedTerminalPermissionResponseLocation', 'app_only'],
+        ]) {
+            const menus = screen.findAllByType('DropdownMenu');
+            const menu = menus.find((node) => node.findAllByProps({ testID: `settings-provider-field-${key}` }).length > 0);
+            expect(menu).toBeDefined();
+            if (!menu) throw new Error(`Missing response location menu: ${key}`);
+            expect(menu.props.selectedId).toBe(expectedLocation);
+            expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual([
+                'app_and_terminal', 'app_only', 'terminal_only',
+            ]);
+            for (const location of ['app_and_terminal', 'app_only', 'terminal_only']) {
+                await act(async () => { menu.props.onSelect(location); });
+                expect(applySettingsMock).toHaveBeenLastCalledWith({ [key]: location });
+            }
+        }
     });
 
     it('renders an authentication section when local CLI auth details are available', async () => {

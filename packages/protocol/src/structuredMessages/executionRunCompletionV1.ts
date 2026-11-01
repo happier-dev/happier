@@ -1,13 +1,14 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ExecutionRunCompletionV1Schema = z.object({
+export const ExecutionRunCompletionV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   runId: z.string().min(1),
   status: z.enum(['succeeded', 'failed', 'cancelled', 'timeout']),
   finishedAtMs: z.number().int().nonnegative(),
   canInspect: z.boolean(),
   summary: z.string().max(8_000).optional(),
-}).passthrough();
+}).passthrough());
 
 export type ExecutionRunCompletionV1 = z.infer<typeof ExecutionRunCompletionV1Schema>;
 

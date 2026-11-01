@@ -309,6 +309,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['encryption.plaintextStorage'],
     representation: 'server',
   },
+  'encryption.plaintextMachine': {
+    description: 'Typed plain Machine metadata, daemon state, and RPC support.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['encryption.plaintextStorage'],
+    representation: 'server',
+  },
   'e2ee.keylessAccounts': {
     description: 'Keyless account support (accounts may omit E2EE signing keys).',
     defaultFailMode: 'fail_closed',

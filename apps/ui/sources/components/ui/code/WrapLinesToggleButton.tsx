@@ -7,10 +7,18 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-export const WrapLinesToggleButton = React.memo(() => {
+type ControlledWrapLinesProps = Readonly<{
+    wrapLines: boolean;
+    onChange: (wrapLines: boolean) => void;
+}>;
+
+type WrapLinesToggleButtonProps = ControlledWrapLinesProps | Readonly<{
+    wrapLines?: never;
+    onChange?: never;
+}>;
+
+const WrapLinesToggleSwitch = React.memo(({ wrapLines, onChange }: ControlledWrapLinesProps) => {
     const { theme } = useUnistyles();
-    const [wrapLinesSetting, setWrapLines] = useSettingMutable('wrapLinesInDiffs');
-    const wrapLines = wrapLinesSetting === true;
     const label = t('settingsAppearance.wrapLinesInDiffs');
 
     return (
@@ -21,7 +29,7 @@ export const WrapLinesToggleButton = React.memo(() => {
             accessibilityState={{ checked: wrapLines }}
             active={wrapLines}
             hitSlop={Platform.OS === 'web' ? undefined : 5}
-            onPress={() => setWrapLines(!wrapLines)}
+            onPress={() => onChange(!wrapLines)}
         >
             <Icon
                 name="arrow-elbow-down-left"
@@ -31,5 +39,16 @@ export const WrapLinesToggleButton = React.memo(() => {
         </IconAction>
     );
 });
+
+const AccountWrapLinesToggleButton = React.memo(() => {
+    const [wrapLinesSetting, setWrapLines] = useSettingMutable('wrapLinesInDiffs');
+    return <WrapLinesToggleSwitch wrapLines={wrapLinesSetting === true} onChange={setWrapLines} />;
+});
+
+export const WrapLinesToggleButton = React.memo((props: WrapLinesToggleButtonProps) => (
+    typeof props.wrapLines === 'boolean'
+        ? <WrapLinesToggleSwitch wrapLines={props.wrapLines} onChange={props.onChange} />
+        : <AccountWrapLinesToggleButton />
+));
 
 WrapLinesToggleButton.displayName = 'WrapLinesToggleButton';

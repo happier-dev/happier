@@ -5,6 +5,7 @@ import {
   SESSION_ORGANIZATION_MAX_FOLDERS,
   SESSION_ORGANIZATION_MAX_LABELS,
   SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
+  SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES,
   SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS,
   SESSION_ORGANIZATION_MAX_TAGS,
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
@@ -13,16 +14,18 @@ import { SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from '
 import { SessionOrganizationLabelSchema, SessionOrganizationOrderEntrySchema } from './ordering.js';
 import { SessionOrganizationPinSchema } from './pins.js';
 import { SessionAttentionStandingSchema } from './standings.js';
+import { SessionOrganizationSessionAppearanceSchema } from './appearances.js';
 import { SessionOrganizationTagSchema, SessionTagAssignmentSchema } from './tags.js';
+import { lazySchema } from '../lazySchema.js';
 
-const SessionOrganizationScopedIdSchema = z.string().trim().min(1).max(10_000);
+const SessionOrganizationScopedIdSchema = lazySchema(() => z.string().trim().min(1).max(10_000));
 
-const SessionOrganizationOrderScopeRequestSchema = SessionOrganizationOrderEntrySchema.pick({
+const SessionOrganizationOrderScopeRequestSchema = lazySchema(() => SessionOrganizationOrderEntrySchema.pick({
   scopeKind: true,
   scopeKey: true,
-});
+}));
 
-export const SessionOrganizationSnapshotRequestSchema = z
+export const SessionOrganizationSnapshotRequestSchema = lazySchema(() => z
   .object({
     includeFolders: z.boolean().default(true),
     includeTags: z.boolean().default(true),
@@ -35,11 +38,12 @@ export const SessionOrganizationSnapshotRequestSchema = z
     orderScopes: z.array(SessionOrganizationOrderScopeRequestSchema).max(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS).default([]),
     includeAttentionStandings: z.boolean().default(false),
     includeAttentionReminderTimes: z.boolean().default(false),
+    includeSessionAppearances: z.boolean().default(false),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 
-export const SessionOrganizationSnapshotSchema = z
+export const SessionOrganizationSnapshotSchema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_ORGANIZATION_SNAPSHOT_VERSION),
     version: z.number().int().nonnegative(),
@@ -51,13 +55,14 @@ export const SessionOrganizationSnapshotSchema = z
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),
     labels: z.array(SessionOrganizationLabelSchema).max(SESSION_ORGANIZATION_MAX_LABELS),
     attentionStandings: z.array(SessionAttentionStandingSchema).max(SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS).optional(),
+    sessionAppearances: z.array(SessionOrganizationSessionAppearanceSchema).max(SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES).optional(),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshot = z.infer<typeof SessionOrganizationSnapshotSchema>;
 
-export const SessionOrganizationSnapshotResponseSchema = z
+export const SessionOrganizationSnapshotResponseSchema = lazySchema(() => z
   .object({
     snapshot: SessionOrganizationSnapshotSchema,
   })
-  .strict();
+  .strict());
 export type SessionOrganizationSnapshotResponse = z.infer<typeof SessionOrganizationSnapshotResponseSchema>;

@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import type { KeyboardEvent } from 'react-native';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { findGestureByKind, type TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
+import { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import {
     publishSessionNavigationCursor,
     resetSessionNavigationCursorForTests,
@@ -17,6 +19,28 @@ import {
 const pathState = vi.hoisted(() => ({
     pathname: '/',
 }));
+const foldBoundary = vi.hoisted(() => ({ emitters: new Set<(value: unknown) => void>() }));
+
+// Only the two Expo/UIKit views are substituted; metrics normalization, presenter,
+// shared cockpit definitions, and the host's routing remain real in the rail test.
+vi.mock('expo-modules-core', async () => {
+    const stub = await import('@/dev/expoModulesCoreStub');
+    function Observer({ onMetricsChange }: { onMetricsChange: (event: { nativeEvent: unknown }) => void }) {
+        React.useEffect(() => {
+            const emit = (value: unknown) => onMetricsChange({ nativeEvent: value });
+            foldBoundary.emitters.add(emit);
+            return () => { foldBoundary.emitters.delete(emit); };
+        }, [onMetricsChange]);
+        return null;
+    }
+    return {
+        ...stub,
+        requireOptionalNativeModule: (name: string) => name === 'HappierWindowFoldMetrics' || name === 'HappierSystemTabBar' ? {} : null,
+        requireNativeViewManager: (name: string) => name === 'HappierWindowFoldMetrics'
+            ? Observer
+            : (props: Record<string, unknown>) => React.createElement('SystemNativeTabBar', { ...props, testID: 'system-tabs' }),
+    };
+});
 const reanimatedSpringState = vi.hoisted(() => ({
     targets: [] as unknown[],
 }));
@@ -39,6 +63,7 @@ const tabBarRenderState = vi.hoisted(() => ({
     renderSpy: vi.fn(),
 }));
 const settingsState = vi.hoisted(() => ({
+    systemTabBarEnabled: true,
     mobileWorkspaceExperienceV1: undefined as 'classic' | 'cockpit' | undefined,
     sessionCockpitSwipeNavigationEnabled: true as boolean,
     sessionLastMobileSurfaceBySessionId: null as Record<string, string> | null,
@@ -78,6 +103,7 @@ const animatedTimingState = vi.hoisted(() => ({
 }));
 const keyboardHeightState = vi.hoisted(() => ({
     value: 0,
+    listeners: new Map<string, Set<(event: KeyboardEvent) => void>>(),
 }));
 const gestureHandlerState = vi.hoisted(() => ({
     gestures: [] as TestGestureChain[],
@@ -136,6 +162,17 @@ vi.mock('expo-router', () => expoRouterModule);
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
+        // OS keyboard notifications are the boundary; keep useKeyboardHeight real.
+        Keyboard: {
+            addListener: (name: string, listener: (event: KeyboardEvent) => void) => {
+                const listeners = keyboardHeightState.listeners.get(name) ?? new Set();
+                keyboardHeightState.listeners.set(name, listeners);
+                listeners.add(listener);
+                // Existing fixtures can begin with a keyboard already opening.
+                if (keyboardHeightState.value > 0 && name.endsWith('Show')) listener(keyboardEvent(keyboardHeightState.value));
+                return { remove: () => { listeners.delete(listener); } };
+            },
+        },
         Animated: {
             Value: class {
                 _value: number;
@@ -248,10 +285,6 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => reducedMotionState.value,
 }));
 
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => keyboardHeightState.value,
-}));
-
 vi.mock('@/components/ui/navigation/TabBar', () => ({
     TabBar: (props: Record<string, unknown>) => {
         tabBarRenderState.renderSpy(props);
@@ -304,6 +337,7 @@ const storageMock = createStorageModuleStub({
         return [null, vi.fn()];
     },
     useSessionMetadata: (sessionId: string) => sessionMetadataState.bySessionId[sessionId] ?? null,
+    useSessionProjectScmStatus: () => null,
     useSessionLastMobileSurface: (sessionId: string | null) => {
         if (!sessionId) return null;
         return settingsState.sessionLastMobileSurfaceBySessionId?.[sessionId] ?? null;
@@ -349,6 +383,7 @@ function readSettingValue(key: string): unknown {
 }
 
 function readLocalSettingValue(key: string): unknown {
+    if (key === 'systemTabBarEnabled') return settingsState.systemTabBarEnabled;
     if (key === 'sessionLastMobileSurfaceBySessionId') {
         return settingsState.sessionLastMobileSurfaceBySessionId;
     }
@@ -368,6 +403,35 @@ function notifyPathListeners(): void {
     for (const listener of pathListeners.listeners) {
         listener();
     }
+}
+
+function keyboardEvent(height: number): KeyboardEvent {
+    return {
+        duration: 0, easing: 'keyboard',
+        startCoordinates: { height: 0, width: 466, screenX: 0, screenY: 678 },
+        endCoordinates: { height, width: 466, screenX: 0, screenY: 678 - height },
+    };
+}
+
+function emitKeyboardHeight(height: number): void {
+    keyboardHeightState.value = height;
+    const name = platformState.os === 'ios'
+        ? (height > 0 ? 'keyboardWillShow' : 'keyboardWillHide')
+        : (height > 0 ? 'keyboardDidShow' : 'keyboardDidHide');
+    for (const listener of keyboardHeightState.listeners.get(name) ?? []) listener(keyboardEvent(height));
+}
+
+async function renderRailChrome() {
+    const { WindowFoldMetricsProvider } = await import('@/utils/platform/useWindowFoldMetrics');
+    const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
+    const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+    const screen = await renderScreen(<WindowFoldMetricsProvider><InboxSummaryProvider summary={{ hasContent: false }}>
+        <SessionCockpitChromeRegistryProvider><ChromeReserveProbe /><MobileBottomChromeHost /></SessionCockpitChromeRegistryProvider>
+    </InboxSummaryProvider></WindowFoldMetricsProvider>);
+    await act(async () => {
+        for (const emit of foldBoundary.emitters) emit({ width: 466, height: 678, divisions: [], verticalBarEdge: 'trailing' });
+    });
+    return screen;
 }
 
 /** Freezes an on-screen session order the way the list surface does when the user leaves it. */
@@ -398,6 +462,10 @@ async function renderCockpitBandOnSession(sessionId: string) {
     return renderScreen(<MobileBottomChromeHost />);
 }
 
+function ChromeReserveProbe() {
+    return React.createElement('ChromeReserve', { value: useSessionCockpitBottomChromeHeight() });
+}
+
 describe('MobileBottomChromeHost', () => {
     afterEach(() => {
         standardCleanup();
@@ -424,17 +492,107 @@ describe('MobileBottomChromeHost', () => {
         settingsState.sessionLastMobileSurfaceBySessionId = null;
         settingsState.embeddedTerminalDockLocation = 'sidebar';
         settingsState.sessionCockpitSwipeNavigationEnabled = true;
+        settingsState.systemTabBarEnabled = true;
         deviceTypeState.value = 'phone';
         featureState.terminalEmbeddedPtyEnabled = true;
         featureState.terminalEmbeddedPtyServerId = null;
         featureState.resolvedServerId = 'server-session';
         keyboardHeightState.value = 0;
+        keyboardHeightState.listeners.clear();
         platformState.os = 'ios';
         sessionMetadataState.bySessionId = {};
         hapticsState.impacts = [];
         hapticsState.selections = 0;
         reducedMotionState.value = false;
         resetSessionNavigationCursorForTests();
+    });
+
+    it.each(['main', 'cockpit'] as const)('keeps the same visible system rail while the keyboard opens and closes on %s tabs', async (kind) => {
+        pathState.pathname = kind === 'main' ? '/' : '/session/s1';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        const screen = await renderRailChrome();
+        const bridge = screen.tree.findByType('SystemNativeTabBar' as never);
+        expect(bridge.props.hidden).toBe(false);
+        await act(async () => { emitKeyboardHeight(320); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never)).toBe(bridge);
+        expect(bridge.props.hidden).toBe(false);
+        expect(screen.tree.findByType('ChromeReserve' as never).props.value).toBe(0);
+        await act(async () => { emitKeyboardHeight(0); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never)).toBe(bridge);
+        expect(bridge.props.hidden).toBe(false);
+    });
+
+    it.each(['main', 'cockpit'] as const)('waits for the first %s system model then hides and restores the same native view on hidden routes', async (kind) => {
+        pathState.pathname = '/account';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        const screen = await renderRailChrome();
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(0);
+        await act(async () => { pathState.pathname = kind === 'main' ? '/' : '/session/s1'; notifyPathListeners(); });
+        const bridge = screen.tree.findByType('SystemNativeTabBar' as never);
+        expect(bridge.props.hidden).toBe(false);
+        await act(async () => { pathState.pathname = '/account'; notifyPathListeners(); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never)).toBe(bridge);
+        expect(bridge.props.hidden).toBe(true);
+        expect(bridge.props.selectedId).toBe(kind === 'main' ? 'sessions' : 'chat');
+        await act(async () => { pathState.pathname = kind === 'main' ? '/settings' : '/session/s1/files'; notifyPathListeners(); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never)).toBe(bridge);
+        expect(bridge.props.hidden).toBe(false);
+        expect(bridge.props.selectedId).toBe(kind === 'main' ? 'settings' : 'browse');
+    });
+
+    it('returns to Happier presentation when the rail edge disappears and never mounts it on tablets', async () => {
+        const screen = await renderRailChrome();
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(1);
+        await act(async () => {
+            for (const emit of foldBoundary.emitters) emit({ width: 466, height: 678, divisions: [], verticalBarEdge: null });
+        });
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
+        await act(async () => {
+            deviceTypeState.value = 'tablet';
+            for (const emit of foldBoundary.emitters) emit({ width: 900, height: 678, divisions: [], verticalBarEdge: 'trailing' });
+        });
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(0);
+    });
+
+    it('retains one native container when the visible model switches between main and cockpit tabs', async () => {
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        const screen = await renderRailChrome();
+        const bridge = screen.tree.findByType('SystemNativeTabBar' as never);
+        expect(bridge.props.selectedId).toBe('sessions');
+        await act(async () => { pathState.pathname = '/session/s1'; notifyPathListeners(); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never) === bridge).toBe(true);
+        expect(bridge.props.selectedId).toBe('chat');
+        await act(async () => { pathState.pathname = '/'; notifyPathListeners(); });
+        expect(screen.tree.findByType('SystemNativeTabBar' as never) === bridge).toBe(true);
+        expect(bridge.props.selectedId).toBe('sessions');
+    });
+
+    it('presents shared cockpit definitions in the rail, routes presses, and restores the unchanged bar on opt-out', async () => {
+        pathState.pathname = '/session/s1';
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        const { WindowFoldMetricsProvider } = await import('@/utils/platform/useWindowFoldMetrics');
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<WindowFoldMetricsProvider><SessionCockpitChromeRegistryProvider>
+            <ChromeReserveProbe /><MobileBottomChromeHost />
+        </SessionCockpitChromeRegistryProvider></WindowFoldMetricsProvider>);
+        const band = screen.tree.findAllByType('View' as never).find(node => typeof node.props.onLayout === 'function');
+        expect(band).toBeDefined();
+        await act(async () => { band?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 466, height: 72 } } }); });
+        expect(screen.tree.findByType('ChromeReserve' as never).props.value).toBe(72);
+        await act(async () => {
+            for (const emit of foldBoundary.emitters) emit({ width: 466, height: 678, divisions: [], verticalBarEdge: 'trailing' });
+        });
+        const bridge = screen.tree.findByType('SystemNativeTabBar' as never);
+        expect(screen.tree.findByType('ChromeReserve' as never).props.value).toBe(0);
+        expect(bridge.props.items.map((item: { id: string }) => item.id)).toEqual(['chat', 'browse', 'git', 'navigation', 'tabs', 'terminal']);
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('SessionCockpitLateralPicker' as never)).toHaveLength(0);
+        await act(async () => { bridge.props.onTabPress({ nativeEvent: { id: 'browse' } }); });
+        expect(settingsState.sessionLastMobileSurfaceBySessionId?.s1).toBe('browse');
+        await act(async () => { settingsState.systemTabBarEnabled = false; notifyStorageListeners(); });
+        expect(screen.tree.findAllByType('SystemNativeTabBar' as never)).toHaveLength(0);
+        expect(screen.tree.findByType('SessionCockpitTabBar' as never).props.activeSurface).toBe('browse');
     });
 
     it('renders the main app tab bar on the root sessions route', async () => {
@@ -538,9 +696,8 @@ describe('MobileBottomChromeHost', () => {
 
         // The keyboard opening is a real teardown, not an overlay: the bar has to leave. It should
         // dissolve the way every bar-to-bar change does rather than vanish between two frames.
-        keyboardHeightState.value = 320;
         await act(async () => {
-            notifyPathListeners();
+            emitKeyboardHeight(320);
         });
 
         expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
@@ -913,6 +1070,12 @@ describe('MobileBottomChromeHost', () => {
         const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
         const screen = await renderScreen(<MobileBottomChromeHost />);
 
+        // Real keyboard notifications arrive after mount, so let the unchanged
+        // Happier exit animation finish before asserting that its pixels are gone.
+        const exitAnimation = animatedTimingState.timings.at(-1);
+        expect(exitAnimation).toBeDefined();
+        await act(async () => { exitAnimation?.finish(); });
+
         expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(0);
         expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
     });
@@ -1068,9 +1231,10 @@ describe('MobileBottomChromeHost', () => {
         it('does not exist while the software keyboard is up', async () => {
             publishVisibleSessionOrder(['session-0', 'session-1', 'session-2']);
             keyboardHeightState.value = 260;
-            await renderCockpitBandOnSession('session-1');
+            const screen = await renderCockpitBandOnSession('session-1');
 
-            expect(findLateralPanGesture()).toBeNull();
+            // A gesture created before the OS notification is no longer attached.
+            expect(screen.tree.findAllByType('GestureDetector' as never)).toHaveLength(0);
         });
 
         it('does not exist without a captured session order', async () => {

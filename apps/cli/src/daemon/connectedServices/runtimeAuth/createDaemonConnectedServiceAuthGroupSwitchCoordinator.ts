@@ -31,6 +31,7 @@ import type { ConnectedServiceSessionAuthSwitchReason } from './connectedService
 import { ConnectedServiceAuthGroupRuntimeStateRevisionConflictError } from '@/api/connectedServices/connectedServiceCredentialApi';
 import type { ConnectedServiceAuthGroupCandidatePreparationResult } from '../refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
 import type { AutomaticQuotaResetContext, ConnectedServiceGroupQuotaProbeResult, ConnectedServiceQuotaRecoveryCreditConsumeResult } from '../quotas/ConnectedServiceQuotasCoordinator';
+import { logger } from '@/ui/logger';
 
 type AuthGroupApi = Readonly<{
   getConnectedServiceAuthGroup(input: Readonly<{
@@ -95,15 +96,6 @@ function assertPredictiveSoftSwitchSessionApplyAllowed(input: Readonly<{
       policyReason: decision.reason,
       ...(input.applyMode ? { attemptedMode: input.applyMode } : {}),
     },
-  });
-}
-
-function assertExactConnectedServiceCredentialRevision(
-  credentialRevision: ConnectedServiceCredentialRevisionV1 | null | undefined,
-): asserts credentialRevision is ConnectedServiceCredentialRevisionV1 {
-  if (credentialRevision != null) return;
-  throw createConnectedServiceAuthGenerationApplyFailureError({
-    errorCode: 'credential_revision_missing',
   });
 }
 
@@ -371,7 +363,12 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
       const credentialRevision = await params.resolveCurrentCredentialRevision(
         serviceId,
         unresolvedState.activeProfileId,
-      ).catch(() => null);
+      ).catch(() => {
+        logger.warn('[ConnectedServices] Credential revision read-back failed after account switch', {
+          serviceId, profileId: unresolvedState.activeProfileId, errorCode: 'credential_revision_read_failed',
+        });
+        return null;
+      });
       return {
         ...unresolvedState,
         credentialRevision,
@@ -436,9 +433,13 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     resolvePostApplyCredentialRevision: async (input) => await params.resolveCurrentCredentialRevision(
       ConnectedServiceIdSchema.parse(input.serviceId),
       input.activeProfileId,
-    ).catch(() => null),
+    ).catch(() => {
+      logger.warn('[ConnectedServices] Credential revision read-back failed after account application', {
+        serviceId: input.serviceId, profileId: input.activeProfileId, errorCode: 'credential_revision_read_failed',
+      });
+      return null;
+    }),
     applyGeneration: async (input) => {
-      assertExactConnectedServiceCredentialRevision(input.credentialRevision);
       if (input.sessionId && params.applyConnectedServiceAuthGeneration) {
         const applied = await params.applyConnectedServiceAuthGeneration({
           sessionId: input.sessionId,
@@ -494,6 +495,9 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     },
     recordObservedFailureState: async (input) => {
       if (!params.api.updateConnectedServiceAuthGroupRuntimeState) return;
+      // Explicit null is an unattributed provider-started failure. The tracked
+      // pool can be recovered, but no member may acquire a limiter from it.
+      if (input.observedProfileId === null) return;
       const observedProfileId = typeof input.observedProfileId === 'string' && input.observedProfileId.trim().length > 0
         ? input.observedProfileId.trim()
         : input.loaded.activeProfileId;

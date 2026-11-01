@@ -6,17 +6,18 @@ import {
   ConnectedServiceProfileIdSchema,
 } from '../../connect/connectedServiceSchemas.js';
 import { ConnectedServiceLimitCategoryV1Schema } from '../../connect/connectedServiceLimitCategory.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const TurnTerminalStatusV1Schema = z.enum(['completed', 'cancelled', 'failed']);
+export const TurnTerminalStatusV1Schema = lazySchema(() => z.enum(['completed', 'cancelled', 'failed']));
 export type TurnTerminalStatusV1 = z.infer<typeof TurnTerminalStatusV1Schema>;
 
-export const PrimaryTurnStatusV1Schema = z.union([
+export const PrimaryTurnStatusV1Schema = lazySchema(() => z.union([
   z.literal('in_progress'),
   TurnTerminalStatusV1Schema,
-]);
+]));
 export type PrimaryTurnStatusV1 = z.infer<typeof PrimaryTurnStatusV1Schema>;
 
-export const SessionRuntimeIssueSourceV1Schema = z.enum([
+export const SessionRuntimeIssueSourceV1Schema = lazySchema(() => z.enum([
   'provider_status_error',
   'provider_process_exit',
   'provider_process_exit_after_switch',
@@ -27,10 +28,10 @@ export const SessionRuntimeIssueSourceV1Schema = z.enum([
   'permission_blocked',
   'dependency_failure',
   'unknown',
-]);
+]));
 export type SessionRuntimeIssueSourceV1 = z.infer<typeof SessionRuntimeIssueSourceV1Schema>;
 
-const SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema = z
+const SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema = lazySchema(() => z
   .object({
     exitCode: z.number().int().nullable(),
     signal: z.string().trim().min(1).max(128).nullable(),
@@ -39,9 +40,9 @@ const SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema = z
     materializationRoot: z.string().trim().min(1).max(2_000).nullable(),
     effectiveStateMode: z.enum(['shared', 'isolated']).nullable(),
   })
-  .strict();
+  .strict());
 
-const SessionRuntimeUsageLimitActionV1Schema = z.discriminatedUnion('kind', [
+const SessionRuntimeUsageLimitActionV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('open_url'),
     labelKey: z.string().trim().min(1).optional(),
@@ -53,18 +54,18 @@ const SessionRuntimeUsageLimitActionV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('none'),
   }).strict(),
-]);
+]));
 
-const SessionRuntimeQuotaSnapshotRefV1Schema = z
+const SessionRuntimeQuotaSnapshotRefV1Schema = lazySchema(() => z
   .object({
     serviceId: ConnectedServiceIdSchema,
     profileId: ConnectedServiceProfileIdSchema.optional(),
     groupId: ConnectedServiceAuthGroupIdSchema.optional(),
     fetchedAtMs: z.number().int().nonnegative().optional(),
   })
-  .strict();
+  .strict());
 
-const SessionRuntimeUsageLimitWindowV1Schema = z
+const SessionRuntimeUsageLimitWindowV1Schema = lazySchema(() => z
   .object({
     meterId: z.string().trim().min(1),
     scope: z.string().trim().min(1).optional(),
@@ -72,9 +73,9 @@ const SessionRuntimeUsageLimitWindowV1Schema = z
     resetAtMs: z.number().int().nonnegative().optional(),
     status: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict());
 
-export const SessionRuntimeUsageLimitDetailsV1Schema = z
+export const SessionRuntimeUsageLimitDetailsV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     resetAtMs: z.number().int().nonnegative().nullable(),
@@ -113,22 +114,22 @@ export const SessionRuntimeUsageLimitDetailsV1Schema = z
       .nullable()
       .optional(),
   })
-  .strict();
+  .strict());
 
 export type SessionRuntimeUsageLimitDetailsV1 = z.infer<typeof SessionRuntimeUsageLimitDetailsV1Schema>;
 
-export const SessionRuntimeTemporaryThrottleDetailsV1Schema = z
+export const SessionRuntimeTemporaryThrottleDetailsV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     retryAfterMs: z.number().int().nonnegative().nullable(),
     recoverability: z.enum(['retry', 'manual', 'unknown']),
   })
-  .strict();
+  .strict());
 
 export type SessionRuntimeTemporaryThrottleDetailsV1 =
   z.infer<typeof SessionRuntimeTemporaryThrottleDetailsV1Schema>;
 
-export const SessionRuntimeIssueV1Schema = z
+export const SessionRuntimeIssueV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     scope: z.literal('primary_session'),
@@ -144,5 +145,5 @@ export const SessionRuntimeIssueV1Schema = z
     temporaryThrottle: SessionRuntimeTemporaryThrottleDetailsV1Schema.optional(),
     providerProcessExitAfterSwitch: SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema.optional(),
   })
-  .readonly();
+  .readonly());
 export type SessionRuntimeIssueV1 = z.infer<typeof SessionRuntimeIssueV1Schema>;

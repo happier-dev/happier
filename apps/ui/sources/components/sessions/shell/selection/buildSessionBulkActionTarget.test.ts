@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SESSION_BULK_ACTION_IDS } from '@/components/sessions/actions/sessionBulkActionTypes';
 import { listSessionBulkActionDescriptors } from '@/components/sessions/actions/sessionBulkActionPresentation';
+import { executeSessionBulkAction } from '@/components/sessions/actions/sessionBulkActionExecution';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 
@@ -92,6 +93,26 @@ function listBulkActionIds(targetIds: readonly string[], settings: SessionListRo
         moveEnabled: false,
     }).map((descriptor) => descriptor.id);
 }
+
+it('moves Direct and persisted selections through the same folder assignment operation', async () => {
+    const settings = createSettings({ attentionStandingEnabled: false, attentionStandingPolicy: { defaultStanding: false, overridesBySessionKey: {} } });
+    const direct = createItem('direct');
+    direct.session = { ...direct.session, metadata: { path: '/repo', directSessionV1: { v: 1 } } };
+    const targets = [createItem('persisted'), direct].map((item) => buildSessionBulkActionTargetFromSessionItem(item, settings));
+    expect(listSessionBulkActionDescriptors({ targets, tagsEnabled: false, moveEnabled: true }).map((action) => action.id))
+        .toContain(SESSION_BULK_ACTION_IDS.moveToFolder);
+    const assignments: Record<string, string | null> = {};
+    const result = await executeSessionBulkAction({
+        action: { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'folder-a' },
+        targets,
+        context: {
+            foldersFeatureDecision: { state: 'enabled' },
+            setSessionFolderAssignment: async ({ target, folderId }) => { assignments[target.key] = folderId; },
+        },
+    });
+    expect(assignments).toEqual({ [`${SERVER_ID}:persisted`]: 'folder-a', [`${SERVER_ID}:direct`]: 'folder-a' });
+    expect(result.remainingSelectedKeys).toEqual([]);
+});
 
 describe('buildSessionBulkActionTargetFromSessionItem attention standing', () => {
     const standingSettings = createSettings({

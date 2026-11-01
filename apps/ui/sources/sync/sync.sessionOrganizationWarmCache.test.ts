@@ -35,10 +35,7 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
         connect: vi.fn(),
         disconnect: vi.fn(),
         initialize: vi.fn(),
-        request: vi.fn(async () => new Response(
-            JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )),
+        request: vi.fn(async (path: string) => sessionReadResponse(path)),
         onStatusChange: vi.fn(() => () => undefined),
     },
 }));
@@ -69,6 +66,19 @@ import { clearWarmCacheAccountScope } from './domains/state/warmCachePersistence
 
 const ACCOUNT_ID = 'test-account';
 
+function sessionReadResponse(path: string): Response {
+    const exactSession = /^\/v2\/sessions\/([^/?]+)$/.exec(new URL(path, 'http://localhost:53288').pathname);
+    if (exactSession && exactSession[1] !== 'active') {
+        return Response.json({ session: {
+            id: decodeURIComponent(exactSession[1]), seq: 0, createdAt: 1, updatedAt: 1,
+            active: false, activeAt: 1, archivedAt: null, encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/workspace', host: 'test' }), metadataVersion: 1,
+            agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+        } });
+    }
+    return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+}
+
 function organizationSnapshot(overrides?: { version?: number; pinnedSessionIds?: readonly string[] }) {
     return {
         schemaVersion: 1,
@@ -93,6 +103,7 @@ function organizationSnapshot(overrides?: { version?: number; pinnedSessionIds?:
             { scopeKind: 'group', scopeKey: 'pinned', itemKind: 'session', itemKey: 's_pinned', sortKey: '00000001' },
         ],
         labels: [],
+        sessionAppearances: [{ sessionId: 's_pinned', display: { t: 'plain', v: { color: { kind: 'custom', hex: '#123456' } } }, updatedAt: 5 }],
     };
 }
 
@@ -148,6 +159,8 @@ describe('session organization warm cache', () => {
         expect(state.sessionOrganizationSnapshotVersionByServerId[serverId]).toBe(7);
         expect(Object.keys(state.sessionOrganizationPinsBySessionKey)).toEqual([`${serverId}:s_pinned`]);
         expect(state.sessionFolderAssignmentsBySessionKey[`${serverId}:s_assigned`]).toBe('f1');
+        expect(state.sessionOrganizationAppearancesBySessionKey[`${serverId}:s_pinned`]?.display).toEqual({ t: 'plain', v: { color: { kind: 'custom', hex: '#123456' } } });
+        expect(state.sessionOrganizationSessionAppearancesSupportedByServerId[serverId]).toBe(true);
     });
 
     it('issues the session list page without waiting for the organization refresh once a warm organization exists', async () => {
@@ -176,10 +189,7 @@ describe('session organization warm cache', () => {
                 });
             }
             if (url.includes('/sessions')) {
-                return new Response(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
+                return sessionReadResponse(url);
             }
             return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }));
@@ -191,6 +201,7 @@ describe('session organization warm cache', () => {
 
         releaseOrganization();
         await fetchSessions;
+        expect(storage.getState().sessions.s_pinned?.metadata).toMatchObject({ path: '/workspace', host: 'test' });
 
         // The refreshed organization has to survive this process, or the next boot is back on
         // the blocking path.
@@ -203,6 +214,7 @@ describe('session organization warm cache', () => {
             version: 9,
             pins: [expect.objectContaining({ sessionId: 's_pinned' })],
             folderAssignments: [{ sessionId: 's_assigned', folderId: 'f1' }],
+            sessionAppearances: [expect.objectContaining({ sessionId: 's_pinned', display: { t: 'plain', v: { color: { kind: 'custom', hex: '#123456' } } } })],
         });
     }, 30_000);
 });

@@ -21,7 +21,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -86,6 +86,9 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
     }>();
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const happierVoiceSupported = useHappierVoiceSupport();
+    const usesHappierVoice = storage((state) =>
+        state.settings.voice.providerId === 'realtime_elevenlabs'
+        && state.settings.voice.adapters.realtime_elevenlabs.billingMode === 'happier');
     const activeServerAccountScope = useActiveServerAccountScope();
     const isTerminalConnectRoute = segments.includes('terminal') && segments.includes('connect');
 
@@ -234,30 +237,21 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
     React.useEffect(() => {
         if (!auth.isAuthenticated) return;
         if (happierVoiceSupported !== false) return;
+        if (!usesHappierVoice) return;
         let cancelled = false;
         fireAndForget((async () => {
-            try {
-                // Defer loading sync/storage modules until needed to keep module evaluation light.
-                const [{ storage }, { applySystemSettings }] = await Promise.all([
-                    import('@/sync/domains/state/storage'),
-                    import('@/sync/store/settingsWriters'),
-                ]);
+            const { applySystemSettings } = await import('@/sync/store/settingsWriters');
 
-                if (cancelled) return;
-                const voice = (storage.getState().settings as any)?.voice ?? null;
-                const providerId = voice?.providerId ?? 'off';
-                const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
-                if (providerId !== 'realtime_elevenlabs') return;
-                if (billingMode !== 'happier') return;
-                applySystemSettings({ voice: { ...voice, providerId: 'off' } });
-            } catch {
-                // Non-fatal: feature gating should never crash the root layout.
-            }
+            if (cancelled) return;
+            const currentVoice = storage.getState().settings.voice;
+            if (currentVoice.providerId !== 'realtime_elevenlabs') return;
+            if (currentVoice.adapters.realtime_elevenlabs.billingMode !== 'happier') return;
+            applySystemSettings({ voice: { ...currentVoice, providerId: 'off' } });
         })(), { tag: 'RootLayout.happierVoiceGate' });
         return () => {
             cancelled = true;
         };
-    }, [auth.isAuthenticated, happierVoiceSupported]);
+    }, [auth.isAuthenticated, happierVoiceSupported, usesHappierVoice]);
 
     if (debugRouterEnabled && Platform.OS === 'web') {
         return (

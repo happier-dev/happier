@@ -1,3 +1,4 @@
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { logger } from '@/ui/logger';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
@@ -116,7 +117,7 @@ function recordSemanticPageDiagnostics(params: Readonly<{
 export async function fetchTranscriptSemanticPage(params: Readonly<{
   token: string;
   sessionId: string;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
   limit: number;
   rawPageLimit: number;
   maxRawRowsToScan: number;

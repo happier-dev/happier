@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     buildMachineDisplayRenderableFromMachine,
@@ -11,38 +11,7 @@ import {
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { settingsDefaults } from '../../domains/settings/settings';
 import type { Machine, Session } from '../../domains/state/storageTypes';
-
-const store = vi.hoisted(() => new Map<string, string>());
-
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return store.get(key);
-        }
-
-        set(key: string, value: string) {
-            store.set(key, value);
-        }
-
-        delete(key: string) {
-            store.delete(key);
-        }
-
-        clearAll() {
-            store.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-vi.mock('../../domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server_a', serverUrl: 'http://server.local', generation: 0 }),
-}));
-
-vi.mock('../../domains/server/serverProfiles', () => ({
-    getServerProfileById: () => ({ id: 'server_a', name: 'Server A' }),
-}));
+import { setActiveServerId, upsertServerProfile } from '../../domains/server/serverProfiles';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -189,9 +158,14 @@ function createHarness() {
 }
 
 describe('settings domain: sessionListViewData rebuilds', () => {
+    let activeServerId: string;
     beforeEach(() => {
-        store.clear();
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', `settings-list-rebuild-${Math.random()}`);
+        const home = upsertServerProfile({ serverUrl: 'https://settings-server.example.test', name: 'Server A' });
+        activeServerId = home.id;
+        setActiveServerId(home.id, { scope: 'device' });
     });
+    afterEach(() => vi.unstubAllEnvs());
 
     it('rebuilds sessionListViewData when grouping settings change', () => {
         const { get } = createHarness();
@@ -207,7 +181,7 @@ describe('settings domain: sessionListViewData rebuilds', () => {
         expect(projectHeader).toMatchObject({
             type: 'header',
             title: '~/personal/repo',
-            serverId: 'server_a',
+            serverId: activeServerId,
             serverName: 'Server A',
         });
         expect(projectedSessionRow).toMatchObject({
@@ -236,6 +210,15 @@ describe('settings domain: sessionListViewData rebuilds', () => {
         });
 
         expect(get().sessionListViewData).not.toBe(initial);
+    });
+
+    it('invalidates session list projections when background unread placement changes', () => {
+        const { get } = createHarness();
+        get().applySettingsLocal({ sessionListInactiveGroupingV1: 'project' });
+        const previous = get().sessionListViewData;
+        get().applySettingsLocal({ sessionListBackgroundWorkAttentionModeV1: 'showUnread' });
+        expect(get().settings.sessionListBackgroundWorkAttentionModeV1).toBe('showUnread');
+        expect(get().sessionListViewData).not.toBe(previous);
     });
 
     it('rebuilds sessionListViewData when the working placement setting changes', () => {

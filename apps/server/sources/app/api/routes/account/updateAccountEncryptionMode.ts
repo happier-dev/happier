@@ -1,3 +1,4 @@
+import { migrateMachineAccountEncryptionInTx } from "@/app/machines/migrateMachineAccountEncryptionInTx";
 import { inTx } from "@/storage/inTx";
 
 export type UpdateAccountEncryptionModeResult =
@@ -26,7 +27,8 @@ export async function updateAccountEncryptionMode(params: Readonly<{
         const hasSettings = typeof account.settings === "string" && account.settings.trim().length > 0;
         const connectedServicesCount = await tx.serviceAccountToken.count({ where: { accountId: params.accountId } });
         const automationsCount = await tx.automation.count({ where: { accountId: params.accountId } });
-        if (hasSettings || connectedServicesCount > 0 || automationsCount > 0) {
+        const machineMigration = await migrateMachineAccountEncryptionInTx({ tx, accountId: params.accountId, toMode: params.mode });
+        if (hasSettings || connectedServicesCount > 0 || automationsCount > 0 || machineMigration !== "applied") {
             return { status: "migration_required" };
         }
 

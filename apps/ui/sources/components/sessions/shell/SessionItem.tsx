@@ -9,19 +9,13 @@ import {
     WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
 } from '@/components/ui/text/webStartEllipsisTextStyles';
-import {
-    DEFAULT_AGENT_ID,
-    getAgentCore,
-    resolveAgentIdFromFlavor,
-} from '@/agents/catalog/catalog';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { Typography } from '@/constants/Typography';
 import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { t } from '@/text';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
-import { storage, useLocalSetting } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
@@ -55,6 +49,8 @@ import { planSessionTagDisplay } from './sessionTagPlacement';
 import { useIsTablet } from '@/utils/platform/responsive';
 import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import { useSessionRowActionMenu } from './row/actionMenu/useSessionRowActionMenu';
+import { useSessionRowAppearanceMenu, type SetSessionAppearance } from './row/actionMenu/useSessionRowAppearanceMenu';
+import { resolveSessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { formatSessionAttentionReminderDateTime } from './row/actionMenu/sessionAttentionReminderAction';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
@@ -73,16 +69,13 @@ import {
 import { useOptionalSessionListSelectionRow } from './selection/SessionListSelectionContext';
 import { resolveSessionListSelectionPointerAction } from './selection/sessionListSelectionPointer';
 import {
-    buildSessionDebugInformation,
-    isSessionDebugInformationEnabled,
-    resolveProviderSessionIdForDebug,
+    buildSessionDebugInformationForSession,
 } from '@/components/sessions/debug/sessionDebugInformation';
-import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
+import { copySessionDebugInformationToClipboard, isSessionCopyActionId } from '@/components/sessions/debug/sessionDebugClipboard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Modal } from '@/modal';
 import {
-    createCopySessionDebugInformationMenuItem,
-    SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
+    createSessionCopyMenuItem,
 } from '@/components/sessions/debug/sessionDebugMenuItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -141,6 +134,8 @@ type SessionItemBaseProps = Readonly<{
     allKnownTags?: readonly string[];
     onSetTags?: ((newTags: string[]) => void) | null;
     tagsEnabled?: boolean;
+    /** The list's canonical session-colour writer; absent hides the row's colour action. */
+    onSetSessionAppearance?: SetSessionAppearance | null;
     selected?: boolean;
     isFirst?: boolean;
     isLast?: boolean;
@@ -177,8 +172,11 @@ type SessionItemRenderProps = Omit<SessionItemBaseProps, 'activityTimeMode' | 's
     sessionNameResolved: string;
     sessionSubtitle: string;
     pendingCount: number;
+    hasUnreadMessages: boolean;
     draft: SessionListRowModel['draft'];
     reminder: SessionListRowModel['reminder'];
+    /** Effective colour (session override, else its project's). */
+    appearanceColor: SessionListRowModel['appearanceColor'];
     /** Live agent work in this session, already named. `null` unless the person opted in (R-8). */
     agentActivityLabel: string | null;
     isSessionIdentityLoading: boolean;
@@ -270,6 +268,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionItemSelected: {
         backgroundColor: theme.colors.surface.selected,
         borderColor: theme.dark ? theme.colors.surface.selected : theme.colors.surface.base,
+    },
+    // An inner pill, not the row border: the 2px border already carries selection, and a full-height
+    // edge would fight the rounded first/last corners. Insets scale with the row's density.
+    appearanceStripe: {
+        position: 'absolute',
+        left: 3,
+        top: '28%',
+        bottom: '28%',
+        width: 3,
+        borderRadius: 2,
+        // Same hairline the colour swatches use, so pale custom colours stay visible on the row.
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+    },
+    // Minimal rows pad only 8px; hug the row edge and thin the pill so the avatar keeps its breathing room.
+    appearanceStripeMinimal: {
+        left: 0,
+        width: 2,
     },
     sessionTitleSelected: {
         color: theme.colors.text.primary,
@@ -685,6 +701,7 @@ const SessionItemContent = React.memo(
         allKnownTags,
         onSetTags,
         tagsEnabled,
+        onSetSessionAppearance,
         selected,
         isFirst,
         isLast,
@@ -708,8 +725,10 @@ const SessionItemContent = React.memo(
         sessionNameResolved,
         sessionSubtitle,
         pendingCount,
+        hasUnreadMessages,
         draft,
         reminder,
+        appearanceColor,
         agentActivityLabel,
         isSessionIdentityLoading,
         activityTimeLabel,
@@ -729,8 +748,6 @@ const SessionItemContent = React.memo(
         // session is held in the working group while its live signals are
         // stale, so animating would misrepresent live activity.
         const attentionIndicatorAnimationEnabled = rowAttentionAnimationEnabled && workingIndicatorPaused !== true;
-        const localDevModeEnabled = useLocalSetting('devModeEnabled');
-        const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
         const router = useRouter();
         const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
             scopeKind: 'spawn',
@@ -807,23 +824,7 @@ const SessionItemContent = React.memo(
         const rowActionIconColor = theme.colors.text.secondary;
         const resolveSessionDebugInformation = React.useCallback(() => {
             const fullSession = storage.getState().sessions[resolvedSession.id];
-            const debugSession = fullSession ?? resolvedSession;
-            const debugMetadata = debugSession.metadata ?? resolvedSession.metadata;
-            const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata)
-                ?? resolveAgentIdFromFlavor(debugMetadata?.flavor)
-                ?? resolveAgentIdFromSessionMetadata(resolvedSession.metadata)
-                ?? resolveAgentIdFromFlavor(resolvedSession.metadata?.flavor)
-                ?? DEFAULT_AGENT_ID;
-            const debugAgentCore = getAgentCore(debugAgentId);
-            const providerSessionId = resolveProviderSessionIdForDebug({
-                metadata: debugMetadata,
-                vendorResumeIdField: debugAgentCore.resume.vendorResumeIdField,
-            });
-            return buildSessionDebugInformation({
-                session: debugSession,
-                providerDisplayName: t(debugAgentCore.displayNameKey),
-                providerSessionId,
-            });
+            return buildSessionDebugInformationForSession(fullSession?.metadata ? fullSession : resolvedSession);
         }, [resolvedSession]);
         const confirmDeleteDraft = React.useCallback(async () => {
             if (!draft || !onDeleteDraft) return;
@@ -893,9 +894,6 @@ const SessionItemContent = React.memo(
                     icon: <Icon name="trash" size={16} color={rowActionIconColor} />,
                 });
             }
-            if (devModeEnabled) {
-                items.push(createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor }));
-            }
             if (showForkAction) {
                 items.push({
                     id: 'session.fork',
@@ -905,8 +903,8 @@ const SessionItemContent = React.memo(
                 });
             }
             return items;
-        }, [devModeEnabled, draft, onDeleteDraft, rowActionIconColor, showForkAction]);
-        const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string) => {
+        }, [draft, onDeleteDraft, rowActionIconColor, showForkAction]);
+        const handleSelectCustomMenuItem = React.useCallback(async (itemId: string) => {
             if (itemId === SESSION_DELETE_DRAFT_MENU_ITEM_ID) {
                 await confirmDeleteDraft();
                 return;
@@ -915,8 +913,8 @@ const SessionItemContent = React.memo(
                 openForkFlow();
                 return;
             }
-            if (itemId !== SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) return;
-            const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation());
+            if (!isSessionCopyActionId(itemId)) return;
+            const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation(), itemId);
             if (copied) {
                 copyFeedback.markCopied(resolvedSession.id);
             }
@@ -945,6 +943,10 @@ const SessionItemContent = React.memo(
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
+        const trailingMenuItems = React.useMemo(() => (contextMenuOpen || moreMenuOpen) ? [createSessionCopyMenuItem({
+            iconColor: rowActionIconColor,
+            information: resolveSessionDebugInformation(),
+        })] : [], [contextMenuOpen, moreMenuOpen, resolveSessionDebugInformation, rowActionIconColor]);
         const suppressNextPressRef = React.useRef(false);
         const contextMenuWasOpenRef = React.useRef(false);
         const clearSuppressionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1090,6 +1092,20 @@ const SessionItemContent = React.memo(
             stopRowPressPropagation,
         ]);
 
+        const appearanceMenu = useSessionRowAppearanceMenu({
+            enabled: moreMenuOpen || contextMenuOpen,
+            serverId: serverId ?? null,
+            sessionId: resolvedSession.id,
+            theme,
+            effectiveColor: appearanceColor,
+            onSetSessionAppearance,
+        });
+        const appearanceStripeColor = resolveSessionAppearanceColor(appearanceColor, theme);
+        const closeRowMenus = React.useCallback(() => {
+            setMoreMenuOpen(false);
+            setContextMenuOpen(false);
+        }, [setContextMenuOpen]);
+
         const {
             tagMenuItems,
             handleTagMenuSelect,
@@ -1111,7 +1127,8 @@ const SessionItemContent = React.memo(
             onTogglePinned,
             onMoveToFolder,
             leadingMenuItems,
-            onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
+            trailingMenuItems,
+            onSelectCustomMenuItem: handleSelectCustomMenuItem,
             selectionModeAvailable: Boolean(resolvedSelectionKey),
             selectionModeActive: rowSelection.isSelectionMode,
             onEnterSelectionMode: handleEnterSelectionMode,
@@ -1122,6 +1139,9 @@ const SessionItemContent = React.memo(
                 setTagMenuOpen(true);
             },
             reminder,
+            archiving: sessionStatus.state === 'archiving',
+            appearance: appearanceMenu,
+            closeMenus: closeRowMenus,
         });
 
         const handleSwipeAction = React.useCallback(async () => {
@@ -1133,11 +1153,11 @@ const SessionItemContent = React.memo(
             const actions: Array<{ name: string; label: string }> = [];
             if (onMoveUp) actions.push({ name: 'moveUp', label: t('common.moveUp') });
             if (onMoveDown) actions.push({ name: 'moveDown', label: t('common.moveDown') });
-            if (sessionActionTarget.canMoveToFolder && onMoveToFolder) actions.push({ name: 'moveToFolder', label: t('sessionsList.moveToFolder') });
-            if (sessionActionTarget.canMoveToFolder && onMoveToWorkspaceRoot) actions.push({ name: 'moveToWorkspaceRoot', label: t('sessionsList.moveToWorkspaceRoot') });
+            if (onMoveToFolder) actions.push({ name: 'moveToFolder', label: t('sessionsList.moveToFolder') });
+            if (onMoveToWorkspaceRoot) actions.push({ name: 'moveToWorkspaceRoot', label: t('sessionsList.moveToWorkspaceRoot') });
             if (draft && onDeleteDraft) actions.push({ name: 'deleteDraft', label: t('sessionDrafts.delete.action') });
             return actions;
-        }, [draft, onDeleteDraft, onMoveDown, onMoveToFolder, onMoveToWorkspaceRoot, onMoveUp, sessionActionTarget.canMoveToFolder]);
+        }, [draft, onDeleteDraft, onMoveDown, onMoveToFolder, onMoveToWorkspaceRoot, onMoveUp]);
 
         const handleAccessibilityAction = React.useCallback((event: { nativeEvent?: { actionName?: string } }) => {
             switch (event.nativeEvent?.actionName) {
@@ -1148,16 +1168,16 @@ const SessionItemContent = React.memo(
                     onMoveDown?.();
                     break;
                 case 'moveToFolder':
-                    if (sessionActionTarget.canMoveToFolder) onMoveToFolder?.();
+                    onMoveToFolder?.();
                     break;
                 case 'moveToWorkspaceRoot':
-                    if (sessionActionTarget.canMoveToFolder) onMoveToWorkspaceRoot?.();
+                    onMoveToWorkspaceRoot?.();
                     break;
                 case 'deleteDraft':
                     void confirmDeleteDraft();
                     break;
             }
-        }, [confirmDeleteDraft, onMoveDown, onMoveToFolder, onMoveToWorkspaceRoot, onMoveUp, sessionActionTarget.canMoveToFolder]);
+        }, [confirmDeleteDraft, onMoveDown, onMoveToFolder, onMoveToWorkspaceRoot, onMoveUp]);
 
         const pendingBadge = formatPendingCountBadge(pendingCount);
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
@@ -1174,9 +1194,11 @@ const SessionItemContent = React.memo(
         const rowStatusColor = rowPresentation.backgroundActivityStatusLine === true
             ? theme.colors.text.secondary
             : resolveSessionRowAttentionStateColor(rowAttentionState, theme);
-        const rowAttentionAccessibilityLabel =
+        const primaryAttentionAccessibilityLabel =
             rowAttentionState === 'failed'
                 ? t('status.error')
+                : rowPresentation.attentionIndicator === 'unread'
+                ? t('settingsNotifications.badges.unreadTitle')
                 : rowPresentation.attentionIndicator === 'working'
                 || rowPresentation.attentionIndicator === 'permission'
                 || rowPresentation.attentionIndicator === 'action'
@@ -1184,6 +1206,11 @@ const SessionItemContent = React.memo(
                 : rowPresentation.statusTextKey
                     ? statusLineText
                     : undefined;
+        const announcesUnreadAndWork = (rowPresentation.attentionIndicator === 'working' && hasUnreadMessages)
+            || (rowPresentation.attentionIndicator === 'unread' && sessionStatus.state === 'background_active');
+        const rowAttentionAccessibilityLabel = announcesUnreadAndWork
+            ? `${statusLineText}, ${t('settingsNotifications.badges.unreadTitle')}`
+            : primaryAttentionAccessibilityLabel;
         const shouldShowStatusSecondaryLine = rowPresentation.secondaryLine === 'status' && statusLineText.trim().length > 0;
         const shouldShowPathSecondaryLine = rowPresentation.secondaryLine === 'path' && Boolean(sessionSubtitle);
         const shouldUsePathSubtitleStartEllipsis = shouldShowPathSecondaryLine && effectiveSubtitleEllipsizeMode === 'head';
@@ -1224,7 +1251,7 @@ const SessionItemContent = React.memo(
         const showInlineTagChips = showTagChips && tagDisplayPlan.placement === 'inline';
         const showBelowTagChips = showTagChips && tagDisplayPlan.placement === 'below';
         const enableLongPressContextMenu =
-            Platform.OS === 'ios'
+            isNativeMobile
             && nativeInlineDragEnabled !== true
             && contextMenuItems.length > 0;
         const openContextMenuFromLongPress = React.useCallback(() => {
@@ -1333,6 +1360,19 @@ const SessionItemContent = React.memo(
                 onPressOut={enableLongPressContextMenu ? clearContextMenuPressInTimer : undefined}
                 onLongPress={enableLongPressContextMenu ? openContextMenuFromLongPress : undefined}
             >
+                {appearanceStripeColor ? (
+                    <View
+                        testID={`session-item-appearance-stripe:${resolvedSession.id}`}
+                        pointerEvents="none"
+                        accessible={false}
+                        importantForAccessibility="no-hide-descendants"
+                        style={[
+                            styles.appearanceStripe,
+                            isMinimal ? styles.appearanceStripeMinimal : null,
+                            { backgroundColor: appearanceStripeColor },
+                        ]}
+                    />
+                ) : null}
                 {shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox ? (
                     <View
                         style={[
@@ -1494,6 +1534,7 @@ const SessionItemContent = React.memo(
                                             sessionId={`${resolvedSession.id}-secondary`}
                                             attentionState={rowAttentionState}
                                             accessibilityLabel={rowAttentionAccessibilityLabel}
+                                            hasUnreadMessages={hasUnreadMessages}
                                             workingMode={workingIndicatorMode}
                                             animationEnabled={attentionIndicatorAnimationEnabled}
                                         />
@@ -1696,6 +1737,7 @@ const SessionItemContent = React.memo(
                                     sessionId={`${resolvedSession.id}-trailing`}
                                     attentionState={rowAttentionState}
                                     accessibilityLabel={rowAttentionAccessibilityLabel}
+                                    hasUnreadMessages={hasUnreadMessages}
                                     workingMode={workingIndicatorMode}
                                     workingSpinnerTone="neutral"
                                     animationEnabled={attentionIndicatorAnimationEnabled}
@@ -1865,8 +1907,10 @@ function SessionItemFromRowModel(props: SessionItemProps & { rowModel: SessionLi
             sessionNameResolved={rowModel.title}
             sessionSubtitle={itemProps.subtitleOverride ?? rowModel.subtitle}
             pendingCount={rowModel.pendingCount}
+            hasUnreadMessages={rowModel.hasUnreadMessages}
             draft={rowModel.draft}
             reminder={rowModel.reminder}
+            appearanceColor={rowModel.appearanceColor}
             agentActivityLabel={rowModel.agentActivityLabel}
             isSessionIdentityLoading={rowModel.isIdentityLoading}
             activityTimeLabel={rowModel.activity.label}

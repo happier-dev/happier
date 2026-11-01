@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+vi.mock('@/sync/http/client', () => ({ serverFetch: async () => new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 }) }));
+import { describe, expect, it, vi } from 'vitest';
 
 import tweetnacl from 'tweetnacl';
 import {
     openBoxBundle,
     openTerminalProvisioningV3Payload,
+    openTerminalProvisioningV3Response,
     TERMINAL_PROVISIONING_V2_PLAINTEXT_BYTES,
     TERMINAL_PROVISIONING_V2_VERSION_BYTE,
 } from '@happier-dev/protocol';
@@ -12,11 +14,26 @@ import {
     buildTerminalResponseV1,
     buildTerminalResponseV2,
     buildTerminalResponseV3,
+    buildTerminalResponseV3TokenOnly,
+    resolveTerminalProvisioningContentPrivateKey,
     decideTerminalProvisioningMode,
 } from './terminalProvisioning';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('terminalProvisioning', () => {
+    it('pairs token-only credentials without inventing a content key', async () => {
+        expect(await resolveTerminalProvisioningContentPrivateKey({ token: 'plain-token' })).toBeNull();
+        const secretKey = new Uint8Array(32).fill(3);
+        const publicKey = tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey;
+        const pairingSecret = new Uint8Array(32).fill(4);
+        const payload = buildTerminalResponseV3TokenOnly({
+            terminalEphemeralPublicKey: publicKey, pairingSecret, createdAtMs: 1_000, expiresAtMs: 61_000,
+        });
+        expect(openTerminalProvisioningV3Response({
+            payload, recipientSecretKeyOrSeed: secretKey, terminalEphemeralPublicKey: publicKey,
+            pairingSecret, createdAtMs: 1_000, expiresAtMs: 61_000, nowMs: 2_000,
+        })).toEqual({ type: 'tokenOnly' });
+    });
     it('decides v2 when supported', () => {
         expect(decideTerminalProvisioningMode({ supportsV2: true, allowLegacyFallback: false })).toBe('v2');
     });

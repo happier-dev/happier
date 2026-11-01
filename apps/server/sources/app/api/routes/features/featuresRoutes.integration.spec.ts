@@ -265,6 +265,49 @@ describe("featuresRoutes", () => {
         });
     });
 
+    describe("OIDC environment secrets", () => {
+        it("advertises resolved providers, rejects the whole set on a missing secret, and recovers without leaking secrets", async () => {
+            const provider = {
+                type: "oidc",
+                displayName: "Acme OIDC",
+                issuer: "https://issuer.example.test",
+                clientId: "cid",
+                redirectUrl: "https://api.example.test/v1/oauth/acme/callback",
+            };
+            const env = {
+                AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify([
+                    { ...provider, id: "literal", clientSecret: "literal-private-value" },
+                    { ...provider, id: "acme", clientSecretEnv: "ACME_OIDC_SECRET" },
+                ]),
+                ACME_OIDC_SECRET: "env-private-value",
+            };
+
+            resetEnv(env);
+            const configured = await getFeaturesPayload();
+            expect(configured.capabilities.oauth.providers.acme).toMatchObject({ configured: true, enabled: true });
+            expect(configured.capabilities.oauth.providers.literal).toMatchObject({ configured: true, enabled: true });
+            expect(configured.capabilities.auth.misconfig).toEqual([]);
+
+            resetEnv({ ...env, ACME_OIDC_SECRET: undefined });
+            const invalid = await getFeaturesPayload();
+            expect(invalid.capabilities.oauth.providers).not.toHaveProperty("acme");
+            expect(invalid.capabilities.oauth.providers).not.toHaveProperty("literal");
+            expect(invalid.capabilities.auth.misconfig).toContainEqual(expect.objectContaining({
+                code: "auth_providers_config_invalid",
+                message: expect.stringContaining("ACME_OIDC_SECRET"),
+            }));
+
+            resetEnv(env);
+            const recovered = await getFeaturesPayload();
+            expect(recovered.capabilities.oauth.providers.acme).toMatchObject({ configured: true, enabled: true });
+            expect(recovered.capabilities.auth.misconfig).toEqual([]);
+
+            const serialized = JSON.stringify([configured, invalid, recovered]);
+            expect(serialized).not.toContain("literal-private-value");
+            expect(serialized).not.toContain("env-private-value");
+        });
+    });
+
     describe("auth recovery + ui", () => {
         it("exposes provider reset as enabled when configured", async () => {
             resetEnv({

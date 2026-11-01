@@ -98,6 +98,9 @@ beforeEach(() => {
         },
     });
     mocks.serverFetch.mockImplementation(async (path: string) => {
+        if (String(path).endsWith('/v1/account/encryption')) {
+            return jsonResponse({ mode: 'plain', updatedAt: 1 });
+        }
         if (String(path).includes('/v1/auth/request/status')) {
             return jsonResponse({ status: 'pending', supportsV2: true });
         }

@@ -14,6 +14,11 @@ const repoRoot = resolve(here, '..', '..');
 
 test('installer smoke selects the Windows-only payload promotion contract on test-only changes', async () => {
   const workflow = YAML.parse(await readFile(join(repoRoot, '.github/workflows/tests.yml'), 'utf8'));
+  assert.equal(
+    workflow.jobs['installers-smoke-windows'].steps.filter((step) => step.run?.includes('src/service/windows.test.ts')).length,
+    1,
+    'Windows CI must execute the PowerShell service contracts exactly once',
+  );
   const classifier = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes');
   const filters = YAML.parse(classifier.with.filters);
   assert.ok(
@@ -155,9 +160,15 @@ test('reusable tests calls make their run flags authoritative regardless of the 
   ]);
 
   for (const [jobName, inputName] of defaultSuiteInputs) {
-    assert.equal(
-      testsWorkflow.jobs[jobName].if,
-      `\${{ (inputs.select_jobs_explicitly && inputs.${inputName}) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.${inputName} == 'true') }}`,
+    const selector = `(inputs.select_jobs_explicitly && inputs.${inputName}) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.${inputName} == 'true')`;
+    const condition = String(testsWorkflow.jobs[jobName].if);
+    // Build consumers may only prepend admission conjuncts; the selection itself stays authoritative.
+    const admission = condition.startsWith('${{ ') && condition.endsWith(` && (${selector}) }}`)
+      ? condition.slice(4, -(` && (${selector}) }}`).length).split(' && ')
+      : null;
+    assert.ok(
+      condition === `\${{ ${selector} }}`
+        || admission?.every((term) => term === '!cancelled()' || /^needs\.[\w-]+\.result == 'success'$/.test(term)),
       `${jobName} must honor an explicit false input even when a scheduled caller invokes tests.yml`,
     );
   }
@@ -177,9 +188,14 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     ['providers', 'run_providers'],
     ['release_actor_guard', 'run_providers'],
   ]) {
-    assert.equal(
-      testsWorkflow.jobs[jobName].if,
-      `\${{ inputs.select_jobs_explicitly && inputs.${inputName} }}`,
+    const selector = `inputs.select_jobs_explicitly && inputs.${inputName}`;
+    const condition = String(testsWorkflow.jobs[jobName].if);
+    const admission = condition.startsWith('${{ ') && condition.endsWith(` && ${selector} }}`)
+      ? condition.slice(4, -(` && ${selector} }}`).length).split(' && ')
+      : null;
+    assert.ok(
+      condition === `\${{ ${selector} }}`
+        || admission?.every((term) => term === '!cancelled()' || /^needs\.[\w-]+\.result == 'success'$/.test(term)),
       `${jobName} must honor explicit reusable inputs even when GitHub preserves the caller event`,
     );
   }

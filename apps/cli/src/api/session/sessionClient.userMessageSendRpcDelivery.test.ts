@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createMockSession as createMockSessionBase,
   createPlainSessionFixture as createPlainSessionFixtureBase,
+  createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 import {
   createApiSessionSocketStub as createApiSessionSocketStubBase,
@@ -810,6 +811,10 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
       token: 'tok', encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
     const daemonCheck = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ ok: true, status: 'waiting' });
+    const sessionRead = vi.spyOn(axios, 'get').mockImplementation(async () => ({ status: 200, data: {
+      session: createSessionRecordFixture({ id: 's1', active: true, encryptionMode: 'plain',
+        metadata: JSON.stringify(client.getMetadataSnapshot()) }),
+    } }));
     try {
       await waitForCurrentPendingInputContract(client);
       // Use the real registered control through its RPC boundary; no recovery owner is mocked.
@@ -851,6 +856,7 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     } finally {
       credentialRead.mockRestore();
       daemonCheck.mockRestore();
+      sessionRead.mockRestore();
       await client.close();
     }
   });
@@ -1066,7 +1072,7 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     });
   });
 
-  it('fails closed when persisted blocking recovery has no provider decision control', async () => {
+  it('admits explicit input while generic recovery retains the automatic quota wait', async () => {
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
       emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1' },
@@ -1091,6 +1097,7 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
         },
       },
     }));
+    await waitForCurrentPendingInputContract(client);
     const received: any[] = [];
     client.onUserMessage((message) => received.push(message));
 
@@ -1098,14 +1105,9 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
       text: 'fresh Claude prompt',
       localId: 'request-missing-control',
       meta: { source: 'ui' },
-    })).resolves.toEqual({
-      recoveryBlocked: {
-        status: 'unavailable',
-        errorCode: 'session_user_message_recovery_control_unavailable',
-      },
-    });
+    })).resolves.toEqual({ providerAcceptancePending: true });
 
-    expect(received).toHaveLength(0);
+    expect(received).toHaveLength(1);
   });
 
   it('delivers fresh direct prompts while runtime activity projection is active', async () => {

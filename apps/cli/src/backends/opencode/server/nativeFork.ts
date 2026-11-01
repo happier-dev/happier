@@ -20,6 +20,7 @@ import { extractOpenCodeTextHistoryItems } from './openCodeSessionMessageImport'
 import { resolveOpenCodeUserMessageIdFromMetadata } from './openCodeUserMessageIds';
 import { asRecord, normalizeString } from './openCodeParsing';
 import { ProviderNativeForkFailedBeforeDispatchError } from '@/backends/forking/providerNativeForkHandler';
+import { withSharedManagedOpenCodeServerAccess } from './sharedManagedServer';
 
 type RawTranscriptRow = Readonly<{
   id?: unknown;
@@ -220,39 +221,56 @@ export async function forkOpenCodeSessionNative(params: {
     if (!resolved) return null;
   }
 
-  let client: OpenCodeServerRuntimeClient | null = null;
-  try {
-    client = await createClient({ directory: params.directory, messageBuffer: new MessageBuffer(),
-      ...(params.baseUrlOverride ? { baseUrlOverride: params.baseUrlOverride } : {}),
-      managedServerLaunchFingerprint: params.managedServerLaunchFingerprint,
-    }).catch((error) => {
-      if (params.managedServerLaunchFingerprint != null) {
-        throw new ProviderNativeForkFailedBeforeDispatchError(new Error('Managed OpenCode native fork target is unavailable.'));
-      }
-      throw error;
-    });
+  return await withSharedManagedOpenCodeServerAccess(async () => {
+    let client: OpenCodeServerRuntimeClient | null = null;
+    try {
+      client = await createClient({ directory: params.directory, messageBuffer: new MessageBuffer(),
+        ...(params.baseUrlOverride ? { baseUrlOverride: params.baseUrlOverride } : {}),
+        managedServerLaunchFingerprint: params.managedServerLaunchFingerprint,
+      }).catch((error) => {
+        if (params.managedServerLaunchFingerprint != null) {
+          throw new ProviderNativeForkFailedBeforeDispatchError(new Error('Managed OpenCode native fork target is unavailable.'));
+        }
+        throw error;
+      });
 
-    // OpenCode server fork semantics are exclusive: it clones messages strictly before `messageID`.
-    //
-    // Happier semantics:
-    // - When forking from a user message (with at least one prior committed message), we fork *before* that message
-    //   so the user can edit/resend it ("branch and edit").
-    // - When the fork target is the first user message in the session, keep an inclusive cutoff (fork after it)
-    //   so the forked session retains the initial prompt context.
-    // - When forking from an agent message, we fork *after* that message (inclusive) to keep assistant context.
-    const targetSeqInclusive =
-      params.forkPoint.type === 'seq'
-        ? Math.max(0, Math.floor(params.forkPoint.upToSeqInclusive))
-        : null;
-    const shouldBranchAndEditUserFork = typeof targetSeqInclusive === 'number' ? targetSeqInclusive >= 2 : true;
+      // OpenCode server fork semantics are exclusive: it clones messages strictly before `messageID`.
+      //
+      // Happier semantics:
+      // - When forking from a user message (with at least one prior committed message), we fork *before* that message
+      //   so the user can edit/resend it ("branch and edit").
+      // - When the fork target is the first user message in the session, keep an inclusive cutoff (fork after it)
+      //   so the forked session retains the initial prompt context.
+      // - When forking from an agent message, we fork *after* that message (inclusive) to keep assistant context.
+      const targetSeqInclusive =
+        params.forkPoint.type === 'seq'
+          ? Math.max(0, Math.floor(params.forkPoint.upToSeqInclusive))
+          : null;
+      const shouldBranchAndEditUserFork = typeof targetSeqInclusive === 'number' ? targetSeqInclusive >= 2 : true;
 
-    let forkCursorMessageId: string | undefined;
-    if (resolved?.source === 'user') {
-      if (shouldBranchAndEditUserFork) {
-        forkCursorMessageId = resolved.messageId;
-      } else {
+      let forkCursorMessageId: string | undefined;
+      if (resolved?.source === 'user') {
+        if (shouldBranchAndEditUserFork) {
+          forkCursorMessageId = resolved.messageId;
+        } else {
+          const vendorMessageId = resolved.messageId;
+          if (typeof client.sessionMessagesList !== 'function') return null;
+          const raw = await client.sessionMessagesList({ sessionId: parentOpenCodeSessionId }).catch((error) => {
+            throwIfOpenCodeHttpAuthError(error);
+            return [] as unknown[];
+          });
+          const items = Array.isArray(raw) ? raw : [];
+          const ids: string[] = [];
+          for (const row of items) {
+            const id = extractOpenCodeSessionMessageId(row);
+            if (id) ids.push(id);
+          }
+          const idx = ids.indexOf(vendorMessageId);
+          if (idx < 0) return null;
+          forkCursorMessageId = idx >= ids.length - 1 ? undefined : ids[idx + 1];
+        }
+      } else if (resolved?.source === 'agent') {
         const vendorMessageId = resolved.messageId;
-        if (typeof client.sessionMessagesList !== 'function') return null;
         const raw = await client.sessionMessagesList({ sessionId: parentOpenCodeSessionId }).catch((error) => {
           throwIfOpenCodeHttpAuthError(error);
           return [] as unknown[];
@@ -267,88 +285,73 @@ export async function forkOpenCodeSessionNative(params: {
         if (idx < 0) return null;
         forkCursorMessageId = idx >= ids.length - 1 ? undefined : ids[idx + 1];
       }
-    } else if (resolved?.source === 'agent') {
-      const vendorMessageId = resolved.messageId;
-      const raw = await client.sessionMessagesList({ sessionId: parentOpenCodeSessionId }).catch((error) => {
-        throwIfOpenCodeHttpAuthError(error);
-        return [] as unknown[];
-      });
-      const items = Array.isArray(raw) ? raw : [];
-      const ids: string[] = [];
-      for (const row of items) {
-        const id = extractOpenCodeSessionMessageId(row);
-        if (id) ids.push(id);
-      }
-      const idx = ids.indexOf(vendorMessageId);
-      if (idx < 0) return null;
-      forkCursorMessageId = idx >= ids.length - 1 ? undefined : ids[idx + 1];
-    }
 
-    const attemptFork = async (messageId: string | undefined): Promise<{ vendorSessionId: string } | null> => {
-      try {
-        const forked = await client!.sessionFork({
-          sessionId: parentOpenCodeSessionId,
-          ...(messageId ? { messageId } : {}),
-        });
-        const vendorSessionId = typeof (forked as any)?.id === 'string' ? String((forked as any).id).trim() : '';
-        return vendorSessionId ? { vendorSessionId } : null;
-      } catch (error) {
-        throwIfOpenCodeHttpAuthError(error);
-        return null;
-      }
-    };
-
-    let forked = await attemptFork(forkCursorMessageId);
-    if (!forked && resolved?.source === 'user') {
-      const userText = typeof resolved.userText === 'string' ? resolved.userText.trim() : '';
-      const happyCreatedAtMs = typeof resolved.happyCreatedAtMs === 'number' ? resolved.happyCreatedAtMs : 0;
-      if (userText && typeof client.sessionMessagesList === 'function') {
-        const raw = await client.sessionMessagesList({ sessionId: parentOpenCodeSessionId }).catch((error) => {
+      const attemptFork = async (messageId: string | undefined): Promise<{ vendorSessionId: string } | null> => {
+        try {
+          const forked = await client!.sessionFork({
+            sessionId: parentOpenCodeSessionId,
+            ...(messageId ? { messageId } : {}),
+          });
+          const vendorSessionId = typeof (forked as any)?.id === 'string' ? String((forked as any).id).trim() : '';
+          return vendorSessionId ? { vendorSessionId } : null;
+        } catch (error) {
           throwIfOpenCodeHttpAuthError(error);
-          return [] as unknown[];
-        });
-        const allItems = Array.isArray(raw) ? raw : [];
-        const items = extractOpenCodeTextHistoryItems(allItems).filter((item) => item.role === 'user');
-        let bestMessageId: string | null = null;
-        let bestScore = Number.POSITIVE_INFINITY;
-        for (const item of items) {
-          const candidateText = item.text.trim();
-          if (candidateText !== userText && !candidateText.startsWith(userText)) continue;
-          const score = happyCreatedAtMs > 0 ? Math.abs(item.createdAtMs - happyCreatedAtMs) : 0;
-          if (score < bestScore) {
-            bestScore = score;
-            bestMessageId = item.messageId;
-          }
+          return null;
         }
-        if (bestMessageId) {
-          let nextForkCursorMessageId: string | undefined;
-          if (shouldBranchAndEditUserFork) {
-            nextForkCursorMessageId = bestMessageId;
-          } else {
-            const ids: string[] = [];
-            for (const row of allItems) {
-              const id = extractOpenCodeSessionMessageId(row);
-              if (id) ids.push(id);
-            }
-            const idx = ids.indexOf(bestMessageId);
-            if (idx < 0) {
-              nextForkCursorMessageId = undefined;
-            } else {
-              nextForkCursorMessageId = idx >= ids.length - 1 ? undefined : ids[idx + 1];
+      };
+
+      let forked = await attemptFork(forkCursorMessageId);
+      if (!forked && resolved?.source === 'user') {
+        const userText = typeof resolved.userText === 'string' ? resolved.userText.trim() : '';
+        const happyCreatedAtMs = typeof resolved.happyCreatedAtMs === 'number' ? resolved.happyCreatedAtMs : 0;
+        if (userText && typeof client.sessionMessagesList === 'function') {
+          const raw = await client.sessionMessagesList({ sessionId: parentOpenCodeSessionId }).catch((error) => {
+            throwIfOpenCodeHttpAuthError(error);
+            return [] as unknown[];
+          });
+          const allItems = Array.isArray(raw) ? raw : [];
+          const items = extractOpenCodeTextHistoryItems(allItems).filter((item) => item.role === 'user');
+          let bestMessageId: string | null = null;
+          let bestScore = Number.POSITIVE_INFINITY;
+          for (const item of items) {
+            const candidateText = item.text.trim();
+            if (candidateText !== userText && !candidateText.startsWith(userText)) continue;
+            const score = happyCreatedAtMs > 0 ? Math.abs(item.createdAtMs - happyCreatedAtMs) : 0;
+            if (score < bestScore) {
+              bestScore = score;
+              bestMessageId = item.messageId;
             }
           }
-          if (nextForkCursorMessageId !== forkCursorMessageId) {
-            forkCursorMessageId = nextForkCursorMessageId;
-            forked = await attemptFork(forkCursorMessageId);
+          if (bestMessageId) {
+            let nextForkCursorMessageId: string | undefined;
+            if (shouldBranchAndEditUserFork) {
+              nextForkCursorMessageId = bestMessageId;
+            } else {
+              const ids: string[] = [];
+              for (const row of allItems) {
+                const id = extractOpenCodeSessionMessageId(row);
+                if (id) ids.push(id);
+              }
+              const idx = ids.indexOf(bestMessageId);
+              if (idx < 0) {
+                nextForkCursorMessageId = undefined;
+              } else {
+                nextForkCursorMessageId = idx >= ids.length - 1 ? undefined : ids[idx + 1];
+              }
+            }
+            if (nextForkCursorMessageId !== forkCursorMessageId) {
+              forkCursorMessageId = nextForkCursorMessageId;
+              forked = await attemptFork(forkCursorMessageId);
+            }
           }
         }
       }
-    }
 
-    const vendorSessionId = forked?.vendorSessionId ? forked.vendorSessionId.trim() : '';
-    if (!vendorSessionId) return null;
-    return { vendorSessionId, ...(forkCursorMessageId ? { vendorMessageId: forkCursorMessageId } : {}) };
-  } finally {
-    await client?.dispose().catch(() => {});
-  }
+      const vendorSessionId = forked?.vendorSessionId ? forked.vendorSessionId.trim() : '';
+      if (!vendorSessionId) return null;
+      return { vendorSessionId, ...(forkCursorMessageId ? { vendorMessageId: forkCursorMessageId } : {}) };
+    } finally {
+      await client?.dispose().catch(() => {});
+    }
+  }, params.baseUrlOverride ?? process.env.HAPPIER_OPENCODE_SERVER_URL, params.managedServerLaunchFingerprint);
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { normalizeCodexBackendMode, type CodexBackendMode } from '../providers/codex/backendMode.js';
 import { normalizeOpenCodeBackendMode } from '../providers/opencode/backendMode.js';
+import { lazySchema } from '../lazySchema.js';
 
 type AgentRuntimeDescriptorProviderShape = Readonly<Record<string, unknown>>;
 
@@ -187,7 +188,7 @@ export function createAgentRuntimeDescriptorV1Schema(zod: typeof z) {
   }).passthrough();
 }
 
-export const AgentRuntimeDescriptorV1Schema = createAgentRuntimeDescriptorV1Schema(z);
+export const AgentRuntimeDescriptorV1Schema = lazySchema(() => createAgentRuntimeDescriptorV1Schema(z));
 
 function buildCodexRuntimeAffinityProviderExtra(params: Readonly<{
   backendMode: 'mcp' | 'acp' | 'appServer';

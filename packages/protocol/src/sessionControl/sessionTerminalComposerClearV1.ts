@@ -1,21 +1,22 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const SessionTerminalComposerClearRequestV1Schema = z
+export const SessionTerminalComposerClearRequestV1Schema = lazySchema(() => z
   .object({
     sessionId: z.string().trim().min(1),
     expectedStateAtMs: z.number().int().nonnegative().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionTerminalComposerClearRequestV1 = z.infer<typeof SessionTerminalComposerClearRequestV1Schema>;
 
-export const SessionTerminalComposerClearSuccessStatusV1Schema = z.enum([
+export const SessionTerminalComposerClearSuccessStatusV1Schema = lazySchema(() => z.enum([
   'cleared',
   'already_empty',
-]);
+]));
 export type SessionTerminalComposerClearSuccessStatusV1 =
   z.infer<typeof SessionTerminalComposerClearSuccessStatusV1Schema>;
 
-export const SessionTerminalComposerClearFailureStatusV1Schema = z.enum([
+export const SessionTerminalComposerClearFailureStatusV1Schema = lazySchema(() => z.enum([
   'unsupported',
   'no_live_terminal',
   'not_safe',
@@ -24,11 +25,11 @@ export const SessionTerminalComposerClearFailureStatusV1Schema = z.enum([
   'capture_unavailable',
   'clear_failed',
   'host_dead',
-]);
+]));
 export type SessionTerminalComposerClearFailureStatusV1 =
   z.infer<typeof SessionTerminalComposerClearFailureStatusV1Schema>;
 
-export const SessionTerminalComposerClearResultV1Schema = z.discriminatedUnion('ok', [
+export const SessionTerminalComposerClearResultV1Schema = lazySchema(() => z.discriminatedUnion('ok', [
   z
     .object({
       ok: z.literal(true),
@@ -45,7 +46,7 @@ export const SessionTerminalComposerClearResultV1Schema = z.discriminatedUnion('
       error: z.string().min(1).optional(),
     })
     .passthrough(),
-]);
+]));
 export type SessionTerminalComposerClearResultV1 =
   z.infer<typeof SessionTerminalComposerClearResultV1Schema>;
 

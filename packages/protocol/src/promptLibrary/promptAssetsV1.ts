@@ -4,47 +4,48 @@ import {
   PromptBundleBodyV1Schema,
   PromptBundleSchemaIdV1Schema,
 } from './promptBundleSchemas.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const PromptAssetScopeV1Schema = z.enum(['user', 'project']);
+export const PromptAssetScopeV1Schema = lazySchema(() => z.enum(['user', 'project']));
 export type PromptAssetScopeV1 = z.infer<typeof PromptAssetScopeV1Schema>;
 
-export const PromptAssetLibraryKindV1Schema = z.enum(['doc', 'bundle']);
+export const PromptAssetLibraryKindV1Schema = lazySchema(() => z.enum(['doc', 'bundle']));
 export type PromptAssetLibraryKindV1 = z.infer<typeof PromptAssetLibraryKindV1Schema>;
 
-export const PromptAssetInstallModeV1Schema = z.enum(['copy', 'symlink']);
+export const PromptAssetInstallModeV1Schema = lazySchema(() => z.enum(['copy', 'symlink']));
 export type PromptAssetInstallModeV1 = z.infer<typeof PromptAssetInstallModeV1Schema>;
 
-export const PromptAssetSupportsScopeV1Schema = z
+export const PromptAssetSupportsScopeV1Schema = lazySchema(() => z
   .object({
     user: z.boolean(),
     project: z.boolean(),
   })
-  .strict();
+  .strict());
 export type PromptAssetSupportsScopeV1 = z.infer<typeof PromptAssetSupportsScopeV1Schema>;
 
-export const PromptAssetCapabilitiesV1Schema = z
+export const PromptAssetCapabilitiesV1Schema = lazySchema(() => z
   .object({
     supportsCatalogInstall: z.boolean().optional(),
     supportsNestedNamespaces: z.boolean().optional(),
     supportsSymlinkInstall: z.boolean().optional(),
   })
   .strict()
-  .default({});
+  .default({}));
 export type PromptAssetCapabilitiesV1 = z.infer<typeof PromptAssetCapabilitiesV1Schema>;
 
-export const PromptAssetDefaultRootV1Schema = z
+export const PromptAssetDefaultRootV1Schema = lazySchema(() => z
   .object({
     label: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
     pathTemplate: z.string().min(1),
   })
-  .strict();
+  .strict());
 export type PromptAssetDefaultRootV1 = z.infer<typeof PromptAssetDefaultRootV1Schema>;
 
-export const PromptAssetExternalRefV1Schema = z.record(z.string(), z.unknown());
+export const PromptAssetExternalRefV1Schema = lazySchema(() => z.record(z.string(), z.unknown()));
 export type PromptAssetExternalRefV1 = z.infer<typeof PromptAssetExternalRefV1Schema>;
 
-export const PromptAssetTypeDescriptorV1Schema = z
+export const PromptAssetTypeDescriptorV1Schema = lazySchema(() => z
   .object({
     id: z.string().min(1),
     providerId: z.string().min(1),
@@ -57,10 +58,10 @@ export const PromptAssetTypeDescriptorV1Schema = z
     defaultRoots: z.array(PromptAssetDefaultRootV1Schema),
     capabilities: PromptAssetCapabilitiesV1Schema,
   })
-  .strict();
+  .strict());
 export type PromptAssetTypeDescriptorV1 = z.infer<typeof PromptAssetTypeDescriptorV1Schema>;
 
-export const PromptAssetDiscoveryItemV1Schema = z
+export const PromptAssetDiscoveryItemV1Schema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
@@ -71,42 +72,42 @@ export const PromptAssetDiscoveryItemV1Schema = z
     digest: z.string().min(1),
     displayPath: z.string().min(1),
   })
-  .strict();
+  .strict());
 export type PromptAssetDiscoveryItemV1 = z.infer<typeof PromptAssetDiscoveryItemV1Schema>;
 
-export const PromptAssetBundleRecordV1Schema = PromptAssetDiscoveryItemV1Schema.extend({
+export const PromptAssetBundleRecordV1Schema = lazySchema(() => PromptAssetDiscoveryItemV1Schema.extend({
   libraryKind: z.literal('bundle'),
   bundleSchemaId: PromptBundleSchemaIdV1Schema,
   bundleBody: PromptBundleBodyV1Schema,
-}).strict();
+}).strict());
 export type PromptAssetBundleRecordV1 = z.infer<typeof PromptAssetBundleRecordV1Schema>;
 
-export const PromptAssetDocRecordV1Schema = PromptAssetDiscoveryItemV1Schema.extend({
+export const PromptAssetDocRecordV1Schema = lazySchema(() => PromptAssetDiscoveryItemV1Schema.extend({
   libraryKind: z.literal('doc'),
   markdown: z.string(),
-}).strict();
+}).strict());
 export type PromptAssetDocRecordV1 = z.infer<typeof PromptAssetDocRecordV1Schema>;
 
-export const PromptAssetMutationErrorCodeV1Schema = z.enum([
+export const PromptAssetMutationErrorCodeV1Schema = lazySchema(() => z.enum([
   'access_denied',
   'conflict',
   'internal_error',
   'invalid_request',
   'not_found',
   'unsupported',
-]);
+]));
 export type PromptAssetMutationErrorCodeV1 = z.infer<typeof PromptAssetMutationErrorCodeV1Schema>;
 
-export const PromptAssetMutationPreviewV1Schema = z
+export const PromptAssetMutationPreviewV1Schema = lazySchema(() => z
   .object({
     operation: z.enum(['write', 'delete']),
     targetPath: z.string().min(1),
     fileCount: z.number().int().min(0),
   })
-  .strict();
+  .strict());
 export type PromptAssetMutationPreviewV1 = z.infer<typeof PromptAssetMutationPreviewV1Schema>;
 
-export const PromptAssetWriteBundleRequestSchema = z
+export const PromptAssetWriteBundleRequestSchema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
@@ -120,10 +121,10 @@ export const PromptAssetWriteBundleRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .strict());
 export type PromptAssetWriteBundleRequest = z.infer<typeof PromptAssetWriteBundleRequestSchema>;
 
-export const PromptAssetWriteDocRequestSchema = z
+export const PromptAssetWriteDocRequestSchema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
@@ -135,16 +136,16 @@ export const PromptAssetWriteDocRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .strict());
 export type PromptAssetWriteDocRequest = z.infer<typeof PromptAssetWriteDocRequestSchema>;
 
-export const PromptAssetWriteRequestSchema = z.union([
+export const PromptAssetWriteRequestSchema = lazySchema(() => z.union([
   PromptAssetWriteBundleRequestSchema,
   PromptAssetWriteDocRequestSchema,
-]);
+]));
 export type PromptAssetWriteRequest = z.infer<typeof PromptAssetWriteRequestSchema>;
 
-export const PromptAssetDeleteRequestSchema = z
+export const PromptAssetDeleteRequestSchema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
@@ -153,73 +154,73 @@ export const PromptAssetDeleteRequestSchema = z
     previewOnly: z.boolean().optional(),
     expectedDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .strict());
 export type PromptAssetDeleteRequest = z.infer<typeof PromptAssetDeleteRequestSchema>;
 
-export const PromptAssetReadRequestSchema = z
+export const PromptAssetReadRequestSchema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
     directory: z.string().min(1).nullable().optional(),
     externalRef: PromptAssetExternalRefV1Schema,
   })
-  .strict();
+  .strict());
 export type PromptAssetReadRequest = z.infer<typeof PromptAssetReadRequestSchema>;
 
-export const PromptAssetDiscoverRequestSchema = z
+export const PromptAssetDiscoverRequestSchema = lazySchema(() => z
   .object({
     assetTypeId: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
     directory: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .strict());
 export type PromptAssetDiscoverRequest = z.infer<typeof PromptAssetDiscoverRequestSchema>;
 
-export const PromptAssetMutationSuccessResponseV1Schema = z
+export const PromptAssetMutationSuccessResponseV1Schema = lazySchema(() => z
   .object({
     ok: z.literal(true),
     externalRef: PromptAssetExternalRefV1Schema.optional(),
     digest: z.string().min(1).optional(),
     preview: PromptAssetMutationPreviewV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
-export const PromptAssetMutationErrorResponseV1Schema = z
+export const PromptAssetMutationErrorResponseV1Schema = lazySchema(() => z
   .object({
     ok: z.literal(false),
     errorCode: PromptAssetMutationErrorCodeV1Schema,
     error: z.string().min(1),
     currentDigest: z.string().min(1).nullable().optional(),
   })
-  .strict();
+  .strict());
 
-export const PromptAssetMutationResponseV1Schema = z.union([
+export const PromptAssetMutationResponseV1Schema = lazySchema(() => z.union([
   PromptAssetMutationSuccessResponseV1Schema,
   PromptAssetMutationErrorResponseV1Schema,
-]);
+]));
 export type PromptAssetMutationResponseV1 = z.infer<typeof PromptAssetMutationResponseV1Schema>;
 
-export const PromptAssetListTypesResponseV1Schema = z
+export const PromptAssetListTypesResponseV1Schema = lazySchema(() => z
   .object({
     ok: z.literal(true),
     types: z.array(PromptAssetTypeDescriptorV1Schema),
   })
-  .strict();
+  .strict());
 export type PromptAssetListTypesResponseV1 = z.infer<typeof PromptAssetListTypesResponseV1Schema>;
 
-export const PromptAssetDiscoverResponseV1Schema = z
+export const PromptAssetDiscoverResponseV1Schema = lazySchema(() => z
   .object({
     ok: z.literal(true),
     items: z.array(PromptAssetDiscoveryItemV1Schema),
   })
-  .strict();
+  .strict());
 export type PromptAssetDiscoverResponseV1 = z.infer<typeof PromptAssetDiscoverResponseV1Schema>;
 
-export const PromptAssetReadResponseV1Schema = z.union([
+export const PromptAssetReadResponseV1Schema = lazySchema(() => z.union([
   z.object({
     ok: z.literal(true),
     item: z.union([PromptAssetBundleRecordV1Schema, PromptAssetDocRecordV1Schema]),
   }).strict(),
   PromptAssetMutationErrorResponseV1Schema,
-]);
+]));
 export type PromptAssetReadResponseV1 = z.infer<typeof PromptAssetReadResponseV1Schema>;

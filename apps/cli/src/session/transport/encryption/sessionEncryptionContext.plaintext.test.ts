@@ -6,6 +6,7 @@ import {
   encryptSessionPayload,
   encryptStoredSessionPayload,
   resolveSessionStoredContentEncryptionMode,
+  resolveSessionEncryptionContextFromCredentials,
   tryDecryptSessionMetadata,
 } from './sessionEncryptionContext';
 
@@ -78,6 +79,15 @@ describe('idempotent nonce derivation is stable across processes', () => {
 });
 
 describe('decryptStoredSessionPayload (plaintext)', () => {
+  it('resolves a plaintext context without account key material', () => {
+    const credentials = { token: 'plain-token', encryption: null };
+    const plainContext = resolveSessionEncryptionContextFromCredentials(credentials, { encryptionMode: 'plain' });
+    expect(plainContext).toEqual({ encryptionVariant: 'plain', encryptionKey: null });
+    expect(resolveSessionEncryptionContextFromCredentials(credentials)).toEqual(plainContext);
+    expect(encryptStoredSessionPayload({ mode: 'plain', ctx: plainContext, payload: { text: 'hello' } })).toBe('{"text":"hello"}');
+    expect(() => resolveSessionEncryptionContextFromCredentials(credentials, { encryptionMode: 'e2ee' }))
+      .toThrow(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
+  });
   const ctx = {
     encryptionKey: new Uint8Array(32).fill(1),
     encryptionVariant: 'legacy',

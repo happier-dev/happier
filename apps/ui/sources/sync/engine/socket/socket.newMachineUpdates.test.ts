@@ -13,7 +13,10 @@ import {
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
-import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
+import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleSocketUpdate, handleUpdateContainer } from './socket';
+import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+import { createMachineFixture } from '@/dev/testkit';
 
 const initialStorageState = storage.getState();
 
@@ -165,6 +168,39 @@ describe('socket update handling: new-machine', () => {
         storage.setState(initialStorageState, true);
     });
 
+    it('initializes an explicit plain machine for subsequent updates without decrypting its marker', async () => {
+        const encryption = Encryption.createWithoutKeyMaterial();
+        const typedContent = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })), 'base64');
+        const params = buildBaseParams({ encryption, getAccountEncryptionMode: async () => 'plain' });
+        await handleSocketUpdate({ ...params, update: {
+            id: 'plain-key-update', seq: 43, createdAt: 124,
+            body: { t: 'new-machine', machineId: 'plain', seq: 8,
+                metadata: typedContent({ host: 'plain-host' }), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey: typedContent(null), active: true, activeAt: 121, createdAt: 101, updatedAt: 111 },
+        } });
+        expect(encryption.getMachineEncryption('plain')).not.toBeNull();
+        await expect(encryption.getMachineEncryption('plain')!.decryptRaw(typedContent({ ready: true }))).resolves.toEqual({ ready: true });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'plain-content-update', seq: 44, createdAt: 125,
+            body: { t: 'update-machine', machineId: 'plain', metadata: { value: typedContent({ ...createMachineFixture().metadata, host: 'updated-host' }), version: 2 } },
+        } });
+        expect(storage.getState().machines.plain?.metadata).toMatchObject({ host: 'updated-host' });
+    });
+
+    it('rejects a plain marker without an explicitly plain account mode', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        const marker = encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })), 'base64');
+        const params = buildBaseParams({ encryption });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'unexpected-plain-key', seq: 43, createdAt: 124,
+            body: { t: 'new-machine', machineId: 'plain', seq: 8,
+                metadata: marker, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey: marker, active: true, activeAt: 121, createdAt: 101, updatedAt: 111 },
+        } });
+        expect(encryption.getMachineEncryption('plain')).toBeNull();
+        expect(params.invalidateMachines).toHaveBeenCalledOnce();
+    });
+
     it('applies a placeholder machine and invalidates machines sync', async () => {
         const invalidateMachines = vi.fn();
         const params = buildBaseParams({ invalidateMachines });
@@ -199,6 +235,21 @@ describe('socket update handling: new-machine', () => {
         expect(machine?.seq).toBe(7);
         expect(machine?.metadata).toBeNull();
         expect(machine?.daemonState).toBeNull();
+    });
+
+    it.each(['', 'not-an-encrypted-key-envelope'])('clears the previous cipher when a present machine key cannot be opened (%s)', async (dataEncryptionKey) => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['m1', null]]));
+        const params = buildBaseParams({ encryption });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'key-update', seq: 43, createdAt: 124,
+            body: { t: 'new-machine', machineId: 'm1', seq: 8,
+                metadata: 'AA==', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey, active: true, activeAt: 121, createdAt: 101, updatedAt: 111 },
+        } });
+        expect(encryption.getMachineEncryption('m1')).toBeNull();
+        expect(storage.getState().machines.m1?.metadata).toBeNull();
+        expect(params.invalidateMachines).toHaveBeenCalledOnce();
     });
 
     it('drops new-machine updates when the captured socket scope is stale', async () => {
@@ -276,6 +327,60 @@ describe('socket update handling: new-machine', () => {
 describe('socket update handling: update-machine (missing encryption)', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
+    });
+
+    it('switches an existing encrypted machine to explicit plain content and clears daemon state atomically', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['transition', null]]));
+        storage.getState().applyMachines([createMachineFixture({
+            id: 'transition', daemonState: { status: 'running' },
+        })]);
+        const typedContent = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })), 'base64');
+        const params = buildBaseParams({ encryption, getAccountEncryptionMode: async () => 'plain' });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'machine-mode-transition', seq: 43, createdAt: 124,
+            body: { t: 'update-machine', machineId: 'transition', dataEncryptionKey: typedContent(null),
+                metadata: { value: typedContent({ ...createMachineFixture().metadata, host: 'plain-host' }), version: 2 }, daemonState: { value: null, version: 2 } },
+        } });
+        expect(storage.getState().machines.transition).toMatchObject({ metadata: { host: 'plain-host' }, daemonState: null, daemonStateVersion: 2 });
+        expect(await encryption.getMachineEncryption('transition')!.decryptRaw(typedContent({ ready: true }))).toEqual({ ready: true });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'stale-machine-mode', seq: 42, createdAt: 123,
+            body: { t: 'update-machine', machineId: 'transition', dataEncryptionKey: null,
+                metadata: { value: 'stale-ciphertext', version: 1 }, daemonState: { value: null, version: 1 } },
+        } });
+        expect(await encryption.getMachineEncryption('transition')!.decryptRaw(typedContent({ ready: true }))).toEqual({ ready: true });
+        expect(storage.getState().machines.transition?.metadata?.host).toBe('plain-host');
+    });
+
+    it('does not install an older mode when its account-mode request completes after newer content', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        await encryption.initializeMachines(new Map([['racing', null]]));
+        storage.getState().applyMachines([createMachineFixture({ id: 'racing' })]);
+        const cipher = encryption.getMachineEncryption('racing')!;
+        const encryptedProbe = await cipher.encryptRaw({ ready: true });
+        const metadataFixture = createMachineFixture().metadata;
+        if (!metadataFixture) throw new Error('The machine fixture must include metadata');
+        const metadata = { ...metadataFixture, host: 'new-encrypted-host' };
+        const encryptedMetadata = await cipher.encryptMetadata(metadata);
+        let resolveMode!: (mode: 'plain' | 'e2ee') => void;
+        const accountMode = new Promise<'plain' | 'e2ee'>((resolve) => { resolveMode = resolve; });
+        const params = buildBaseParams({ encryption, getAccountEncryptionMode: () => accountMode });
+        const marker = encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })), 'base64');
+        const older = handleUpdateContainer({ ...params, updateData: {
+            id: 'older-plain', seq: 42, createdAt: 123,
+            body: { t: 'update-machine', machineId: 'racing', dataEncryptionKey: marker,
+                metadata: { value: marker, version: 2 }, daemonState: { value: null, version: 2 } },
+        } });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'newer-encrypted', seq: 43, createdAt: 124,
+            body: { t: 'update-machine', machineId: 'racing', dataEncryptionKey: null,
+                metadata: { value: encryptedMetadata, version: 3 }, daemonState: { value: null, version: 3 } },
+        } });
+        resolveMode('plain');
+        await older;
+        expect(await encryption.getMachineEncryption('racing')!.decryptRaw(encryptedProbe)).toEqual({ ready: true });
+        expect(storage.getState().machines.racing?.metadata?.host).toBe('new-encrypted-host');
     });
 
     it('invalidates machines sync instead of attempting to decrypt', async () => {

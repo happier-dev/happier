@@ -1,28 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./sharedManagedServer', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./sharedManagedServer')>(),
-    ensureSharedManagedOpenCodeServerBaseUrl: vi.fn(),
-    readSharedManagedOpenCodeServerStateBestEffort: vi.fn(async () => null),
-    readSharedManagedOpenCodeServerStateByBaseUrlBestEffort: vi.fn(async () => null),
-}));
-
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 
-import { createOpenCodeServerRuntimeClient } from './client';
+import { createManagedOpenCodeClientFixture } from './managedOpenCodeClient.testkit';
 
 describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission', () => {
     const originalFetch = globalThis.fetch;
     const originalServerUrl = process.env.HAPPIER_OPENCODE_SERVER_URL;
 
-    beforeEach(() => {
+    let fixture: Awaited<ReturnType<typeof createManagedOpenCodeClientFixture>>;
+    beforeEach(async () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         delete process.env.HAPPIER_OPENCODE_SERVER_URL;
+        fixture = await createManagedOpenCodeClientFixture();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        vi.useRealTimers();
+        await fixture.close();
         globalThis.fetch = originalFetch;
         if (typeof originalServerUrl === 'string') {
             process.env.HAPPIER_OPENCODE_SERVER_URL = originalServerUrl;
@@ -32,18 +29,6 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
     });
 
     it('does not replay prompt_async after an ambiguous managed-server fetch failure', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        // Persistent mock: the client reads managed-server state at construction (identity baseline)
-        // and again on the transport-failure retry path; a single once-mock leaves the retry undefined.
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
 
         const fetchUrls: string[] = [];
         let promptAttempts = 0;
@@ -68,6 +53,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             if (url.includes('/prompt_async')) {
                 promptAttempts += 1;
                 if (promptAttempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
                     throw new TypeError('fetch failed');
                 }
                 return new Response(null, { status: 204 });
@@ -79,7 +65,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             });
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -96,16 +82,6 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
     });
 
     it('does not replay session summarization after an ambiguous managed-server fetch failure', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
 
         let summarizeAttempts = 0;
         globalThis.fetch = vi.fn(async (input) => {
@@ -118,7 +94,10 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             }
             if (url.includes('/summarize')) {
                 summarizeAttempts += 1;
-                if (summarizeAttempts === 1) throw new TypeError('fetch failed');
+                if (summarizeAttempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
+                    throw new TypeError('fetch failed');
+                }
                 return new Response(null, { status: 204 });
             }
             return new Response(JSON.stringify({}), {
@@ -127,7 +106,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             });
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -140,19 +119,8 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
     });
 
     it('logs one bounded payload-free diagnostic when retrying a managed read request', async () => {
-        const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
-        const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
-        const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
         const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
         const secret = 'must-not-appear-in-provider-request-log';
-
-        ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
-        readMock.mockResolvedValue({
-            baseUrl: 'http://127.0.0.1:10000',
-            pid: process.pid,
-            startedAtMs: Date.now(),
-        });
-
         let messageAttempts = 0;
         globalThis.fetch = vi.fn(async (input) => {
             const url = typeof input === 'string' ? input : String((input as Request)?.url ?? '');
@@ -165,6 +133,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             if (url.includes('/message')) {
                 messageAttempts += 1;
                 if (messageAttempts === 1) {
+                    await fixture.publish({ baseUrl: 'http://127.0.0.1:10000', ownerToken: 'gen-B', startedAtMs: 2 });
                     throw new TypeError(`fetch failed: Authorization: Bearer ${secret}`);
                 }
                 return new Response(JSON.stringify([]), {
@@ -178,7 +147,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             });
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
         });
@@ -222,7 +191,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             });
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp/private-workspace',
             messageBuffer: new MessageBuffer(),
             baseUrlOverride: 'http://127.0.0.1:9999',
@@ -267,7 +236,7 @@ describe('createOpenCodeServerRuntimeClient sessionPromptAsync exact submission'
             });
         }) as typeof fetch;
 
-        const client = await createOpenCodeServerRuntimeClient({
+        const client = await fixture.createClient({
             directory: '/tmp',
             messageBuffer: new MessageBuffer(),
             baseUrlOverride: 'http://127.0.0.1:9999',

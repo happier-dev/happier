@@ -748,7 +748,7 @@ describe('getSessionStatus', () => {
         expect(status.shouldShowStatus).toBe(true);
     });
 
-    it('does not show actionable permission state for stale active online pending flags', async () => {
+    it('keeps permission_required for long-waiting pending flags while the runtime is live', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const status = getSessionStatus({
             id: 's-renderable',
@@ -776,7 +776,7 @@ describe('getSessionStatus', () => {
             hasPendingUserActionRequests: false,
         }, 1_000_000, 0);
 
-        expect(status.state).toBe('waiting');
+        expect(status.state).toBe('permission_required');
     });
 
     it('returns static translated working text when animated working status text is disabled', async () => {
@@ -1707,7 +1707,7 @@ describe('useSessionStatus', () => {
         }
     });
 
-    it('refreshes when a fresh pending request expires without a storage update', async () => {
+    it('keeps a pending request actionable past the runtime staleness window while the runtime is live', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         try {
@@ -1725,9 +1725,9 @@ describe('useSessionStatus', () => {
 
             expect(hook.getCurrent().state).toBe('permission_required');
 
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 5 });
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS * 2 });
 
-            expect(hook.getCurrent().state).toBe('waiting');
+            expect(hook.getCurrent().state).toBe('permission_required');
         } finally {
             vi.useRealTimers();
         }

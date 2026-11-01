@@ -1,6 +1,7 @@
+import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
+import { createThemeProfileNavigationParams, type ThemeProfileView } from '@/sync/domains/settings/themeProfiles';
 import * as React from 'react';
-import { Appearance, Platform, View } from 'react-native';
-import { setStatusBarStyle } from 'expo-status-bar';
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -10,17 +11,15 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { resolveStatusBarStyleForThemePreference, type ThemePreference } from '@/components/ui/layout/statusBarStyle';
-import { runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
+import { useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Modal } from '@/modal';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
-import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
 import { isThemeProfileActive, setActiveThemeProfileForMode } from '@/theme/profiles/themeProfilePersistence';
-import type { ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { buildThemePresetSourceOptions, type ThemePresetSourceOption } from './themeProfilePresetOptions';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -30,9 +29,9 @@ import {
     upsertThemeProfile,
 } from './themeProfileScreenUtils';
 
-const profileEditorRoute = (profileId: string) => ({
+const profileEditorRoute = (profileId: string, view?: ThemeProfileView) => ({
     pathname: '/settings/appearance/themes/[profileId]' as const,
-    params: { profileId },
+    params: createThemeProfileNavigationParams(view, profileId),
 });
 
 const createProfileName = (count: number): string => t('settingsAppearance.themeProfiles.newProfileName', { count });
@@ -42,7 +41,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const router = useRouter();
     const reduceMotion = useReducedMotionPreference();
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
+    const [themeProfiles, setThemeProfiles, themeProfileView] = useThemeProfilesMutable();
     const [builtInDropdownOpen, setBuiltInDropdownOpen] = React.useState(false);
     const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(themeProfiles), [themeProfiles]);
     const customPresetOptions = React.useMemo(() => presetOptions.filter((option) => option.kind === 'custom'), [presetOptions]);
@@ -57,27 +56,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         router.push(profileEditorRoute('new'));
     }, [router]);
 
-    const applyThemeSelection = React.useCallback((nextThemePreference: ThemePreference, nextThemeProfiles: ThemeProfilesLocalStateV1) => {
-        const systemTheme = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
-        void runThemePreferenceChange({
-            currentPreference: themePreference,
-            nextPreference: nextThemePreference,
-            platform: Platform.OS,
-            reduceMotion,
-            forceAnimate: true,
-            systemTheme,
-            mutation: () => {
-                setThemePreference(nextThemePreference);
-                setThemeProfiles(nextThemeProfiles);
-                applyThemeRuntimeSelection({
-                    themePreference: nextThemePreference,
-                    themeProfiles: nextThemeProfiles,
-                    systemTheme,
-                });
-                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextThemePreference, systemTheme), true);
-            },
-        });
-    }, [reduceMotion, setThemePreference, setThemeProfiles, themePreference]);
+    const applyThemeSelection = useApplyThemeSelection({ themePreference, setThemePreference, setThemeProfiles, reduceMotion });
 
     const duplicateTheme = React.useCallback((option: ThemePresetSourceOption) => {
         if (profileLimitReached) return;
@@ -90,8 +69,8 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
             sourceProfile: option.profile ?? undefined,
         });
         setThemeProfiles(upsertThemeProfile(themeProfiles, profile));
-        router.push(profileEditorRoute(id));
-    }, [profileLimitReached, router, setThemeProfiles, themeProfiles]);
+        router.push(profileEditorRoute(id, themeProfileView));
+    }, [profileLimitReached, router, setThemeProfiles, themeProfiles, themeProfileView]);
 
     const selectBaseTheme = React.useCallback((mode: ThemeProfileMode) => {
         applyThemeSelection(themePreference, setActiveThemeProfileForMode(themeProfiles, mode, null));
@@ -155,7 +134,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 icon: 'pencil-simple',
                 color: theme.colors.accent.blue,
                 inlineTestID: `settings-theme-edit-${option.id}`,
-                onPress: () => router.push(profileEditorRoute(profile.id)),
+                onPress: () => router.push(profileEditorRoute(profile.id, themeProfileView)),
             });
             actions.push({
                 id: `delete-${option.id}`,
@@ -184,7 +163,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 />
             </View>
         );
-    }, [deleteProfile, duplicateTheme, isPresetOptionActive, profileLimitReached, router, theme.colors.accent.blue, theme.colors.status.connected]);
+    }, [deleteProfile, duplicateTheme, isPresetOptionActive, profileLimitReached, router, theme.colors.accent.blue, theme.colors.status.connected, themeProfileView]);
 
     const renderPresetRow = React.useCallback((option: ThemePresetSourceOption) => {
         const builtIn = option.kind !== 'custom';

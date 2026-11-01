@@ -3,6 +3,8 @@ import { join, relative } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { getSettingsStackScreenDefinitions } from '@/components/settings/navigation/settingsRouteRegistry';
+
 const UI_SOURCES_ROOT = join(__dirname, '..', '..', '..');
 const APP_ROUTES_ROOT = join(UI_SOURCES_ROOT, 'app', '(app)');
 const SETTINGS_ROUTES_ROOT = join(APP_ROUTES_ROOT, 'settings');
@@ -16,6 +18,7 @@ const SETTINGS_NAVIGATION_REGISTRY_PATH = join(
     'navigation',
     'settingsRouteRegistry.ts',
 );
+const SETTINGS_STACK_PATH = join(UI_SOURCES_ROOT, 'components', 'settings', 'navigation', 'SettingsStack.tsx');
 const MAIN_VIEW_PATH = join(UI_SOURCES_ROOT, 'components', 'navigation', 'shell', 'MainView.tsx');
 const MOBILE_BOTTOM_CHROME_HOST_PATH = join(
     UI_SOURCES_ROOT,
@@ -40,6 +43,20 @@ function toRelativeUiPath(fullPath: string): string {
     return relative(UI_SOURCES_ROOT, fullPath).replaceAll('\\', '/');
 }
 
+function stackRouteNames(root: string): string[] {
+    return readdirSync(root).flatMap((entry) => {
+        const fullPath = join(root, entry);
+        if (statSync(fullPath).isDirectory()) {
+            return existsSync(join(fullPath, '_layout.tsx'))
+                ? [entry]
+                : stackRouteNames(fullPath).map((name) => `${entry}/${name}`);
+        }
+        return entry.endsWith('.tsx') && entry !== '_layout.tsx'
+            ? [entry.replace(/\.tsx$/, '')]
+            : [];
+    }).sort();
+}
+
 describe('settings navigation architecture', () => {
     it('centralizes settings route chrome in the settings layout registry', () => {
         expect(existsSync(SETTINGS_LAYOUT_PATH)).toBe(true);
@@ -49,20 +66,13 @@ describe('settings navigation architecture', () => {
         expect(appLayout).not.toMatch(/name=["']settings\/[^"']+["']/);
 
         const settingsLayout = readFileSync(SETTINGS_LAYOUT_PATH, 'utf8');
-        expect(settingsLayout).toContain('getSettingsStackScreenDefinitions');
+        expect(settingsLayout).toContain('SettingsStack');
 
-        const registry = readFileSync(SETTINGS_NAVIGATION_REGISTRY_PATH, 'utf8');
-        const routeNames = walkFiles(SETTINGS_ROUTES_ROOT)
-            .filter((fullPath) => fullPath.endsWith('.tsx'))
-            .filter((fullPath) => !fullPath.endsWith('/_layout.tsx'))
-            .map((fullPath) => {
-                const relativePath = relative(SETTINGS_ROUTES_ROOT, fullPath).replaceAll('\\', '/');
-                return relativePath.replace(/\.tsx$/, '');
-            })
-            .sort();
-
-        const missingRoutes = routeNames.filter((routeName) => !registry.includes(`name: '${routeName}'`));
-        expect(missingRoutes).toEqual([]);
+        for (const scope of ['settings', 'prompts'] as const) {
+            const root = scope === 'settings' ? SETTINGS_ROUTES_ROOT : join(SETTINGS_ROUTES_ROOT, scope);
+            expect(getSettingsStackScreenDefinitions((key) => key, scope).map((entry) => entry.name).sort())
+                .toEqual(stackRouteNames(root));
+        }
     });
 
     it('keeps settings screens from declaring their own static Stack.Screen chrome', () => {
@@ -72,6 +82,7 @@ describe('settings navigation architecture', () => {
         ]
             .filter((fullPath) => fullPath.endsWith('.tsx'))
             .filter((fullPath) => !fullPath.endsWith('/_layout.tsx'))
+            .filter((fullPath) => fullPath !== SETTINGS_STACK_PATH)
             .map((fullPath) => ({
                 relativePath: toRelativeUiPath(fullPath),
                 contents: readFileSync(fullPath, 'utf8'),

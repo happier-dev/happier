@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import {
@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
+import { installExpoBlurRequireStub } from '@/dev/testkit/mocks/expoBlur';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 
@@ -19,6 +20,8 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 const localSettingState = vi.hoisted(() => ({
     uiBackdropBlurEnabled: true,
 }));
+
+const platform = vi.hoisted(() => ({ OS: 'ios' as 'ios' | 'android' }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
@@ -42,19 +45,15 @@ vi.mock('@/components/ui/popover', () => ({
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('expo-blur', () => {
-    const React = require('react');
-    return {
-        BlurView: (props: any) => React.createElement('BlurView', props, props.children),
-    };
-});
+// `expo-blur` is loaded through `require`, which `vi.mock` does not reach.
+const restoreExpoBlur = installExpoBlurRequireStub();
 
 installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'ios',
+                get OS() { return platform.OS; },
             },
             useWindowDimensions: () => ({ width: 390, height: 844 }),
             View: (props: any) => React.createElement('View', props, props.children),
@@ -82,6 +81,10 @@ function findNativePortalBackdropPressable(tree: ReturnType<typeof renderer.crea
     )).find(Boolean) ?? null;
 }
 
+afterAll(() => {
+    restoreExpoBlur();
+});
+
 describe('Popover (native portal)', () => {
     let restorePopoverWebGlobals: (() => void) | null = null;
 
@@ -94,6 +97,7 @@ describe('Popover (native portal)', () => {
         restorePopoverWebGlobals = null;
         vi.useRealTimers();
         localSettingState.uiBackdropBlurEnabled = true;
+        platform.OS = 'ios';
     });
 
     it('positions using anchor coordinates relative to the portal root when available (avoids iOS header/sheet offsets)', async () => {
@@ -697,6 +701,7 @@ describe('Popover (native portal)', () => {
 
         const hostEffects = tree ? findHostNodesByTestId(tree, 'popover-backdrop-effect') : [];
         expect(hostEffects.length).toBe(4);
+        expect(tree?.findAllByType('BlurView' as any)).toHaveLength(4);
     });
 
     it('can render an anchor overlay above the blur backdrop (keeps the trigger crisp without cutout seams)', async () => {
@@ -781,4 +786,41 @@ describe('Popover (native portal)', () => {
         expect(flattenTestStyle(hostEffects[0]?.props?.style).backgroundColor).toBe('rgba(0,0,0,0.08)');
     });
 
+    // expo-blur's Android (Dimezis) blur redraws the whole app per frame and leaks its pre-draw
+    // hooks after unmount, so Android renders the dim backdrop instead of a blur view.
+    it('renders the dim backdrop effect instead of a blur view on Android', async () => {
+        platform.OS = 'android';
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(140, 120, 28, 28));
+                },
+            },
+        } as any;
+
+        const tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(Popover, {
+                open: true,
+                anchorRef,
+                placement: 'bottom',
+                portal: { native: true },
+                onRequestClose: () => {},
+                backdrop: { effect: 'blur' },
+                children: () => React.createElement(PopoverChild),
+            } as any),
+            React.createElement(OverlayPortalHost),
+        ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        expect(tree.findAllByType('BlurView' as any)).toHaveLength(0);
+        expect(findHostNodesByTestId(tree, 'popover-backdrop-effect').length).toBeGreaterThan(0);
+    });
 });

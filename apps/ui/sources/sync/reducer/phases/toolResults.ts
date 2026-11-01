@@ -3,6 +3,7 @@ import type { ReducerState } from '../reducer';
 import { applyToolResultUpdateToReducerMessage } from '../helpers/applyToolResultUpdateToReducerMessage';
 import { bufferOrphanToolResult } from '../helpers/orphanToolResults';
 import type { ToolResultUpdate } from '../helpers/toolResultUpdateTypes';
+import { selectToolResultSessionMediaMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 
 function toToolResultUpdate(c: Readonly<{
     tool_use_id: string;
@@ -59,6 +60,7 @@ export function runToolResultsPhase(params: Readonly<{
             for (const [contentIndex, content] of msg.content.entries()) {
                 const c = content;
                 if (c.type === 'tool-result') {
+                    const resultMeta = selectToolResultSessionMediaMeta(msg, c.tool_use_id);
                     // Find the message containing this tool
                     const mainMessageId = state.toolIdToMessageId.get(c.tool_use_id);
                     const sidechain = mainMessageId ? null : resolveSidechainToolMessage(state, c.tool_use_id);
@@ -71,7 +73,7 @@ export function runToolResultsPhase(params: Readonly<{
                             result: {
                                 key: `${msg.id}:${contentIndex}`,
                                 createdAt: msg.createdAt,
-                                meta: msg.meta,
+                                meta: resultMeta,
                                 toolResult,
                             },
                         });
@@ -88,7 +90,7 @@ export function runToolResultsPhase(params: Readonly<{
                         messageId,
                         toolResult,
                         resultCreatedAt: msg.createdAt,
-                        meta: msg.meta,
+                        meta: resultMeta,
                         changed,
                     });
                     if (sidechain) {

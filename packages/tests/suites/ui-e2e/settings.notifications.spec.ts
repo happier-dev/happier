@@ -78,7 +78,7 @@ test.describe('ui e2e: settings notifications', () => {
         await expect(page.getByTestId('settings-notifications-push-enabled')).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('settings-notifications-add-webhook')).toHaveCount(1, { timeout: 60_000 });
 
-        const webhookRows = page.locator('[data-testid^="settings-notifications-webhook-"]');
+        const webhookRows = page.locator('[data-testid^="settings-notifications-webhook-"]:not([data-testid^="settings-notifications-webhook-topic:"])');
         await expect(webhookRows).toHaveCount(0, { timeout: 60_000 });
 
         await page.getByTestId('settings-notifications-add-webhook').click();

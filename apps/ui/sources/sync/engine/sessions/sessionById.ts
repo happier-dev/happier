@@ -227,27 +227,26 @@ export async function fetchAndApplySessionById(params: Readonly<{
       if (looksLikeCurrentV2SessionNotFound404(body)) {
         return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
       }
-      if (looksLikeMissingV2SessionRoute404(body, sessionId)) {
-        const fallbackRow = await scanSessionByIdFromCompatList({
-          request: params.request,
-          token: params.credentials.token,
-          sessionId,
-        });
-        if (!fallbackRow) {
-          return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
-        }
-        body = { session: fallbackRow };
-      }
     }
-
-    if (body === null) {
-      const status = responseStatus;
-      const errorCode =
-        status === 404 ? 'not_found'
-          : status === 401 ? 'unauthorized'
-              : status === 403 ? 'forbidden'
-                  : 'http_error';
-      return { ok: false, session: null, errorCode, httpStatus: status };
+    if (responseStatus === 404 && looksLikeMissingV2SessionRoute404(body, sessionId)) {
+      const fallbackRow = await scanSessionByIdFromCompatList({
+        request: params.request,
+        token: params.credentials.token,
+        sessionId,
+      });
+      if (!fallbackRow) {
+        return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
+      }
+      body = { session: fallbackRow };
+    } else {
+      // Only a recognized missing legacy route can borrow list transport. An explicit failed exact
+      // read remains a failure even if its JSON resembles a row or a subsequent list could find it.
+      return {
+        ok: false,
+        session: null,
+        errorCode: 'http_error',
+        httpStatus: responseStatus,
+      };
     }
   }
 

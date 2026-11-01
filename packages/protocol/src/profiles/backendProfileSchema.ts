@@ -4,10 +4,11 @@ import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
 import { SESSION_PERMISSION_MODES } from '../sessionMetadata/sessionPermissionModes.js';
 import { CodingPromptBehaviorOverrideV1Schema } from '../prompts/codingPromptBehaviorV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 const ENV_VAR_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
-export const EnvironmentVariableSchema = z.object({
+export const EnvironmentVariableSchema = lazySchema(() => z.object({
   name: z.string().regex(ENV_VAR_NAME_REGEX, 'Invalid environment variable name'),
   value: z.string(),
   // User override:
@@ -15,30 +16,30 @@ export const EnvironmentVariableSchema = z.object({
   // - false: force non-secret handling in UI (unless daemon enforces)
   // - undefined: auto classification
   isSecret: z.boolean().optional(),
-});
+}));
 
 export type EnvironmentVariable = z.infer<typeof EnvironmentVariableSchema>;
 
-const RequiredEnvVarKindSchema = z.enum(['secret', 'config']);
+const RequiredEnvVarKindSchema = lazySchema(() => z.enum(['secret', 'config']));
 
-export const EnvVarRequirementSchema = z.object({
+export const EnvVarRequirementSchema = lazySchema(() => z.object({
   name: z.string().regex(ENV_VAR_NAME_REGEX, 'Invalid environment variable name'),
   kind: RequiredEnvVarKindSchema.default('secret'),
   // Required=true blocks session creation when unsatisfied.
   // Required=false is “optional” (still useful for vault binding, but does not block).
   required: z.boolean().default(true),
-});
+}));
 
 export type EnvVarRequirement = z.infer<typeof EnvVarRequirementSchema>;
 
-const RequiresMachineLoginSchema = z.string().min(1);
+const RequiresMachineLoginSchema = lazySchema(() => z.string().min(1));
 const RequiresMachineLoginTargetKeySchema = BackendTargetKeySchema;
 
-const ProfileCompatibilitySchema = z.record(z.string(), z.boolean()).default({});
-const ProfileCompatibilityByTargetKeySchema = z.record(BackendTargetKeySchema, z.boolean()).default({});
-const SessionTranscriptStorageModeSchema = z.enum(['persisted', 'direct']);
+const ProfileCompatibilitySchema = lazySchema(() => z.record(z.string(), z.boolean()).default({}));
+const ProfileCompatibilityByTargetKeySchema = lazySchema(() => z.record(BackendTargetKeySchema, z.boolean()).default({}));
+const SessionTranscriptStorageModeSchema = lazySchema(() => z.enum(['persisted', 'direct']));
 
-export const AIBackendProfileSchema = z.object({
+export const AIBackendProfileSchema = lazySchema(() => z.object({
   // Accept both UUIDs (user profiles) and simple strings (built-in profiles like 'anthropic').
   // The isBuiltIn field distinguishes profile types.
   id: z.string().min(1),
@@ -65,6 +66,11 @@ export const AIBackendProfileSchema = z.object({
 
   // Default model mode for this profile.
   defaultModelMode: z.string().optional(),
+
+  // Default backend target used when starting a session under this profile without an
+  // explicit backend choice. Consumers validate compatibility before use; a launch may
+  // reject an incompatible profile/target pairing.
+  defaultBackendTargetKey: BackendTargetKeySchema.optional(),
 
   // Canonical compatibility metadata.
   compatibilityByTargetKey: ProfileCompatibilityByTargetKeySchema.default({}),
@@ -113,11 +119,11 @@ export const AIBackendProfileSchema = z.object({
   }, {
     path: ['requiresMachineLogin'],
     message: 'requiresMachineLogin may only be set when authMode=machineLogin',
-  });
+  }));
 
 export type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
 
-export const SavedSecretSchema = z.object({
+export const SavedSecretSchema = lazySchema(() => z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(100),
   kind: z.enum(['apiKey', 'token', 'password', 'other']).default('apiKey'),
@@ -138,7 +144,7 @@ export const SavedSecretSchema = z.object({
 }, {
   path: ['encryptedValue'],
   message: 'Secret must include a value or encrypted value',
-});
+}));
 
 export type SavedSecret = z.infer<typeof SavedSecretSchema>;
 

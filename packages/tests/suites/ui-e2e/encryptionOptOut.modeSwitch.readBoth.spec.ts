@@ -181,8 +181,8 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
   });
 
   test('switches modes and keeps old sessions readable (e2ee → plain → e2ee)', { tag: "@smoke" }, async ({ page }, testInfo) => {
-    // This scenario performs two real account migrations and three daemon-backed session create/send flows.
-    test.setTimeout(180_000);
+    // Auth, daemon, CLI, and browser phases enforce their own deadlines throughout this composed scenario.
+    test.setTimeout(0);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
@@ -190,6 +190,14 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
     await mkdir(testDir, { recursive: true });
 
     const diagnostics = collectBrowserDiagnostics({ page });
+    const daemonEnv = {
+      ...process.env,
+      HAPPIER_SERVER_URL: server.baseUrl,
+      HAPPIER_WEBAPP_URL: uiBaseUrl,
+      HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+    };
 
     let daemon: StartedDaemon | null = null;
     let thrown: unknown = null;
@@ -200,9 +208,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
         cliHomeDir,
         serverUrl: server.baseUrl,
         uiBaseUrl,
-        extraEnv: {
-          HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
-        },
+        extraEnv: daemonEnv,
       });
 
       const draftAText = `account-mode draft A ${run.runId}`;
@@ -258,6 +264,8 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       expect(sessionADraft.envelope).toBe('encrypted');
 
       const migrateDraftsToPlain = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'plain' });
+      // Converting Machine content retires its previous daemon encryption context.
+      daemon = await daemon.restart();
       expectCompleteDraftMigration({
         request: migrateDraftsToPlain,
         draftIds: [draftAId, draftBId],
@@ -310,6 +318,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await expect(page.getByText(msgB, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
       const migrateDraftsToE2ee = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'e2ee' });
+      daemon = await daemon.restart();
       expectCompleteDraftMigration({
         request: migrateDraftsToE2ee,
         draftIds: [draftAId, draftBId],

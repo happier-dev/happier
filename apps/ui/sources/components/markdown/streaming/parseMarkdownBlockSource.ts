@@ -30,6 +30,7 @@ function buildPlainTextBlocks(source: string, options: { stripOptionsTags?: bool
 }
 
 export function parseMarkdownBlockSource(source: MarkdownBlockSource): MarkdownBlock[] {
+    if (source.codeBlock) return [source.codeBlock];
     if (source.incompleteKind === 'options') {
         return buildPlainTextBlocks(source.source, { stripOptionsTags: true });
     }

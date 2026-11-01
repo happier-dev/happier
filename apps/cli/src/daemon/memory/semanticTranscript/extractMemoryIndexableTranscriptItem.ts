@@ -1,3 +1,4 @@
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
@@ -21,10 +22,7 @@ import type {
 
 const MAX_MEMORY_TOOL_SUMMARY_CHARS = 500;
 
-type MemorySemanticExtractionContext = Readonly<{
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
-}>;
+type MemorySemanticExtractionContext = SessionEncryptionContext;
 
 function normalizeSeq(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;

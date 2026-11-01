@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path';
 import type { ExistingSessionHandoffStateResolver } from '@/backends/types';
 import { verifyResumeReachableClaude } from '@/backends/claude/connectedServices/verifyResumeReachableClaude';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
+import { resolveClaudeConfigDirEnvOverlay } from '@/backends/claude/utils/resolveClaudeConfigDirEnvOverlay';
 import { ExistingSessionStateUnavailableError } from '@/session/handoff/sessionHandoffErrors';
 
 export const resolveExistingClaudeSessionHandoffState: ExistingSessionHandoffStateResolver = async (params) => {
@@ -24,7 +25,7 @@ export const resolveExistingClaudeSessionHandoffState: ExistingSessionHandoffSta
       directory: params.targetPath,
       agent: 'claude',
       resume: params.vendorResumeId,
-      environmentVariables: { CLAUDE_CONFIG_DIR: configDir },
+      environmentVariables: resolveClaudeConfigDirEnvOverlay(params.env),
       transcriptStorage: params.sessionStorageMode,
       approvedNewDirectoryCreation: true,
     },

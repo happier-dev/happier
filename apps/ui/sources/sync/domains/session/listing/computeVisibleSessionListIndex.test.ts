@@ -1131,7 +1131,7 @@ describe('computeVisibleSessionListIndex', () => {
         ]);
     });
 
-    it('promotes server-backed pinned foreground and background work before pinned/ready placement', () => {
+    it('promotes server-backed pinned foreground and read background work before pinned/ready placement', () => {
         const now = 1_000_000;
         const groupKey = 'server:s1:active:project:repo';
         const source: SessionListIndexItem[] = [
@@ -1159,7 +1159,8 @@ describe('computeVisibleSessionListIndex', () => {
                     latestTurnStatusObservedAt: now - 1_000,
                     latestReadyEventSeq: 4,
                     latestReadyEventAt: now - 1_000,
-                    lastViewedSessionSeq: 1,
+                    // Read: an unread finished turn would outrank background work and place the row in Ready.
+                    lastViewedSessionSeq: 4,
                     runtimeActivityState: 'active',
                     runtimeActivityActiveCount: 1,
                     runtimeActivityObservedAt: now - 10_000,

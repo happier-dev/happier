@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
-export const CodexAppServerCapabilitiesSchema = z
+export const CodexAppServerCapabilitiesSchema = lazySchema(() => z
   .object({
     goals: z.boolean().optional(),
     vendorPlugins: z.boolean().optional(),
@@ -8,5 +9,5 @@ export const CodexAppServerCapabilitiesSchema = z
     structuredInput: z.boolean().optional(),
     permissionProfiles: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type CodexAppServerCapabilities = z.infer<typeof CodexAppServerCapabilitiesSchema>;

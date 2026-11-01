@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { runSqliteMigrationDeploy } from "./migrate.sqlite.deploy";
 
@@ -39,7 +38,7 @@ describe("migrate.sqlite.deploy.ts", () => {
         await rm(tmpDir, { recursive: true, force: true });
     });
 
-    it("applies through the real Node adapter and canonical policy using a safe derived file URL", async () => {
+    it("applies through the real Node adapter and canonical policy using the native file path", async () => {
         const migrationName = "20260101000000_first";
         const migrationDir = join(migrationsDir, migrationName);
         await mkdir(migrationDir, { recursive: true });
@@ -71,7 +70,7 @@ describe("migrate.sqlite.deploy.ts", () => {
 
         const databasePath = join(lightDataDir, "happier-server-light.sqlite");
         expect(env.DATABASE_URL).toBe(
-            `${pathToFileURL(databasePath).href}?socket_timeout=30&connection_limit=1`,
+            `file:${databasePath}?socket_timeout=30&connection_limit=1`,
         );
         expect(schemaSyncCalls).toEqual([serverRoot]);
 
@@ -118,7 +117,7 @@ describe("migrate.sqlite.deploy.ts", () => {
                 env: {
                     HAPPY_SERVER_LIGHT_DATA_DIR: lightDataDir,
                     HAPPIER_SERVER_LIGHT_DATA_DIR: lightDataDir,
-                    DATABASE_URL: pathToFileURL(databasePath).href,
+                    DATABASE_URL: `file:${databasePath}`,
                 },
                 serverRoot,
                 runSchemaSync: async () => {},

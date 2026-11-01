@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 export type BundledWorkspacePackage = Readonly<{
     packageName: string;
     srcDir: string;
+    /** Non-dist files the package declares for bundling (`happierWorkspaceBundleFiles`). */
+    includeFiles?: string[];
 }>;
 
 export type EnsureWorkspacePackagesBuiltByName = (

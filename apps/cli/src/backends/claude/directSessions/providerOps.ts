@@ -1,9 +1,13 @@
+import { resolve } from 'node:path';
+
 import { getClaudeDirectSessionActivity } from './getClaudeDirectSessionActivity';
 import { getClaudeDirectSessionWorkingDirectory } from './getClaudeDirectSessionWorkingDirectory';
 import { listClaudeSessionCandidates } from './listClaudeSessionCandidates';
 import { pageClaudeTranscript } from './pageClaudeTranscript';
 import { readAfterClaudeTranscript } from './readAfterClaudeTranscript';
-import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
+import { resolveClaudeConfigDirForDirectSessions, resolveConfiguredClaudeConfigDir } from './resolveClaudeConfigDir';
+import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
+import { resolvePathForComparison } from '@/utils/path/normalizePathForComparison';
 
 import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 import {
@@ -43,6 +47,10 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
   }),
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
     const configDir = resolveClaudeConfigDirForDirectSessions({ source: linked.source, env: process.env });
+    const [sourceRoot, configuredRoot] = await Promise.all([
+      resolvePathForComparison(resolve(configDir)),
+      resolvePathForComparison(resolve(resolveConfiguredClaudeConfigDir({ env: process.env }))),
+    ]);
     const directory =
       linked.sessionPath ??
       (await getClaudeDirectSessionWorkingDirectory({
@@ -58,7 +66,14 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
       resume: linked.remoteSessionId,
       approvedNewDirectoryCreation: true,
       transcriptStorage: 'direct',
-      environmentVariables: mergeDirectSessionEnvironmentVariables([{ CLAUDE_CONFIG_DIR: configDir }]),
+      // A canonical transcript root does not record whether the native auth
+      // environment set CLAUDE_CONFIG_DIR. Keep that environment for its own
+      // store; a linked session in a different store still needs its pinned root.
+      environmentVariables: mergeDirectSessionEnvironmentVariables([
+        sourceRoot === configuredRoot
+          ? resolveClaudeConfigDirEnvOverlay(process.env)
+          : { CLAUDE_CONFIG_DIR: configDir },
+      ]),
     };
   },
 };

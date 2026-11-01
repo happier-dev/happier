@@ -98,6 +98,25 @@ describe.skipIf(process.platform === 'win32')('withProviderCliUpdates with the r
     await expect(cap.invoke!({ method: 'install', params: { intent: 'update', allowVendorRecipeExecution: true } }))
       .resolves.toMatchObject({ ok: true, result: { previousVersion: '2.1.282', version: '2.1.283' } });
   }, 30_000);
+
+  it('propagates capability operation cancellation to the native updater', async () => {
+    const controller = new AbortController();
+    const reason = new Error('capability invocation cancelled');
+    const runCommand: typeof runCommandCapture = async ({ signal }) => {
+      controller.abort(reason);
+      return signal?.aborted
+        ? { kind: 'aborted', error: reason, stdout: '', stderr: '' }
+        : { kind: 'exited', status: 0, signal: null, stdout: '', stderr: '' };
+    };
+    const cap = withProviderCliUpdates(claudeCliCapability, 'claude', {
+      fetchLatestVersion: async () => ({ latestVersion: null, heldVersion: null }),
+      installProviderCli: (params) => installProviderCli({ ...params, logDir: join(root, 'logs'), deps: { runCommand } }),
+    });
+
+    await expect(cap.invoke!({
+      method: 'install', params: { intent: 'update', allowVendorRecipeExecution: true }, signal: controller.signal,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'install-failed', message: reason.message } });
+  });
 });
 
 async function detectContext() {

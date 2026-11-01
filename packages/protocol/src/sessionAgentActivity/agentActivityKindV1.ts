@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * What kind of work an agent-activity entry describes.
@@ -29,5 +30,5 @@ export const AGENT_ACTIVITY_KINDS_V1 = [
   'workflow_agent',
 ] as const;
 
-export const AgentActivityKindV1Schema = z.enum(AGENT_ACTIVITY_KINDS_V1);
+export const AgentActivityKindV1Schema = lazySchema(() => z.enum(AGENT_ACTIVITY_KINDS_V1));
 export type AgentActivityKindV1 = z.infer<typeof AgentActivityKindV1Schema>;

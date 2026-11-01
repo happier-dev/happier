@@ -1,3 +1,5 @@
+import { Encryption } from '@/sync/encryption/encryption';
+import { buildAccountEncryptionMachinesDirective, type AccountEncryptionMachineMigrationCandidate } from './buildAccountEncryptionMachinesDirective';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { deriveSettingsSecretsKeySet, unsealSecretsDeepWithKeys } from '@/sync/encryption/secretSettings';
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
@@ -41,6 +43,8 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
   sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
+  machines?: readonly AccountEncryptionMachineMigrationCandidate[];
+  machineEncryption?: Encryption;
   fetchConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     sealed: Readonly<{ format: string; ciphertext: string }>;
     metadata: ConnectedServiceCredentialMetadataInput;
@@ -130,6 +134,12 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     target: { mode: 'plain' },
   });
 
+  const machines = params.machines === undefined ? undefined : await buildAccountEncryptionMachinesDirective({
+    candidates: params.machines,
+    sourceEncryption: params.machineEncryption ?? (() => { throw new Error('Machine encryption context is unavailable'); })(),
+    target: { mode: 'plain' },
+  });
+
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'plain',
     expectedSettingsVersion: params.expectedSettingsVersion,
@@ -137,5 +147,6 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     connectedServices,
     automations,
     ...(sessionDrafts ? { sessionDrafts } : {}),
+    ...(machines ? { machines } : {}),
   });
 }

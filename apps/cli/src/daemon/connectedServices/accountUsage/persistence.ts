@@ -12,7 +12,7 @@ import {
   type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import {
@@ -228,6 +228,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       throw new Error('Provider account usage sealed persistence requires credentials and randomBytes');
     }
 
+    requireEncryptionCredentials(params.credentials);
     const material = params.credentials.encryption.type === 'legacy'
       ? { type: 'legacy' as const, secret: params.credentials.encryption.secret }
       : { type: 'dataKey' as const, machineKey: params.credentials.encryption.machineKey };

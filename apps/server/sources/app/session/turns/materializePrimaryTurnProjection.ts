@@ -7,6 +7,23 @@ export type PrimaryTurnMaterializedProjection = Readonly<{
     lastRuntimeIssue: SessionRuntimeIssueV1 | null;
 }>;
 
+/** Storage encoding shared by turn mutations and current-runtime cutover. */
+export function buildPrimaryTurnProjectionWriteData(projection: PrimaryTurnMaterializedProjection): {
+    latestTurnId: string | null;
+    latestTurnStatus: PrimaryTurnStatusV1 | null;
+    latestTurnStatusObservedAt: bigint | null;
+    lastRuntimeIssue: string | null;
+} {
+    return {
+        latestTurnId: projection.latestTurnId,
+        latestTurnStatus: projection.latestTurnStatus,
+        latestTurnStatusObservedAt: projection.latestTurnStatusObservedAt === null
+            ? null : BigInt(projection.latestTurnStatusObservedAt),
+        lastRuntimeIssue: projection.lastRuntimeIssue === null
+            ? null : JSON.stringify(projection.lastRuntimeIssue),
+    };
+}
+
 function isTerminalStatus(status: PrimaryTurnStatusV1): boolean {
     return status === "completed" || status === "cancelled" || status === "failed";
 }

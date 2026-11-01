@@ -12,6 +12,7 @@ import type { NormalizedProviderUsageLimitDetailsV1 } from '../connectedServices
 import { adoptClaudePermissionModeFromMetadata } from '../utils/syncPermissionModeFromMetadata';
 import {
   isClaudeRuntimeAuthRecoveryContinuing,
+  recordClaudeRateLimitQuotaEvidence,
   surfaceClaudeRuntimeAuthFailure,
   surfaceClaudeRateLimitRuntimeIssue,
 } from '../connectedServices/surfaceClaudeRuntimeIssues';
@@ -717,7 +718,7 @@ export async function claudeUnifiedTerminalLauncher(
       return;
     }
     recoveryProbeInconclusiveEscalated = true;
-    logger.warn('[unified]: terminal host recovery probe inconclusive repeatedly; escalating to a durable attention state without disposing (no positive death evidence)', {
+    logger.warnFile('[unified]: terminal host recovery probe inconclusive repeatedly; escalating to a durable attention state without disposing (no positive death evidence)', {
       hostKind: error.hostKind,
       reason: error.reason,
       consecutiveInconclusiveProbes: consecutiveRecoveryProbeInconclusive,
@@ -904,9 +905,8 @@ export async function claudeUnifiedTerminalLauncher(
         allowPendingDeliveryBlock: !effectMayHaveOccurred,
       });
     };
-    const knownClaudeSessionId = typeof session.sessionId === 'string' && session.sessionId.trim().length > 0
-      ? session.sessionId.trim()
-      : null;
+    const resumeIdentity = session.getResumableSessionIdentity();
+    const knownClaudeSessionId = resumeIdentity?.sessionId ?? null;
     const claudeArgs = unifiedTerminalLaunchAttempt === 0
       ? initialPrompt.claudeArgs
       : knownClaudeSessionId
@@ -978,8 +978,8 @@ export async function claudeUnifiedTerminalLauncher(
       dispatch: async () => runClaudeUnifiedTerminalSession({
       path: session.path,
       happySessionId: session.client.sessionId,
-      sessionId: session.sessionId,
-      transcriptPath: session.transcriptPath,
+      sessionId: knownClaudeSessionId,
+      transcriptPath: resumeIdentity?.transcriptPath ?? null,
       claudeArgs,
       expectedProviderResumeSessionId: resumeSessionId,
       hookSettingsPath: session.hookSettingsPath,
@@ -999,6 +999,8 @@ export async function claudeUnifiedTerminalLauncher(
       expectedExistingTerminalHostAttachmentId,
       currentTerminalHost: resolveCurrentTerminalHost(session) ?? undefined,
       ...binding.sessionOptions,
+      onProviderEvent: () => session.client.sessionTurnLifecycle?.observeProviderTurnEvent(),
+      readProviderSessionId: () => session.sessionId,
       onHistoricalMessage: async (message) => {
         if (binding.shouldSuppressTranscriptMessage(message)) return;
         await transcriptProjector.observeCommitted(message);
@@ -1090,8 +1092,8 @@ export async function claudeUnifiedTerminalLauncher(
       providerActivityLedger: session.getProviderTaskActivityLedger() ?? undefined,
       registerTerminalComposerClearRuntimeControl: (clearTerminalComposer) =>
         session.client.registerSessionRuntimeControls?.({ clearTerminalComposer }) ?? (() => undefined),
-      registerConnectedServiceExactApplicationHandler: (releaseProviderUi) =>
-        session.registerConnectedServiceExactApplicationHandler(releaseProviderUi),
+      registerConnectedServiceExactApplicationHandler: (wakePendingInput) =>
+        session.registerConnectedServiceExactApplicationHandler(wakePendingInput),
       onConnectedServiceExactApplicationReleased: releaseUsageLimitPendingBlock,
       onPendingInputInterruptAndRunLocalIdChange:
         inFlightSteerCapabilityPublisher.publishPendingInputInterruptAndRunLocalId,
@@ -1238,6 +1240,7 @@ export async function claudeUnifiedTerminalLauncher(
         session.onThinkingChange(thinking);
       },
       onUsageLimitDetails: surfaceRateLimit,
+      onQuotaEvidence: (windows) => recordClaudeRateLimitQuotaEvidence(session, windows, '[unified-terminal]'),
       onRuntimeAuthFailureEvent: async (error) => {
         try {
           const surfaced = await surfaceClaudeRuntimeAuthFailure(session, error, '[unified]');

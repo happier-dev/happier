@@ -105,15 +105,23 @@ function describeActionLabel(item: UpdateItem): string | null {
 export function describeUpdateItem(item: UpdateItem, context: Readonly<{ sessionsRunning?: boolean }> = {}): UpdateItemPresentation {
     const actionLabel = describeActionLabel(item);
     const command = item.action.kind === 'manual' ? item.action.command : null;
-    const subtitle = item.action.kind === 'manual' && !command && item.state !== 'upToDate'
+    const status = item.action.kind === 'manual' && !command && item.state !== 'upToDate'
         ? [describeStatus(item), t('updates.row.updateItYourWay')].join(' · ')
         : describeStatus(item);
+    const cachedRelease = item.cachedRelease;
+    const subtitle = cachedRelease
+        ? [status, cachedRelease.channel
+            ? t('updates.row.cachedReleaseChannel', { channel: cachedRelease.channel })
+            : t('updates.row.cachedRelease')].join(' · ')
+        : status;
     const sizingLabel = item.subject.kind === 'app'
         ? t('updates.action.restart')
         : t('updates.action.update').length >= t('common.retry').length ? t('updates.action.update') : t('common.retry');
     // Another machine's Happier CLI update restarts its background service; its sessions reconnect.
-    const note = context.sessionsRunning === true && item.subject.kind === 'happier-cli' && item.action.kind === 'run'
-        ? t('updates.row.restartsService')
-        : null;
+    const note = item.subject.kind === 'happier-cli' && item.action.kind === 'manual'
+        ? t('updates.row.manualUpdateInterruptsSessions')
+        : context.sessionsRunning === true && item.subject.kind === 'happier-cli' && item.action.kind === 'run'
+            ? t('updates.row.restartsService')
+            : null;
     return { subtitle, command, actionLabel, sizingLabel, note };
 }

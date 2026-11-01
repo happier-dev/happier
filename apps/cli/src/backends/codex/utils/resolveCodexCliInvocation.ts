@@ -10,6 +10,13 @@ import { isBun } from '@/utils/runtime';
 
 const JAVA_SCRIPT_ENTRYPOINT_EXTENSION = /\.(?:c?js|mjs)$/i;
 
+/** Explicit binaries that launch the Codex App Server instead of the resolved Codex CLI. */
+export const CODEX_APP_SERVER_OVERRIDE_ENV_KEYS = [
+    'HAPPIER_CODEX_APP_SERVER_BIN',
+    'HAPPIER_CODEX_TUI_BIN',
+    'HAPPY_CODEX_TUI_BIN',
+] as const;
+
 function looksLikePath(value: string): boolean {
     return value.includes('/') || value.includes('\\') || value.startsWith('.') || value.startsWith('~');
 }

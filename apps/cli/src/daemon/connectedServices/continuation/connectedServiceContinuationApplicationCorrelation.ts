@@ -28,10 +28,12 @@ function readCorrelationKeys(
 }
 
 export function createConnectedServiceContinuationApplicationCorrelation<T>() {
-  const pendingByTarget = new Map<string, T>();
-  const targetByScope = new Map<string, Readonly<{
+  // This only carries the recovery owner's context into an asynchronous recipient
+  // acknowledgement. Currentness/admission and Pending receipts own its lifetime;
+  // a settled generation must never veto a later interrupted recovery.
+  const pendingByScope = new Map<string, Readonly<{
     target: string;
-    generation: number;
+    continuation: T;
   }>>();
 
   return {
@@ -40,20 +42,10 @@ export function createConnectedServiceContinuationApplicationCorrelation<T>() {
       continuation: T,
     ): boolean {
       const correlationKeys = readCorrelationKeys(key);
-      if (correlationKeys === null || pendingByTarget.has(correlationKeys.target)) {
-        return false;
-      }
-      const previous = targetByScope.get(correlationKeys.scope);
-      if (previous !== undefined) {
-        if (key.generation <= previous.generation) {
-          return false;
-        }
-        pendingByTarget.delete(previous.target);
-      }
-      pendingByTarget.set(correlationKeys.target, continuation);
-      targetByScope.set(correlationKeys.scope, {
+      if (correlationKeys === null) return false;
+      pendingByScope.set(correlationKeys.scope, {
         target: correlationKeys.target,
-        generation: key.generation,
+        continuation,
       });
       return true;
     },
@@ -64,11 +56,11 @@ export function createConnectedServiceContinuationApplicationCorrelation<T>() {
     ): Promise<boolean> {
       const correlationKeys = readCorrelationKeys(key);
       if (correlationKeys === null) return false;
-      const continuation = pendingByTarget.get(correlationKeys.target);
-      if (continuation === undefined) return false;
-      await settleContinuation(continuation);
-      if (pendingByTarget.get(correlationKeys.target) === continuation) {
-        pendingByTarget.delete(correlationKeys.target);
+      const pending = pendingByScope.get(correlationKeys.scope);
+      if (!pending || pending.target !== correlationKeys.target) return false;
+      await settleContinuation(pending.continuation);
+      if (pendingByScope.get(correlationKeys.scope) === pending) {
+        pendingByScope.delete(correlationKeys.scope);
       }
       return true;
     },

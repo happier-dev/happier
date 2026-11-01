@@ -4,6 +4,7 @@ import { serverFetch } from '@/sync/http/client';
 interface AuthRequestStatus {
     status: 'not_found' | 'pending' | 'authorized';
     supportsV2: boolean;
+    supportsTokenOnly?: boolean;
 }
 
 export type AuthApproveResult = 'approved' | 'already_authorized' | 'not_found';
@@ -19,6 +20,8 @@ export class AuthApproveUnsupportedResponseError extends Error {
 type AuthApproveAnswer = Uint8Array | (() => Uint8Array);
 
 export type AuthApproveOptions = Readonly<{
+    /** Offered only to terminals that explicitly advertise the token-only response variant. */
+    answerTokenOnly?: AuthApproveAnswer;
     /**
      * Address both requests at this exact relay instead of the focused one. `serverFetch` refuses
      * an authenticated request whose origin differs from the active server, so a caller holding a
@@ -72,7 +75,11 @@ export async function authApprove(
         };
 
         let responsePayload: Uint8Array | null = null;
-        if (supportsV2) {
+        if (supportsV2 && statusData.supportsTokenOnly === true && options.answerTokenOnly) {
+            const tokenOnly = resolve(options.answerTokenOnly);
+            if (tokenOnly.length > 0) responsePayload = tokenOnly;
+        }
+        if (!responsePayload && supportsV2) {
             const v2 = resolve(answerV2);
             if (v2.length > 0) {
                 responsePayload = v2;

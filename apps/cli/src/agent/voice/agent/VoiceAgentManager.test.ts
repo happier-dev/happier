@@ -1341,11 +1341,163 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts[1]).toContain('Initial context:\nCTX');
   });
 
+  it('accepts a READY handshake reply with trailing punctuation or whitespace', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const backend = createPromptCaptureBackend([{ responseText: '  Ready.\n' }]);
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    try {
+      const started = await manager.start({
+        agentId: 'claude',
+        chatModelId: 'chat-model',
+        commitModelId: 'commit-model',
+        permissionPolicy: 'read_only',
+        idleTtlSeconds: 60,
+        initialContext: 'CTX',
+        bootstrapMode: 'ready_handshake',
+      });
+      expect(started.voiceAgentId).toEqual(expect.any(String));
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('bounds backend session start by the bootstrap budget and disposes the backend on timeout', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const dispose = vi.fn(async () => {});
+    const backend: AgentBackend = {
+      onMessage() {},
+      startSession: () => new Promise<never>(() => {}),
+      async sendPrompt() {},
+      async cancel() {},
+      dispose,
+    };
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    try {
+      await expect(
+        manager.start({
+          agentId: 'claude',
+          chatModelId: 'chat-model',
+          commitModelId: 'commit-model',
+          permissionPolicy: 'read_only',
+          idleTtlSeconds: 60,
+          initialContext: 'CTX',
+          bootstrapMode: 'ready_handshake',
+          bootstrapTimeoutMs: 25,
+        }),
+      ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+      expect(dispose).toHaveBeenCalled();
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('gives the READY handshake only the bootstrap budget left after session start', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    let nowMs = 1_000;
+    const backend = createBootstrapTimeoutBackend();
+    const startSession = backend.startSession.bind(backend);
+    backend.startSession = async () => {
+      nowMs += 10_000;
+      return await startSession();
+    };
+    const manager = new VoiceAgentManager({ createBackend: () => backend, getNowMs: () => nowMs });
+    try {
+      await expect(
+        manager.start({
+          agentId: 'codex',
+          chatModelId: 'chat-model',
+          commitModelId: 'commit-model',
+          permissionPolicy: 'read_only',
+          idleTtlSeconds: 60,
+          initialContext: 'CTX',
+          bootstrapMode: 'ready_handshake',
+          bootstrapTimeoutMs: 15_000,
+        }),
+      ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+      expect(backend.seenTimeouts).toEqual([5_000]);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('rejects start at the bootstrap deadline when the READY prompt write never completes', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const dispose = vi.fn(async () => {});
+    const backend: AgentBackend = {
+      onMessage() {},
+      async startSession() {
+        return { sessionId: 's-stalled-prompt' as SessionId };
+      },
+      sendPrompt: () => new Promise<never>(() => {}),
+      async waitForResponseComplete() {},
+      async cancel() {},
+      dispose,
+    };
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    try {
+      await expect(
+        manager.start({
+          agentId: 'claude',
+          chatModelId: 'chat-model',
+          commitModelId: 'commit-model',
+          permissionPolicy: 'read_only',
+          idleTtlSeconds: 60,
+          initialContext: 'CTX',
+          bootstrapMode: 'ready_handshake',
+          bootstrapTimeoutMs: 25,
+        }),
+      ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+      expect(dispose).toHaveBeenCalled();
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('rejects start at the bootstrap deadline when the READY response keeps extending its own wait', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const dispose = vi.fn(async () => {});
+    const backend: AgentBackend = {
+      onMessage() {},
+      async startSession() {
+        return { sessionId: 's-chatty' as SessionId };
+      },
+      async sendPrompt() {},
+      // Models an ACP backend whose idle timer restarts on every streamed update.
+      waitForResponseComplete: () => new Promise<void>(() => {}),
+      async cancel() {},
+      dispose,
+    };
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    try {
+      await expect(
+        manager.start({
+          agentId: 'claude',
+          chatModelId: 'chat-model',
+          commitModelId: 'commit-model',
+          permissionPolicy: 'read_only',
+          idleTtlSeconds: 60,
+          initialContext: 'CTX',
+          bootstrapMode: 'ready_handshake',
+          bootstrapTimeoutMs: 25,
+        }),
+      ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+      expect(dispose).toHaveBeenCalled();
+    } finally {
+      await manager.dispose();
+    }
+  });
+
   it('uses the provided bootstrap timeout for READY handshakes', async () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createBootstrapTimeoutBackend();
-    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    // A fixed clock keeps the whole bootstrap budget available to the handshake.
+    const manager = new VoiceAgentManager({ createBackend: () => backend, getNowMs: () => 0 });
 
     await expect(
       manager.start({

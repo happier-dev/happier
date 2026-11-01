@@ -183,3 +183,19 @@ test('CLI integration covers every shard despite the unit-job partition', async 
   }
   assert.deepEqual([...covered].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
+
+test('consumers of a skip-tolerant job declare explicit admission', async () => {
+  const workflow = YAML.parse(await readFile(join(process.cwd(), '.github/workflows/tests.yml'), 'utf8'));
+  const needsOf = (id) => [workflow.jobs[id]?.needs ?? []].flat();
+  // A job that admits a skipped need can succeed above a skipped ancestor. GitHub's implicit
+  // success() on a consumer without a status function still sees that skip and drops the lane.
+  const skipTolerant = new Set(Object.keys(workflow.jobs).filter((id) => /result == 'skipped'/.test(String(workflow.jobs[id].if ?? ''))));
+  const statusFunction = /\b(?:always|success|failure|cancelled)\(\)/;
+  const implicit = Object.keys(workflow.jobs).filter((id) => (
+    id !== 'ci_summary'
+    && needsOf(id).some((parent) => skipTolerant.has(parent))
+    && !statusFunction.test(String(workflow.jobs[id].if ?? ''))
+  ));
+  assert.ok(skipTolerant.has('build-cli'), 'build-cli admits the optional launcher skip');
+  assert.deepEqual(implicit, [], 'an optional ancestor skip must not silently skip a requested lane');
+});

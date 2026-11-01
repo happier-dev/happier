@@ -46,7 +46,7 @@ if (typeof whoami.status === "number" && whoami.status !== 0) {
 
 if (!noGit) {
   // `npm version` makes a git commit + tag by default; it requires a clean working tree.
-  const status = spawnSync("git", ["status", "--porcelain"], { encoding: "utf8" });
+  const status = spawnSync("git", ["status", "--porcelain"], { encoding: "utf8", windowsHide: true });
   if (typeof status.status === "number" && status.status === 0) {
     const out = (status.stdout ?? "").trim();
     if (out.length > 0) {

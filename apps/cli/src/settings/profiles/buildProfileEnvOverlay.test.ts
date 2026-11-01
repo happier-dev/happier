@@ -19,7 +19,7 @@ function makeCredentials(): Credentials {
 function assertLegacyCredentials(credentials: Credentials): asserts credentials is Credentials & {
   encryption: { type: 'legacy'; secret: Uint8Array };
 } {
-  if (credentials.encryption.type !== 'legacy') {
+  if (credentials.encryption?.type !== 'legacy') {
     throw new Error('expected legacy credentials');
   }
 }
@@ -203,14 +203,14 @@ describe('buildProfileEnvOverlay with the shipped MiniMax built-in profiles', ()
       expect(result.envOverlayExpanded).toMatchObject({
         ANTHROPIC_BASE_URL: expectedBaseUrl,
         ANTHROPIC_AUTH_TOKEN: 'mm-from-env',
-        ANTHROPIC_MODEL: 'MiniMax-M3',
+        ANTHROPIC_MODEL: 'MiniMax-M3.1-Flash',
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
         // Claude Code resolves the opus/sonnet/haiku aliases through these keys.
         // Without them a model switch would send "opus"/"sonnet" upstream, which
         // MiniMax rejects.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M2.7',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3.1-Flash',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3.1-Flash',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M3.1-Flash',
         API_TIMEOUT_MS: '600000',
       });
     },

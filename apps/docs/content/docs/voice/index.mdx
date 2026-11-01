@@ -189,6 +189,8 @@ Local voice is the right choice when you want:
 
 Local voice settings also include voice-agent behavior such as backend selection, machine targeting, resumability, and working-directory policy when you use **Agent** mode.
 
+Local voice is experimental. Turn on **Voice** in **Settings → Features** first. **Agent** mode with the daemon voice agent also needs **Subagents** and **Voice agent**. See [Feature flags](/extras/feature-flags).
+
 ### Backend and model lists are machine-aware
 
 When you use **Agent** mode, Happier does not guess a fake model list locally.
@@ -229,11 +231,11 @@ Use **Agent** when you want a colleague-style voice layer that can ask follow-up
 
 ### TTS still matters in direct-to-session mode
 
-Even in **Direct to session**, TTS can still be enabled so Happier can read agent replies back to you.
+Even in **Direct to session**, TTS can still be enabled so Happier can read agent replies back to you. With **Auto-speak replies** on, Happier waits for the session's turn to finish and speaks that turn's final reply. Thinking and interim progress messages are not read out.
 
 ### Hands-free mode
 
-When you use **Device STT**, Happier can also expose hands-free endpointing controls such as silence timeout and minimum speech duration.
+With **Device STT** or **Local neural STT**, Local voice can run hands-free: it detects when you stop speaking, sends the turn, and starts listening again. Silence timeout and minimum speech duration control when a turn counts as finished. **OpenAI-compatible STT** and **Google Gemini STT** transcribe a finished recording, so they are push-to-talk: tap the mic again to send. See [Local voice providers](/voice/local-providers) for details.
 
 ### Test TTS
 
@@ -286,6 +288,7 @@ Check:
 - that TTS is enabled for the selected provider
 - that the correct TTS provider is selected
 - that **Test TTS** succeeds in the Local voice section
+- the message under the voice status, if one is shown: Local voice reports microphone, speech-to-text, sending, playback, and missing-feature problems there
 
 ### My ElevenLabs voice list is empty
 

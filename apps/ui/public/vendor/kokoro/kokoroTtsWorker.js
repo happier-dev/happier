@@ -1,4 +1,5 @@
 import { KokoroTTS, TextSplitterStream, env } from './kokoro.web.js'
+import { resolveKokoroWebVoiceId } from './resolveKokoroVoice.js'
 
 function clampSample(x) {
     if (x > 1) return 1
@@ -141,7 +142,7 @@ async function handleGenerate(message) {
     if (canceledRequestIds.has(message.id)) return
 
     const audioObj = await tts.generate(message.text, {
-        voice: message.voiceId,
+        voice: resolveKokoroWebVoiceId(message.voiceId, Object.keys(tts.voices ?? {})),
         speed: message.speed,
     })
     if (canceledRequestIds.has(message.id)) return
@@ -166,7 +167,7 @@ async function handleStream(message) {
 
     try {
         const stream = tts.stream(splitter, {
-            voice: message.voiceId,
+            voice: resolveKokoroWebVoiceId(message.voiceId, Object.keys(tts.voices ?? {})),
             speed: message.speed,
         })
 

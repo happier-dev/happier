@@ -4,17 +4,18 @@ import {
   ProviderAccountUsageRecordIdSchema,
   type ProviderAccountUsageRecordId,
 } from '../connect/accountUsage.js';
+import { lazySchema } from '../lazySchema.js';
 
 export const PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY = 'providerAccountUsageRefsV1' as const;
 export const PROVIDER_ACCOUNT_USAGE_REFS_MAX_RECORD_IDS = 32;
 
-export const ProviderAccountUsageRefsV1Schema = z
+export const ProviderAccountUsageRefsV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     recordIds: z.array(ProviderAccountUsageRecordIdSchema).max(PROVIDER_ACCOUNT_USAGE_REFS_MAX_RECORD_IDS),
     updatedAtMs: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type ProviderAccountUsageRefsV1 = z.infer<typeof ProviderAccountUsageRefsV1Schema>;
 
 function toMetadataRecord(metadata: unknown): Record<string, unknown> {

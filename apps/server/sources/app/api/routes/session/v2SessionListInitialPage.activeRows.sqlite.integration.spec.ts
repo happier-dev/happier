@@ -46,6 +46,7 @@ function createTestApp() {
  */
 describe("v2 session list initial page: merged active rows (SQLite integration)", () => {
     let harness: LightSqliteHarness;
+    const restoreQueryObservers: Array<() => void> = [];
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
@@ -57,6 +58,7 @@ describe("v2 session list initial page: merged active rows (SQLite integration)"
     }, 180_000);
 
     afterEach(async () => {
+        for (const restore of restoreQueryObservers.splice(0)) restore();
         await closeTrackedApps();
         harness.resetEnv();
         await db.accessKey.deleteMany();
@@ -239,7 +241,7 @@ describe("v2 session list initial page: merged active rows (SQLite integration)"
                 url: `/v2/sessions?limit=1${params.query}`,
                 headers: { authorization: `Bearer ${token}` },
             });
-            expect(response.statusCode).toBe(200);
+            expect(response.statusCode, response.body).toBe(200);
             return response.json() as Record<string, unknown>;
         }
 
@@ -248,6 +250,70 @@ describe("v2 session list initial page: merged active rows (SQLite integration)"
             if (!Array.isArray(sessions)) throw new Error("response carried no sessions array");
             return sessions.map((session) => (session as { id: string }).id);
         }
+
+        it("adds only accessible required rows, including archived shares, without changing pagination", async () => {
+            const { userId } = await seed();
+            const ownerId = await createAccount();
+            const archivedAt = Date.now() - 500;
+            await createSession({ accountId: ownerId, id: "required-shared", activityAt: 1, archivedAt });
+            await createSession({ accountId: ownerId, id: "required-denied", activityAt: 1 });
+            await db.sessionShare.create({ data: {
+                sessionId: "required-shared", sharedByUserId: ownerId, sharedWithUserId: userId,
+                encryptedDataKey: new Uint8Array([1, 2, 3]),
+            } });
+            const ordinary = await fetchSessionListBody({ userId, query: "&includeActive=true" });
+            const requiredIds = ["required-shared", "live-but-archived-row", "live-flag-without-heartbeat-row",
+                "required-denied", "required-missing", "page-row", "required-shared"];
+            const merged = await fetchSessionListBody({
+                userId, query: `&includeActive=true&requiredSessionIds=${encodeURIComponent(JSON.stringify(requiredIds))}`,
+            });
+
+            expect(readSessionIds(merged)).toEqual([
+                "live-row", "page-row", "required-shared", "live-but-archived-row", "live-flag-without-heartbeat-row",
+            ]);
+            expect(merged.nextCursor).toBe(ordinary.nextCursor);
+            expect(merged.hasNext).toBe(ordinary.hasNext);
+            expect(merged.includedActive).toBe(true);
+            expect(merged.sessions).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: "required-shared", archivedAt, share: { accessLevel: "view", canApprovePermissions: false }, dataEncryptionKey: "AQID" }),
+            ]));
+        });
+
+        it("serves required-only chunks without reading or returning any other row family", async () => {
+            const { userId } = await seed();
+            // Observe the real database boundary: every session read must be scoped to the requested ids.
+            function observeReads(delegate: unknown): unknown[] {
+                // Prisma's proxy methods need explicit binding; keep every real query intact.
+                const model = delegate as { findMany: (args: unknown) => Promise<unknown> };
+                const original = model.findMany.bind(model);
+                const reads: unknown[] = [];
+                model.findMany = async (args) => { reads.push(args); return await original(args); };
+                restoreQueryObservers.push(() => { model.findMany = original; });
+                return reads;
+            }
+            const sessionReads = observeReads(db.session);
+            const pinReads = observeReads(db.sessionPin);
+            const requiredIds = ["live-but-archived-row", "live-flag-without-heartbeat-row", "missing"];
+            const body = await fetchSessionListBody({ userId, query:
+                `&requiredOnly=true&includeActive=true&includeAttention=true&cursor=ignored&requiredSessionIds=${encodeURIComponent(JSON.stringify(requiredIds))}`,
+            });
+
+            expect(readSessionIds(body)).toEqual(["live-but-archived-row", "live-flag-without-heartbeat-row"]);
+            expect(body.nextCursor).toBeNull();
+            expect(body.hasNext).toBe(false);
+            expect("includedActive" in body).toBe(false);
+            expect(pinReads).toHaveLength(0);
+            expect(sessionReads.length).toBeGreaterThan(0);
+            for (const args of sessionReads) {
+                expect(args).toEqual(expect.objectContaining({ where: expect.objectContaining({ id: { in: requiredIds } }) }));
+            }
+        });
+
+        it("returns an empty required-only response without an ordinary page", async () => {
+            const { userId } = await seed();
+            const body = await fetchSessionListBody({ userId, query: "&requiredOnly=true&requiredSessionIds=%5B%5D" });
+            expect(body).toEqual({ sessions: [], nextCursor: null, hasNext: false });
+        });
 
         it("marks the initial page that merged the active family with includedActive", async () => {
             const { userId } = await seed();
@@ -278,12 +344,13 @@ describe("v2 session list initial page: merged active rows (SQLite integration)"
 
             const body = await fetchSessionListBody({
                 userId,
-                query: `&includeActive=true&cursor=${encodeURIComponent(cursor)}`,
+                query: `&includeActive=true&cursor=${encodeURIComponent(cursor)}&requiredSessionIds=${encodeURIComponent(JSON.stringify(["live-but-archived-row"]))}`,
             });
 
             expect("includedActive" in body).toBe(false);
             // The page after the cursor is ordinary paging, so the family is not merged into it.
             expect(readSessionIds(body)).not.toContain("page-row");
+            expect(readSessionIds(body)).not.toContain("live-but-archived-row");
         });
     });
 

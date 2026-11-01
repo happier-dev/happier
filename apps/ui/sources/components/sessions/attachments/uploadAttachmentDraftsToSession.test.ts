@@ -273,3 +273,21 @@ describe('uploadAttachmentDraftsToSession', () => {
     });
 
 });
+
+describe('formatAttachmentsBlock', () => {
+    it('tells agents that relative attachment paths resolve against the session working directory', async () => {
+        const { formatAttachmentsBlock } = await import('./uploadAttachmentDraftsToSession');
+        const { stripLegacyAttachmentsBlock } = await import('@/components/sessions/transcript/messageSelection/resolveSelectableMessageText');
+
+        const block = formatAttachmentsBlock([{
+            name: 'file.png',
+            path: '.happier/uploads/messages/m1/12345678-file.png',
+            mimeType: 'image/png',
+            sizeBytes: 5,
+        }]);
+
+        expect(block).toMatch(/relative to the session working directory/i);
+        // The transcript still hides the whole block, intro line included.
+        expect(stripLegacyAttachmentsBlock(`hello\n\n${block}`)).toBe('hello');
+    });
+});

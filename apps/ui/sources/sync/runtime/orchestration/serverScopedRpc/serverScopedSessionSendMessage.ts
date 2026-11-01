@@ -16,6 +16,7 @@ import {
 } from '@/sync/engine/pending/pendingInputServerWireContract';
 
 import { createSessionRequestForResolvedServerScope } from './createSessionRequestWithServerScope';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
 type ScopedSessionEncryptionLike = Readonly<{
   encryptRawRecord: (record: RawRecord) => Promise<string>;
@@ -141,7 +142,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
       return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     }
 
-    const timeoutMs = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 30_000;
+    const timeoutMs = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
     const context = await d.resolveContext({ serverId: args.serverId, timeoutMs });
     const session = d.getSession(sessionId);
     const requestedAction = args.requestedAction ?? selectSessionPendingRequestedAction({

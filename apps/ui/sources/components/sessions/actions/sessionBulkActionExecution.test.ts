@@ -8,6 +8,10 @@ import {
     type SessionBulkActionTarget,
 } from './sessionBulkActionExecution';
 import { buildSessionBulkActionResultSummary } from './sessionActionResultMessages';
+import { storage } from '@/sync/domains/state/storage';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createDeferred } from '@/dev/testkit';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 function target(input: Partial<SessionBulkActionTarget> & Pick<SessionBulkActionTarget, 'key' | 'sessionId'>): SessionBulkActionTarget {
     return {
@@ -25,22 +29,42 @@ function target(input: Partial<SessionBulkActionTarget> & Pick<SessionBulkAction
 }
 
 describe('executeSessionBulkAction', () => {
-    it('skips folder-ineligible sessions while moving eligible sessions', async () => {
-        const assigned: string[] = [];
+    it('uses the caller archive error when a direct archive fails without a display message', async () => {
         const result = await executeSessionBulkAction({
-            action: { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'folder-a' },
-            targets: [
-                target({ key: 'persisted', sessionId: 'persisted', canMoveToFolder: true }),
-                target({ key: 'direct', sessionId: 'direct', canMoveToFolder: false }),
-            ],
+            action: { id: SESSION_BULK_ACTION_IDS.archive },
+            targets: [target({ key: 'server-a:timeout', sessionId: 'timeout' })],
             context: {
-                foldersFeatureDecision: { state: 'enabled' },
-                setSessionFolderAssignment: async ({ target }) => { assigned.push(target.sessionId); },
+                archiveSession: async () => ({ success: false, code: 'session_archive_timeout' }),
+                archiveErrorMessage: 'localized archive failure',
             },
         });
-        expect(assigned).toEqual(['persisted']);
-        expect(result.skipped.map((entry) => entry.target.key)).toEqual(['direct']);
-        expect(result.remainingSelectedKeys).toEqual(['direct']);
+        expect(result.failed.map((entry) => entry.reason)).toEqual(['localized archive failure']);
+    });
+
+    it('captures the server for queued archive targets before active-server changes', async () => {
+        const original = upsertServerProfile({ serverUrl: 'https://bulk-original.example' });
+        const next = upsertServerProfile({ serverUrl: 'https://bulk-next.example' });
+        setActiveServerId(original.id);
+        const firstRequest = createDeferred<{ success: boolean }>();
+        const observed: Array<string | null | undefined> = [];
+        const archiveSession = vi.fn(async (target: SessionBulkActionTarget) => {
+            observed.push(target.serverId);
+            if (target.sessionId === 'first') return firstRequest.promise;
+            return { success: true };
+        });
+        const result = executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.archive },
+            targets: [
+                target({ key: 'first', sessionId: 'first', serverId: undefined }),
+                target({ key: 'second', sessionId: 'second', serverId: undefined }),
+            ],
+            context: { archiveSession, concurrencyLimit: 1 },
+        });
+        await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledTimes(1));
+        setActiveServerId(next.id);
+        firstRequest.resolve({ success: true });
+        await result;
+        expect(observed).toEqual([original.id, original.id]);
     });
 
     it('treats empty target selections as a no-op for every bulk action', async () => {
@@ -276,6 +300,50 @@ describe('executeSessionBulkAction', () => {
         expect(stopResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
         expect(archiveResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
         expect(unarchiveResult.skipped.map((entry) => entry.reasonCode)).toEqual(['permission_denied']);
+    });
+
+    it('skips archive for sessions whose archive is already in flight', async () => {
+        const seed = (id: string, active: boolean): void => {
+            storage.getState().mergeSessionListRenderables([{
+                id,
+                active,
+                archivedAt: null,
+                owner: 'user_1',
+                accessLevel: undefined,
+                seq: 1,
+                lastViewedSessionSeq: 1,
+                latestTurnStatus: 'completed',
+                createdAt: 1,
+                updatedAt: 1,
+                activeAt: 1,
+                metadataVersion: 1,
+                agentStateVersion: 1,
+                metadata: null,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } satisfies SessionListRenderableSession]);
+            storage.getState().beginSessionArchive(id, 'server-a');
+        };
+        seed('pending-inactive', false);
+        seed('pending-active', true);
+        const archiveSession = vi.fn(async () => ({ success: true }));
+        const stopSession = vi.fn(async () => ({ success: true }));
+        const stopSessionAndMaybeArchive = vi.fn(async () => undefined);
+
+        const result = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.archive },
+            targets: [
+                target({ key: 'server-a:pending-inactive', sessionId: 'pending-inactive' }),
+                target({ key: 'server-a:pending-active', sessionId: 'pending-active', active: true }),
+            ],
+            context: { archiveSession, stopSession, stopSessionAndMaybeArchive },
+        });
+
+        expect(archiveSession).not.toHaveBeenCalled();
+        expect(stopSessionAndMaybeArchive).not.toHaveBeenCalled();
+        expect(result.skipped.map((entry) => entry.reasonCode)).toEqual(['archive_in_progress', 'archive_in_progress']);
+        storage.setState({ sessionArchiveOperations: {} });
     });
 
     it('fails bulk move-to-folder closed when the sessions.folders feature is unavailable', async () => {

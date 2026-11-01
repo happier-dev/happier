@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import { readClaudePeerMessage, type DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { resolveClaudeSessionMessageRole } from '@/api/session/messageRole';
 import { isClaudeInternalTranscriptMessage } from '@/backends/claude/utils/isClaudeInternalTranscriptMessage';
@@ -129,7 +129,7 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
 
   if (
     normalized.type === 'user' &&
-    !(normalized.origin && typeof normalized.origin === 'object' && 'kind' in normalized.origin && normalized.origin.kind === 'peer') &&
+    !readClaudePeerMessage(normalized) &&
     typeof (normalized as any).message?.content === 'string' &&
     (normalized as any).isSidechain !== true &&
     (normalized as any).isMeta !== true

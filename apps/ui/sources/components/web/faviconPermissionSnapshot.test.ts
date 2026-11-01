@@ -222,7 +222,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(second.hasFreshPermission).toBe(true);
     });
 
-    it('expires agent-state permission freshness without a storage update', () => {
+    it('keeps an agent-state permission past the runtime staleness window until the runtime goes offline', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -254,14 +254,21 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const freshSnapshot = selector(state);
 
         vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
-        const staleSnapshot = selector(state);
+        const agedSnapshot = selector(state);
+        const offlineSnapshot = selector({
+            ...state,
+            sessions: {
+                ...state.sessions,
+                session1: { ...state.sessions.session1, presence: 1_000 },
+            },
+        });
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
-        expect(staleSnapshot).not.toBe(freshSnapshot);
-        expect(staleSnapshot.hasFreshPermission).toBe(false);
+        expect(agedSnapshot.hasFreshPermission).toBe(true);
+        expect(offlineSnapshot.hasFreshPermission).toBe(false);
     });
 
-    it('expires transcript permission freshness without a storage update', () => {
+    it('keeps a transcript permission past the runtime staleness window until the runtime goes offline', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -295,11 +302,18 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const freshSnapshot = selector(state);
 
         vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
-        const staleSnapshot = selector(state);
+        const agedSnapshot = selector(state);
+        const offlineSnapshot = selector({
+            ...state,
+            sessions: {
+                ...state.sessions,
+                session1: { ...state.sessions.session1, presence: 1_000 },
+            },
+        });
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
-        expect(staleSnapshot).not.toBe(freshSnapshot);
-        expect(staleSnapshot.hasFreshPermission).toBe(false);
+        expect(agedSnapshot.hasFreshPermission).toBe(true);
+        expect(offlineSnapshot.hasFreshPermission).toBe(false);
     });
 
     it('reuses derived transcript permission freshness for unrelated session updates', () => {

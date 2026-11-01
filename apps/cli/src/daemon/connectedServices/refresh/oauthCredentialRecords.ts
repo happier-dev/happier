@@ -4,12 +4,13 @@ import {
   type ConnectedServiceCredentialRecordV1,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
 export function openConnectedServiceRecord(params: Readonly<{
   credentials: Credentials;
   ciphertext: string;
 }>): ConnectedServiceCredentialRecordV1 {
+  requireEncryptionCredentials(params.credentials);
   const opened = openConnectedServiceCredentialCiphertext({
     material:
       params.credentials.encryption.type === 'legacy'
@@ -51,7 +52,7 @@ export function buildUpdatedOauthRecord(params: Readonly<{
       tokenType: params.next.tokenType ?? params.record.oauth.tokenType,
       providerAccountId: params.next.providerAccountId ?? params.record.oauth.providerAccountId,
       providerEmail: params.next.providerEmail ?? params.record.oauth.providerEmail,
-      raw: params.next.raw ?? params.record.oauth.raw,
+      raw: params.next.raw === undefined ? params.record.oauth.raw : params.next.raw,
     },
   });
 }

@@ -1,4 +1,6 @@
 import {
+    SessionOrganizationSessionAppearanceSchema,
+    type SessionOrganizationSessionAppearance,
     type SessionAttentionStanding,
     type SessionFolderAssignment,
     type SessionOrganizationFolder,
@@ -12,6 +14,7 @@ import {
 
 import { parseSessionOrganizationDisplayEnvelope } from "./contentEnvelope";
 import type {
+    SessionAppearanceRecord,
     SessionAttentionStandingRecord,
     SessionOrganizationFolderRecord,
     SessionOrganizationLabelRecord,
@@ -35,6 +38,14 @@ export function mapSessionAttentionStanding(row: SessionAttentionStandingRecord)
         ...(row.remindAt ? { remindAt: row.remindAt.getTime() } : {}),
         updatedAt: row.updatedAt.getTime(),
     };
+}
+
+export function mapSessionAppearance(row: SessionAppearanceRecord): SessionOrganizationSessionAppearance {
+    return SessionOrganizationSessionAppearanceSchema.parse({
+        sessionId: row.sessionId,
+        display: parseSessionOrganizationDisplayEnvelope(row.displayDbValue),
+        updatedAt: row.updatedAt.getTime(),
+    });
 }
 
 export function mapSessionOrganizationFolder(
@@ -97,6 +108,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
     orderEntries: SessionOrganizationOrderEntry[];
     labels: SessionOrganizationLabel[];
     attentionStandings?: SessionAttentionStanding[];
+    sessionAppearances?: SessionOrganizationSessionAppearance[];
 }>): SessionOrganizationSnapshot {
     return {
         schemaVersion: 1,
@@ -109,5 +121,6 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
         orderEntries: params.orderEntries,
         labels: params.labels,
         ...(params.attentionStandings ? { attentionStandings: params.attentionStandings } : {}),
+        ...(params.sessionAppearances ? { sessionAppearances: params.sessionAppearances } : {}),
     };
 }

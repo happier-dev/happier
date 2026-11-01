@@ -1,5 +1,5 @@
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createSocketIoAckTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import {
     type ConnectedServiceUxDiagnosticV1,
     normalizeSessionUsageLimitRecoveryOperationResultV1,
@@ -72,7 +72,7 @@ const STALE_ACTIVE_SESSION_RPC_FALLBACK_ERRORS = new Set<string>([
     'unsupported',
     'unsupported_session_runtime_method',
     'session_usage_limit_recovery_inert_waiting',
-    'operation has timed out',
+    createSocketIoAckTimeoutError().message,
 ]);
 
 function readRecord(value: unknown): Record<string, unknown> | null {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import {
     readForkSessionRpcTimeoutMsFromEnv,
@@ -75,6 +76,32 @@ describe('sessions ops server-scoped routing', () => {
         });
         expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
         expect(machineRpcWithServerScopeMock.mock.calls.some(([request]) => request.method.startsWith('spawn'))).toBe(false);
+    });
+
+    it.each([false, true])('does not unarchive or start an archived pending-input consumer (active: %s)', async (active) => {
+        storage.setState({
+            sessions: { 'session-1': createSessionFixture({ active, archivedAt: 123 }) },
+        });
+        apiRequestMock.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: null } }));
+        machineRpcWithServerScopeMock.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+        const markSessionResumingSpy = vi.spyOn(storage.getState(), 'markSessionResuming');
+        try {
+            const { ensureSessionRuntimeForPendingInput } = await sessionsModulePromise;
+            const result = await ensureSessionRuntimeForPendingInput({
+                sessionId: 'session-1',
+                machineId: 'machine-1',
+                directory: '/tmp',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            });
+
+            expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+            expect(storage.getState().sessions['session-1'].archivedAt).toBe(123);
+            expect(apiRequestMock).not.toHaveBeenCalled();
+            expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+            expect(markSessionResumingSpy).not.toHaveBeenCalled();
+        } finally {
+            markSessionResumingSpy.mockRestore();
+        }
     });
 
     it('restores an archived session before issuing its resume spawn', async () => {

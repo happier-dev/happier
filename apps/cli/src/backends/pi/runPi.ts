@@ -6,7 +6,6 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
 import { buildPiToolsForPermissionMode } from '@/backends/pi/acp/backend';
-import { PiTerminalDisplay } from '@/backends/pi/ui/PiTerminalDisplay';
 import { resolvePiToolsDeliveryAvailability } from '@/backends/pi/shellBridge/resolvePiShellBridgeAvailability';
 
 export async function runPi(opts: StandardAcpProviderRunOptions & {
@@ -24,9 +23,9 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     resolveToolsDeliveryAvailability: resolvePiToolsDeliveryAvailability,
     deliversSystemPromptAtSpawn: true,
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: PiTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/pi/ui/PiTerminalDisplay')).PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode)?.join(',') ?? 'native',
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, processEnv, toolDelivery, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) =>
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) =>
       createPiAcpRuntime({
         directory,
         machineId,
@@ -37,7 +36,6 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
         onThinkingChange: setThinking,
         getSessionOpenAbortSignal: getAbortSignal,
         memoryRecallGuidanceEnabled,
-        fallbackToolDelivery: toolDelivery,
         getPermissionMode,
         processEnv,
         pendingQueueDrainMaxPopPerWake,

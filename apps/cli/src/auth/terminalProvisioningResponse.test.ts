@@ -3,6 +3,8 @@ import tweetnacl from 'tweetnacl';
 import {
   sealBoxBundle,
   sealTerminalProvisioningV3Payload,
+  sealTerminalProvisioningV2TokenOnlyPayload,
+  sealTerminalProvisioningV3TokenOnlyPayload,
 } from '@happier-dev/protocol';
 
 import {
@@ -90,6 +92,39 @@ describe('openTerminalProvisioningResponse', () => {
       requirement: null,
       nowMs: 2_000,
     })).toBeNull();
+  });
+
+  it('opens token-only responses while preserving the v3 authentication requirement', () => {
+    const input = {
+      terminalSecretKey,
+      terminalPublicKey,
+      pairing,
+      requirement: null,
+      nowMs: 2_000,
+    } as const;
+    const v3Payload = sealTerminalProvisioningV3TokenOnlyPayload({
+      terminalEphemeralPublicKey: terminalPublicKey,
+      pairingSecret: pairing.secret,
+      createdAtMs: pairing.createdAtMs,
+      expiresAtMs: pairing.expiresAtMs,
+      randomBytes: deterministicRandomBytes,
+    });
+    expect(openTerminalProvisioningResponse({ ...input, payload: v3Payload }))
+      .toEqual({ type: 'tokenOnly', authenticated: true });
+    expect(openTerminalProvisioningResponse({ ...input, payload: v3Payload, pairing: null })).toBeNull();
+    expect(openTerminalProvisioningResponse({
+      ...input,
+      payload: v3Payload,
+      pairing: { ...pairing, secret: new Uint8Array(32).fill(12) },
+    })).toBeNull();
+
+    const v2Payload = sealTerminalProvisioningV2TokenOnlyPayload({
+      recipientPublicKey: terminalPublicKey,
+      randomBytes: deterministicRandomBytes,
+    });
+    expect(openTerminalProvisioningResponse({ ...input, payload: v2Payload }))
+      .toEqual({ type: 'tokenOnly', authenticated: false });
+    expect(openTerminalProvisioningResponse({ ...input, payload: v2Payload, requirement: 'v3' })).toBeNull();
   });
 
   it('continues to accept legacy v2 and v1 responses during the expansion window', () => {

@@ -180,6 +180,26 @@ describe('SessionItem agent-activity label', () => {
         standardCleanup();
     });
 
+    it.each([[false, 'working'], [true, 'working'], [false, 'unread'], [true, 'unread']] as const)('shows unread alongside background work with minimal %s and main indicator %s', async (minimal, indicator) => {
+        const { SessionItem } = await import('./SessionItem');
+        const props: SessionItemProps = { session: createSession(), compact: minimal, compactMinimal: minimal, variant: 'no-path' };
+        const screen = await renderScreen(<SessionItem {...props} rowModel={createSessionItemTestRowModel(props, {
+            status: { ...workingStatus, state: 'background_active', statusText: '1 task running in background' },
+            hasUnreadMessages: true,
+            attention: { listState: indicator === 'working' ? 'thinking' : 'unread', rowState: indicator },
+            presentation: { attentionIndicator: indicator, titleTone: 'emphasized', secondaryLine: minimal ? 'none' : 'status' },
+        })} />);
+        const suffix = minimal ? 'trailing' : 'secondary';
+        if (indicator === 'working') {
+            expect(screen.findByTestId(`session-row-attention-indicator-spinner-${SESSION_ID}-${suffix}`)).toBeTruthy();
+            expect(screen.findByTestId(`session-row-unread-indicator-${SESSION_ID}-${suffix}`)).toBeNull();
+        } else {
+            expect(screen.findByTestId(`session-row-attention-indicator-dot-${SESSION_ID}-${suffix}`)).toBeTruthy();
+        }
+        expect(screen.findByTestId(`session-row-attention-indicator-${SESSION_ID}-${suffix}`)?.props.accessibilityLabel)
+            .toBe('1 task running in background, settingsNotifications.badges.unreadTitle');
+    });
+
     it('paints the sentence the row model handed it', async () => {
         const screen = await renderRow('3 subagents working');
 

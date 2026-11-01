@@ -1,24 +1,25 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const E2eScenarioTierSchema = z.enum(['smoke', 'extended']);
-export const E2eProviderLaneScopeSchema = z.enum(['acp-only', 'declared-scenarios']);
-export const E2eProviderDefaultRuntimePathSchema = z.enum(['provider-lane', 'appServer']);
-export const E2eProviderAppServerCoverageSchema = z.enum(['excluded', 'not-applicable', 'capability-contract']);
-export const E2eProviderAppServerCapabilitySurfaceSchema = z.enum(['modes', 'models', 'speed', 'rollback']);
+export const E2eScenarioTierSchema = lazySchema(() => z.enum(['smoke', 'extended']));
+export const E2eProviderLaneScopeSchema = lazySchema(() => z.enum(['acp-only', 'declared-scenarios']));
+export const E2eProviderDefaultRuntimePathSchema = lazySchema(() => z.enum(['provider-lane', 'appServer']));
+export const E2eProviderAppServerCoverageSchema = lazySchema(() => z.enum(['excluded', 'not-applicable', 'capability-contract']));
+export const E2eProviderAppServerCapabilitySurfaceSchema = lazySchema(() => z.enum(['modes', 'models', 'speed', 'rollback']));
 
-const TierListsSchema = z.object({
+const TierListsSchema = lazySchema(() => z.object({
   smoke: z.array(z.string().min(1)),
   extended: z.array(z.string().min(1)),
-});
+}));
 
-const CoverageExpectationSchema = z.object({
+const CoverageExpectationSchema = lazySchema(() => z.object({
   providerLaneScope: E2eProviderLaneScopeSchema,
   defaultRuntimePath: E2eProviderDefaultRuntimePathSchema,
   appServerCoverage: E2eProviderAppServerCoverageSchema,
   appServerCapabilitySurfaces: z.array(E2eProviderAppServerCapabilitySurfaceSchema).optional(),
-});
+}));
 
-export const E2eCliProviderScenarioRegistryV1Schema = z.object({
+export const E2eCliProviderScenarioRegistryV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   tiers: TierListsSchema,
   coverageExpectation: CoverageExpectationSchema.optional(),
@@ -37,6 +38,6 @@ export const E2eCliProviderScenarioRegistryV1Schema = z.object({
     })
     .partial()
     .optional(),
-});
+}));
 
 export type E2eCliProviderScenarioRegistryV1 = z.infer<typeof E2eCliProviderScenarioRegistryV1Schema>;

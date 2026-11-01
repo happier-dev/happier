@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
-export const CodexAppServerPermissionsProfileSchema = z.record(z.string(), z.unknown());
+export const CodexAppServerPermissionsProfileSchema = lazySchema(() => z.record(z.string(), z.unknown()));
 export type CodexAppServerPermissionsProfile = z.infer<typeof CodexAppServerPermissionsProfileSchema>;
 
-export const CodexAppServerTurnPermissionFieldsSchema = z
+export const CodexAppServerTurnPermissionFieldsSchema = lazySchema(() => z
   .object({
     permissions: CodexAppServerPermissionsProfileSchema.optional(),
     sandboxPolicy: z.unknown().optional(),
@@ -20,5 +21,5 @@ export const CodexAppServerTurnPermissionFieldsSchema = z
         path: ['sandboxPolicy'],
       });
     }
-  });
+  }));
 export type CodexAppServerTurnPermissionFields = z.infer<typeof CodexAppServerTurnPermissionFieldsSchema>;

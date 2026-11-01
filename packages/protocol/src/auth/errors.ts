@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const AUTH_ERROR_CODES = [
   // Provider / policy
@@ -28,5 +29,5 @@ export const AUTH_ERROR_CODES = [
   'forbidden',
 ] as const;
 
-export const AuthErrorCodeSchema = z.enum(AUTH_ERROR_CODES);
+export const AuthErrorCodeSchema = lazySchema(() => z.enum(AUTH_ERROR_CODES));
 export type AuthErrorCode = z.infer<typeof AuthErrorCodeSchema>;

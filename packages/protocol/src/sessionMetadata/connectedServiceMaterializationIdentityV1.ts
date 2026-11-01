@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY =
   'connectedServiceMaterializationIdentityV1' as const;
@@ -47,7 +48,7 @@ export function createConnectedServiceMaterializationIdentityV1Schema(zod: typeo
 }
 
 export const ConnectedServiceMaterializationIdentityV1Schema =
-  createConnectedServiceMaterializationIdentityV1Schema(z);
+  lazySchema(() => createConnectedServiceMaterializationIdentityV1Schema(z));
 export type ConnectedServiceMaterializationIdentityV1 =
   z.infer<typeof ConnectedServiceMaterializationIdentityV1Schema>;
 

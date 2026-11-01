@@ -5,6 +5,7 @@ import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 
 import {
   buildServiceCommandEnv,
+  applyServicePlan,
   isBenignServiceAbsenceFailure,
 } from '@happier-dev/cli-common/service';
 
@@ -181,6 +182,7 @@ export async function applyDaemonServiceInstallPlan(
   if (options.runCommands !== false) {
     assertDaemonServiceCommandsAvailable(plan.commands);
   }
+  await applyServicePlan({ writes: [], copies: plan.copies, commands: [] }, { runCommands: false });
   for (const file of plan.files) {
     await mkdir(dirname(file.path), { recursive: true });
     await writeFile(file.path, file.content, 'utf-8');

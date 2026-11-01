@@ -2,14 +2,11 @@
  * Cross-platform blur overlay for `SlideTransitionFrame` layers.
  *
  * Web → CSS `filter: blur(${px}px)` driven via `useAnimatedStyle`.
- * Native → `expo-blur` `BlurView`.intensity driven via `useAnimatedProps`.
+ * iOS → `expo-blur` `BlurView`.intensity driven via `useAnimatedProps`.
+ * Android → no blur overlay (the slide still translates/fades): no native blur is
+ * safe to mount there; see `isNativeBlurAvailable`.
  *
- * Lazy-loads `expo-blur` only on native (web has no equivalent runtime cost).
- *
- * Per Phase 1A.0 spike conclusions: a single cross-platform implementation is
- * sufficient — the visual approximates the reference on both platforms (and on
- * Android with `experimentalBlurMethod: 'dimezisBlurView'`). If a per-platform
- * fallback is ever needed, the caller can pass `blur={false}` for that platform.
+ * Lazy-loads `expo-blur` only where native blur is available.
  */
 
 import * as React from 'react';
@@ -20,11 +17,12 @@ import Animated, {
     type SharedValue,
 } from 'react-native-reanimated';
 
+import { isNativeBlurAvailable } from '@/components/ui/glass/blurMaterial';
+
 import { resolveSlideLayerStyle, type SlideLayerRole } from './resolveSlideLayerStyle';
 
 type AnimatedBlurViewProps = Readonly<{
     intensity?: number;
-    experimentalBlurMethod?: string;
     style?: StyleProp<ViewStyle>;
     animatedProps?: object;
     testID?: string;
@@ -34,7 +32,7 @@ let cachedNativeBlurComponent: React.ComponentType<AnimatedBlurViewProps> | null
 let pendingNativeBlurComponent: Promise<React.ComponentType<AnimatedBlurViewProps> | null> | null = null;
 
 function loadAnimatedNativeBlurComponent(): Promise<React.ComponentType<AnimatedBlurViewProps> | null> {
-    if (Platform.OS === 'web') return Promise.resolve(null);
+    if (!isNativeBlurAvailable()) return Promise.resolve(null);
     if (cachedNativeBlurComponent) return Promise.resolve(cachedNativeBlurComponent);
     pendingNativeBlurComponent ??= import('expo-blur')
         .then((expoBlur) => {
@@ -64,6 +62,9 @@ const blurOverlayStyle: ViewStyle = {
 export function SlideTransitionBlurLayer(props: SlideTransitionBlurLayerProps): React.ReactElement | null {
     if (Platform.OS === 'web') {
         return <SlideTransitionBlurLayerWeb {...props} />;
+    }
+    if (!isNativeBlurAvailable()) {
+        return null;
     }
     return <SlideTransitionBlurLayerNative {...props} />;
 }
@@ -144,7 +145,6 @@ function SlideTransitionBlurLayerNative(props: SlideTransitionBlurLayerProps): R
     return (
         <AnimatedBlurView
             animatedProps={animatedProps as object}
-            experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
             style={blurOverlayStyle}
             testID={props.testID}
         />

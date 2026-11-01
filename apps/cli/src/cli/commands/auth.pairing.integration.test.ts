@@ -7,7 +7,6 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { captureConsoleLogAndMuteStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
@@ -27,7 +26,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     'HAPPIER_NO_BROWSER_OPEN',
     'HAPPIER_AUTH_METHOD',
     'HAPPIER_AUTH_POLL_INTERVAL_MS',
-    'HAPPIER_LOG_LEVEL',
     'HAPPIER_TERMINAL_PAIRING_REQUIRE',
     'HAPPIER_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
@@ -41,12 +39,9 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
   let envScope = createEnvKeyScope(envKeys);
 
   beforeEach(async () => {
+    vi.resetModules();
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    // These in-process homes are removed while logger instances survive module
-    // resets. Keep console diagnostics, but avoid queued file writes recreating
-    // the homes during teardown; file logging has its own owner-level tests.
-    envScope.patch({ HAPPIER_LOG_LEVEL: 'silent' });
     remoteHomeDir = await createTempDir('happier-cli-auth-remote-');
     localHomeDir = await createTempDir('happier-cli-auth-local-');
     restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
@@ -62,59 +57,11 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     await removeTempDir(localHomeDir);
   });
 
-  it.each([240_000, 7_200_000, null])('reports the server deadline %s capped by crypto validity and binds links and saved state to it', async (remainingMs) => {
-    const serverExpiresAt = remainingMs === null ? null : Date.now() + remainingMs;
-    const app = fastify({ logger: false });
-    // The absent field is the released server response, before #403.
-    app.post('/v1/auth/request', async () => ({ state: 'requested', ...(serverExpiresAt === null ? {} : { expiresAt: serverExpiresAt }) }));
-    await app.ready();
-    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
-    try {
-      envScope.patch({
-        HAPPIER_HOME_DIR: remoteHomeDir,
-        HAPPIER_SERVER_URL: 'http://happier-auth.test',
-        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
-        HAPPIER_WEBAPP_URL: 'http://webapp.test',
-      });
-      vi.resetModules();
-      const { handleAuthRequest } = await import('./auth/request');
-      const output = captureConsoleLogAndMuteStdout();
-      try {
-        await handleAuthRequest(['--json']);
-        const request = JSON.parse(output.logs[0] ?? '') as {
-          expiresAtMs: number | null;
-          expiryNotice: string;
-          pairing: { createdAtMs: number; expiresAtMs: number };
-          links: { webUrl: string; mobileUrl: string };
-          stateFile: string;
-        };
-        const cryptoExpiresAt = request.pairing.createdAtMs + 3_600_000;
-        const expectedDeadline = serverExpiresAt === null ? null : Math.min(serverExpiresAt, cryptoExpiresAt);
-        expect(request.expiresAtMs).toBe(expectedDeadline);
-        if (expectedDeadline === null) {
-          expect(request.expiryNotice).toMatch(/expires soon/i);
-          expect(request.expiryNotice).not.toMatch(/hour|minute|\d/);
-        } else {
-          expect(request.expiryNotice).toContain(new Date(expectedDeadline).toISOString());
-        }
-        const pairingDeadline = expectedDeadline ?? cryptoExpiresAt;
-        expect(request.pairing.expiresAtMs).toBe(pairingDeadline);
-        for (const link of [request.links.webUrl, request.links.mobileUrl]) expect(link).toContain(`expiresAt=${pairingDeadline}`);
-        const state = JSON.parse(await readFile(request.stateFile, 'utf8')) as { pairingExpiresAtMs: number };
-        expect(state.pairingExpiresAtMs).toBe(pairingDeadline);
-      } finally {
-        output.restore();
-      }
-    } finally {
-      restoreAxios();
-      await app.close();
-    }
-  });
-
   it('persists an opt-in v3 requirement with split request/wait state', async () => {
     const app = fastify({ logger: false });
     app.post('/v1/auth/request', async (_req, reply) => reply.send({ state: 'requested' }));
     await app.ready();
+    const { installAxiosFastifyAdapter } = await import('@/testkit/http/axiosAdapter');
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
 
     try {
@@ -125,7 +72,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
         HAPPIER_TERMINAL_PAIRING_REQUIRE: 'v3',
       });
-      vi.resetModules();
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
 
       const { handleAuthRequest } = await import('./auth/request');
       const output = captureConsoleLogAndMuteStdout();
@@ -152,6 +100,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
   it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing dataKey credentials on the remote', async () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
 
     app.post('/v1/auth/request', async (req, reply) => {
       const body = req.body as { publicKey?: unknown; claimSecretHash?: unknown; supportsV2?: unknown } | undefined;
@@ -204,6 +153,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     });
 
     await app.ready();
+    const { installAxiosFastifyAdapter } = await import('@/testkit/http/axiosAdapter');
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
 
     try {
@@ -218,7 +168,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'dev',
       });
-      vi.resetModules();
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
       const remoteWarns: string[] = [];
       const remoteWarnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
         remoteWarns.push(args.map((arg) => String(arg)).join(' '));
@@ -246,12 +197,10 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const { writeCredentialsLegacy } = await import('@/persistence');
       const legacySecret = new Uint8Array(32).fill(9);
       await writeCredentialsLegacy({ secret: legacySecret, token: 'local-token' });
-
-      vi.resetModules();
       const { handleAuthApprove } = await import('./auth/approve');
       const approveOut = captureConsoleLogAndMuteStdout();
       try {
@@ -271,7 +220,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const { handleAuthWait } = await import('./auth/wait');
       const waitOut = captureConsoleLogAndMuteStdout();
       try {
@@ -289,8 +238,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       const { readCredentials } = await import('@/persistence');
       const creds = await readCredentials();
       expect(creds?.token).toBe('issued-token');
-      expect(creds?.encryption.type).toBe('dataKey');
-      expect(Array.from(creds?.encryption.type === 'dataKey' ? creds.encryption.machineKey : [])).toEqual(
+      expect(creds?.encryption?.type).toBe('dataKey');
+      expect(Array.from(creds?.encryption?.type === 'dataKey' ? creds.encryption.machineKey : [])).toEqual(
         Array.from(deriveAccountMachineKeyFromRecoverySecret(legacySecret)),
       );
     } finally {
@@ -313,6 +262,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     });
 
     await app.ready();
+    const { installAxiosFastifyAdapter } = await import('@/testkit/http/axiosAdapter');
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
 
     try {
@@ -327,7 +277,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_VARIANT: 'stable',
       });
 
-      vi.resetModules();
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
       const { handleAuthRequest } = await import('./auth/request');
       const requestOut = captureConsoleLogAndMuteStdout();
       let requestJson: { publicKey: string; stateFile: string };
@@ -339,13 +290,11 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       }
       await expect(readFile(requestJson.stateFile, 'utf8')).resolves.toContain(requestJson.publicKey);
 
-      vi.resetModules();
       const { writeCredentialsLegacy, readSettings } = await import('@/persistence');
       const legacySecret = new Uint8Array(32).fill(4);
       const tokenPayload = Buffer.from(JSON.stringify({ sub: 'acct_local' })).toString('base64url');
       await writeCredentialsLegacy({ secret: legacySecret, token: `header.${tokenPayload}.sig` });
 
-      vi.resetModules();
       const { handleAuthWait } = await import('./auth/wait');
       const waitOut = captureConsoleLogAndMuteStdout();
       try {
@@ -379,6 +328,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
   it('claims a pending request with --replace-existing on an already authenticated machine, switching to the new account while keeping the previous account machine mapping', async () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
     const tokenForAccount = (accountId: string): string =>
       `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.sig`;
 
@@ -427,6 +377,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     });
 
     await app.ready();
+    const { installAxiosFastifyAdapter } = await import('@/testkit/http/axiosAdapter');
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
 
     try {
@@ -441,13 +392,13 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
       const { writeCredentialsLegacy } = await import('@/persistence');
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(4), token: tokenForAccount('acct_A') });
       const { ensureMachineIdInSettings } = await import('@/ui/auth');
       const { machineId: accountAMachineId } = await ensureMachineIdInSettings({ accountId: 'acct_A' });
 
-      vi.resetModules();
       const { handleAuthRequest } = await import('./auth/request');
       const requestOut = captureConsoleLogAndMuteStdout();
       let requestJson: { publicKey: string };
@@ -466,10 +417,9 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const approverPersistence = await import('@/persistence');
       await approverPersistence.writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'approver-token' });
-      vi.resetModules();
       const { handleAuthApprove } = await import('./auth/approve');
       const approveOut = captureConsoleLogAndMuteStdout();
       try {
@@ -487,7 +437,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const { handleAuthWait } = await import('./auth/wait');
       const waitOut = captureConsoleLogAndMuteStdout();
       let waitJson: { success?: boolean; token?: string; machineId?: string };

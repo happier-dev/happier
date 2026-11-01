@@ -40,6 +40,17 @@ it('retains Update-all until the local CLI settles after its view closes and ano
     storage.setState({ profileScope: accountA });
     let updateListener: SystemTaskBridgeListenerSet | undefined;
     let updateStarts = 0;
+    let statusListener: SystemTaskBridgeListenerSet | undefined;
+    let statusTaskId = '';
+    let delayStatus = false;
+    const statusData = {
+        acquisition: { command: '/managed/happier', provenance: 'managed', version: '0.2.12' },
+        server: { serverUrl, publicServerUrl: serverUrl, localServerUrl: null, comparableKey: null },
+        auth: { credentialState: 'valid', validatedAccountId: accountA.accountId, accountId: accountA.accountId, machineId: 'machine-local-1' },
+        service: { installed: true, running: true, autostart: 'at-login', targetMode: 'default-following' },
+        runtimeConvergence: { controlReachable: true, serviceOwnsRunningDaemon: true, machineIdMatches: true, cliVersionMatches: true },
+        cli: { update: { currentVersion: '0.2.12', latestVersion: '0.2.14', updateAvailable: true, managed: true }, choice: null },
+    };
     runnerRef.current = createSystemTaskRunner({ bridge: {
         async start(spec) {
             if (spec.kind === 'cli.update.v1') { updateStarts++; return 'batch-local-update'; }
@@ -47,16 +58,10 @@ it('retains Update-all until the local CLI settles after its view closes and ano
         },
         async subscribe(taskId, listeners) {
             if (taskId === 'batch-local-update') updateListener = listeners;
+            else if (delayStatus) { statusListener = listeners; statusTaskId = taskId; }
             else queueMicrotask(() => listeners.onResult({
                 protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, taskId, ok: true,
-                data: {
-                    acquisition: { command: '/managed/happier', provenance: 'managed', version: '0.2.12' },
-                    server: { serverUrl, publicServerUrl: serverUrl, localServerUrl: null, comparableKey: null },
-                    auth: { credentialState: 'valid', validatedAccountId: accountA.accountId, accountId: accountA.accountId, machineId: 'machine-local-1' },
-                    service: { installed: true, running: true, autostart: 'at-login', targetMode: 'default-following' },
-                    runtimeConvergence: { controlReachable: true, serviceOwnsRunningDaemon: true, machineIdMatches: true, cliVersionMatches: true },
-                    cli: { update: { currentVersion: '0.2.12', latestVersion: '0.2.14', updateAvailable: true, managed: true }, choice: null },
-                },
+                data: statusData,
             }));
             return () => {};
         },
@@ -81,19 +86,30 @@ it('retains Update-all until the local CLI settles after its view closes and ano
     expect(laterObserver.getCurrent().cli.item?.state).toBe('running');
     expect(laterObserver.getCurrent().originalBatch.batch).toEqual({ done: 0, total: 1, stopping: false });
     await laterObserver.unmount();
-    const reopened = await renderHook(() => useUpdateBatch(accountA, [item], () => queuedRun()));
+    const reopened = await renderHook(() => ({ ...useUpdateBatch(accountA, [item], () => queuedRun()), cli: useThisComputerCliUpdate() }));
     expect(reopened.getCurrent().batch).toEqual({ done: 0, total: 1, stopping: false });
     let duplicateExecutions = 0;
     await act(async () => {
         await runUpdateBatch(accountA, [item], async () => { duplicateExecutions++; await queuedRun(); });
     });
     expect(duplicateExecutions).toBe(0);
+    delayStatus = true;
     await act(async () => {
         updateListener?.onResult({ protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, taskId: 'batch-local-update', ok: true, data: {} });
     });
-    await act(async () => { await batchRun; });
+    const duringRefresh = reopened.getCurrent().cli.item?.state;
+    const batchDuringRefresh = readUpdateBatch(accountA);
+    await act(async () => {
+        statusListener?.onResult({ protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, taskId: statusTaskId, ok: true,
+            data: { ...statusData, acquisition: { ...statusData.acquisition, version: '0.2.14' },
+                cli: { ...statusData.cli, update: { ...statusData.cli.update, currentVersion: '0.2.14', updateAvailable: false } } } });
+        await batchRun;
+    });
+    expect(duringRefresh).toBe('running');
+    expect(batchDuringRefresh).toEqual({ done: 0, total: 1, stopping: false });
 
     expect(readUpdateBatch(accountA)).toBeNull();
+    expect(reopened.getCurrent().cli.item).toMatchObject({ currentVersion: '0.2.14', action: { kind: 'none' } });
     expect(updateStarts).toBe(1);
     expect(readUnseenUpdateCompletions(accountB).size).toBe(0);
     expect(readUnseenUpdateCompletions(accountA).get('machine-local-1:happier-cli')).toBe('done');

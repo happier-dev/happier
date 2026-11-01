@@ -320,6 +320,36 @@ describe('createCoalescedWorkflowActivityPublisher', () => {
     scheduler.dispose();
   });
 
+  it('rearms a retry when the timer fires before its fractional monotonic deadline', async () => {
+    const monotonicNow = performance.now.bind(performance);
+    let clockReads = 0;
+    // Real clock reads consume submillisecond time; native timers truncate fractional delays.
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonicNow() + clockReads++ / 1000);
+    let available = false;
+    const records: SessionWorkflowRunSnapshotV1[] = [];
+    const publisher = createWorkflowActivityPublisher({
+      backendId: 'claude',
+      commitRecord: async (snapshot) => {
+        records.push(snapshot);
+        if (!available) throw createHttpStatusError(500, 'Unavailable');
+      },
+      writeHeadlines: () => {},
+    });
+    const scheduler = createCoalescedWorkflowActivityPublisher({
+      publisher, getSnapshots: () => new Map([['a', runSnapshot('a')]]),
+    });
+    try {
+      scheduler.notify({ changedRunIds: ['a'], startedRunIds: ['a'], terminalRunIds: [], statusChangedRunIds: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      available = true;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(records).toHaveLength(2);
+    } finally {
+      scheduler.dispose();
+      clock.mockRestore();
+    }
+  });
+
   it('flush waits for an in-flight write and drains new terminal observations arriving during it', async () => {
     let releaseFirstWrite!: () => void;
     const firstWrite = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });

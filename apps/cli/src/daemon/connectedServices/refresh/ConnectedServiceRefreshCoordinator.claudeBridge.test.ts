@@ -33,10 +33,10 @@ import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { computeClaudeCodeCredentialSafeTokenFingerprint } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
 
-const credentials: Credentials = {
+const credentials = {
   token: 'happy-token',
   encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-};
+} satisfies Credentials;
 
 function legacySecret(): Uint8Array {
   if (credentials.encryption.type !== 'legacy') throw new Error('fixture');

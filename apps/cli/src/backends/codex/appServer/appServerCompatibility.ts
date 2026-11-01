@@ -105,13 +105,6 @@ export function isCodexAppServerInvalidRequestForMethodError(error: unknown, met
     return readMessage(error).includes(method);
 }
 
-export function isCodexAppServerInvalidRequestMapExpectedStringError(error: unknown): boolean {
-    if (readCode(error) !== -32600) return false;
-    const message = readMessage(error);
-    return /invalid\s+request/i.test(message)
-        && /invalid\s+type:\s*map,\s*expected\s+a\s*string/i.test(message);
-}
-
 export function isCodexAppServerExperimentalApiUnavailableError(error: unknown): boolean {
     const message = readMessage(error);
     if (!/experimental/i.test(message)) return false;

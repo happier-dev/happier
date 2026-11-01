@@ -51,9 +51,12 @@ vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => true,
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
-}));
+vi.mock('@/auth/context/AuthContext', () => {
+  // AuthContext retains credentials until the account changes; an object per
+  // render spuriously retires and reattaches the real quota subscription.
+  const credentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') };
+  return { useAuth: () => ({ credentials }) };
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => !disabledFeatureIds.has(featureId),

@@ -7,7 +7,7 @@ import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 export type HappyActionMode = 'drop' | 'rerun_latest';
 
-export function useHappyAction(action: () => Promise<void>, options?: Readonly<{ mode?: HappyActionMode }>) {
+export function useHappyAction<TResult = void>(action: () => Promise<TResult>, options?: Readonly<{ mode?: HappyActionMode }>) {
     const [loading, setLoading] = React.useState(false);
     const loadingRef = React.useRef(false);
     const pendingRerunRef = React.useRef(false);
@@ -29,12 +29,11 @@ export function useHappyAction(action: () => Promise<void>, options?: Readonly<{
         }
         loadingRef.current = true;
         setLoadingSafe(true);
-        (async () => {
+        return (async () => {
             try {
                 while (true) {
                     try {
-                        await action();
-                        break;
+                        return await action();
                     } catch (e) {
                         if (e instanceof HappyError) {
                             // if (e.canTryAgain) {

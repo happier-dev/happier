@@ -11,6 +11,7 @@ import {
   SyncedSessionAuthoringTerminalV1Schema,
   SyncedSessionAuthoringConnectedServicesV1Schema,
 } from './fieldCatalog.js';
+import { lazySchema } from '../lazySchema.js';
 
 export type {
   SessionAuthoringContextKind,
@@ -59,9 +60,9 @@ export const SYNCED_SESSION_AUTHORING_FIELD_IDS_V1 = Object.freeze(
   SESSION_AUTHORING_FIELD_ARTIFACTS.syncedFieldIds,
 );
 export type SyncedSessionAuthoringFieldIdV1 = (typeof SYNCED_SESSION_AUTHORING_FIELD_IDS_V1)[number];
-export const SyncedSessionAuthoringFieldIdV1Schema = z.enum(
+export const SyncedSessionAuthoringFieldIdV1Schema = lazySchema(() => z.enum(
   SYNCED_SESSION_AUTHORING_FIELD_IDS_V1 as [SyncedSessionAuthoringFieldIdV1, ...SyncedSessionAuthoringFieldIdV1[]],
-);
+));
 export const SyncedSessionAuthoringValueV1Schema = SESSION_AUTHORING_FIELD_ARTIFACTS.syncedValueSchema;
 export type SyncedSessionAuthoringValueV1 = typeof SyncedSessionAuthoringValueV1Schema['_output'];
 export type SessionAuthoringValueV1 = typeof SessionAuthoringValueV1Schema['_output'];

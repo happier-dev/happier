@@ -1,11 +1,14 @@
 import * as Sentry from "@sentry/node";
 import { createRequire } from "node:module";
-import type { Integration } from "@sentry/core";
-import type { Log } from "@sentry/core";
+import type { Log } from "@sentry/node";
 
 import { parseOptionalBooleanEnv } from "@/config/env";
+import { warn } from "@/utils/logging/log";
+import { isBunRuntime } from "@/utils/runtime/isBunRuntime";
 import { redactSentryEvent, redactSentryLog } from "./sentryLogRedaction";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
+
+type Integration = Parameters<typeof Sentry.addIntegration>[0];
 
 type ServerSentryConfig = {
     dsn: string;
@@ -23,35 +26,17 @@ let cachedConfig: ServerSentryConfig | null = null;
 
 function tryLoadNodeProfilingIntegration(): null | (() => Integration) {
     try {
+        // The V8 native profiler aborts Bun/JSC before JavaScript can catch the load error.
+        if (isBunRuntime()) throw new Error("Native Node profiling is unavailable under Bun");
         const req = createRequire(import.meta.url);
-        const mod: any = req("@sentry/profiling-node");
+        const mod: typeof import("@sentry/profiling-node") = req("@sentry/profiling-node");
         const fn = mod?.nodeProfilingIntegration;
-        return typeof fn === "function" ? (fn as () => Integration) : null;
+        if (typeof fn !== "function") throw new Error("Profiling integration is unavailable");
+        return fn;
     } catch {
+        warn({ module: "sentry", event: "profiling-unavailable" }, "Sentry profiling was requested but its native integration could not be loaded; error capture remains enabled.");
         return null;
     }
-}
-
-type IntegrationSetupOnce = Exclude<Integration["setupOnce"], undefined>;
-
-function createLazyNodeProfilingIntegration(): Integration {
-    let resolvedIntegration: Integration | null | undefined = undefined;
-    const setupOnce: IntegrationSetupOnce = (...args) => {
-        if (resolvedIntegration === undefined) {
-            const factory = tryLoadNodeProfilingIntegration();
-            resolvedIntegration = factory ? factory() : null;
-        }
-
-        const resolvedSetupOnce = resolvedIntegration?.setupOnce;
-        if (resolvedSetupOnce) {
-            (resolvedSetupOnce as IntegrationSetupOnce)(...args);
-        }
-    };
-
-    return {
-        name: "profiling",
-        setupOnce,
-    };
 }
 
 function parseRateEnv(raw: string | undefined, defaultValue: number): number {
@@ -172,7 +157,8 @@ export function initializeServerSentry(env: NodeJS.ProcessEnv): void {
                       }
 
                       if (resolved.profileSessionSampleRate > 0) {
-                          next.push(createLazyNodeProfilingIntegration());
+                          const profilingFactory = tryLoadNodeProfilingIntegration();
+                          if (profilingFactory) next.push(profilingFactory());
                       }
 
                       if (resolved.enableLogs) {

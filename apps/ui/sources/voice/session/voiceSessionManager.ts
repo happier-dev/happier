@@ -52,8 +52,12 @@ export function createVoiceSessionManager(deps: Readonly<{
     // Give UI immediate feedback even if adapter takes time to transition.
     ensureAdapterSnapshotFallback(adapterId, sessionId);
 
-    await adapter.toggle({ sessionId });
-    refreshFromAdapter(adapter);
+    try {
+      await adapter.toggle({ sessionId });
+    } finally {
+      // A rejected toggle must not leave the optimistic 'connecting' placeholder behind.
+      refreshFromAdapter(adapter);
+    }
   };
 
   const stop = async (sessionId: string) => {

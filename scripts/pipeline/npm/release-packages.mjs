@@ -241,6 +241,36 @@ function readPackageVersion(repoRoot, pkgDir) {
   return version;
 }
 
+function assertBundledWindowsServiceLauncher(repoRoot, pkgDir) {
+  const launcherPath = withinRepo(repoRoot, path.join(
+    pkgDir,
+    'node_modules',
+    '@happier-dev',
+    'cli-common',
+    'native',
+    'windows',
+    'bin',
+    'windows-x64',
+    'happier-service-launcher.exe',
+  ));
+  if (!fs.existsSync(launcherPath) || !fs.statSync(launcherPath).isFile()) {
+    fail(`Windows service launcher is missing from the bundled npm package: ${path.relative(repoRoot, launcherPath)}`);
+  }
+  const bytes = fs.readFileSync(launcherPath);
+  const peOffset = bytes.length >= 0x40 ? bytes.readUInt32LE(0x3c) : -1;
+  if (
+    peOffset < 0
+    || peOffset + 96 > bytes.length
+    || bytes.readUInt16LE(0) !== 0x5a4d
+    || bytes.readUInt32LE(peOffset) !== 0x00004550
+    || bytes.readUInt16LE(peOffset + 4) !== 0x8664
+    || bytes.readUInt16LE(peOffset + 24 + 68) !== 2
+    || !bytes.includes(Buffer.from('HAPPIER_SERVICE_LAUNCHER_V1', 'ascii'))
+  ) {
+    fail(`Windows service launcher in the bundled npm package is not the expected x64 GUI PE: ${path.relative(repoRoot, launcherPath)}`);
+  }
+}
+
 /**
  * @param {'cli' | 'stack' | 'server'} packageKey
  */
@@ -386,6 +416,9 @@ async function main() {
         }
 
         pkg.prepare();
+        if (!dryRun && (pkg.key === 'cli' || pkg.key === 'stack')) {
+          assertBundledWindowsServiceLauncher(repoRoot, pkg.dir);
+        }
 
         const outName = `${pkg.key}-${nextVersion}.tgz`;
         const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);

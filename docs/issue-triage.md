@@ -17,7 +17,7 @@ Happier separates issue evidence transport, triage routing, deep diagnosis, GitH
 | Independent Happier session creation and monitoring | `.agents/skills/happier-session-control` |
 | Approved source correction | `.agents/skills/happier-implement` |
 | Correction availability across source, dev, preview, and stable | release workflows through `scripts/pipeline/github/reconcile-issue-stage.mjs` |
-| Whose response or action is currently required | `.github/workflows/issue-needs-handoff.yml` through `scripts/pipeline/github/reconcile-issue-needs.mjs` |
+| Whose response or action is currently required on an issue or PR | `.github/workflows/issue-needs-handoff.yml` through `scripts/pipeline/github/reconcile-issue-needs.mjs` |
 
 The maintainer CLI deliberately does not own an `issue triage` reviewer, prompt generator, classifier, or coding-agent assignment command. Skills are the diagnosis doctrine; maintainer tooling is bounded evidence and reproduction transport.
 
@@ -191,6 +191,39 @@ Base the public response on the reporter's stated channel and the relevant compo
 Do not ask a preview or stable reporter to retest when the issue merely reaches dev unless they explicitly want to test a different channel. Do not promise `soon` or a date without schedule evidence. Prefer the simple wording `will reach preview on the next preview release` or its stable equivalent.
 
 Keep an issue open until the correction reaches the reporter's channel and the evidence needed for closure is satisfied. `stage:stable` is availability evidence, not automatic closure authority; release automation never closes issues.
+
+## Pull request handoff and disposition
+
+PR stewardship uses the same handoff reconciler, directive parser, permission checks, and incremental label writer as issues. Use at most one handoff label: `needs:maintainer` for a concrete project review or decision, or `needs:author` after explicitly requesting changes, evidence, or an answer from the PR author. `needs:reporter` remains issue-only; `needs:author` is PR-only. Removing an inappropriate participant label is allowed when correcting a handoff. Labels record the next actor, not that a review happened, CI status, or a permanent judgment of a particular head.
+
+Every public PR assessment states its disposition and next action:
+
+| Disposition | Next action and handoff |
+| --- | --- |
+| Acceptable after named changes | State the required changes; use `needs:author` only when the author must make them. A steward implementing them retains the project-side action. |
+| A decision needs author evidence | Ask a concrete question and select `needs:author`. |
+| Ready for maintainer review or decision | Select `needs:maintainer` for the named action. |
+| Approach declined | Explain why and explicitly say that the findings are not a request to repair the proposal. Recommend closure, or close under existing explicit authority. Do not park the declined PR in `needs:author`. |
+| No immediate human action | Clear handoff labels. Draft status alone creates no review obligation. |
+
+An approach can be declined without resolving its linked issue. Keep a still-valid issue open, and distinguish rejection of a proposed mechanism from rejection of the reported problem. Findings about a declined patch do not become a repair checklist. Do not spend author/steward effort fixing its tests, CI, or individual defects merely to preserve an approach that should not land. No new automatic-closure or timeout policy is implied.
+
+The workflow handles PR `opened`, `reopened`, `ready_for_review`, `synchronize`, and `closed` events through `pull_request_target`, plus ordinary PR conversation replies through `issue_comment`. It checks out only the trusted default branch, never a contributor head, merge commit, script, or artifact. A non-draft open/reopen/ready event selects `needs:maintainer`; a current-head update does likewise, including bot-authored code updates. Draft lifecycle updates do not manufacture review demand. The reconciler re-reads the live PR and ignores a superseded synchronize event rather than handing off an old head. A closed or merged PR clears all three handoff labels, including a previously misapplied issue participant label, without closing anything itself.
+
+An author conversation reply on a PR marked `needs:author` returns it to `needs:maintainer`, including when the author also has repository permissions. Other participants and bot/App comments do not wake that PR queue. This is a request to evaluate the response, not proof that the findings are resolved. Ordinary maintainer comments change no label unless they contain permitted directives. Explicit project-side directives take precedence over the default author-response transition.
+
+Inline review replies and review submissions are not automatic triggers: fork PR review workflows receive read-only tokens. A steward reads those responses and applies the same handoff policy through authorized GitHub operations. Bot review findings never assign work without adjudication. Do not add a second reconciler, privileged artifact relay, periodic scanner, or credential to imitate these events.
+
+For a human maintainer's saved reply requesting author work:
+
+```markdown
+%cursor%
+
+<!-- happier-label:add=needs:author -->
+<!-- happier-label:remove=needs:maintainer -->
+```
+
+To return it for review, add `needs:maintainer` and remove `needs:author` with the same directive syntax. To clear a PR handoff, remove both. Interactive agents keep the exact label delta explicit and use the authority in `happier-github-ops`; directives do not grant authority and bot-authored saved replies are not executed as human instructions.
 
 ## Contributor attribution
 

@@ -7,6 +7,11 @@ import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTt
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 
+/**
+ * Speaks text with the configured local-voice TTS provider. Resolves when speech finishes or is
+ * deliberately stopped; rejects on a real provider failure so the caller can report it. There is
+ * no silent fallback to another voice.
+ */
 export async function speakWithLocalTtsProvider(ctx: {
   text: string;
   settings: any;
@@ -18,10 +23,18 @@ export async function speakWithLocalTtsProvider(ctx: {
   const provider = ctx.tts.provider;
 
   if (provider === 'device') {
-    let clearStopper = () => {};
+    // Browsers report speechSynthesis.cancel() as an utterance error ('interrupted'/'canceled'),
+    // which expo-speech surfaces through onError without the error code; a stop we requested
+    // is therefore recognized by this flag, not by the error.
+    let stopped = false;
+    const clearStopper = ctx.registerPlaybackStopper(() => {
+      stopped = true;
+      stopDeviceSpeech();
+    });
     try {
-      clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-      await speakDeviceText(ctx.text, ctx.onSpeaking).catch(() => {});
+      await speakDeviceText(ctx.text, ctx.onSpeaking);
+    } catch (error) {
+      if (!stopped) throw error;
     } finally {
       clearStopper();
     }
@@ -34,30 +47,19 @@ export async function speakWithLocalTtsProvider(ctx: {
     if (model !== 'kokoro') return;
 
     const assetSetId = typeof localNeural?.assetId === 'string' && localNeural.assetId.trim() ? localNeural.assetId.trim() : null;
-    const voiceId = typeof localNeural?.voiceId === 'string' && localNeural.voiceId.trim() ? localNeural.voiceId.trim() : 'af_heart';
+    // Unset stays null: each platform resolves it against its own installed voice catalog.
+    const voiceId = typeof localNeural?.voiceId === 'string' && localNeural.voiceId.trim() ? localNeural.voiceId.trim() : null;
     const speed = typeof localNeural?.speed === 'number' && Number.isFinite(localNeural.speed) ? localNeural.speed : 1;
 
     ctx.onSpeaking();
-    const ok = await speakKokoroText({
+    await speakKokoroText({
       text: ctx.text,
       assetSetId,
       voiceId,
       speed,
       timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
       registerPlaybackStopper: ctx.registerPlaybackStopper,
-    })
-      .then(() => true)
-      .catch(() => false);
-
-    if (ok) return;
-
-    let clearStopper = () => {};
-    try {
-      clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-      await speakDeviceText(ctx.text, ctx.onSpeaking).catch(() => {});
-    } finally {
-      clearStopper();
-    }
+    });
     return;
   }
 
@@ -90,7 +92,7 @@ export async function speakWithLocalTtsProvider(ctx: {
       pitch,
       timeoutMs: ctx.networkTimeoutMs,
       registerPlaybackStopper: ctx.registerPlaybackStopper,
-    }).catch(() => {});
+    });
     return;
   }
 
@@ -112,5 +114,5 @@ export async function speakWithLocalTtsProvider(ctx: {
     input: ctx.text,
     timeoutMs: ctx.networkTimeoutMs,
     registerPlaybackStopper: ctx.registerPlaybackStopper,
-  }).catch(() => {});
+  });
 }

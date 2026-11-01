@@ -94,7 +94,7 @@ describe('getSessionActivityForVoiceTool', () => {
         }));
     });
 
-    it('counts activity from normalized transcript state', async () => {
+    it('counts activity from normalized transcript state and reports the live pending request as blocking', async () => {
         const { getSessionActivityForVoiceTool } = await import('./sessionActivity');
 
         await expect(getSessionActivityForVoiceTool({ sessionId: 's1' })).resolves.toEqual({
@@ -104,8 +104,8 @@ describe('getSessionActivityForVoiceTool', () => {
             active: true,
             thinking: false,
             working: false,
-            blocked: false,
-            permissionRequired: false,
+            blocked: true,
+            permissionRequired: true,
             actionRequired: false,
             updatedAt: 123,
             permissionRequestIds: ['req_1'],

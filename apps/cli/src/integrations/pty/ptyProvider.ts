@@ -325,13 +325,13 @@ export function createNodePtyProvider(params?: Readonly<{
     return null;
   };
 
-  const nodePty = tryResolveModule('node-pty');
-  // Homebridge's POSIX backend writes through tty.ReadStream, which is not
-  // writable in Bun. Let the existing external relay handle native failures
-  // instead of returning a terminal whose first input write will fail.
-  const homebridgePty = platform !== 'win32' && isBun()
-    ? null
-    : tryResolveModule('@homebridge/node-pty-prebuilt-multiarch');
+  // Both POSIX backends use tty.ReadStream for the nonblocking PTY master.
+  // Bun can return a successful spawn while silently losing input/output
+  // (oven-sh/bun#25822). Use the existing external relay until the bundled
+  // Bun runtime passes interactive PTY input/output and cleanup validation.
+  const useNativePty = platform === 'win32' || !isBun();
+  const nodePty = useNativePty ? tryResolveModule('node-pty') : null;
+  const homebridgePty = useNativePty ? tryResolveModule('@homebridge/node-pty-prebuilt-multiarch') : null;
   const nativeCandidates = [nodePty, homebridgePty];
   const preferred = nativeCandidates.find((candidate) => candidate !== null) ?? null;
   const fallback = nativeCandidates.find((candidate) => candidate !== null && candidate !== preferred) ?? null;

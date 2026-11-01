@@ -9,7 +9,8 @@ export type SessionOrganizationChangeScope =
     | "tagAssignments"
     | "order"
     | "labels"
-    | "attentionStandings";
+    | "attentionStandings"
+    | "sessionAppearances";
 
 export function buildSessionOrganizationHint(params: Readonly<{
     scope: SessionOrganizationChangeScope;

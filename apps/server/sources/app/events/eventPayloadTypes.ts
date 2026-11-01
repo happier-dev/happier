@@ -195,12 +195,14 @@ export type UpdateEvent = {
 } | {
     type: 'update-machine';
     machineId: string;
+    dataEncryptionKey?: string | null;
+    contentPublicKeyFingerprint?: string | null;
     metadata?: {
         value: string;
         version: number;
     };
     daemonState?: {
-        value: string;
+        value: string | null;
         version: number;
     };
     activeAt?: number;

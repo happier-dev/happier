@@ -9,14 +9,23 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization/types';
 import { HappyError } from '@/utils/errors/errors';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedRootFlatListProps: any | null = null;
+const virtualizedListHarness = vi.hoisted(() => ({
+    state: null as ReturnType<typeof import('@/dev/testkit/mocks/flashList').createCapturingFlashListMock>['state'] | null,
+}));
+
+// The session list virtualizer owns native layout; use its canonical host boundary harness.
+vi.mock('@/components/ui/lists/flashListCompat/SessionListVirtualizedList', async () => {
+    const { createCapturingFlashListMock } = await import('@/dev/testkit/mocks/flashList');
+    const harness = createCapturingFlashListMock({ renderItems: true });
+    virtualizedListHarness.state = harness.state;
+    return { SessionListVirtualizedList: harness.module.FlashList };
+});
 const routerPushSpy = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
@@ -47,8 +56,8 @@ const sessionOrganizationOps = vi.hoisted(() => ({
 const tokenStorageMocks = vi.hoisted(() => ({
     getCredentialsForServerUrl: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
 }));
-const flatListMock = createCapturingFlatListMock({ renderItems: true });
 let sessionOrganizationProjection: SessionOrganizationProjection | null = null;
+let resetOrganizationLabels: (() => void) | null = null;
 
 const groupKey = 'server:server_a:day:2026-02-17';
 
@@ -81,11 +90,6 @@ installSessionShellCommonModuleMocks({
         return createReactNativeWebMock({
             Platform: { OS: 'web', select: (value: any) => value.web ?? value.default },
             TurboModuleRegistry: { get: () => ({}) },
-            FlatList: (props: any) => {
-                const element = flatListMock.module.FlatList(props);
-                capturedRootFlatListProps = flatListMock.state.props;
-                return element;
-            },
         });
     },
     router: async () => {
@@ -406,6 +410,9 @@ function createEmptySessionOrganizationProjection(): SessionOrganizationProjecti
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
@@ -427,7 +434,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         tokenStorageMocks.getCredentialsForServerUrl.mockClear();
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
-        capturedRootFlatListProps = null;
+        if (virtualizedListHarness.state) virtualizedListHarness.state.props = null;
         hideInactiveSessions = false;
         sessionListAttentionPromotionMode = null;
         sessionListAttentionStandingDefault = false;
@@ -439,12 +446,17 @@ describe('SessionsList pinning + per-group ordering', () => {
 
     afterEach(() => {
         standardCleanup();
+        resetOrganizationLabels?.();
+        resetOrganizationLabels = null;
     });
 
     it('carries the stored attention standing into every row model it builds', async () => {
         sessionListAttentionPromotionMode = 'global';
         sessionOrganizationProjection = {
             ...createEmptySessionOrganizationProjection(),
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {
                 sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
             },
@@ -469,7 +481,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         sessionListAttentionPromotionMode = 'global';
         const { SessionsList } = await import('./SessionsList');
         const screen = await renderScreen(<SessionsList />);
-        const baselineExtraData = expectPresent(capturedRootFlatListProps?.extraData, 'expected row extra data');
+        const baselineExtraData = expectPresent(virtualizedListHarness.state?.props?.extraData, 'expected row extra data');
 
         // Every organization write also republishes the visible list, so each step below refreshes
         // the view data the way the real hook does before re-rendering the surface.
@@ -482,18 +494,21 @@ describe('SessionsList pinning + per-group ordering', () => {
         // rendered row: the gate compares signatures, never the rebuilt policy/pin objects.
         sessionOrganizationProjection = { ...createEmptySessionOrganizationProjection(), version: 2 };
         await republishVisibleSessionListViewData();
-        expect(capturedRootFlatListProps?.extraData).toBe(baselineExtraData);
+        expect(virtualizedListHarness.state?.props?.extraData).toBe(baselineExtraData);
 
         sessionOrganizationProjection = {
             ...createEmptySessionOrganizationProjection(),
             version: 3,
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {
                 sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
             },
         };
         await republishVisibleSessionListViewData();
         const standingExtraData = expectPresent(
-            capturedRootFlatListProps?.extraData,
+            virtualizedListHarness.state?.props?.extraData,
             'expected row extra data after the standing landed',
         );
         expect(standingExtraData).not.toBe(baselineExtraData);
@@ -501,6 +516,9 @@ describe('SessionsList pinning + per-group ordering', () => {
         sessionOrganizationProjection = {
             ...createEmptySessionOrganizationProjection(),
             version: 4,
+            appearancesBySessionId: {},
+            sessionAppearancesBySessionId: {},
+            sessionAppearancesSupported: false,
             attentionStandingsBySessionId: {
                 sess_a: { sessionId: 'sess_a', standing: true, updatedAt: 10 },
             },
@@ -508,7 +526,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             pinsBySessionId: { sess_b: { sessionId: 'sess_b', sortKey: null, pinnedAt: 1 } },
         };
         await republishVisibleSessionListViewData();
-        expect(capturedRootFlatListProps?.extraData).not.toBe(standingExtraData);
+        expect(virtualizedListHarness.state?.props?.extraData).not.toBe(standingExtraData);
     });
 
     it('leaves every row non-standing while the attention band is off', async () => {
@@ -557,11 +575,12 @@ describe('SessionsList pinning + per-group ordering', () => {
         const screen = await renderSessionsList();
 
         expect(screen.root).toBeTruthy();
-        expect(capturedRootFlatListProps).toBeTruthy();
-        expect(typeof capturedRootFlatListProps?.onWheel).toBe('function');
+        expect(virtualizedListHarness.state?.props).toBeTruthy();
+        const onWheel = virtualizedListHarness.state?.props?.overrideProps?.onWheel;
+        expect(typeof onWheel).toBe('function');
 
         const stopPropagation = vi.fn();
-        capturedRootFlatListProps?.onWheel?.({ stopPropagation });
+        onWheel({ stopPropagation });
         expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
 
@@ -855,6 +874,10 @@ describe('SessionsList pinning + per-group ordering', () => {
                 },
             },
         };
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previousLabels = storage.getState().sessionOrganizationLabelsByLabelKey;
+        resetOrganizationLabels = () => storage.setState({ sessionOrganizationLabelsByLabelKey: previousLabels });
+        storage.setState({ sessionOrganizationLabelsByLabelKey: sessionOrganizationProjection.labelsByLabelKey });
         mockMachinesState.current = [
             { id: 'machine-live-1', metadata: { displayName: 'Rebound workstation' } },
             { id: 'machine-live-2', metadata: { host: 'rebound-2.local' } },

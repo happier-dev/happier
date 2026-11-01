@@ -1,3 +1,4 @@
+import { requireEncryptedSessionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { Credentials } from '@/persistence';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
@@ -112,6 +113,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
   if (!params.credentials) return { ok: false, reason: 'missingCredentials' };
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
+  requireEncryptedSessionContext(ctx);
   if (ctx.encryptionKey.length !== 32) return { ok: false, reason: 'invalidEncryptionKey' };
 
   return {

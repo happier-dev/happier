@@ -133,7 +133,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
         run: exit 1
@@ -233,14 +233,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install candidate dependencies without credentials
         env:
           YARN_PRODUCTION: 'false'
@@ -299,9 +297,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted workflow control dependencies
@@ -413,9 +409,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install trusted workflow control dependencies
@@ -498,7 +492,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enable trusted control Yarn
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install artifact verifier dependencies
@@ -564,7 +558,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enable trusted control Yarn
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install artifact verifier dependencies

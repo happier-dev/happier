@@ -1,5 +1,7 @@
 // @ts-check
 
+import { validateLinuxWebKitRuntime } from './linux-webkit-runtime.mjs';
+
 /** @type {const} */
 export const LINUX_HOST_GRAPHICS_LIBRARY_PATTERNS = [
   'libwayland-client.so',
@@ -42,4 +44,12 @@ export function validateLinuxPackageMetadata(packagePath, inspect) {
     return;
   }
   throw new Error(`unsupported Linux package: ${fileName}`);
+}
+
+/** Validate the required AppImage engine and helper closure, independent of CI env.
+ * @param {string} appDir
+ * @param {Parameters<typeof validateLinuxWebKitRuntime>[0]['inspect']} [inspect]
+ */
+export function validateLinuxAppImageRuntime(appDir, inspect) {
+  return validateLinuxWebKitRuntime({ root: appDir, layout: 'appimage', inspect });
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const UsageSchema = z.object({
+export const UsageSchema = lazySchema(() => z.object({
     // Usage statistics for assistant messages.
     // This is intentionally passthrough() to keep forward-compatible with new vendor fields.
     input_tokens: z.number().int().nonnegative(),
@@ -10,6 +11,6 @@ export const UsageSchema = z.object({
     // Some upstream providers emit `service_tier: null` in error payloads.
     // Treat null as “unknown” so we don't drop the whole message.
     service_tier: z.string().nullish(),
-}).passthrough();
+}).passthrough());
 
 export type Usage = z.infer<typeof UsageSchema>;

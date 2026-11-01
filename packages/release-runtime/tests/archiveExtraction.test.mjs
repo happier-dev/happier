@@ -1007,7 +1007,7 @@ test('extractArchivePayloadToDirectory bounds zip entry count and cumulative exp
       ['entries', { maxEntries: 1 }, /too many entries/iu],
       ['files', { maxFiles: 1 }, /too many files/iu],
       ['file-bytes', { maxFileBytes: 3 }, /file exceeds its byte limit/iu],
-      ['bytes', { maxExpandedBytes: 7 }, /expanded-byte limit/iu],
+      ['bytes', { maxExpandedBytes: 7 }, { code: 'archive-expanded-byte-limit' }],
     ]) {
       const extractDir = join(rootDir, `extract-${suffix}`);
       if (suffix === 'bytes') await mkdir(extractDir, { recursive: true });
@@ -1528,7 +1528,7 @@ test('inspectTarArchiveEntries applies the same entry and expanded-byte budgets 
     );
     await assert.rejects(
       inspectTarArchiveEntries({ archivePath, limits: { maxExpandedBytes: 7 } }),
-      /expanded-byte limit/iu,
+      { code: 'archive-expanded-byte-limit' },
     );
   } finally {
     await rm(rootDir, { recursive: true, force: true });

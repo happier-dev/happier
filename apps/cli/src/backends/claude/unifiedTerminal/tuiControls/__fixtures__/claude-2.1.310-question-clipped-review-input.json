@@ -1,0 +1,53 @@
+{
+  "questions": [
+    {
+      "header": "Probe layout",
+      "question": "S1: A synthetic client reads task-owned fixture updates from a scratch server and displays a simple status indicator. Which isolated validation path should this harmless probe use?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Keep synthetic updates (Recommended)",
+          "description": "Synthetic fixture only."
+        },
+        {
+          "label": "Use a fresh fixture",
+          "description": "Synthetic fixture only."
+        },
+        {
+          "label": "Defer the scratch check",
+          "description": "Synthetic fixture only."
+        }
+      ]
+    },
+    {
+      "header": "Probe timing",
+      "question": "L2: The synthetic probe records harmless fixture markers while its scratch client displays a status indicator. Which isolated timing choice should this validation keep without changing a user preference?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Keep the synthetic timing (Recommended)",
+          "description": "Observe only the synthetic marker and retain the task-owned capture so the exact native answer can be checked against the structured hook result."
+        },
+        {
+          "label": "Record the next marker",
+          "description": "Observe the subsequent harmless marker in the same isolated fixture without changing any persistent preference or touching another runtime."
+        }
+      ]
+    },
+    {
+      "header": "Probe summary",
+      "question": "L3: Several synthetic fixture checks share this task-owned scratch transcript: a local status marker, a harmless text update, and a captured review page. Which final summary should the isolated validation retain while preserving all existing user settings?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Keep synthetic result evidence",
+          "description": "Preserve the public synthetic capture and exact structured answers for the current-source validation report, then stop only this task-owned runtime."
+        },
+        {
+          "label": "Keep a short summary",
+          "description": "Keep only a brief task-owned summary of the fixture result, with no account, credential, policy, server, or user-session changes."
+        }
+      ]
+    }
+  ]
+}

@@ -394,31 +394,7 @@ describe('registerSessionHandlers session controls', () => {
   // control. The session-side handler propagates every SUCCESSFUL cancel through
   // the injected daemon notifier; a daemon-side waiting intent left armed after a
   // user cancel resumes the session involuntarily at the provider reset time.
-  it('propagates successful wait-resume cancels to the daemon recovery owner (runtime-control path)', async () => {
-    const { handlers, registrar } = createRegistrar();
-    const cancelUsageLimitWaitResume = vi.fn(async () => ({ ok: true, recovery: { status: 'cancelled' } }));
-    const notifyUsageLimitWaitResumeCancelled = vi.fn(async () => ({ ok: true }));
-
-    registerSessionHandlers(registrar, process.cwd(), {
-      sessionRuntimeControls: {
-        cancelUsageLimitWaitResume,
-      },
-      notifyUsageLimitWaitResumeCancelled,
-    });
-
-    expect(parseUsageLimitResult(await handlers.get(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL)?.({
-      sessionId: 'sess_1',
-      issueFingerprint: 'usage-limit:sess_1:reset',
-      armedAtMs: 1,
-      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
-    }))).toMatchObject({ ok: true, status: 'cancelled' });
-    expect(notifyUsageLimitWaitResumeCancelled).toHaveBeenCalledWith({
-      sessionId: 'sess_1',
-      attemptId: 'runtime-auth-attempt:exact-1',
-    });
-  });
-
-  it('propagates successful wait-resume cancels to the daemon recovery owner (no provider runtime control)', async () => {
+  it.each([false, true])('settles exact account-recovery cancellation even when daemon notification fails=%s', async (notificationFails) => {
     const { handlers, registrar } = createRegistrar();
     let metadata: Metadata = {
       path: process.cwd(),
@@ -449,7 +425,10 @@ describe('registerSessionHandlers session controls', () => {
       metadata = update.metadata;
       return update.result;
     };
-    const notifyUsageLimitWaitResumeCancelled = vi.fn(async () => ({ ok: true }));
+    const notifyUsageLimitWaitResumeCancelled = vi.fn(async () => {
+      if (notificationFails) throw new Error('daemon unreachable');
+      return { ok: true };
+    });
 
     registerSessionHandlers(registrar, process.cwd(), {
       getSessionMetadata: () => metadata,
@@ -670,46 +649,6 @@ describe('registerSessionHandlers session controls', () => {
       runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:a',
     })).resolves.toMatchObject({ ok: false, errorCode: 'usage_limit_recovery_cancel_persistence_failed' });
     expect(notifyUsageLimitWaitResumeCancelled).not.toHaveBeenCalled();
-  });
-
-  it('does not propagate failed wait-resume cancels and survives notifier failures', async () => {
-    const { handlers, registrar } = createRegistrar();
-    const cancelUsageLimitWaitResume = vi.fn(async () => ({
-      ok: false,
-      errorCode: 'usage_limit_issue_unavailable',
-      error: 'usage_limit_issue_unavailable',
-    }));
-    const notifyUsageLimitWaitResumeCancelled = vi.fn(async () => {
-      throw new Error('daemon unreachable');
-    });
-
-    registerSessionHandlers(registrar, process.cwd(), {
-      sessionRuntimeControls: {
-        cancelUsageLimitWaitResume,
-      },
-      notifyUsageLimitWaitResumeCancelled,
-    });
-
-    expect(parseUsageLimitResult(await handlers.get(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL)?.({
-      sessionId: 'sess_1',
-      issueFingerprint: 'usage-limit:sess_1:reset',
-      armedAtMs: 1,
-      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
-    }))).toMatchObject({ ok: false });
-    expect(notifyUsageLimitWaitResumeCancelled).not.toHaveBeenCalled();
-
-    // Successful cancel must not fail when the daemon notifier throws (best-effort).
-    cancelUsageLimitWaitResume.mockResolvedValueOnce({ ok: true, recovery: { status: 'cancelled' } } as never);
-    expect(parseUsageLimitResult(await handlers.get(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL)?.({
-      sessionId: 'sess_1',
-      issueFingerprint: 'usage-limit:sess_1:reset',
-      armedAtMs: 1,
-      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
-    }))).toMatchObject({ ok: true, status: 'cancelled' });
-    expect(notifyUsageLimitWaitResumeCancelled).toHaveBeenCalledWith({
-      sessionId: 'sess_1',
-      attemptId: 'runtime-auth-attempt:exact-1',
-    });
   });
 
   it('rejects non-boolean rememberPreference values before dispatching runtime controls', async () => {

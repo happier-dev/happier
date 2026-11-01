@@ -162,6 +162,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     pairId: parsed.pairId,
                     secret: parsed.secret,
                     publicKey: encodeBase64(keypair.publicKey),
+                    supportsCredentialVariants: true,
                     deviceLabel: resolveDeviceLabel() ?? undefined,
                 });
 
@@ -196,8 +197,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 );
 
                 if (credentials && !isCancelledRef.current) {
-                    const secretString = encodeBase64(credentials.secret, 'base64url');
-                    await auth.login(credentials.token, secretString);
+                    await auth.loginWithCredentials(credentials);
                     if (!isCancelledRef.current) {
                         router.replace('/');
                     }

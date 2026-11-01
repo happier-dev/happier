@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { lazySchema } from '../../../lazySchema.js';
 
-const AuthMethodActionSchema = z.object({
+const AuthMethodActionSchema = lazySchema(() => z.object({
   id: z.enum(['login', 'provision', 'connect']),
   enabled: z.boolean(),
   mode: z.enum(['keyed', 'keyless', 'either']),
-});
+}));
 
-export const AuthMethodSchema = z.object({
+export const AuthMethodSchema = lazySchema(() => z.object({
   id: z.string(),
   actions: z.array(AuthMethodActionSchema),
   ui: z
@@ -15,9 +16,9 @@ export const AuthMethodSchema = z.object({
       iconHint: z.string().nullable().optional(),
     })
     .optional(),
-});
+}));
 
-export const AuthCapabilitiesSchema = z.object({
+export const AuthCapabilitiesSchema = lazySchema(() => z.object({
   methods: z.array(AuthMethodSchema).optional().default([]),
   signup: z.object({
     methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
@@ -103,7 +104,7 @@ export const AuthCapabilitiesSchema = z.object({
         emailDomainAllowlist: { enabled: false, count: 0 },
       },
     }),
-});
+}));
 
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 

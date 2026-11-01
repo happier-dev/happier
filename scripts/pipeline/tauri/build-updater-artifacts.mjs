@@ -13,6 +13,8 @@ import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from
 import { execFileSyncPortable } from '../lib/exec-file-sync-portable.mjs';
 import { applyExpoWebModalEnv } from '../expo/expoWebModalEnv.mjs';
 import { createTauriActoolEnvironment } from '../../../apps/ui/scripts/tauriActoolEnvironment.mjs';
+import { readTauriMainBinaryName, resolveTauriChannelConfigFile } from './channel-config.mjs';
+import { validateLinuxWebKitRuntime, linuxWebKitAppImageFilesConfig } from './linux-webkit-runtime.mjs';
 
 function fail(message) {
   console.error(message);
@@ -38,30 +40,21 @@ function parseBool(value, name) {
 }
 
 /**
- * Windows MSI versioning is stricter than plain semver:
- * - pre-release identifiers must be numeric-only
- * - numeric identifiers must fit within a 16-bit unsigned integer (<= 65535)
- *
- * Our dev/preview build versions use `-dev.<n>` / `-preview.<n>`, which fails MSI packaging.
- * This normalizes those versions to `-<n>` for Windows only.
+ * Keep the app's semantic version identical to the updater feed on every platform.
+ * WiX needs a numeric fourth component (<= 65535); its dedicated override must not
+ * replace the app version, or Windows repeatedly offers its own dev/preview build.
  *
  * @param {string} buildVersion
- * @returns {string}
+ * @param {NodeJS.Platform} platform
  */
-export function normalizeTauriBuildVersionForWindows(buildVersion) {
-  const raw = String(buildVersion ?? '').trim();
-  if (!raw) return raw;
+export function resolveTauriBuildVersionConfig(buildVersion, platform) {
+  const version = String(buildVersion ?? '').trim();
+  const match = platform === 'win32' ? version.match(/^(\d+\.\d+\.\d+)-(?:dev|preview)\.(\d+)$/) : null;
+  if (!match) return { version };
 
-  const match = raw.match(/^(\d+\.\d+\.\d+)-(?:dev|preview)\.(\d+)$/);
-  if (!match) return raw;
-
-  const base = match[1];
-  const nRaw = match[2];
-  const n = Number.parseInt(String(nRaw ?? ''), 10);
-  if (!Number.isFinite(n) || n <= 0) return `${base}-1`;
-
-  const clamped = Math.min(65535, n);
-  return `${base}-${clamped}`;
+  const n = Number.parseInt(match[2], 10);
+  const build = !Number.isFinite(n) || n <= 0 ? 1 : Math.min(65535, n);
+  return { version, bundle: { windows: { wix: { version: `${match[1]}.${build}` } } } };
 }
 
 /**
@@ -129,7 +122,7 @@ export function resolveLinuxHsetupResourcesOverrideConfig() {
 }
 
 /**
- * @param {{ environment: string }} opts
+ * @param {{ environment: string; tauriDir?: string }} opts
  * @returns {{
  *   productName: string;
  *   appRelativePath: string;
@@ -143,7 +136,7 @@ export function resolveLinuxAppImageDiagnosticsLayout(opts) {
   const productName = resolveLinuxProductNameOverride({ environment }) ?? 'Happier';
   return {
     productName,
-    appRelativePath: path.join('usr', 'bin', 'app'),
+    appRelativePath: path.join('usr', 'bin', readTauriMainBinaryName(opts)),
     legacyHsetupRelativePath: path.join('usr', 'bin', 'hsetup'),
     resourceHsetupDirRelativePath: path.join('usr', 'lib', productName, 'binaries'),
     resourceHsetupPrefix: 'hsetup-',
@@ -206,7 +199,7 @@ function dumpLinuxAppImageDiagnostics(opts) {
   const absUiDir = String(opts.absUiDir ?? '').trim();
   const environment = String(opts.environment ?? '').trim();
 
-  const layout = resolveLinuxAppImageDiagnosticsLayout({ environment });
+  const layout = resolveLinuxAppImageDiagnosticsLayout({ environment, tauriDir: path.join(absUiDir, 'src-tauri') });
   const productName = layout.productName;
   const appDirPath = path.join(absUiDir, 'src-tauri', 'target', 'release', 'bundle', 'appimage', `${productName}.AppDir`);
   const appPath = path.join(appDirPath, layout.appRelativePath);
@@ -426,6 +419,15 @@ function main() {
   }
 
   const platform = process.platform;
+  if (platform === 'linux' && !noBundle && !dryRun) {
+    try {
+      // This pipeline bundles all configured Linux formats. Native candidate
+      // compilation uses --no-bundle and retains the distro headers and symbols.
+      validateLinuxWebKitRuntime({ root: '/', layout: 'installed' });
+    } catch (error) {
+      throw new Error('Linux AppImage packaging requires the pinned WebKit SDK. Prepare it with .github/actions/install-tauri-linux-dependencies (bundled-webkit: true) before bundling.', { cause: error });
+    }
+  }
   const yarn = platform === 'win32' ? null : resolveYarnInvocation();
   const targetArgs = tauriTarget ? ['--target', tauriTarget] : [];
   /** @type {string[]} */
@@ -458,6 +460,16 @@ function main() {
       );
     }
     configs.push('--config', linuxHsetupOverridePath);
+  }
+
+  if (platform === 'linux' && !noBundle) {
+    const webkitFilesOverridePath = tempFile(tmpRoot, 'tauri.linux.webkit.appimage.files.override.json');
+    if (opts.dryRun) {
+      console.log(`[dry-run] write ${webkitFilesOverridePath} (AppImage WebKit GPU helper)`);
+    } else {
+      fs.writeFileSync(webkitFilesOverridePath, `${JSON.stringify(linuxWebKitAppImageFilesConfig())}\n`, 'utf8');
+    }
+    configs.push('--config', webkitFilesOverridePath);
   }
 
   const signingKeyValue = noBundle ? '' : String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
@@ -556,17 +568,15 @@ function main() {
   const tauriEnv = actool?.env ?? baseTauriEnv;
   try {
     if (environment !== 'production') {
-      const tauriBuildVersion = platform === 'win32'
-        ? normalizeTauriBuildVersionForWindows(buildVersion)
-        : buildVersion;
+      const versionConfig = resolveTauriBuildVersionConfig(buildVersion, platform);
       const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
       if (opts.dryRun) {
-        console.log(`[dry-run] write ${versionOverride} (version=${tauriBuildVersion})`);
+        console.log(`[dry-run] write ${versionOverride} (${JSON.stringify(versionConfig)})`);
       } else {
-        fs.writeFileSync(versionOverride, `${JSON.stringify({ version: tauriBuildVersion })}\n`, 'utf8');
+        fs.writeFileSync(versionOverride, `${JSON.stringify(versionConfig)}\n`, 'utf8');
       }
 
-      const configPath = environment === 'publicdev' ? 'src-tauri/tauri.publicdev.conf.json' : 'src-tauri/tauri.preview.conf.json';
+      const configPath = `src-tauri/${resolveTauriChannelConfigFile(environment)}`;
 
       if (platform === 'win32') {
         const tauri = resolveTauriCliInvocation({ platform, absUiDir });

@@ -27,7 +27,7 @@ async function runSessionForwarder(params: {
   hookEventName: string;
   secretFile?: string;
   body: unknown;
-}): Promise<{ code: number | null }> {
+}): Promise<{ code: number | null; stderr: string }> {
   const scriptPath = resolve(process.cwd(), 'scripts', 'session_hook_forwarder.cjs');
   const args = [scriptPath, String(params.port), params.hookEventName];
   if (params.secretFile) {
@@ -36,10 +36,13 @@ async function runSessionForwarder(params: {
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
     });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.on('error', reject);
-    child.on('close', (code) => resolvePromise({ code }));
+    child.on('close', (code) => resolvePromise({ code, stderr }));
     child.stdin.end(JSON.stringify(params.body));
   });
 }
@@ -144,6 +147,7 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
       body: { session_id: 'via-forwarder' },
     });
     expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
     await waitUntil(() => onSessionHook.mock.calls.length === 1);
     expect(onSessionHook).toHaveBeenCalledWith('via-forwarder', expect.objectContaining({
       hook_event_name: 'SessionStart',
@@ -163,6 +167,9 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
       body: { session_id: 'rejected-hook' },
     });
     expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('403');
+    expect(result.stderr).not.toContain('expected-secret');
+    expect(result.stderr).not.toContain('rejected-hook');
   });
 
   it('makes hook transport failure visible through a nonzero command exit', async () => {
@@ -176,5 +183,25 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
       body: { session_id: 'unreachable-hook' },
     });
     expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('ECONNREFUSED');
+    expect(result.stderr).not.toContain('unreachable-hook');
+  });
+
+  it('reports an unreadable secret file without revealing its path or hook payload', async () => {
+    const server = await startHookServer({ onSessionHook: vi.fn(), permissionHookSecret: 'expected-secret' });
+    servers.push(server);
+    const secretFile = join(mkdtempSync(join(tmpdir(), 'happier-missing-hook-secret-')), 'private-secret');
+    const result = await runSessionForwarder({
+      port: server.port,
+      hookEventName: 'Stop',
+      secretFile,
+      body: { session_id: 'private-session' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('ENOENT');
+    expect(result.stderr).toContain('403');
+    expect(result.stderr).not.toContain(secretFile);
+    expect(result.stderr).not.toContain('expected-secret');
+    expect(result.stderr).not.toContain('private-session');
   });
 });

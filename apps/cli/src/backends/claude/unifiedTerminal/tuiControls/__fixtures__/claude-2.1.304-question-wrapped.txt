@@ -1,0 +1,35 @@
+  ⎿  · Which comma probe? → first LF line
+     second LF line — 雪 🦦
+
+● PROBE_DONE
+
+✻ Cooked for 4s · done 3:03 PM
+
+❯ Repeat same comma question once, same options. No other tools.
+
+● User answered Claude's questions:
+  ⎿  · Which comma probe? → owned canonical first LF
+     owned canonical second LF — 雪 🦦
+
+● The comma question was asked again with the same two options. The answer came back as
+  "owned canonical first LF / owned canonical second LF — 雪 🦦".
+
+✻ Sautéed for 4s · done 3:05 PM
+
+❯ Repeat same comma question once, same options. No other tools.
+──────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Comma
+
+Which comma probe?
+
+  1. Alpha, beta
+     Probe option with a comma in the label.
+  2. 雪 🦦
+     Probe option with Unicode and an emoji in the label.
+❯ 3. word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11 word12
+     word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24
+     word25 word26 word27 word28 word29 word30 word31 word32
+──────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

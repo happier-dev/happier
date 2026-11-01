@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SessionForkStrategySchema } from '../../sessionFork.js';
+import { lazySchema } from '../../lazySchema.js';
 
 const ACTION_OPERATION_ID_MAX_LENGTH = 2_000;
 const ACTION_OPERATION_PHASE_MAX_LENGTH = 200;
@@ -15,21 +16,21 @@ export const ACTION_OPERATION_RPC_METHODS_V1 = Object.freeze({
   cancel: 'actionOperation.cancel.v1',
 } as const);
 
-const ActionOperationIdentifierSchema = z.string().trim().min(1).max(ACTION_OPERATION_ID_MAX_LENGTH);
-const ActionOperationTimestampSchema = z.number().finite().int().nonnegative();
+const ActionOperationIdentifierSchema = lazySchema(() => z.string().trim().min(1).max(ACTION_OPERATION_ID_MAX_LENGTH));
+const ActionOperationTimestampSchema = lazySchema(() => z.number().finite().int().nonnegative());
 
-export const ActionOperationStateV1Schema = z.enum([
+export const ActionOperationStateV1Schema = lazySchema(() => z.enum([
   'accepted',
   'running',
   'succeeded',
   'failed',
   'cancelled',
-]);
+]));
 export type ActionOperationStateV1 = z.infer<typeof ActionOperationStateV1Schema>;
 
-const ActionOperationProgressLabelSchema = z.string().trim().min(1).max(ACTION_OPERATION_LABEL_MAX_LENGTH);
+const ActionOperationProgressLabelSchema = lazySchema(() => z.string().trim().min(1).max(ACTION_OPERATION_LABEL_MAX_LENGTH));
 
-export const ActionOperationProgressV1Schema = z.discriminatedUnion('kind', [
+export const ActionOperationProgressV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('indeterminate'),
     label: ActionOperationProgressLabelSchema.optional(),
@@ -48,24 +49,24 @@ export const ActionOperationProgressV1Schema = z.discriminatedUnion('kind', [
     message: 'current must not exceed total',
     path: ['current'],
   }),
-]);
+]));
 export type ActionOperationProgressV1 = z.infer<typeof ActionOperationProgressV1Schema>;
 
 /** Redacted Action executor failure projection safe for public operation UI. */
-export const ActionOperationFailureV1Schema = z.object({
+export const ActionOperationFailureV1Schema = lazySchema(() => z.object({
   errorCode: z.string().trim().min(1).max(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH),
   error: z.string().trim().min(1).max(ACTION_OPERATION_ERROR_MAX_LENGTH),
-}).strict();
+}).strict());
 export type ActionOperationFailureV1 = z.infer<typeof ActionOperationFailureV1Schema>;
 
-export const ActionOperationScopeV1Schema = z.object({
+export const ActionOperationScopeV1Schema = lazySchema(() => z.object({
   accountId: ActionOperationIdentifierSchema,
   machineId: ActionOperationIdentifierSchema,
   sessionId: ActionOperationIdentifierSchema.optional(),
-}).strict();
+}).strict());
 export type ActionOperationScopeV1 = z.infer<typeof ActionOperationScopeV1Schema>;
 
-export const ActionOperationDomainRefV1Schema = z.discriminatedUnion('kind', [
+export const ActionOperationDomainRefV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('forkRequest'),
     id: ActionOperationIdentifierSchema,
@@ -77,10 +78,10 @@ export const ActionOperationDomainRefV1Schema = z.discriminatedUnion('kind', [
     id: ActionOperationIdentifierSchema,
     targetMachineId: ActionOperationIdentifierSchema.optional(),
   }).strict(),
-]);
+]));
 export type ActionOperationDomainRefV1 = z.infer<typeof ActionOperationDomainRefV1Schema>;
 
-const ActionOperationSnapshotV1BaseSchema = z.object({
+const ActionOperationSnapshotV1BaseSchema = lazySchema(() => z.object({
   version: z.literal(1),
   operationId: ActionOperationIdentifierSchema,
   requestId: ActionOperationIdentifierSchema.optional(),
@@ -97,9 +98,9 @@ const ActionOperationSnapshotV1BaseSchema = z.object({
   error: ActionOperationFailureV1Schema.optional(),
   domainRef: ActionOperationDomainRefV1Schema.optional(),
   cancellation: z.enum(['unsupported', 'supported']),
-}).strict();
+}).strict());
 
-export const ActionOperationSnapshotV1Schema = ActionOperationSnapshotV1BaseSchema.superRefine((snapshot, ctx) => {
+export const ActionOperationSnapshotV1Schema = lazySchema(() => ActionOperationSnapshotV1BaseSchema.superRefine((snapshot, ctx) => {
   const hasResult = Object.prototype.hasOwnProperty.call(snapshot, 'result');
   const hasError = Object.prototype.hasOwnProperty.call(snapshot, 'error');
 
@@ -165,20 +166,20 @@ export const ActionOperationSnapshotV1Schema = ActionOperationSnapshotV1BaseSche
   if (hasResult || hasError) {
     ctx.addIssue({ code: 'custom', path: ['state'], message: 'cancelled operations cannot have result or error fields' });
   }
-});
+}));
 export type ActionOperationSnapshotV1 = z.infer<typeof ActionOperationSnapshotV1Schema>;
 
-export const ActionOperationRevisionEphemeralV1Schema = z.object({
+export const ActionOperationRevisionEphemeralV1Schema = lazySchema(() => z.object({
   type: z.literal('action-operation-updated'),
   machineId: ActionOperationIdentifierSchema,
-  content: z.object({
-    t: z.literal('encrypted'),
-    c: z.string().trim().min(1),
-  }).strict(),
-}).strict();
+  content: z.discriminatedUnion('t', [
+    z.object({ t: z.literal('encrypted'), c: z.string().trim().min(1) }).strict(),
+    z.object({ t: z.literal('plain'), v: ActionOperationSnapshotV1Schema }).strict(),
+  ]),
+}).strict());
 export type ActionOperationRevisionEphemeralV1 = z.infer<typeof ActionOperationRevisionEphemeralV1Schema>;
 
-export const ActionOperationListV1RequestSchema = z.object({
+export const ActionOperationListV1RequestSchema = lazySchema(() => z.object({
   states: z.array(ActionOperationStateV1Schema).max(ActionOperationStateV1Schema.options.length).optional(),
   sessionId: ActionOperationIdentifierSchema.optional(),
   cursor: ActionOperationIdentifierSchema.optional(),
@@ -186,35 +187,35 @@ export const ActionOperationListV1RequestSchema = z.object({
   if (request.states && new Set(request.states).size !== request.states.length) {
     ctx.addIssue({ code: 'custom', path: ['states'], message: 'states must not contain duplicates' });
   }
-});
+}));
 export type ActionOperationListV1Request = z.infer<typeof ActionOperationListV1RequestSchema>;
 
-export const ActionOperationListV1ResponseSchema = z.object({
+export const ActionOperationListV1ResponseSchema = lazySchema(() => z.object({
   items: z.array(ActionOperationSnapshotV1Schema),
   nextCursor: ActionOperationIdentifierSchema.nullable(),
-}).strict();
+}).strict());
 export type ActionOperationListV1Response = z.infer<typeof ActionOperationListV1ResponseSchema>;
 
-export const ActionOperationGetV1RequestSchema = z.object({
+export const ActionOperationGetV1RequestSchema = lazySchema(() => z.object({
   operationId: ActionOperationIdentifierSchema,
-}).strict();
+}).strict());
 export type ActionOperationGetV1Request = z.infer<typeof ActionOperationGetV1RequestSchema>;
 
-const ActionOperationNotFoundV1Schema = z.object({ kind: z.literal('not_found') }).strict();
+const ActionOperationNotFoundV1Schema = lazySchema(() => z.object({ kind: z.literal('not_found') }).strict());
 
-export const ActionOperationGetV1ResponseSchema = z.union([
+export const ActionOperationGetV1ResponseSchema = lazySchema(() => z.union([
   z.object({ kind: z.literal('found'), operation: ActionOperationSnapshotV1Schema }).strict(),
   ActionOperationNotFoundV1Schema,
-]);
+]));
 export type ActionOperationGetV1Response = z.infer<typeof ActionOperationGetV1ResponseSchema>;
 
 export const ActionOperationCancelV1RequestSchema = ActionOperationGetV1RequestSchema;
 export type ActionOperationCancelV1Request = z.infer<typeof ActionOperationCancelV1RequestSchema>;
 
-export const ActionOperationCancelV1ResponseSchema = z.discriminatedUnion('kind', [
+export const ActionOperationCancelV1ResponseSchema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unsupported') }).strict(),
   z.object({ kind: z.literal('requested') }).strict(),
   z.object({ kind: z.literal('already_settled') }).strict(),
   ActionOperationNotFoundV1Schema,
-]);
+]));
 export type ActionOperationCancelV1Response = z.infer<typeof ActionOperationCancelV1ResponseSchema>;

@@ -107,7 +107,7 @@ export function findingHeadline(finding: RepairFinding): string {
       const runningChannel = finding.daemon.startedWithReleaseChannel;
       const descriptor = runningChannel && runningVersion
         ? `${runningChannel} • ${runningVersion}`
-        : 'an older CLI version';
+        : 'a different CLI version';
       // Cross-channel: the daemon is on a DIFFERENT release channel than the
       // current CLI. The classifier only emits this when the daemon is on a
       // profile we actually care about (the active one, or one a configured
@@ -117,9 +117,9 @@ export function findingHeadline(finding: RepairFinding): string {
         return `A ${runningChannel ?? 'different-channel'} daemon (${descriptor}) is holding your active profile — take over with ${finding.currentCliReleaseChannel}?`;
       }
       if (finding.daemon.startedBy === 'automatic-startup') {
-        return `A running background service is older than this CLI (${descriptor})`;
+        return `A running background service uses a different CLI version (${descriptor})`;
       }
-      return `A manually-started daemon is running an older CLI version (${descriptor})`;
+      return `A manually-started daemon is running a different CLI version (${descriptor})`;
     }
     case 'running_daemon_duplicate_profile':
       return 'Two daemons own the same relay profile';

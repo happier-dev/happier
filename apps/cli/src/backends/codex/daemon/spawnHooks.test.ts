@@ -117,6 +117,54 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
   });
 });
 
+describe('codexDaemonSpawnHooks.validateSpawn (Codex CLI launch requirement)', () => {
+  async function createIsolatedSpawnEnv(): Promise<NodeJS.ProcessEnv> {
+    const home = await createTempDir('happier-codex-spawnhooks-home-');
+    tempDirs.add(home);
+    return { PATH: home, HOME: home, USERPROFILE: home, HAPPIER_HOME_DIR: home };
+  }
+
+  it('rejects a default App Server spawn when no Codex CLI is resolvable', async () => {
+    const environmentVariables = await createIsolatedSpawnEnv();
+
+    const res = await codexDaemonSpawnHooks.validateSpawn!({ environmentVariables });
+
+    expect(res.ok).toBe(false);
+  });
+
+  it('admits an App Server spawn when the Codex CLI is resolvable from the spawn environment', async () => {
+    const environmentVariables = { ...await createIsolatedSpawnEnv(), PATH: await createFakeBin('codex') };
+
+    const res = await codexDaemonSpawnHooks.validateSpawn!({ codexBackendMode: 'appServer', environmentVariables });
+
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('admits an App Server spawn launched through its explicit binary override without a Codex CLI', async () => {
+    const overrideDir = await createFakeBin('custom-codex');
+    const environmentVariables = {
+      ...await createIsolatedSpawnEnv(),
+      HAPPIER_CODEX_APP_SERVER_BIN: join(overrideDir, process.platform === 'win32' ? 'custom-codex.cmd' : 'custom-codex'),
+    };
+
+    const res = await codexDaemonSpawnHooks.validateSpawn!({ codexBackendMode: 'appServer', environmentVariables });
+
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('rejects an MCP spawn without a Codex CLI even when an App Server override exists', async () => {
+    const overrideDir = await createFakeBin('custom-codex');
+    const environmentVariables = {
+      ...await createIsolatedSpawnEnv(),
+      HAPPIER_CODEX_APP_SERVER_BIN: join(overrideDir, process.platform === 'win32' ? 'custom-codex.cmd' : 'custom-codex'),
+    };
+
+    const res = await codexDaemonSpawnHooks.validateSpawn!({ codexBackendMode: 'mcp', environmentVariables });
+
+    expect(res.ok).toBe(false);
+  });
+});
+
 describe('codexDaemonSpawnHooks', () => {
   it('presents only the shared native client while retaining headless App Server controller custody', async () => {
     for (const host of ['tmux', 'zellij', 'herdr'] as const) {

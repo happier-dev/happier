@@ -10,6 +10,7 @@ import { resolveConfiguredCodexConfigTomlPath } from '../utils/resolveConfigured
 export type SpawnSpec = { command: string; args: string[] };
 export type ResolveCodexAcpSpawnOptions = {
   permissionMode?: PermissionMode;
+  reasoningSummary?: 'auto' | 'none';
   disableUserMcpServers?: boolean;
   env?: NodeJS.ProcessEnv;
   currentWorkingDirectory?: string;
@@ -111,6 +112,9 @@ function appendConfigOverridesArgs(spec: SpawnSpec, opts: ResolveCodexAcpSpawnOp
     : [];
 
   const overrides = readCodexAcpConfigOverrides(env);
+  if (opts.reasoningSummary !== undefined) {
+    overrides.push(`model_reasoning_summary=${JSON.stringify(opts.reasoningSummary)}`);
+  }
   return appendCodexCliConfigOverridesArgs(spec, [...baseOverrides, ...overrides]);
 }
 

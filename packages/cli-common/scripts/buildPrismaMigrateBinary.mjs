@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { DEFAULT_BUN_COMPILE_OPTIONS } from '../src/componentArtifacts/commands.ts';
+
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
@@ -44,7 +46,7 @@ const transformedPrismaSource = prismaSource
 const result = await Bun.build({
   entrypoints: [prismaEntrypoint],
   target: 'bun',
-  compile: { target, outfile },
+  compile: { ...DEFAULT_BUN_COMPILE_OPTIONS, target, outfile },
   plugins: [{
     name: 'happier-prisma-runtime-bundle',
     setup(build) {

@@ -1,3 +1,4 @@
+import { getServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
@@ -66,7 +67,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
   ])('rejects a record with the wrong requested %s before reading mode or writing', async (_field, binding) => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -96,7 +97,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
   it('stores plaintext credentials via v3 when account mode is plain', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -144,7 +145,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       token: { ...record.token!, token: 'previous-token' },
     };
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -185,7 +186,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     mockServerConfig();
     const record = sampleRecord();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -255,7 +256,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let activeContract: 'current' | 'released' = cachedContract;
     let featuresReadCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -316,7 +317,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
   it('passes reconnect identity confirmation through plaintext credential storage', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -352,7 +353,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
   it('stores sealed credentials via v2 when account mode is e2ee', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -391,7 +392,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
   it('passes reconnect identity confirmation through sealed credential storage', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -433,7 +434,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let committed = false;
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -480,7 +481,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -522,7 +523,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     const original = { ...intended, token: { ...intended.token!, token: 'original' } };
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -569,7 +570,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let credentialGetCount = 0;
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -609,7 +610,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     const original = { ...intended, token: { ...intended.token!, token: 'original' } };
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -646,7 +647,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       expectedCredentialRevision: string | null;
     }> = [];
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -691,7 +692,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     const record = sampleRecord();
     let postCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -734,7 +735,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let v2PostCount = 0;
     let v3PostCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -792,7 +793,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
     let v2DeleteCount = 0;
     let v3DeleteCount = 0;
     const fetchMock = vi.fn(async (input: any, init?: any) => {
-      const url = String(input);
+      const url = getServerFetchUrl(input).pathname;
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') return new Response('', { status: 200 });
       if (url.endsWith('/v1/auth/ping') && method === 'GET') return new Response('', { status: 200 });
@@ -803,11 +804,13 @@ describe('storeConnectedServiceCredentialForAccount', () => {
           updatedAt: modeGetCount,
         }), { status: 200 });
       }
-      if (url.includes('/v2/connect/openai-codex/profiles/work/credential?') && method === 'DELETE') {
+      if (url === '/v2/connect/openai-codex/profiles/work/credential' && method === 'DELETE') {
+        expect(getServerFetchUrl(input).searchParams.get('expectedCredentialRevision')).toBe('csr_0123456789ABCDEFGHJKMNPQRS');
         v2DeleteCount += 1;
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
-      if (url.includes('/v3/connect/openai-codex/profiles/work/credential?') && method === 'DELETE') {
+      if (url === '/v3/connect/openai-codex/profiles/work/credential' && method === 'DELETE') {
+        expect(getServerFetchUrl(input).searchParams.get('expectedCredentialRevision')).toBe('csr_0123456789ABCDEFGHJKMNPQRS');
         v3DeleteCount += 1;
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }

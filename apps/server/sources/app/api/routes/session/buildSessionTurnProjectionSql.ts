@@ -68,9 +68,8 @@ export type SessionTurnProjectionSql = Readonly<{
 /**
  * Builds the id-selection statement.
  *
- * Window functions are used by all three dialects (Postgres 9.4+, SQLite 3.25+, MySQL 8.0+).
- * The frame is stated explicitly rather than relying on the default, because the default frame
- * is RANGE-based and would behave differently in the presence of ties.
+ * Seek the newest prompts first, then resolve each selected turn's final replies. The only
+ * window runs over the bounded prompt page, never over the session's event-heavy history.
  */
 export function buildSessionTurnProjectionIdsSql(
     input: SessionTurnProjectionSqlInput,
@@ -94,57 +93,64 @@ export function buildSessionTurnProjectionIdsSql(
     const colRole = ident("messageRole");
     const colId = ident("id");
 
-    // A NULL role predates the role column and is treated as `user` everywhere else on this
-    // route (`buildRequestedMessageRoleWhere`), so it must open a turn here too — otherwise
-    // legacy rows shift every turn boundary. Each occurrence binds its OWN placeholder,
-    // because a reused `?` consumes a further argument under positional binding.
-    const isUserRow = () => `(${colRole} IS NULL OR ${colRole} = ${bind("userRole")})`;
+    const scopeWhere = (alias = "") => {
+        const prefix = alias ? `${alias}.` : "";
+        return `${prefix}${colSession} = ${bind("sessionId")} AND ${prefix}${colSidechain} `
+            + (input.sidechainId === null ? "IS NULL" : `= ${bind("sidechainId")}`);
+    };
 
-    const parts: string[] = [];
-    parts.push(`WITH scoped AS (
-    SELECT ${colId}, ${colSeq}, ${colRole}
-    FROM ${table}
-    WHERE ${colSession} = ${bind("sessionId")} AND `);
-    parts.push(input.sidechainId === null
-        ? `${colSidechain} IS NULL`
-        : `${colSidechain} = ${bind("sidechainId")}`);
-    if (input.hasBeforeSeq) parts.push(` AND ${colSeq} < ${bind("beforeSeq")}`);
-    parts.push(`
-),
-turned AS (
-    SELECT scoped.*, SUM(CASE WHEN ${isUserRow()} THEN 1 ELSE 0 END) OVER (
-        ORDER BY ${colSeq} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS turn_no
-    FROM scoped
-),
-anchors AS (
-    SELECT DISTINCT turn_no FROM turned WHERE ${isUserRow()}
-),
+    // A NULL role is a legacy prompt. Separate equality seeks let all engines use the
+    // existing (sessionId, sidechainId, messageRole, seq) index; an OR/IN plus ordering can
+    // instead choose the sequence index and walk every event row (#661).
+    const parts: string[] = ["WITH "];
+    for (const [index, name] of ["user_prompts", "legacy_prompts"].entries()) {
+        if (index > 0) parts.push(",\n");
+        parts.push(`${name} AS (
+    SELECT ${colId}, ${colSeq} FROM ${table}
+    WHERE ${scopeWhere()} AND ${colRole} ${index === 0 ? `= ${bind("userRole")}` : "IS NULL"}`);
+        if (input.hasBeforeSeq) parts.push(` AND ${colSeq} < ${bind("beforeSeq")}`);
+        parts.push(`
+    ORDER BY ${colSeq} DESC LIMIT ${bind("turnLimit")}
+)`);
+    }
+    parts.push(`,
 recent AS (
-    SELECT turn_no FROM anchors ORDER BY turn_no DESC LIMIT ${bind("turnLimit")}
+    SELECT ${colId}, ${colSeq} FROM (
+        SELECT ${colId}, ${colSeq} FROM user_prompts
+        UNION ALL
+        SELECT ${colId}, ${colSeq} FROM legacy_prompts
+    ) candidates
+    ORDER BY ${colSeq} DESC LIMIT ${bind("turnLimit")}
+),
+turns AS (
+    SELECT ${colId}, ${colSeq}, LEAD(${colSeq}) OVER (ORDER BY ${colSeq}) AS next_seq
+    FROM recent
 ),
 picked AS (
-    SELECT ${colId} FROM turned WHERE ${isUserRow()} AND turn_no IN (SELECT turn_no FROM recent)`);
+    SELECT ${colId} FROM turns`);
 
-    // The last reply row of each RECENT turn. Restricting to `recent` inside the subquery
-    // matters: without it this returns the last reply of every turn in the whole session,
-    // which is the over-fetch this projection exists to remove.
     for (const roleParam of ["agentRole", "toolRole"] as const) {
         parts.push(`
     UNION ALL
-    SELECT ranked.${colId} FROM (
-        SELECT ${colId}, turn_no, ROW_NUMBER() OVER (
-            PARTITION BY turn_no ORDER BY ${colSeq} DESC
-        ) AS rn
-        FROM turned
-        WHERE ${colRole} = ${bind(roleParam)}
-    ) ranked
-    WHERE ranked.rn = 1 AND ranked.turn_no IN (SELECT turn_no FROM recent)`);
+    SELECT (
+        SELECT reply.${colId} FROM ${table} reply
+        WHERE ${scopeWhere("reply")} AND reply.${colRole} = ${bind(roleParam)}
+            AND reply.${colSeq} > turns.${colSeq}
+            AND reply.${colSeq} <= COALESCE(turns.next_seq - 1, `);
+        // The newest selected turn ends at the cursor, or at the chain's current tail.
+        // MAX uses the existing chain/seq index and does not walk message history. Keeping
+        // this as a range bound (rather than an OR) also bounds older turns' reply seeks.
+        parts.push(input.hasBeforeSeq
+            ? `${bind("beforeSeq")} - 1`
+            : `(SELECT MAX(edge.${colSeq}) FROM ${table} edge WHERE ${scopeWhere("edge")})`);
+        parts.push(`)
+        ORDER BY reply.${colSeq} DESC LIMIT 1
+    ) AS ${colId} FROM turns`);
     }
 
     parts.push(`
 )
-SELECT ${colId} FROM picked`);
+SELECT ${colId} FROM picked WHERE ${colId} IS NOT NULL`);
 
     return { sql: parts.join("").trim(), parameterOrder };
 }

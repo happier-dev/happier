@@ -5,8 +5,9 @@ import {
   ReviewFindingSchema,
   ReviewQuestionSchema,
 } from '@happier-dev/protocol';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ReviewFollowUpIntentInputSchema = z.object({
+export const ReviewFollowUpIntentInputSchema = lazySchema(() => z.object({
   kind: z.literal('review_follow_up.v1'),
   parentRunRef: z.object({
     runId: z.string().min(1),
@@ -22,6 +23,6 @@ export const ReviewFollowUpIntentInputSchema = z.object({
   findings: z.array(ReviewFindingSchema).default([]),
   questions: z.array(ReviewQuestionSchema).default([]),
   assumptions: z.array(ReviewAssumptionSchema).default([]),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFollowUpIntentInput = z.infer<typeof ReviewFollowUpIntentInputSchema>;

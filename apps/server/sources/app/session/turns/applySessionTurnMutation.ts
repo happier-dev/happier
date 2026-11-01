@@ -480,7 +480,7 @@ export function applySessionTurnMutationToTurns(params: Readonly<{
 
     const latestTurnId = shouldMoveLatestTurnPointer(mutation.action)
         ? turnId
-        : params.currentLatestTurnId ?? turnId;
+        : params.currentLatestTurnId;
     const nextTurns = replaceTurn(turns, nextTurn);
     const materialized = materializePrimaryTurnProjection({
         latestTurnId,

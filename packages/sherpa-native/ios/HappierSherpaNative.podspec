@@ -18,7 +18,8 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
 
   s.pod_target_xcconfig = {
-    'DEFINES_MODULE' => 'YES'
+    'DEFINES_MODULE' => 'YES',
+    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/../common/cpp"'
   }
 
   sherpa_version = ENV['HAPPIER_SHERPA_ONNX_VERSION'] || 'v1.12.25'
@@ -64,6 +65,9 @@ Pod::Spec.new do |s|
   s.source_files = [
     'HappierSherpaNativeModule.swift',
     'HappierSherpaOfflineTtsEngine.{h,mm}',
-    'HappierSherpaOnlineAsrEngine.{h,mm}'
+    'HappierSherpaOnlineAsrEngine.{h,mm}',
+    '../common/cpp/HappierSherpaOnlineAsr.h'
   ]
+
+  s.private_header_files = ['../common/cpp/HappierSherpaOnlineAsr.h']
 end

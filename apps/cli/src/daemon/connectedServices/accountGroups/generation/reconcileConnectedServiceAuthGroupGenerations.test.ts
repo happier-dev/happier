@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
 
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../../connectedServiceChildEnvironment';
+import { ConnectedServiceRuntimeRegistry } from '../../runtimeRegistry/registry';
+import { registerConnectedServiceRuntimeTargetForDaemon } from '../../startup/runtimeTargetRegistration';
 import { ConnectedServiceAuthGroupGenerationConsumer } from './ConnectedServiceAuthGroupGenerationConsumer';
 import {
   reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget,
@@ -57,7 +60,10 @@ function groupTarget(sessionId = 'live'): ConnectedServiceGenerationRuntimeTarge
 
 type ConsumerDeps = ConstructorParameters<typeof ConnectedServiceAuthGroupGenerationConsumer>[0];
 
-function createConsumer(applyCommittedGeneration?: ConsumerDeps['applyCommittedGeneration']) {
+function createConsumer(
+  applyCommittedGeneration?: ConsumerDeps['applyCommittedGeneration'],
+  overrides: Partial<ConsumerDeps> = {},
+) {
   const apply = applyCommittedGeneration ?? vi.fn(async (
     input: Parameters<ConsumerDeps['applyCommittedGeneration']>[0],
   ) => ({
@@ -65,10 +71,11 @@ function createConsumer(applyCommittedGeneration?: ConsumerDeps['applyCommittedG
     errorCode: null,
     providerAdoptedTarget: {
       ...input.committedGeneration.decisionCommittedTarget,
+      credentialRevision: input.committedGeneration.decisionCommittedTarget.credentialRevision ?? credentialRevision,
       proof: {
         status: 'verified' as const,
         source: 'codex_app_server',
-        credentialRevision: input.committedGeneration.decisionCommittedTarget.credentialRevision,
+        credentialRevision: input.committedGeneration.decisionCommittedTarget.credentialRevision ?? credentialRevision,
       },
     },
   }));
@@ -82,12 +89,120 @@ function createConsumer(applyCommittedGeneration?: ConsumerDeps['applyCommittedG
       }),
       verifySharedGenerationApplication: async () => null,
       notifyCurrentGroupTruth: async () => ({ ok: true }),
+      ...overrides,
     }),
     applyCommittedGeneration: vi.mocked(apply),
   };
 }
 
 describe('reconcileConnectedServiceAuthGroupGenerations', () => {
+  function registerRecoveredRecipient(registry: ConnectedServiceRuntimeRegistry, withSelection: boolean) {
+    // A replacement daemon has a fresh registry and the recovered declarative pool binding.
+    const target = registerConnectedServiceRuntimeTargetForDaemon({
+      runtimeRegistry: registry,
+      pid: 42,
+      agentId: 'codex',
+      sessionId: 'recovered-recipient',
+      connectedServicesBindingsRaw: groupTarget().connectedServicesBindingsRaw,
+      ...(withSelection ? {
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group', serviceId: 'openai-codex', groupId: 'team',
+            activeProfileId: 'old', fallbackProfileId: 'old', generation: 1,
+          }]),
+        },
+      } : {}),
+    });
+    if (!target) throw new Error('recipient registration rejected');
+    return target;
+  }
+
+  it.each(['metadata-only restart', 'existing selection'] as const)(
+    'delivers current truth and recovery after reconciling a %s recipient', async (state) => {
+      const registry = new ConnectedServiceRuntimeRegistry();
+      const target = registerRecoveredRecipient(registry, state === 'existing selection');
+      const registration = { key: { kind: 'session' as const, pid: target.pid }, target };
+      const notifyCurrentGroupTruth = vi.fn(async () => ({ ok: true as const }));
+      const continueAfterExactRecipientApplication = vi.fn(async () => undefined);
+      const { consumer } = createConsumer(undefined, {
+        // Only the provider/transport boundary is supplied; registration, fanout and settlement stay real.
+        settleExactRecipientApplication: async ({ sessionId, providerAdoptedTarget }) => {
+          if (!registry.adoptExactGroupApplicationForSession({ sessionId, ...providerAdoptedTarget })) {
+            throw new Error('exact recipient runtime binding unavailable');
+          }
+        },
+        notifyCurrentGroupTruth,
+        continueAfterExactRecipientApplication,
+      });
+
+      await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
+        target, consumer,
+        listCurrentGroups: async () => [group()],
+        resolveCredentialRevision: () => credentialRevision,
+        resolveCredentialBoundary: revisionedCredentialBoundary,
+        executionAuthority: 'passive_projection',
+        isCurrent: () => registry.isCurrentTargetRegistration(registration),
+      })).resolves.toMatchObject({ acknowledgeable: true, sessionDispositionCount: 1 });
+
+      expect(registry.getBySessionId(target.sessionId!)?.activeBindings).toEqual([{
+        serviceId: 'openai-codex', groupId: 'team', profileId: 'backup', generation: 2, credentialRevision,
+      }]);
+      expect(notifyCurrentGroupTruth).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: target.sessionId, applicationSettled: true,
+        currentTruth: { kind: 'current_auth_group_available', groupId: 'team', generation: 2, credentialRevision },
+      }));
+      expect(continueAfterExactRecipientApplication).toHaveBeenCalledWith({
+        sessionId: target.sessionId,
+        providerAdoptedTarget: expect.objectContaining({
+          serviceId: 'openai-codex', groupId: 'team', profileId: 'backup', generation: 2, credentialRevision,
+          proof: expect.objectContaining({ status: 'verified', credentialRevision }),
+        }),
+      });
+    },
+  );
+
+  it.each(['replacement', 'unbind'] as const)(
+    'excludes a real %s during settlement from current-truth delivery and recovery', async (change) => {
+      const registry = new ConnectedServiceRuntimeRegistry();
+      const target = registerRecoveredRecipient(registry, true);
+      const registration = { key: { kind: 'session' as const, pid: target.pid }, target };
+      const notifyCurrentGroupTruth = vi.fn(async () => ({ ok: true as const }));
+      const continueAfterExactRecipientApplication = vi.fn(async () => undefined);
+      const { consumer } = createConsumer(undefined, {
+        settleExactRecipientApplication: async ({ sessionId, providerAdoptedTarget }) => {
+          const settled = registry.adoptExactGroupApplicationForSession({ sessionId, ...providerAdoptedTarget });
+          if (!settled) throw new Error('exact recipient runtime binding unavailable');
+          if (change === 'replacement') {
+            registry.unregisterPid(target.pid);
+            // Identical values at the same PID/session must not revive the old registration.
+            registerConnectedServiceRuntimeTargetForDaemon({ runtimeRegistry: registry, ...settled });
+          } else {
+            registry.updateTarget({
+              pid: target.pid,
+              connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {} },
+              connectedServiceSelectionsEnv: {},
+            });
+          }
+        },
+        notifyCurrentGroupTruth,
+        continueAfterExactRecipientApplication,
+      });
+
+      await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
+        target, consumer,
+        listCurrentGroups: async () => [group()],
+        resolveCredentialRevision: () => credentialRevision,
+        resolveCredentialBoundary: revisionedCredentialBoundary,
+        executionAuthority: 'passive_projection',
+        isCurrent: () => registry.isCurrentTargetRegistration(registration),
+      })).resolves.toMatchObject({ acknowledgeable: true });
+
+      expect(registry.isCurrentTargetRegistration(registration)).toBe(false);
+      expect(notifyCurrentGroupTruth).not.toHaveBeenCalled();
+      expect(continueAfterExactRecipientApplication).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not dispatch a frozen runtime target that is replaced while group truth is loading', async () => {
     const target = groupTarget('same-session');
     let isCurrent = true;
@@ -541,7 +656,7 @@ describe('reconcileConnectedServiceAuthGroupGenerations', () => {
     expect(notifyCurrentGroupTruth).not.toHaveBeenCalled();
   });
 
-  it('acknowledges an exact successfully materialized supported legacy credential', async () => {
+  it('reapplies a legacy projection using the server-resolved current credential', async () => {
     const { consumer, applyCommittedGeneration } = createConsumer();
 
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
@@ -568,13 +683,13 @@ describe('reconcileConnectedServiceAuthGroupGenerations', () => {
     })).resolves.toEqual({
       acknowledgeable: true,
       reconciledGroupCount: 1,
-      sessionDispositionCount: 0,
+      sessionDispositionCount: 1,
     });
 
-    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
   });
 
-  it('keeps exact spawn settlement when provider verification also observes the legacy shared surface', async () => {
+  it('does not reuse revisionless spawn and provider proof as runner availability', async () => {
     const { consumer, applyCommittedGeneration } = createConsumer();
 
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
@@ -615,13 +730,13 @@ describe('reconcileConnectedServiceAuthGroupGenerations', () => {
     })).resolves.toEqual({
       acknowledgeable: true,
       reconciledGroupCount: 1,
-      sessionDispositionCount: 0,
+      sessionDispositionCount: 1,
     });
 
-    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
   });
 
-  it('does not treat a missing credential as a successfully materialized legacy credential', async () => {
+  it('reapplies and accepts current provider proof when the credential projection is absent', async () => {
     const { consumer, applyCommittedGeneration } = createConsumer();
 
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
@@ -641,7 +756,7 @@ describe('reconcileConnectedServiceAuthGroupGenerations', () => {
       resolveCredentialRevision: () => null,
       resolveCredentialBoundary: () => ({ status: 'absent' }),
       executionAuthority: 'passive_projection',
-    })).rejects.toThrow('connected_service_generation_reconciliation_not_acknowledgeable');
+    })).resolves.toMatchObject({ acknowledgeable: true, sessionDispositionCount: 1 });
     expect(applyCommittedGeneration).toHaveBeenCalledOnce();
   });
 

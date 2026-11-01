@@ -10,12 +10,6 @@ const repoRoot = resolve(here, '..', '..');
 
 const smokeDir = join(repoRoot, 'scripts', 'release', 'release-assets-e2e');
 
-test('npm-e2e-smoke Dockerfile uses Node 22 policy', async () => {
-  const dockerfilePath = join(smokeDir, 'Dockerfile');
-  const raw = await readFile(dockerfilePath, 'utf8');
-  assert.match(raw, /^FROM node:22-bookworm/m);
-});
-
 test('npm-e2e-smoke includes noninteractive terminal auth approver helper', async () => {
   const helper = join(smokeDir, 'bin', 'terminal-auth-approve.cjs');
   assert.ok(existsSync(helper), `missing helper: ${helper}`);

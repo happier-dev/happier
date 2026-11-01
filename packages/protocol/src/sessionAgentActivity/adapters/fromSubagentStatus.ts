@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { AgentActivityStatusV1 } from '../agentActivityStatusV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
 /**
  * Boundary vocabulary for the client-derived subagent status.
@@ -27,7 +28,7 @@ export const SESSION_SUBAGENT_STATUS_SOURCES_V1 = [
   'unknown',
 ] as const;
 
-export const SessionSubagentStatusSourceV1Schema = z.enum(SESSION_SUBAGENT_STATUS_SOURCES_V1);
+export const SessionSubagentStatusSourceV1Schema = lazySchema(() => z.enum(SESSION_SUBAGENT_STATUS_SOURCES_V1));
 export type SessionSubagentStatusSourceV1 = z.infer<typeof SessionSubagentStatusSourceV1Schema>;
 
 /**

@@ -2,6 +2,7 @@ export * from './targets.js';
 export * from './commands.js';
 export * from './serverBuildDbProviders.js';
 export * from './serverSidecars.js';
+export * from './sharpRuntimeSidecars.js';
 export * from './buildCliBinaryArtifactPayload.js';
 export * from './buildCliOptionalComponentArtifactPayload.js';
 export * from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';

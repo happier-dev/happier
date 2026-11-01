@@ -2,25 +2,26 @@ import { z } from 'zod';
 
 import { ReviewFindingSchema } from '../reviews/ReviewFinding.js';
 import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const ReviewTriageStatusSchema = z.enum([
+export const ReviewTriageStatusSchema = lazySchema(() => z.enum([
   'accept',
   'reject',
   'defer',
   'needs_refinement',
-]);
+]));
 export type ReviewTriageStatus = z.infer<typeof ReviewTriageStatusSchema>;
 
-export const ReviewTriageOverlaySchema = z.object({
+export const ReviewTriageOverlaySchema = lazySchema(() => z.object({
   findings: z.array(z.object({
     id: z.string().min(1),
     status: ReviewTriageStatusSchema,
     comment: z.string().min(1).optional(),
   }).passthrough()),
-}).passthrough();
+}).passthrough());
 export type ReviewTriageOverlay = z.infer<typeof ReviewTriageOverlaySchema>;
 
-export const ReviewFindingsV1Schema = z.object({
+export const ReviewFindingsV1Schema = lazySchema(() => z.object({
   runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().min(1),
   findings: z.array(ReviewFindingSchema),
@@ -30,7 +31,7 @@ export const ReviewFindingsV1Schema = z.object({
     patchesTruncated: z.boolean().optional(),
   }).passthrough().optional(),
   generatedAtMs: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFindingsV1 = z.infer<typeof ReviewFindingsV1Schema>;
 

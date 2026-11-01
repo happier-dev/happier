@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resetScopedSessionDataKeyCacheForTests, resolveScopedSessionDataKey } from './resolveScopedSessionDataKey';
+import { resetScopedSessionDataKeyCacheForTests, resolveScopedSessionCryptoContext, resolveScopedSessionDataKey } from './resolveScopedSessionDataKey';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { SecretBoxEncryption } from '@/sync/encryption/encryptor';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
@@ -35,6 +38,63 @@ describe('resolveScopedSessionDataKey', () => {
     } catch {
       // ignore
     }
+  });
+
+  it.each([undefined, 'e2ee'] as const)('preserves legacy session encryption with a null data key and %s mode', async (encryptionMode) => {
+    runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      session: { ...validSessionById, encryptionMode, dataEncryptionKey: null },
+    }), { status: 200 }));
+    const secret = new Uint8Array(32).fill(7);
+    const encryption = await createEncryptionFromAuthCredentials({
+      token: 'token', secret: encodeBase64(secret, 'base64url'),
+    });
+    const context = await resolveScopedSessionCryptoContext({
+      serverId: 's-id', serverUrl: 'https://server.example.test', token: 'token', sessionId: 'session-1',
+      networkMode: 'background-task',
+      decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value),
+    });
+
+    expect(context).toEqual({ encryptionMode: 'e2ee', sessionDataKey: null });
+    if (context.encryptionMode !== 'e2ee') throw new Error('Expected encrypted session context');
+    await encryption.initializeSessions(new Map([['session-1', context.sessionDataKey]]));
+    const session = encryption.getSessionEncryption('session-1');
+    if (!session) throw new Error('Expected initialized session encryption');
+    const request = { id: 'permission-1', approved: false, decision: 'denied' };
+    const encrypted = await session.encryptRaw(request);
+    const peer = new SecretBoxEncryption(secret);
+    expect(await peer.decrypt([decodeBase64(encrypted, 'base64')])).toEqual([request]);
+    const [ack] = await peer.encrypt([{ ok: true }]);
+    expect(await session.decryptRaw(encodeBase64(ack, 'base64'))).toEqual({ ok: true });
+  });
+
+  it.each(['', 'not-a-valid-envelope'])('does not replace a malformed published data key (%s) with legacy encryption', async (dataEncryptionKey) => {
+    runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      session: { ...validSessionById, dataEncryptionKey },
+    }), { status: 200 }));
+    const encryption = await createEncryptionFromAuthCredentials({
+      token: 'token', secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+    });
+    await expect(resolveScopedSessionCryptoContext({
+      serverId: 's-id', serverUrl: 'https://server.example.test', token: 'token', sessionId: 'session-1',
+      networkMode: 'background-task',
+      decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value),
+    })).resolves.toEqual({ encryptionMode: 'unknown', sessionDataKey: null });
+  });
+
+  it('requires genuine credential material for a legacy encrypted session', async () => {
+    runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      session: { ...validSessionById, dataEncryptionKey: null },
+    }), { status: 200 }));
+    const encryption = await createEncryptionFromAuthCredentials({ token: 'token' });
+    const context = await resolveScopedSessionCryptoContext({
+      serverId: 's-id', serverUrl: 'https://server.example.test', token: 'token', sessionId: 'session-1',
+      networkMode: 'background-task',
+      decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value),
+    });
+    expect(context.encryptionMode).toBe('e2ee');
+    await expect(encryption.initializeSessions(new Map([['session-1', context.sessionDataKey]])))
+      .rejects.toMatchObject({ code: 'encryption_material_unavailable' });
+    expect(encryption.getSessionEncryption('session-1')).toBeNull();
   });
 
   it('loads and decrypts the session data encryption key from a valid by-id response', async () => {

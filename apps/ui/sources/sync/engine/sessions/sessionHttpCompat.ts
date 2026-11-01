@@ -2,6 +2,7 @@ import {
     PendingActivationAuthorizationV1Schema,
     V2SessionListResponseSchema,
     V2SessionByIdNotFoundSchema,
+    withConnectedServiceReaderSupport,
     type V2SessionListResponse,
     type V2SessionRecord,
 } from '@happier-dev/protocol';
@@ -13,6 +14,7 @@ import {
 } from '@/sync/runtime/syncPerformanceTelemetry';
 import { HappyError } from '@/utils/errors/errors';
 import { resolveSessionRuntimeActivityProjectionFields } from './sessionRuntimeActivityProjection';
+import { normalizeSessionListHydrationSessionIds } from './sessionListHydrationPriority';
 
 type SessionRequest = (path: string, init: RequestInit) => Promise<Response>;
 type SessionListRequestHeadersOptions = Readonly<{
@@ -366,20 +368,116 @@ export function looksLikeCurrentV2SessionNotFound404(body: unknown): boolean {
  * have none). `V2SessionListResponseSchema` is `.passthrough()`, so the marker rides the existing
  * response without a format change and older clients never see it.
  */
-export async function fetchSessionListPageCompat(params: Readonly<{
+type SessionListPageRequest = Readonly<{
     request: SessionRequest;
     token: string;
     sessionListPath?: string;
+    serverUrl?: string;
     cursor?: string | null;
     limit: number;
     telemetryFields?: SyncPerformanceTelemetryFields;
-}>): Promise<{
+}>;
+type SessionListPage = {
     sessions: V2SessionListResponse['sessions'];
     nextCursor: string | null;
     hasNext: boolean | undefined;
     source: 'v2' | 'v1';
     includedActiveRows: boolean;
-}> {
+};
+
+/**
+ * nginx's default large_client_header_buffers permits an 8 KiB request line, smaller than Node's
+ * 16 KiB header budget. Count the encoded target, reader-support query added by the HTTP adapter,
+ * and HTTP/1.1 framing; an ID count cannot express that boundary.
+ * https://nginx.org/en/docs/http/ngx_http_core_module.html#large_client_header_buffers
+ */
+const SESSION_LIST_REQUEST_LINE_BYTES = 8 * 1024;
+
+export async function fetchSessionListPageCompat(params: SessionListPageRequest & Readonly<{
+    requiredSessionIds?: readonly string[];
+    requiredOnly?: boolean;
+}>): Promise<SessionListPage> {
+    const requiredSessionIds = normalizeSessionListHydrationSessionIds(params.requiredSessionIds);
+    if (requiredSessionIds.length === 0) {
+        if (params.requiredOnly) {
+            return { sessions: [], nextCursor: null, hasNext: false, source: 'v2', includedActiveRows: false };
+        }
+        return fetchSessionListPageRequest(params);
+    }
+
+    const buildPath = (ids: readonly string[], requiredOnly: boolean): string => {
+        const url = new URL(params.sessionListPath || '/v2/sessions', 'http://placeholder.local');
+        url.searchParams.set('limit', String(params.limit));
+        url.searchParams.set('requiredSessionIds', JSON.stringify(ids));
+        if (requiredOnly) {
+            url.searchParams.set('requiredOnly', 'true');
+            url.searchParams.delete('includeActive');
+            url.searchParams.delete('includeAttention');
+            url.searchParams.delete('cursor');
+        } else if (params.cursor) {
+            url.searchParams.set('cursor', params.cursor);
+        }
+        return url.pathname + url.search;
+    };
+    const fitsRequestLine = (ids: readonly string[], requiredOnly: boolean): boolean => {
+        const requestUrl = new URL(withConnectedServiceReaderSupport(
+            `${params.serverUrl ?? 'http://placeholder.local'}${buildPath(ids, requiredOnly)}`,
+        ));
+        // URL serialisation percent-encodes non-ASCII input, so every character here is one byte.
+        return `GET ${requestUrl.pathname}${requestUrl.search} HTTP/1.1\r\n`.length
+            <= SESSION_LIST_REQUEST_LINE_BYTES;
+    };
+    const chunks: string[][] = [];
+    let chunk: string[] = [];
+    for (const sessionId of requiredSessionIds) {
+        const requiredOnly = params.requiredOnly === true || chunks.length > 0;
+        if (!fitsRequestLine([...chunk, sessionId], requiredOnly)) {
+            // A long identifier may fit a required-only request but not the larger account query.
+            // Keep the account page as the first request, then carry that ID in the overflow family.
+            if (chunk.length > 0 || !requiredOnly) chunks.push(chunk);
+            chunk = [];
+            if (!fitsRequestLine([sessionId], params.requiredOnly === true || chunks.length > 0)) {
+                throw new HappyError('A required session identifier exceeds the HTTP request-line limit', false);
+            }
+        }
+        chunk.push(sessionId);
+    }
+    if (chunk.length > 0) chunks.push(chunk);
+
+    let firstPage: SessionListPage | undefined;
+    const sessions: V2SessionListResponse['sessions'] = [];
+    const seen = new Set<string>();
+    const requestedIds = new Set(requiredSessionIds);
+    for (const [index, chunkIds] of chunks.entries()) {
+        const ids = chunkIds.filter((id) => !seen.has(id));
+        // The ordinary families may already cover later chunks. Keep the first account read even
+        // when its required family is empty, but never re-download rows supplied by that read.
+        if (index > 0 && ids.length === 0) continue;
+        const requiredOnly = params.requiredOnly === true || index > 0;
+        const page = await fetchSessionListPageRequest({
+            ...params,
+            sessionListPath: buildPath(ids, requiredOnly),
+            cursor: requiredOnly ? null : params.cursor,
+        });
+        firstPage ??= page;
+        for (const row of page.sessions) {
+            // Old relays ignore both new query keys. Their ordinary rows never become authority for
+            // a targeted read; omitted IDs still take the caller's exact, outcome-aware fallback.
+            if ((requiredOnly && !requestedIds.has(row.id)) || seen.has(row.id)) continue;
+            seen.add(row.id);
+            sessions.push(row);
+        }
+    }
+    return {
+        sessions,
+        nextCursor: params.requiredOnly ? null : firstPage!.nextCursor,
+        hasNext: params.requiredOnly ? false : firstPage!.hasNext,
+        source: firstPage!.source,
+        includedActiveRows: params.requiredOnly ? false : firstPage!.includedActiveRows,
+    };
+}
+
+async function fetchSessionListPageRequest(params: SessionListPageRequest): Promise<SessionListPage> {
     const sessionListPath = params.sessionListPath || '/v2/sessions';
     const url = new URL(sessionListPath, 'http://placeholder.local');
     url.searchParams.set('limit', String(params.limit));

@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
-export const SessionRollbackTargetSchema = z.discriminatedUnion('type', [
+export const SessionRollbackTargetSchema = lazySchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('latest_turn') }).strict(),
   z
     .object({
@@ -8,18 +9,18 @@ export const SessionRollbackTargetSchema = z.discriminatedUnion('type', [
       userMessageSeq: z.number().int().nonnegative(),
     })
     .strict(),
-]);
+]));
 export type SessionRollbackTarget = z.infer<typeof SessionRollbackTargetSchema>;
 
-export const SessionRollbackRpcParamsSchema = z
+export const SessionRollbackRpcParamsSchema = lazySchema(() => z
   .object({
     v: z.literal(1),
     target: SessionRollbackTargetSchema.default({ type: 'latest_turn' }),
   })
-  .strict();
+  .strict());
 export type SessionRollbackRpcParams = z.infer<typeof SessionRollbackRpcParamsSchema>;
 
-export const SessionRollbackRpcResultSchema = z.union([
+export const SessionRollbackRpcResultSchema = lazySchema(() => z.union([
   z
     .object({
       ok: z.literal(true),
@@ -34,5 +35,5 @@ export const SessionRollbackRpcResultSchema = z.union([
       errorMessage: z.string().min(1),
     })
     .passthrough(),
-]);
+]));
 export type SessionRollbackRpcResult = z.infer<typeof SessionRollbackRpcResultSchema>;

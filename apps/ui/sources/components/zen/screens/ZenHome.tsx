@@ -56,8 +56,9 @@ export const ZenHome = () => {
     // Handle reorder action
     const handleReorder = React.useCallback(async (id: string, newIndex: number) => {
         if (auth?.credentials) {
-            await reorderTodosSync(auth.credentials, id, newIndex, 'undone');
+            return await reorderTodosSync(auth.credentials, id, newIndex, 'undone');
         }
+        return 'refused' as const;
     }, [auth?.credentials]);
 
     // Add keyboard shortcut for "T" to open new task (Web only)

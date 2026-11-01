@@ -4,11 +4,18 @@ import assert from 'node:assert/strict';
 import { resolveLinuxAppImageDiagnosticsLayout } from './build-updater-artifacts.mjs';
 
 test('resolveLinuxAppImageDiagnosticsLayout returns consistent AppDir relative paths', () => {
-  const layout = resolveLinuxAppImageDiagnosticsLayout({ environment: 'dev' });
-  assert.equal(layout.productName, 'HappierDev');
-  assert.equal(layout.appRelativePath, 'usr/bin/app');
-  assert.equal(layout.legacyHsetupRelativePath, 'usr/bin/hsetup');
-  assert.equal(layout.resourceHsetupDirRelativePath, 'usr/lib/HappierDev/binaries');
-  assert.equal(layout.resourceHsetupPrefix, 'hsetup-');
+  for (const [environment, productName, binaryName] of [
+    ['production', 'Happier', 'happier-desktop'],
+    ['preview', 'HappierPreview', 'happier-desktop-preview'],
+    ['dev', 'HappierDev', 'happier-desktop-dev'],
+    ['publicdev', 'HappierDev', 'happier-desktop-dev'],
+  ]) {
+    const layout = resolveLinuxAppImageDiagnosticsLayout({ environment });
+    assert.equal(layout.productName, productName);
+    assert.equal(layout.appRelativePath, `usr/bin/${binaryName}`);
+    assert.equal(layout.legacyHsetupRelativePath, 'usr/bin/hsetup');
+    assert.equal(layout.resourceHsetupDirRelativePath, `usr/lib/${productName}/binaries`);
+    assert.equal(layout.resourceHsetupPrefix, 'hsetup-');
+  }
 });
 

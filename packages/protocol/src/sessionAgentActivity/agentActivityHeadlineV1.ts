@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SessionAgentActivityEntryV1Schema, type SessionAgentActivityEntryV1 } from './agentActivityEntryV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * The session-metadata key the unified agent-activity headline is published under.
@@ -13,13 +14,13 @@ import { SessionAgentActivityEntryV1Schema, type SessionAgentActivityEntryV1 } f
  */
 export const SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY = 'sessionAgentActivityHeadlineV1';
 
-export const SessionAgentActivityHeadlineTruncationV1Schema = z
+export const SessionAgentActivityHeadlineTruncationV1Schema = lazySchema(() => z
   .object({
     reason: z.literal('entry_limit'),
     /** Terminal entries the producer's history bound dropped. Never a parse-time drop count. */
     omittedCount: z.number().int().nonnegative(),
   })
-  .strip();
+  .strip());
 export type SessionAgentActivityHeadlineTruncationV1 = z.infer<typeof SessionAgentActivityHeadlineTruncationV1Schema>;
 
 /**
@@ -33,7 +34,7 @@ export type SessionAgentActivityHeadlineTruncationV1 = z.infer<typeof SessionAge
  * `activeEntries` is never bounded: a roster that is quietly incomplete is the failure R-3 exists to
  * prevent. Only `recentEntries` is bounded, and `truncated` says so out loud.
  */
-export const SessionAgentActivityHeadlineV1Schema = z
+export const SessionAgentActivityHeadlineV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     backendId: z.string().trim().min(1),
@@ -45,7 +46,7 @@ export const SessionAgentActivityHeadlineV1Schema = z
     recentEntries: z.array(SessionAgentActivityEntryV1Schema).optional(),
     truncated: SessionAgentActivityHeadlineTruncationV1Schema.optional(),
   })
-  .strip();
+  .strip());
 export type SessionAgentActivityHeadlineV1 = z.infer<typeof SessionAgentActivityHeadlineV1Schema>;
 
 /**
@@ -54,10 +55,10 @@ export type SessionAgentActivityHeadlineV1 = z.infer<typeof SessionAgentActivity
  * Derived from the canonical schema with `.extend`, not restated, so an envelope field added above
  * cannot go missing here.
  */
-const SessionAgentActivityHeadlineEnvelopeV1Schema = SessionAgentActivityHeadlineV1Schema.extend({
+const SessionAgentActivityHeadlineEnvelopeV1Schema = lazySchema(() => SessionAgentActivityHeadlineV1Schema.extend({
   activeEntries: z.array(z.unknown()),
   recentEntries: z.array(z.unknown()).optional(),
-});
+}));
 
 function keepReadableEntries(entries: readonly unknown[]): SessionAgentActivityEntryV1[] {
   const readable: SessionAgentActivityEntryV1[] = [];

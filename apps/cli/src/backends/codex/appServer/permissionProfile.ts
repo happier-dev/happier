@@ -1,41 +1,35 @@
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 
-import { resolveCodexAppServerPolicyForPermissionMode } from '../utils/permissionModePolicy';
-
-export type CodexAppServerPermissionProfileId = ':read-only' | ':workspace' | ':danger-no-sandbox';
-
-export type CodexAppServerPermissionsParams = Readonly<{
-    permissions?: Readonly<{
-        type: 'profile';
-        id: CodexAppServerPermissionProfileId;
-    }>;
-}>;
+import {
+    resolveCodexAppServerPolicyForPermissionMode,
+    type CodexAppServerPolicy,
+} from '../utils/permissionModePolicy';
 
 export type CodexAppServerLegacyPermissionTarget = 'thread' | 'turn';
 
-export function resolveCodexAppServerPermissionProfileId(
-    permissionMode: PermissionMode,
-): CodexAppServerPermissionProfileId | null {
-    switch (normalizePermissionModeToIntent(permissionMode)) {
-        case 'read-only':
-            return ':read-only';
-        case 'safe-yolo':
-        case 'plan':
-            return ':workspace';
-        case 'yolo':
-            return ':danger-no-sandbox';
-        case 'default':
-        default:
-            return null;
-    }
-}
-
 export function buildCodexAppServerPermissionsParams(params: Readonly<{
     permissionMode: PermissionMode;
-}>): CodexAppServerPermissionsParams {
-    const id = resolveCodexAppServerPermissionProfileId(params.permissionMode);
-    return id ? { permissions: { type: 'profile', id } } : {};
+    directory: string;
+    target: CodexAppServerLegacyPermissionTarget;
+    managedScalarFallback?: boolean;
+}>): Record<string, unknown> {
+    if (normalizePermissionModeToIntent(params.permissionMode) === 'default') return {};
+    const policy = resolveCodexAppServerPolicyForPermissionMode(params.permissionMode, params);
+    // Codex's :workspace profile restricts network access. The canonical Happier
+    // workspace policy permits network access and carries explicit writable roots.
+    if (policy.sandbox === 'workspace-write') {
+        return serializeLegacyPermissionParams(policy, params.target);
+    }
+    const profiles = {
+        'read-only': ':read-only',
+        'danger-full-access': ':danger-full-access',
+    } as const;
+    return {
+        permissions: profiles[policy.sandbox],
+        approvalPolicy: policy.approvalPolicy,
+        ...(policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {}),
+    };
 }
 
 export function buildCodexAppServerLegacyPermissionParams(params: Readonly<{
@@ -51,10 +45,17 @@ export function buildCodexAppServerLegacyPermissionParams(params: Readonly<{
         managedScalarFallback: params.managedScalarFallback,
     });
 
+    return serializeLegacyPermissionParams(policy, params.target);
+}
+
+function serializeLegacyPermissionParams(
+    policy: CodexAppServerPolicy,
+    target: CodexAppServerLegacyPermissionTarget,
+): Record<string, unknown> {
     return {
         approvalPolicy: policy.approvalPolicy,
         ...(policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {}),
-        ...(params.target === 'thread'
+        ...(target === 'thread'
             ? { sandbox: policy.sandbox }
             : { sandboxPolicy: policy.sandboxPolicy }),
     };

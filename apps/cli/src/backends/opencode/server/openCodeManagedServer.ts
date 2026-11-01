@@ -166,6 +166,7 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     ...(params.cwd ? { cwd: params.cwd } : {}),
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
+    windowsHide: true,
     ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
   const baseUrl = `http://${hostname}:${port}`;

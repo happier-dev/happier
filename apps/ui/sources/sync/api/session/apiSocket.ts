@@ -4,7 +4,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
+import { serverFetch, StaleServerGenerationError, type ServerReadRequestInit } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -12,21 +12,23 @@ import { storage } from '@/sync/domains/state/storage';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
     type ManagedConnectionState,
+    type ManagedConnectionSupervisor,
     type ManagedConnectionTransport,
     type TransportDisconnectEvent,
 } from '@happier-dev/connection-supervisor';
 import { createSyncSocketTransport } from '@/sync/api/session/connection/createSyncSocketTransport';
+import { createSocketConnectionSupervisor } from '@/sync/runtime/connectivity/createSocketConnectionSupervisor';
 import {
-    reportServerUnreachable,
-    invalidateServerReachabilitySupervisor,
     reportServerRestarting,
     startServerReachabilitySupervisor,
     stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
-import { isSocketIoAckTimeoutError, raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
+import { raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { t } from '@/text';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
@@ -209,6 +211,7 @@ class ApiSocket {
     private reachabilityUnsubscribe: (() => void) | null = null;
     private reachabilityServerUrl: string | null = null;
     private socketTransport: ManagedConnectionTransport | null = null;
+    private socketSupervisor: ManagedConnectionSupervisor | null = null;
     private detachSocketTransportListeners: Array<() => void> = [];
 
     //
@@ -234,6 +237,7 @@ class ApiSocket {
         const serverUrl = canonicalizeServerUrl(endpoint) || endpoint;
 
         if (this.reachabilityUnsubscribe && this.reachabilityServerUrl && this.reachabilityServerUrl !== serverUrl) {
+            this.stopSocketSupervisor();
             const previousServerUrl = this.reachabilityServerUrl;
             this.reachabilityUnsubscribe();
             this.reachabilityUnsubscribe = null;
@@ -257,6 +261,7 @@ class ApiSocket {
         this.reachabilityUnsubscribe?.();
         this.reachabilityUnsubscribe = null;
         this.reachabilityServerUrl = null;
+        this.stopSocketSupervisor();
         if (previousServerUrl) {
             void stopServerReachabilitySupervisor(previousServerUrl);
         }
@@ -416,16 +421,16 @@ class ApiSocket {
             onIssued?: () => void;
         },
     ): Promise<R> {
-        const machineEncryption = this.encryption!.getMachineEncryption(machineId);
+        const machineEncryption = this.encryption?.getMachineEncryption(machineId);
         if (!machineEncryption) {
-            throw new Error(`Machine encryption not found for ${machineId}`);
+            throw createRpcCallError({ error: t('errors.machineRpcDecryptionFailed'), errorCode: 'machine_rpc_context_unavailable' });
         }
 
         const result: any = await this.emitWithAck(
             SOCKET_RPC_EVENTS.CALL,
             buildSocketRpcCallPayload({
                 method: `${machineId}:${method}`,
-                payload: await machineEncryption.encryptRaw(params),
+                payload: await machineEncryption.encodeRpcPayload(params),
                 timeoutMs: options?.timeoutMs,
                 authorization: options?.authorization,
             }),
@@ -433,7 +438,7 @@ class ApiSocket {
         );
 
         if (result.ok) {
-            return await machineEncryption.decryptRaw(result.result) as R;
+            return await machineEncryption.decodeRpcResult(result.result) as R;
         }
         throw createRpcCallError({
             error: typeof result.error === 'string' ? result.error : 'RPC call failed',
@@ -474,7 +479,10 @@ class ApiSocket {
     // HTTP Requests
     //
 
-    async request(path: string, options?: RequestInit): Promise<Response> {
+    request(path: string, options?: ServerReadRequestInit): Promise<Response>;
+    /** Consume the response body while HTTP cancellation and the initiating Home scope remain enforced. */
+    request<T>(path: string, options: ServerReadRequestInit | undefined, consumeResponse: (response: Response) => Promise<T>): Promise<T>;
+    async request<T>(path: string, options?: ServerReadRequestInit, consumeResponse?: (response: Response) => Promise<T>): Promise<Response | T> {
         if (!this.config) {
             throw new Error('SyncSocket not initialized');
         }
@@ -501,6 +509,34 @@ class ApiSocket {
         const headers = new Headers(options?.headers);
         headers.set('Authorization', `Bearer ${credentials.token}`);
 
+        const validateResponseScope = () => {
+            const current = getActiveServerSnapshot();
+            if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
+                throw new StaleServerGenerationError();
+            }
+        };
+        const observeResponse = (response: Response) => {
+            validateResponseScope();
+            // Best-effort server time calibration using the HTTP Date header.
+            try {
+                const dateHeader = response.headers.get('date');
+                const serverNow = dateHeader ? Date.parse(dateHeader) : Number.NaN;
+                if (!Number.isNaN(serverNow)) observeServerTimestamp(serverNow);
+            } catch {
+                // Best-effort only
+            }
+        };
+
+        if (consumeResponse) {
+            // Body consumers own their complete read; they cannot share an in-flight Response.
+            return await serverFetch(url, { ...options, headers }, { includeAuth: false }, async (response) => {
+                observeResponse(response);
+                const result = await consumeResponse(response);
+                validateResponseScope();
+                return result;
+            });
+        }
+
         const canDedupe =
             (method === 'GET' || method === 'HEAD')
             && !hasBody
@@ -510,7 +546,7 @@ class ApiSocket {
         const requestKey = canDedupe
             // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share
             // a single in-flight fetch even if the active server generation changes while bootstrapping.
-            ? `${snapshot.serverId ?? ''}:${method}:${url}:tk:${getOrCreateTokenCacheKey(credentials.token)}`
+            ? `${snapshot.serverId ?? ''}:${method}:${url}:bounded:${options?.responseSizeBounded === true}:tk:${getOrCreateTokenCacheKey(credentials.token)}`
             : null;
 
         let response: Response;
@@ -547,24 +583,7 @@ class ApiSocket {
             );
         }
 
-        const current = getActiveServerSnapshot();
-        if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
-            throw new StaleServerGenerationError();
-        }
-
-        // Best-effort server time calibration using the HTTP Date header ("server now").
-        // This avoids deriving "now" from potentially stale resource timestamps (e.g. session.updatedAt).
-        try {
-            const dateHeader = response.headers.get('date');
-            if (dateHeader) {
-                const serverNow = Date.parse(dateHeader);
-                if (!Number.isNaN(serverNow)) {
-                    observeServerTimestamp(serverNow);
-                }
-            }
-        } catch {
-            // Best-effort only
-        }
+        observeResponse(response);
 
         return response;
     }
@@ -607,41 +626,48 @@ class ApiSocket {
             if (this.hasConnectedOnce) {
                 this.pendingReconnectNotification = true;
             }
-            void this.socketTransport?.disconnect({ intentional: true });
+            this.stopSocketSupervisor();
             return;
         }
 
-        try {
-            this.ensureSocketTransport();
-        } catch (error) {
-            this.setError(error instanceof Error ? error : new Error(String(error)));
-            this.updateStatus('error');
-            return;
+        if (!this.socketSupervisor) {
+            const supervisor = createSocketConnectionSupervisor({
+                createTransport: () => {
+                    this.ensureSocketTransport(true);
+                    return this.socketTransport!;
+                },
+                onStateChange: (next) => {
+                    if (this.socketSupervisor === supervisor) this.applySocketConnectionState(next);
+                },
+            });
+            this.socketSupervisor = supervisor;
         }
 
-        if (!this.socketTransport || this.socketTransport.isConnected()) {
-            return;
-        }
-
-        this.updateStatus('connecting');
-        void this.socketTransport.connect().catch((error) => {
+        const supervisor = this.socketSupervisor;
+        void supervisor.start().catch((error) => {
+            if (this.socketSupervisor !== supervisor) return;
             this.setError(error instanceof Error ? error : new Error(String(error)));
             this.updateStatus('error');
         });
+        this.applySocketConnectionState(supervisor.getState());
     }
 
-    private invalidateReachabilityAfterSocketTransportFailure(error: unknown): void {
-        const config = this.config;
-        if (!config) return;
-        void invalidateServerReachabilitySupervisor({ serverUrl: config.endpoint, token: config.token }).catch(() => {
-            reportServerUnreachable(config.endpoint, error);
-        });
+    private applySocketConnectionState(state: ManagedConnectionState): void {
+        if (state.phase === 'online') this.updateStatus('connected');
+        else if (state.phase === 'connecting') this.updateStatus('connecting');
+        else this.updateStatus(state.phase === 'auth_failed' ? 'error' : 'disconnected');
     }
 
-    private ensureSocketTransport(): void {
+    private stopSocketSupervisor(): void {
+        const supervisor = this.socketSupervisor;
+        this.socketSupervisor = null;
+        void supervisor?.stop();
+    }
+
+    private ensureSocketTransport(forceNew = false): void {
         if (!this.config) return;
         const key = `${this.config.endpoint}|${this.config.token}`;
-        if (this.socketTransport && this.socketTransportKey === key && this.socket) {
+        if (!forceNew && this.socketTransport && this.socketTransportKey === key && this.socket) {
             return;
         }
 
@@ -679,11 +705,10 @@ class ApiSocket {
                     return;
                 }
                 this.pendingReconnectNotification = true;
-                this.invalidateReachabilityAfterSocketTransportFailure(event.error ?? new Error(event.reason ?? 'socket disconnect'));
             }),
             transport.onError((error: unknown) => {
                 this.setError(error instanceof Error ? error : new Error(String(error)));
-                this.invalidateReachabilityAfterSocketTransportFailure(error);
+                this.updateStatus('error');
             }),
         ];
     }
@@ -723,8 +748,6 @@ class ApiSocket {
             case 'online':
                 if (this.socketTransport?.isConnected() === true) {
                     this.updateStatus('connected');
-                } else if (this.currentStatus === 'disconnected') {
-                    this.updateStatus('connecting');
                 }
                 return;
             case 'offline':

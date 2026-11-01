@@ -83,6 +83,47 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         await harness.close();
     });
 
+    it.each([false, true])("persists and projects token-only reader support (%s) without changing it on legacy polling", async (initialSupport) => {
+        const { publicKeyBase64 } = createTerminalKeypair();
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const createRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: publicKeyBase64, supportsV2: true, ...(initialSupport ? { supportsTokenOnly: true } : {}) },
+        });
+        expect(createRes.statusCode).toBe(200);
+
+        const statusUrl = `/v1/auth/request/status?publicKey=${encodeURIComponent(publicKeyBase64)}`;
+        expect((await app.inject({ method: "GET", url: statusUrl })).json()).toEqual({
+            status: "pending", supportsV2: true, supportsTokenOnly: initialSupport,
+        });
+
+        for (const supportsTokenOnly of [true, false]) {
+            const updateRes = await app.inject({
+                method: "POST",
+                url: "/v1/auth/request",
+                payload: { publicKey: publicKeyBase64, supportsTokenOnly },
+            });
+            expect(updateRes.statusCode).toBe(200);
+            const pollRes = await app.inject({
+                method: "POST",
+                url: "/v1/auth/request",
+                payload: { publicKey: publicKeyBase64 },
+            });
+            expect(pollRes.statusCode).toBe(200);
+            const row = await db.terminalAuthRequest.findUnique({
+                where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(publicKeyBase64)) },
+            });
+            expect(row).toMatchObject({ supportsV2: true, supportsTokenOnly });
+            expect((await app.inject({ method: "GET", url: statusUrl })).json()).toEqual({
+                status: "pending", supportsV2: true, supportsTokenOnly,
+            });
+        }
+    });
+
     it("returns the persisted request deadline for a configured TTL without renewing repeated requests", async () => {
         harness.resetEnv({ TERMINAL_AUTH_REQUEST_TTL_SECONDS: "240" });
         const { publicKeyBase64 } = createTerminalKeypair();
@@ -177,7 +218,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             url: `/v1/auth/request/status?publicKey=${encodeURIComponent(publicKeyBase64)}`,
         });
         expect(statusRes.statusCode).toBe(200);
-        expect(statusRes.json()).toEqual({ status: "not_found", supportsV2: false });
+        expect(statusRes.json()).toEqual({ status: "not_found", supportsV2: false, supportsTokenOnly: false });
 
         const remaining = await db.terminalAuthRequest.findUnique({ where: { id: row!.id } });
         expect(remaining).toBeNull();
@@ -217,7 +258,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             url: `/v1/auth/request/status?publicKey=${encodeURIComponent(publicKeyBase64)}`,
         });
         expect(statusRes.statusCode).toBe(200);
-        expect(statusRes.json()).toEqual({ status: "pending", supportsV2: true });
+        expect(statusRes.json()).toEqual({ status: "pending", supportsV2: true, supportsTokenOnly: false });
 
         await app.close();
     });
@@ -307,7 +348,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             url: `/v1/auth/request/status?publicKey=${encodeURIComponent(publicKeyBase64)}`,
         });
         expect(statusRes.statusCode).toBe(200);
-        expect(statusRes.json()).toEqual({ status: "authorized", supportsV2: true });
+        expect(statusRes.json()).toEqual({ status: "authorized", supportsV2: true, supportsTokenOnly: false });
 
         const claimRes = await app.inject({
             method: "POST",
@@ -434,7 +475,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             url: `/v1/auth/request/status?publicKey=${encodeURIComponent(tooLarge)}`,
         });
         expect(statusRes.statusCode).toBe(200);
-        expect(statusRes.json()).toEqual({ status: "not_found", supportsV2: false });
+        expect(statusRes.json()).toEqual({ status: "not_found", supportsV2: false, supportsTokenOnly: false });
 
         const claimRes = await app.inject({
             method: "POST",
@@ -622,7 +663,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             url: "/v1/auth/request/status?publicKey=not-base64!!",
         });
         expect(res.statusCode).toBe(200);
-        expect(res.json()).toEqual({ status: "not_found", supportsV2: false });
+        expect(res.json()).toEqual({ status: "not_found", supportsV2: false, supportsTokenOnly: false });
 
         await app.close();
     });

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 import {
   clearPendingExternalAuthMock,
@@ -12,12 +14,18 @@ import {
   setPendingExternalAuthState,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 
+const keylessToken = `header.${Buffer.from(JSON.stringify({ sub: 'account-provisioning' })).toString('base64url')}.signature`;
+const serverFeatures = createRootLayoutFeaturesResponse({
+  features: { encryption: { plaintextMachine: { enabled: true } } },
+});
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@shopify/react-native-skia', () => ({}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetServerFeaturesClientForTests();
   resetOAuthHarness();
 });
 
@@ -53,6 +61,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
+      if (rawUrl.endsWith('/v1/features')) {
+        return new Response(JSON.stringify(serverFeatures), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
       if (isReachabilityProbeUrl(rawUrl)) {
         return new Response('', { status: 200 });
       }
@@ -61,7 +74,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         if (body?.pending !== 'p3' || body?.proof !== 'proof_3') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
         }
-        return new Response(JSON.stringify({ success: true, token: 'tok_3' }), {
+        return new Response(JSON.stringify({ success: true, token: keylessToken }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -91,7 +104,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalled();
+      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: keylessToken });
       expect(replaceSpy).toHaveBeenCalledWith('/');
     } finally {
       await act(async () => {
@@ -120,6 +133,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
+      if (rawUrl.endsWith('/v1/features')) {
+        return new Response(JSON.stringify(serverFeatures), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
       if (isReachabilityProbeUrl(rawUrl)) {
         return new Response('', { status: 200 });
       }
@@ -128,7 +146,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         if (body?.pending !== 'p4' || body?.proof !== 'proof_4') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
         }
-        return new Response(JSON.stringify({ success: true, token: 'tok_4' }), {
+        return new Response(JSON.stringify({ success: true, token: keylessToken }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -143,7 +161,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalled();
+      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: keylessToken });
       expect(replaceSpy).toHaveBeenCalledWith('/');
 
       expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);

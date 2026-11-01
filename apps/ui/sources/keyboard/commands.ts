@@ -18,12 +18,18 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     {
         id: 'composer.sendImmediate',
         defaultBinding: { binding: 'Mod+Enter', allowInEditable: true },
+        // Preserve the persisted command id and custom bindings for alternate send.
         settingsTitleKey: 'settingsKeyboard.commands.composerSendImmediate',
     },
     {
         id: 'composer.sendPending',
-        defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true },
+        allowInEditable: true,
         settingsTitleKey: 'settingsKeyboard.commands.composerSendPending',
+    },
+    {
+        id: 'composer.sendInterrupt',
+        defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true },
+        settingsTitleKey: 'settingsKeyboard.commands.composerSendInterrupt',
     },
     {
         id: 'commandPalette.open',

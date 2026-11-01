@@ -1,3 +1,4 @@
+import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { Credentials } from '@/persistence';
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
@@ -28,7 +29,7 @@ function readPlainPayloadRole(row: RawTranscriptRow): string | null {
 
 export function extractRecentMessagesFromTranscriptRows(params: Readonly<{
   rows: readonly RawTranscriptRow[];
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
   includeUser: boolean;
   includeAssistant: boolean;
   maxCharsPerMessage: number | null;

@@ -1,11 +1,10 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { readStoredSessionMessagesReadProjectionFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import {
     resolveLastViewedSessionSeq,
     type LastViewedSessionSeqInput,
 } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import {
-    resolveLatestUnreadAffectingCommittedMessageSeq,
     resolveSessionReadableSeq,
     type ResolveSessionReadableSeqInput,
 } from '@/sync/domains/session/readCursor/resolveSessionReadableSeq';
@@ -42,16 +41,14 @@ function resolveLegacyPendingActivityAt(metadata: unknown): number | undefined {
         : undefined;
 }
 
-function readSessionMessagesForReadState(session: SessionReadStateInput): ResolveSessionReadableSeqInput['messages'] {
+function readSessionMessagesReadProjectionForReadState(session: SessionReadStateInput): NonNullable<ResolveSessionReadableSeqInput['messagesProjection']> | null {
     const sessionId = typeof session.id === 'string' ? session.id.trim() : '';
     if (!sessionId) return null;
     const storageState = readRegisteredStorageState();
     if (!storageState) return null;
-    const sessionMessages = (storageState as {
-        sessionMessages?: Record<string, { isLoaded?: unknown } | undefined>;
-    }).sessionMessages?.[sessionId];
+    const sessionMessages = storageState.sessionMessages?.[sessionId];
     if (sessionMessages?.isLoaded !== true) return null;
-    return readStoredSessionMessages(storageState, sessionId);
+    return readStoredSessionMessagesReadProjectionFromStateLike(sessionMessages);
 }
 
 function readRenderableHasUnreadMessages(session: SessionReadStateInput): boolean | null {
@@ -71,16 +68,16 @@ function readRenderableHasUnreadMessages(session: SessionReadStateInput): boolea
 }
 
 export function deriveSessionReadState(session: SessionReadStateInput): SessionReadState {
-    const storedMessages = readSessionMessagesForReadState(session);
     const renderableHasUnreadMessages = readRenderableHasUnreadMessages(session);
     if (renderableHasUnreadMessages === true) {
         return 'unread';
     }
+    const messagesProjection = readSessionMessagesReadProjectionForReadState(session);
     const readableSeq = resolveSessionReadableSeq({
-        messages: storedMessages,
-        latestMessageSeq: storedMessages === null
+        messagesProjection,
+        latestMessageSeq: messagesProjection === null
             ? session.latestMessageSeq
-            : resolveLatestUnreadAffectingCommittedMessageSeq(storedMessages),
+            : null,
         sessionSeq: session.seq,
         latestReadyEventSeq: session.latestReadyEventSeq,
         latestTurnStatus: session.latestTurnStatus ?? null,

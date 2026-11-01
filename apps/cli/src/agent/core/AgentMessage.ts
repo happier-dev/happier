@@ -44,6 +44,20 @@ export interface StatusMessage {
   status: AgentStatus;
   /** Additional details (e.g., error message) */
   detail?: string;
+  /** In-process terminal error evidence for the host; never serialized to the transcript. */
+  error?: unknown;
+  /** The provider conclusively settled its response; an unqualified idle may be transient. */
+  turnFinished?: true;
+}
+
+/**
+ * Provider-observed input submission, such as input submitted by a provider extension.
+ * Later provider handlers may transform or handle the submission without starting a turn.
+ * Host-submitted inputs are already recorded by the host and must not be emitted again.
+ */
+export interface ProviderUserPromptMessage {
+  type: 'user-message';
+  text: string;
 }
 
 /**
@@ -216,6 +230,7 @@ export interface PatchApplyEndMessage {
 export type AgentMessage =
   | ModelOutputMessage
   | StatusMessage
+  | ProviderUserPromptMessage
   | ToolCallMessage
   | ToolResultMessage
   | SessionMediaMessage

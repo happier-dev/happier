@@ -1,5 +1,5 @@
 import type { Metadata } from '@/api/types';
-import { parseTmuxSessionIdentifier } from '@/integrations/tmux';
+import { formatTmuxSessionIdentifier, parseTmuxSessionIdentifier } from '@/integrations/tmux';
 import { join } from 'node:path';
 
 export type TerminalAttachPlan =
@@ -146,7 +146,7 @@ export function createTerminalAttachPlan(params: {
     typeof tmpDir === 'string' && tmpDir.trim().length > 0 ? { TMUX_TMPDIR: tmpDir } : {};
 
   const hasTmpDir = Object.prototype.hasOwnProperty.call(tmuxCommandEnv, 'TMUX_TMPDIR');
-  const resolvedTarget = parsed.window?.startsWith('@') ? parsed.window : target;
+  const resolvedTarget = formatTmuxSessionIdentifier(parsed, { exactSession: true });
 
   let shouldUnsetTmuxEnv = hasTmpDir;
   let shouldAttach = !params.insideTmux || shouldUnsetTmuxEnv;
@@ -179,6 +179,6 @@ export function createTerminalAttachPlan(params: {
     shouldUnsetTmuxEnv,
     tmuxCommandEnv,
     selectWindowArgs: ['select-window', '-t', resolvedTarget],
-    attachSessionArgs: ['attach-session', '-t', parsed.session],
+    attachSessionArgs: ['attach-session', '-t', formatTmuxSessionIdentifier({ session: parsed.session }, { exactSession: true })],
   };
 }

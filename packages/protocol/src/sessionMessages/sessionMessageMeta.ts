@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { createHappierMetaEnvelopeSchema } from '../structuredMessages/HappierMetaEnvelope.js';
 
 import { createSentFromSchema } from '../sentFrom.js';
 import { createSessionPermissionModeSchema } from '../sessionMetadata/sessionPermissionModes.js';
+import { lazySchema } from '../lazySchema.js';
 
 export type SessionUserMessageDeliveryIntentV1 =
   | 'default'
@@ -74,15 +76,10 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
       allowedTools: zod.array(zod.string()).nullable().optional(),
       disallowedTools: zod.array(zod.string()).nullable().optional(),
       displayText: zod.string().optional(),
-      happier: zod
-        .object({
-          kind: zod.string(),
-          payload: zod.unknown(),
-        })
-        .optional(),
+      happier: createHappierMetaEnvelopeSchema(zod).optional(),
     })
     .passthrough();
 }
 
-export const SessionMessageMetaSchema = createSessionMessageMetaSchema(z);
+export const SessionMessageMetaSchema = lazySchema(() => createSessionMessageMetaSchema(z));
 export type SessionMessageMeta = z.infer<typeof SessionMessageMetaSchema>;

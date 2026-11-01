@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 import { ActionOperationDetail } from './ActionOperationDetail';
@@ -73,6 +75,33 @@ function runningOperation(): ActionOperationSnapshotV1 {
 }
 
 describe('ActionOperationLedger', () => {
+    it('keeps a seen failure explicitly dismissible through the shared Activity and Inbox model', async () => {
+        const { useActionOperationActivityModel } = await import('./useActionOperationActivityModel');
+        const previousProfileScope = storage.getState().profileScope;
+        const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'account-dismissal' };
+        const failed: ActionOperationSnapshotV1 = {
+            ...runningOperation(),
+            operationId: 'seen-failure',
+            scope: { ...runningOperation().scope, accountId: scope.accountId },
+            state: 'failed',
+            settledAt: 1_700_000_120_000,
+        };
+        storage.setState({ profileScope: scope });
+        actionOperationStore.merge(failed);
+        const hook = await renderHook(() => useActionOperationActivityModel());
+        try {
+            await act(async () => { actionOperationStore.markAccountTerminalSeen(scope.accountId); });
+            expect(hook.getCurrent().inboxEntries).toEqual([]);
+            expect(hook.getCurrent().canDismissOperation(failed)).toBe(true);
+            await act(async () => hook.getCurrent().dismissOperation(failed.operationId));
+            expect(hook.getCurrent().operations).toEqual([]);
+            expect(actionOperationStore.getState().operationsById.get(failed.operationId)?.state).toBe('failed');
+        } finally {
+            await hook.unmount();
+            storage.setState({ profileScope: previousProfileScope });
+        }
+    });
+
     it('retains shared stopping feedback when Activity is reopened and observes the cancellation cutoff', async () => {
         const snapshot = { ...runningOperation(), actionId: 'session.direct.takeover_persist',
             progress: { kind: 'phase' as const, phase: 'cancelling', label: 'Stopping import' } };
@@ -229,7 +258,7 @@ describe('ActionOperationLedger', () => {
         expect(onCancelOperation).not.toHaveBeenCalled();
     });
 
-    it('adds an explicit Inbox-only resolution action for an admitted terminal failure', async () => {
+    it('offers explicit dismissal of a terminal failure in Activity as well as Inbox', async () => {
         const onDismissOperation = vi.fn();
         const failed: ActionOperationSnapshotV1 = {
             ...runningOperation(),
@@ -239,14 +268,13 @@ describe('ActionOperationLedger', () => {
             settledAt: 1_700_000_120_000,
             error: { errorCode: 'failed', error: 'Failed' },
         };
-        const { ActionOperationRows } = await import('./ActionOperationLedger');
+        const { ActionOperationLedger } = await import('./ActionOperationLedger');
         const screen = await renderScreen(
-            <ActionOperationRows
+            <ActionOperationLedger
                 operations={[failed]}
                 onOpenOperation={() => {}}
                 canDismissOperation={() => true}
                 onDismissOperation={onDismissOperation}
-                allowTerminalDismissal
                 nowMs={1_700_000_120_000}
             />,
         );
@@ -378,5 +406,12 @@ describe('ActionOperationLedger', () => {
         });
 
         expect(actionOperationStore.getState().terminalSeenAtById.has(operationId)).toBe(true);
+
+        const mountedTerminal = { ...running, operationId: 'operation-mounted-terminal', state: 'failed' as const };
+        actionOperationStore.merge(mountedTerminal);
+        await renderScreen(
+            <ActionOperationDetailModal operationId={mountedTerminal.operationId} onClose={() => {}} refreshDetail={async () => {}} />,
+        );
+        expect(actionOperationStore.getState().terminalSeenAtById.has(mountedTerminal.operationId)).toBe(false);
     });
 });

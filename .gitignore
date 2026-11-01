@@ -145,6 +145,8 @@ _.env.pipeline.production.local
 /apps/stack/output
 
 /packages/cli-common/.dist*
+/packages/cli-common/native/windows/bin/
+/service-launcher.obj
 /.playwright-mcp
 /.clawpatch
 /apply_fix.py
@@ -162,3 +164,6 @@ _.env.pipeline.production.local
 /apps/ui/scripts/icons/scanner.mjs
 /apps/ui/scripts/icons/snapSizes.mjs
 /apps/website/.playwright-mcp
+
+# Leftovers of an interrupted apps/stack atomic_dir_swap
+**/.backup.*/

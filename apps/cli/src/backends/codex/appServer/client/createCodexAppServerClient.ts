@@ -1,16 +1,18 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
+import { Duplex } from 'node:stream';
 import { appendFile, rename, rm, stat } from 'node:fs/promises';
 
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
-import { withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
+import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
+import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { resolveConfiguredCodexConfigTomlPath } from '../../utils/resolveConfiguredCodexHome';
 import { createCodexAppServerJsonLineReader } from './codexAppServerJsonLineReader';
-import { createCodexUnixWebSocket, type CodexUnixWebSocket } from './createCodexUnixWebSocket';
+import { createCodexWebSocket, type CodexWebSocket } from './createCodexWebSocket';
 import { readCodexAppServerRequestTimeoutMs } from './codexAppServerRpcTimeout';
 import {
     sanitizeCodexAppServerRpcDiagnosticString,
@@ -380,38 +382,85 @@ type CreateCodexAppServerClientParams = Readonly<{
 }>;
 
 export async function createCodexAppServerClient(params: CreateCodexAppServerClientParams): Promise<DisposableCodexAppServerClient> {
+    params.initializeRequestOptions?.signal?.throwIfAborted();
     if (params.transport && params.transport.kind !== 'stdio') return await createUnlockedCodexAppServerClient(params);
+    const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
+    const baseInvocation = await resolveCodexCliInvocation({
+        args: ['app-server', '--listen', 'stdio://'],
+        cwd: params.cwd,
+        processEnv,
+        overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
+        targetLabel: 'Codex app-server',
+    });
+    const versionOutput = await readCodexNativeStartupVersion(baseInvocation, processEnv, params.cwd, params.initializeRequestOptions?.signal);
     const timeoutMs = params.initializeRequestOptions?.timeoutMs
         ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
-    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async () => (
-        await createUnlockedCodexAppServerClient(params)
-    ), params.initializeRequestOptions?.signal);
+    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async configOverrides => (
+        await createUnlockedCodexAppServerClient({ ...params, configOverrides }, baseInvocation)
+    ), params.initializeRequestOptions?.signal, { processEnv, cwd: params.cwd, configOverrides: params.configOverrides, versionOutput });
 }
 
 /** Warm managed disk-auth homes through the same native initialization owner. */
 export async function bootstrapCodexNativeHome(params: Omit<CreateCodexAppServerClientParams, 'transport'>): Promise<void> {
-    const timeoutMs = params.initializeRequestOptions?.timeoutMs
-        ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
-    await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async () => {
-        const client = await createUnlockedCodexAppServerClient(params);
-        await client.dispose();
-    }, params.initializeRequestOptions?.signal);
+    const client = await createCodexAppServerClient(params);
+    await client.dispose();
 }
 
-async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerClientParams): Promise<DisposableCodexAppServerClient> {
+async function createUnlockedCodexAppServerClient(
+    params: CreateCodexAppServerClientParams,
+    resolvedInvocation?: Awaited<ReturnType<typeof resolveCodexCliInvocation>>,
+): Promise<DisposableCodexAppServerClient> {
     params.initializeRequestOptions?.signal?.throwIfAborted();
     const sourceProcessEnv = params.processEnv ?? process.env;
     const rpcLogger = createRpcLogger(sourceProcessEnv);
     const processEnv = sanitizeCodexAppServerEnv(sourceProcessEnv);
     const transport = params.transport ?? { kind: 'stdio' };
+    const maxJsonLineChars = readMaxJsonLineChars(sourceProcessEnv);
     const baseOverrides = params.disableUserMcpServers === true
         ? readCodexMcpServerKeysFromConfigToml(processEnv).map((key) => `mcp_servers.${key}.enabled=false`)
         : [];
     let child: ReturnType<typeof spawn> | null = null;
-    let webSocket: CodexUnixWebSocket | null = null;
+    let webSocket: CodexWebSocket | null = null;
     let connectionReady = Promise.resolve();
     if (transport.kind === 'unixWebSocket') {
-        webSocket = createCodexUnixWebSocket(transport.socketPath);
+        webSocket = createCodexWebSocket(() => createConnection(transport.socketPath));
+    } else {
+        const baseInvocation = resolvedInvocation ?? await resolveCodexCliInvocation({
+            args: transport.kind === 'daemonProxy'
+                ? ['app-server', 'proxy']
+                : ['app-server', '--listen', 'stdio://'],
+            cwd: params.cwd,
+            processEnv,
+            overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
+            targetLabel: 'Codex app-server',
+        });
+        const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...baseOverrides, ...(params.configOverrides ?? [])]);
+        params.initializeRequestOptions?.signal?.throwIfAborted();
+        const windowsInvocation = resolveWindowsCommandInvocation({
+            command: invocation.command,
+            args: invocation.args,
+            resolveCommandOnPath: true,
+        });
+        child = spawn(windowsInvocation.command, windowsInvocation.args, {
+            cwd: params.cwd ?? process.cwd(),
+            env: processEnv,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            windowsVerbatimArguments: windowsInvocation.windowsVerbatimArguments,
+        });
+
+        if (!child.stdin || !child.stdout || !child.stderr) {
+            throw new Error('Failed to start Codex app-server with piped stdio');
+        }
+        if (transport.kind === 'daemonProxy') {
+            // Codex's native proxy owns cross-platform AF_UNIX access and relays raw
+            // bytes. The same WebSocket owner performs its HTTP upgrade and framing.
+            // @ts-expect-error @types/node omits Node's documented readable/writable stream pair.
+            const proxyStream = Duplex.from({ readable: child.stdout, writable: child.stdin });
+            webSocket = createCodexWebSocket(() => proxyStream);
+        }
+    }
+    if (webSocket) {
         const socket = webSocket;
         connectionReady = new Promise<void>((resolve, reject) => {
             const onOpen = () => {
@@ -433,34 +482,6 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
             socket.once('error', onError);
             socket.once('close', onCloseBeforeOpen);
         });
-    } else {
-        const baseInvocation = await resolveCodexCliInvocation({
-            args: transport.kind === 'daemonProxy'
-                ? ['app-server', 'proxy']
-                : ['app-server', '--listen', 'stdio://'],
-            cwd: params.cwd,
-            processEnv,
-            overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
-            targetLabel: 'Codex app-server',
-        });
-        const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...baseOverrides, ...(params.configOverrides ?? [])]);
-        params.initializeRequestOptions?.signal?.throwIfAborted();
-        const windowsInvocation = resolveWindowsCommandInvocation({
-            command: invocation.command,
-            args: invocation.args,
-            resolveCommandOnPath: true,
-        });
-        child = spawn(windowsInvocation.command, windowsInvocation.args, {
-            cwd: params.cwd ?? process.cwd(),
-            env: processEnv,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            windowsHide: true,
-            windowsVerbatimArguments: windowsInvocation.windowsVerbatimArguments,
-        });
-
-        if (!child.stdin || !child.stdout || !child.stderr) {
-            throw new Error('Failed to start Codex app-server with piped stdio');
-        }
     }
 
     const state: MessageQueueState = {
@@ -575,21 +596,29 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
     let terminateTransportPromise: Promise<void> | null = null;
     const terminateTransport = (): Promise<void> => {
         if (terminateTransportPromise) return terminateTransportPromise;
-        if (webSocket) {
-            webSocket.terminate();
-            terminateTransportPromise = closedPromise;
-            return terminateTransportPromise;
-        }
-        // Snapshot and terminate descendants before closing stdio. Ending stdin first can let a
-        // JavaScript launcher exit and re-parent its native Codex child before the tree walk.
-        terminateTransportPromise = child
-            ? killProcessTree(child, { graceMs: 250 }).then(() => undefined).catch(() => undefined)
-            : Promise.resolve();
+        terminateTransportPromise = (async () => {
+            // Snapshot and terminate descendants before closing stdio. Ending stdin first can let a
+            // JavaScript launcher exit and re-parent its native Codex child before the tree walk.
+            if (child) await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+            const socket = webSocket;
+            if (socket) {
+                await new Promise<void>((resolve) => {
+                    if (socket.readyState === socket.CLOSED) resolve();
+                    else socket.once('close', () => resolve());
+                    socket.terminate();
+                });
+            }
+        })();
         return terminateTransportPromise;
     };
 
     const failWith = (error: unknown, options?: Readonly<{ terminateChild?: boolean }>): void => {
         const failure = error instanceof Error ? error : new Error(String(error));
+        if (state.fatalError === null && stderrBuffer.trim()) {
+            // Preserve the first error's identity and type while retaining native
+            // diagnostics regardless of which transport event reports failure first.
+            failure.message += `\n${sanitizeCodexAppServerRpcDiagnosticString(stderrBuffer.trim())}`;
+        }
         failWaiters(state, failure);
         const fatalFailure = state.fatalError ?? failure;
         failPendingRequests(fatalFailure);
@@ -683,7 +712,7 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
             }
         },
         {
-            maxBufferedChars: readMaxJsonLineChars(sourceProcessEnv),
+            maxBufferedChars: maxJsonLineChars,
             onOversizedLine: handleOversizedJsonLine,
         },
     );
@@ -708,21 +737,24 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
             const failure = new Error(
                 `Codex app-server WebSocket closed before completing the request (code=${String(code ?? 'unknown')})${details ? `: ${details}` : ''}`,
             );
-            failWith(failure, { terminateChild: false });
+            failWith(failure);
         });
-    } else if (child?.stdin && child.stdout && child.stderr) {
+    }
+    if (child?.stdin && child.stdout && child.stderr) {
         child.stdin.on('error', (error) => {
             failWith(error);
         });
-        child.stdout.setEncoding('utf8');
-        child.stdout.on('data', (chunk: string) => {
-            if (state.fatalError) return;
-            try {
-                jsonLineReader.push(chunk);
-            } catch (error) {
-                failWith(new Error(`Invalid Codex app-server JSON output: ${error instanceof Error ? error.message : String(error)}`));
-            }
-        });
+        if (!webSocket) {
+            child.stdout.setEncoding('utf8');
+            child.stdout.on('data', (chunk: string) => {
+                if (state.fatalError) return;
+                try {
+                    jsonLineReader.push(chunk);
+                } catch (error) {
+                    failWith(new Error(`Invalid Codex app-server JSON output: ${error instanceof Error ? error.message : String(error)}`));
+                }
+            });
+        }
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', (chunk: string) => {
             if (stderrBuffer.length >= maxStderrChars) return;
@@ -734,10 +766,7 @@ async function createUnlockedCodexAppServerClient(params: CreateCodexAppServerCl
         child.once('close', (code, signal) => {
             resolveClosed?.();
             if (disposing) return;
-            const suffix = stderrBuffer.trim()
-                ? `\n${sanitizeCodexAppServerRpcDiagnosticString(stderrBuffer.trim())}`
-                : '';
-            const failure = new Error(`Codex app-server exited before completing the request (code=${code ?? 'null'} signal=${signal ?? 'null'})${suffix}`);
+            const failure = new Error(`Codex app-server exited before completing the request (code=${code ?? 'null'} signal=${signal ?? 'null'})`);
             failWith(failure, { terminateChild: false });
         });
     }

@@ -111,6 +111,79 @@ function getCapturedEnvironmentVariablesListProps(): EnvironmentVariablesListPro
 }
 
 describe('ProfileEditForm secret binding draft', () => {
+    it('keeps creation-picker selections local until the variable and binding are added together', async () => {
+        capture.environmentVariablesListProps = null;
+        capture.setSecretBindings.mockReset();
+        profileEditFormTestState.modalShowSpy.mockReset();
+        const { ProfileEditForm } = await import('./ProfileEditForm');
+        const profile = buildProfile();
+        profile.environmentVariables = [];
+        profile.envVarRequirements = [];
+        const onSave = vi.fn(() => true);
+        const saveRef = { current: null as null | (() => boolean) };
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        const onSelect = vi.fn();
+        await act(async () => getCapturedEnvironmentVariablesListProps().onPickDefaultSecretForSourceVar('CUSTOM_CREDENTIAL', {
+            secretId: null, onSelect,
+        }));
+        const modalConfig = profileEditFormTestState.modalShowSpy.mock.calls.at(-1)?.[0] as Readonly<{
+            props: { onResolve: (result: SecretRequirementModalResult) => void };
+        }>;
+        await act(async () => modalConfig.props.onResolve({
+            action: 'selectSaved', envVarName: 'CUSTOM_CREDENTIAL', secretId: 'secret-1', setDefault: true,
+        }));
+        expect(onSelect).toHaveBeenCalledWith('secret-1');
+        expect(getCapturedEnvironmentVariablesListProps().environmentVariables).toEqual([]);
+        expect(getCapturedEnvironmentVariablesListProps().getDefaultSecretNameForSourceVar('CUSTOM_CREDENTIAL')).toBeNull();
+        await act(async () => getCapturedEnvironmentVariablesListProps().onAddVariable({
+            variable: { name: 'CUSTOM_CREDENTIAL', value: '', isSecret: true },
+            requirement: { name: 'CUSTOM_CREDENTIAL', required: true, useSecretVault: true, secretId: 'secret-1' },
+        }));
+        expect(getCapturedEnvironmentVariablesListProps().getDefaultSecretNameForSourceVar('CUSTOM_CREDENTIAL')).toBe('OpenRouter');
+        expect(capture.setSecretBindings).not.toHaveBeenCalled();
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+            environmentVariables: [{ name: 'CUSTOM_CREDENTIAL', value: '', isSecret: true }],
+            envVarRequirements: [{ name: 'CUSTOM_CREDENTIAL', kind: 'secret', required: true }],
+        }), { CUSTOM_CREDENTIAL: 'secret-1' });
+        expect(JSON.stringify(onSave.mock.calls)).not.toContain('secret-value');
+    });
+
+    it('keeps a secret created inside the creation picker selected', async () => {
+        profileEditFormTestState.modalShowSpy.mockReset();
+        const { ProfileEditForm } = await import('./ProfileEditForm');
+        const profile = buildProfile();
+        profile.environmentVariables = [];
+        profile.envVarRequirements = [];
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave: vi.fn(), onCancel: vi.fn(),
+        }));
+        const onSelect = vi.fn();
+        await act(async () => getCapturedEnvironmentVariablesListProps().onPickDefaultSecretForSourceVar('CUSTOM_CREDENTIAL', {
+            secretId: null, onSelect,
+        }));
+        const modalConfig = profileEditFormTestState.modalShowSpy.mock.calls.at(-1)?.[0] as Readonly<{
+            props: {
+                onChangeSecrets: (secrets: unknown[]) => void;
+                onResolve: (result: SecretRequirementModalResult) => void;
+            };
+        }>;
+        await act(async () => {
+            modalConfig.props.onChangeSecrets([{
+                id: 'new-secret', name: 'New credential', kind: 'apiKey',
+                encryptedValue: { _isSecretValue: true, value: 'synthetic-value' },
+                createdAt: 2, updatedAt: 2,
+            }]);
+            modalConfig.props.onResolve({
+                action: 'selectSaved', envVarName: 'CUSTOM_CREDENTIAL', secretId: 'new-secret', setDefault: true,
+            });
+        });
+        expect(onSelect).toHaveBeenCalledWith('new-secret');
+        expect(getCapturedEnvironmentVariablesListProps().environmentVariables).toEqual([]);
+    });
+
     it('shows a selected default secret immediately without persisting the unsaved draft', async () => {
         capture.environmentVariablesListProps = null;
         capture.setSecretBindings.mockReset();

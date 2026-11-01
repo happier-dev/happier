@@ -32,6 +32,7 @@ import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagno
 import { automationRoutes } from "./routes/automations/automationRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
+import { enableApiCompression } from "./utils/enableApiCompression";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -68,7 +69,22 @@ export function resolveApiCorsMaxAgeSeconds(env: Record<string, string | undefin
     return parsed;
 }
 
-export function enableContentTypeParsers(app: Pick<FastifyInstance, 'addContentTypeParser'>) {
+export function enableContentTypeParsers(
+    app: Pick<FastifyInstance, 'addContentTypeParser' | 'removeContentTypeParser' | 'getDefaultJsonParser'>,
+) {
+    // Released CLIs send bodiless DELETEs with `Content-Type: application/json`; Fastify's default
+    // parser rejects those with FST_ERR_CTP_EMPTY_JSON_BODY. Treat an empty JSON body as no body and
+    // keep the default parser (incl. prototype/constructor poisoning rejection) for everything else.
+    const parseDefaultJson = app.getDefaultJsonParser('error', 'error');
+    const parseJsonBody: FastifyBodyParser<string> = (request, body, done) => {
+        if (body.length === 0) {
+            return done(null, undefined);
+        }
+        return parseDefaultJson(request, body, done);
+    };
+    app.removeContentTypeParser('application/json');
+    app.addContentTypeParser('application/json', { parseAs: 'string' }, parseJsonBody);
+
     const parseUnsupportedBody: FastifyBodyParser<string> = (_request, body, done) => {
         if (body.length === 0) {
             return done(null, undefined);
@@ -92,6 +108,7 @@ export async function startApi() {
         ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
     });
     enableContentTypeParsers(app);
+    await enableApiCompression(app);
     app.register(import('@fastify/cors'), createApiCorsOptions(process.env));
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
 

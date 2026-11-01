@@ -29,7 +29,7 @@ import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItem
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import { migrateAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMigrate';
+import { fetchAccountEncryptionMigrationMachines, migrateAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMigrate';
 import { Text } from '@/components/ui/text/Text';
 import { useRouter } from 'expo-router';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -71,6 +71,7 @@ export default React.memo(() => {
     const friendsEnabled = useFriendsEnabled();
     const applyProfile = storage((state) => state.applyProfile);
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
+    const plaintextMachineEnabled = useFeatureEnabled('encryption.plaintextMachine');
     const sessionDraftSyncEnabled = useFeatureEnabled('sessions.drafts');
 
     const [accountEncryptionMode, setAccountEncryptionMode] = useState<'e2ee' | 'plain' | null>(null);
@@ -456,6 +457,10 @@ export default React.memo(() => {
                                                 ? listNewSessionDraftEncryptionMigrationCandidates(sessionDraftScope)
                                                 : [];
 
+                                            const machines = plaintextMachineEnabled
+                                                ? await fetchAccountEncryptionMigrationMachines(credentials)
+                                                : undefined;
+
                                             let generatedSecret: string | null = null;
                                             const legacyCredentialsForE2ee = nextMode === 'e2ee'
                                                 ? (() => {
@@ -473,6 +478,8 @@ export default React.memo(() => {
                                                     connectedServiceProfiles,
                                                     automations,
                                                     sessionDrafts,
+                                                    machines,
+                                                    machineEncryption: sync.encryption,
                                                     fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
                                                     decryptAutomationTemplateRaw: async (payloadCiphertext: string) =>
@@ -485,6 +492,8 @@ export default React.memo(() => {
                                                     connectedServiceProfiles,
                                                     automations,
                                                     sessionDrafts,
+                                                    machines,
+                                                    machineEncryption: sync.encryption,
                                                     fetchConnectedServiceCredentialPlain: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialPlain(credentials, { serviceId, profileId }),
                                                 });
@@ -513,7 +522,7 @@ export default React.memo(() => {
                                             }
 
                                             const contentBinding = nextMode === 'e2ee'
-                                                ? await buildContentKeyBinding(keyProof!.seed).catch(() => null)
+                                                ? await buildContentKeyBinding(keyProof!.seed)
                                                 : null;
 
                                             const migrationRequest = {
@@ -529,8 +538,10 @@ export default React.memo(() => {
                                                 request: migrationRequest,
                                                 migrate: async (nextRequest) =>
                                                     await migrateAccountEncryptionMode(credentials, nextRequest),
-                                                activateTargetMode: () => {
+                                                activateTargetMode: async () => {
+                                                    if (generatedSecret) await auth.login(credentials.token, generatedSecret);
                                                     sync.reconfigureSessionDraftRepositoryForAccountMode(targetCredentials, nextMode);
+                                                    if (machines) await sync.refreshMachines();
                                                 },
                                                 acknowledgeSessionDrafts: async (records) => {
                                                     if (!sessionDraftScope) {
@@ -542,7 +553,6 @@ export default React.memo(() => {
                                             setAccountEncryptionMode(result.mode);
 
                                             if (generatedSecret) {
-                                                await auth.login(auth.credentials.token, generatedSecret);
                                                 await Modal.alertAsync(t('settingsAccount.backup'), t('settingsAccount.backupDescription'));
                                             }
                                         } catch (e) {

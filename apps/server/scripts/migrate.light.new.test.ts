@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 const { spawnMock, fileSyncMock } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
@@ -59,7 +58,7 @@ describe('migrate.light.new.ts', () => {
         vi.resetModules();
     });
 
-    it('derives a safe sqlite DATABASE_URL for the temporary migration database', async () => {
+    it('preserves the native SQLite path for the temporary migration database', async () => {
         await import('./migrate.light.new');
         await waitForSpawnCount(2);
 
@@ -70,7 +69,7 @@ describe('migrate.light.new.ts', () => {
 
         expect(prismaCall).toBeDefined();
         const env = (prismaCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined)?.env;
-        const expected = `${pathToFileURL(join(tmpDir, 'happy server #light.sqlite')).href}?socket_timeout=30`;
+        const expected = `file:${join(tmpDir, 'happy server #light.sqlite')}?socket_timeout=30`;
         expect(env?.DATABASE_URL).toBe(expected);
     });
 });

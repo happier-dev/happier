@@ -19,6 +19,11 @@ import path from 'node:path';
  * and always fails. Generated `ios/**` artifacts are per-machine, absent on CI, and
  * self-heal on the next prebuild — they warn loudly rather than blocking an install
  * (this checkout is shared, and a failed `yarn install` would block unrelated work).
+ *
+ * Expo TaskManager 14.0.9 and Notifications 0.32.16 also ship prebuilt Android
+ * publications. Their native backports must compile from source through
+ * package.json's autolinking buildFromSource setting, including TaskManager's
+ * loader Gradle project dependency; patch application alone cannot establish that.
  */
 
 const IOS_IMPLEMENTATION_EXTENSIONS = new Set(['.m', '.mm', '.swift']);
@@ -26,6 +31,8 @@ const ANDROID_IMPLEMENTATION_EXTENSIONS = new Set(['.java', '.kt']);
 const SHARED_IMPLEMENTATION_EXTENSIONS = new Set(['.c', '.cc', '.cpp']);
 
 const REACT_NATIVE_CORE_PREFIX = 'node_modules/react-native/';
+const TASK_MANAGER_ANDROID_PREFIX = 'node_modules/expo-task-manager/android/';
+const NOTIFICATIONS_ANDROID_PREFIX = 'node_modules/expo-notifications/android/';
 
 function readPatchTargets(patchContents) {
     const targets = [];
@@ -50,19 +57,16 @@ function classifyTarget(target) {
     return null;
 }
 
-function collectCorePatchTargets(patchesDir) {
-    if (!fs.existsSync(patchesDir)) return { ios: [], android: [] };
+function collectPatchTargets(patchesDir) {
+    if (!fs.existsSync(patchesDir)) return [];
 
-    const byPlatform = { ios: [], android: [] };
+    const targets = [];
     for (const entry of fs.readdirSync(patchesDir).sort()) {
         if (!entry.endsWith('.patch')) continue;
         const contents = fs.readFileSync(path.join(patchesDir, entry), 'utf8');
-        for (const target of readPatchTargets(contents)) {
-            const platform = classifyTarget(target);
-            if (platform) byPlatform[platform].push(target);
-        }
+        targets.push(...readPatchTargets(contents));
     }
-    return byPlatform;
+    return targets;
 }
 
 function declaresSourceBuild(appConfigContents, platform) {
@@ -80,9 +84,51 @@ export function verifyNativePatchCompilation({ uiDir }) {
     const errors = [];
     const warnings = [];
 
-    const coreTargets = collectCorePatchTargets(path.join(uiDir, 'patches'));
+    const patchTargets = collectPatchTargets(path.join(uiDir, 'patches'));
+    const expoAndroidTargets = patchTargets.filter((target) => (target.startsWith(TASK_MANAGER_ANDROID_PREFIX) || target.startsWith(NOTIFICATIONS_ANDROID_PREFIX))
+        && (ANDROID_IMPLEMENTATION_EXTENSIONS.has(path.extname(target)) || SHARED_IMPLEMENTATION_EXTENSIONS.has(path.extname(target))));
+    if (expoAndroidTargets.length > 0) {
+        let packageJson = {};
+        try {
+            packageJson = JSON.parse(fs.readFileSync(path.join(uiDir, 'package.json'), 'utf8'));
+        } catch {
+            // Missing or invalid configuration cannot force source compilation.
+        }
+        const configuredProjects = packageJson?.expo?.autolinking?.android?.buildFromSource;
+        const requiredProjects = [];
+        if (expoAndroidTargets.some((target) => target.startsWith(TASK_MANAGER_ANDROID_PREFIX))) {
+            // TaskManager 14.0.9's android/build.gradle depends on this loader project.
+            requiredProjects.push('expo-task-manager', 'unimodules-app-loader');
+        }
+        if (expoAndroidTargets.some((target) => target.startsWith(NOTIFICATIONS_ANDROID_PREFIX))) {
+            requiredProjects.push('expo-notifications');
+        }
+        // Expo's settings plugin uses Regex.matches(project.name), not a substring match.
+        const missingProjects = requiredProjects.filter((project) => !(Array.isArray(configuredProjects) && configuredProjects.some((pattern) => {
+            if (typeof pattern !== 'string') return false;
+            try {
+                return new RegExp(`^(?:${pattern})$`).test(project);
+            } catch {
+                return false;
+            }
+        })));
+        if (missingProjects.length > 0) {
+            errors.push(
+                'patches/ edits Expo Android implementation files, but package.json does not select\n'
+                + `${missingProjects.join(', ')} in expo.autolinking.android.buildFromSource.\n`
+                + 'Patched modules and their required Gradle project dependencies must compile from source instead of Maven publications.\n'
+                + `Patched implementation files:\n${formatTargets(expoAndroidTargets)}`,
+            );
+        }
+    }
+
+    const coreTargets = { ios: [], android: [] };
+    for (const target of patchTargets) {
+        const platform = classifyTarget(target);
+        if (platform) coreTargets[platform].push(target);
+    }
     if (coreTargets.ios.length === 0 && coreTargets.android.length === 0) {
-        return { ok: true, errors, warnings };
+        return { ok: errors.length === 0, errors, warnings };
     }
 
     const appConfigPath = path.join(uiDir, 'app.config.js');

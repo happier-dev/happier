@@ -1,9 +1,8 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import {
-    readStoredSessionMessages,
     readStoredSessionMessagesFromStateLike,
+    readStoredSessionMessagesReadProjectionFromStateLike,
 } from '@/sync/domains/messages/readStoredSessionMessages';
-import type { Message } from '@/sync/domains/messages/messageTypes';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
@@ -53,25 +52,25 @@ function hasMetadataAvailable(session: ActivityAttentionSession): boolean {
     return !('metadataUnavailable' in session && session.metadataUnavailable === true);
 }
 
-function readSessionMessagesForAttention(
+function readSessionMessagesStateForAttention(
     session: ActivityAttentionSession,
     options?: ActivityAttentionSessionOptions,
-): readonly Message[] | null {
+): StorageState['sessionMessages'][string] | null | undefined {
     if (!isHydratedSession(session)) return null;
     if (options?.sessionMessagesById) {
-        return readStoredSessionMessagesFromStateLike(options.sessionMessagesById[session.id]);
+        return options.sessionMessagesById[session.id];
     }
     const storageState = readRegisteredStorageState();
     if (!storageState) return null;
-    return readStoredSessionMessages(storageState, session.id);
+    return storageState.sessionMessages?.[session.id];
 }
 
 function resolveActivityReadableSeq(
     session: ActivityAttentionSession,
-    options?: ActivityAttentionSessionOptions,
+    sessionMessages: StorageState['sessionMessages'][string] | null | undefined,
 ): number {
     return resolveSessionReadableSeq({
-        messages: readSessionMessagesForAttention(session, options),
+        messagesProjection: readStoredSessionMessagesReadProjectionFromStateLike(sessionMessages),
         sessionSeq: session.seq,
         latestReadyEventSeq: session.latestReadyEventSeq,
         latestTurnStatus: session.latestTurnStatus ?? null,
@@ -140,17 +139,20 @@ export function deriveActivityAttentionFlags(
     options?: ActivityAttentionSessionOptions,
 ): ActivityAttentionFlags {
     const metadataAvailable = hasMetadataAvailable(session);
-    const sessionMessages = readSessionMessagesForAttention(session, options) ?? undefined;
+    const sessionMessagesState = readSessionMessagesStateForAttention(session, options);
 
     const hasUnread = metadataAvailable && options?.showUnread !== false
         ? readSessionBooleanFlag(session, 'hasUnreadMessages') ?? computeHasUnreadActivity({
-            sessionSeq: resolveActivityReadableSeq(session, options),
+            sessionSeq: resolveActivityReadableSeq(session, sessionMessagesState),
             pendingActivityAt: 0,
             lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
             lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
         })
         : false;
 
+    const sessionMessages = sessionMessagesState === null
+        ? undefined
+        : readStoredSessionMessagesFromStateLike(sessionMessagesState);
     const pendingFlags = isHydratedSession(session)
         ? derivePendingRequestFlagsFromSession(session, sessionMessages)
         : null;

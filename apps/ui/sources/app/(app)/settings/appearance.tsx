@@ -1,6 +1,6 @@
+import { useThemeProfilesMutable } from '@/sync/domains/state/storage';
 import React from 'react';
-import { Appearance, Platform, View } from 'react-native';
-import { setStatusBarStyle } from 'expo-status-bar';
+import { Platform, View } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -13,6 +13,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ThemeSelectionDropdown, type ThemeSelectionOption } from '@/components/settings/appearance/themeProfiles/ThemeSelectionDropdown';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import {
     AVATAR_STYLE_OPTIONS,
     isAvatarStyleId,
@@ -20,18 +21,17 @@ import {
 } from '@/components/ui/avatar/avatarStyleOptions';
 import { getGeneratedAvatarComponentForStyle } from '@/components/ui/avatar/avatarComponentRegistry';
 import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
-import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
-import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+import { useApplyThemeSelection } from '@/components/settings/appearance/useApplyThemeSelection';
 import {
     DEFAULT_THEME_PROFILES_LOCAL_STATE,
     findActiveThemeProfileForMode,
     setActiveThemeProfileForMode,
 } from '@/theme/profiles/themeProfilePersistence';
-import type { ThemeProfileMode, ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { Icon } from '@/components/ui/icons/Icon';
+import { isNativeBlurAvailable } from '@/components/ui/glass/blurMaterial';
 import {
     LOADING_INDICATOR_STYLE_LABEL_KEYS,
     LoadingIndicatorStylePreview,
@@ -91,12 +91,16 @@ export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const deviceType = useDeviceType();
+    const foldMetrics = useWindowFoldMetrics();
+    const [systemTabBarEnabled, setSystemTabBarEnabled] = useLocalSettingMutable('systemTabBarEnabled');
     const reduceMotion = useReducedMotionPreference();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
+    const [showChatCodeBlockWrapControls, setShowChatCodeBlockWrapControls] = useSettingMutable('showChatCodeBlockWrapControls');
+    const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles, setThemeProfiles] = useLocalSettingMutable('themeProfiles');
+    const [themeProfiles, setThemeProfiles] = useThemeProfilesMutable();
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [loadingIndicatorStyle, setLoadingIndicatorStyle] = useLocalSettingMutable('loadingIndicatorStyle');
@@ -105,6 +109,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [uiBackdropBlurEnabled, setUiBackdropBlurEnabled] = useLocalSettingMutable('uiBackdropBlurEnabled');
+    const [hapticsEnabled, setHapticsEnabled] = useLocalSettingMutable('hapticsEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [tabBarGitBadgeMode, setTabBarGitBadgeMode] = useSettingMutable('tabBarGitBadgeMode');
     const [tabBarFriendsBadgeEnabled, setTabBarFriendsBadgeEnabled] = useSettingMutable('tabBarFriendsBadgeEnabled');
@@ -270,27 +275,7 @@ export default React.memo(function AppearanceSettingsScreen() {
         setUiFontScale(UI_FONT_SCALE_PRESETS[itemId]);
     }, [setUiFontScale]);
 
-    const applyThemeSelection = React.useCallback((nextThemePreference: 'adaptive' | 'light' | 'dark', nextThemeProfiles: ThemeProfilesLocalStateV1) => {
-        const systemTheme = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
-        void runThemePreferenceChange({
-            currentPreference: themePreference,
-            nextPreference: nextThemePreference,
-            platform: Platform.OS,
-            reduceMotion,
-            forceAnimate: true,
-            systemTheme,
-            mutation: () => {
-                setThemePreference(nextThemePreference);
-                setThemeProfiles(nextThemeProfiles);
-                applyThemeRuntimeSelection({
-                    themePreference: nextThemePreference,
-                    themeProfiles: nextThemeProfiles,
-                    systemTheme,
-                });
-                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextThemePreference, systemTheme), true);
-            },
-        });
-    }, [reduceMotion, setThemePreference, setThemeProfiles, themePreference]);
+    const applyThemeSelection = useApplyThemeSelection({ themePreference, setThemePreference, setThemeProfiles, reduceMotion });
 
     const selectCurrentTheme = React.useCallback((option: ThemeSelectionOption) => {
         if (option.kind === 'adaptive') {
@@ -433,6 +418,35 @@ export default React.memo(function AppearanceSettingsScreen() {
                 />
             </ItemGroup>
 
+            <ItemGroup title={t('settingsAppearance.chatCodeBlocks.title')}>
+                <Item
+                    title={t('settingsAppearance.chatCodeBlocks.showWrapControls')}
+                    subtitle={t('settingsAppearance.chatCodeBlocks.showWrapControlsDescription')}
+                    rightElement={
+                        <Switch
+                            testID="settings-appearance-showChatCodeBlockWrapControls-switch"
+                            accessibilityLabel={t('settingsAppearance.chatCodeBlocks.showWrapControls')}
+                            value={showChatCodeBlockWrapControls}
+                            onValueChange={setShowChatCodeBlockWrapControls}
+                        />
+                    }
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.chatCodeBlocks.wrapByDefault')}
+                    subtitle={t('settingsAppearance.chatCodeBlocks.wrapByDefaultDescription')}
+                    rightElement={
+                        <Switch
+                            testID="settings-appearance-wrapChatCodeBlocks-switch"
+                            accessibilityLabel={t('settingsAppearance.chatCodeBlocks.wrapByDefault')}
+                            value={wrapChatCodeBlocks}
+                            onValueChange={setWrapChatCodeBlocks}
+                        />
+                    }
+                    showChevron={false}
+                />
+            </ItemGroup>
+
             {/* Layout */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
                 <DropdownMenu
@@ -507,6 +521,25 @@ export default React.memo(function AppearanceSettingsScreen() {
                     }}
                 />
             </ItemGroup>
+
+            {(Platform.OS === 'ios' || Platform.OS === 'android') && (
+                <ItemGroup title={t('settingsAppearance.feedback')}>
+                    <Item
+                        testID="settings-appearance-haptics"
+                        title={t('settingsAppearance.haptics')}
+                        subtitle={t('settingsAppearance.hapticsDescription')}
+                        icon={<Icon name="device-mobile" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={
+                            <Switch
+                                testID="settings-appearance-haptics-switch"
+                                value={hapticsEnabled !== false}
+                                onValueChange={setHapticsEnabled}
+                            />
+                        }
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            )}
 
             {/* Style */}
             <ItemGroup title={t('settingsAppearance.avatarStyle')}>
@@ -619,6 +652,22 @@ export default React.memo(function AppearanceSettingsScreen() {
 
             {/* Tab bar appearance */}
             <ItemGroup title={t('settingsAppearance.tabBarAppearance.title')} footer={t('settingsAppearance.tabBarAppearance.footer')}>
+                {Platform.OS === 'ios' && foldMetrics?.verticalBarEdge != null ? (
+                    <Item
+                        title={t('settingsAppearance.tabBarAppearance.sideRailTitle')}
+                        subtitle={t('settingsAppearance.tabBarAppearance.sideRailSubtitle')}
+                        icon={<Icon name="stack" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={
+                            <Switch
+                                testID="settings-appearance-systemTabBar-switch"
+                                accessibilityLabel={t('settingsAppearance.tabBarAppearance.sideRailTitle')}
+                                value={systemTabBarEnabled}
+                                onValueChange={setSystemTabBarEnabled}
+                            />
+                        }
+                        showChevron={false}
+                    />
+                ) : null}
                 <DropdownMenu
                     open={openTabBarSizeMenu}
                     onOpenChange={setOpenTabBarSizeMenu}
@@ -669,7 +718,8 @@ export default React.memo(function AppearanceSettingsScreen() {
                     }
                     showChevron={false}
                 />
-                {glassBlurEnabled ? (
+                {/* Intensity only tunes a real blur; Android glass is an unblurred tint. */}
+                {glassBlurEnabled && (Platform.OS === 'web' || isNativeBlurAvailable()) ? (
                     <DropdownMenu
                         open={openGlassBlurMenu}
                         onOpenChange={setOpenGlassBlurMenu}

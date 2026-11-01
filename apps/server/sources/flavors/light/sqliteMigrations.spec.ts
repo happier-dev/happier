@@ -151,7 +151,8 @@ describe('light sqlite migrations (unit)', () => {
   it('resolveSqliteDatabaseFilePath parses file: DATABASE_URL values', () => {
     expect(resolveSqliteDatabaseFilePath('file:/tmp/happier.sqlite')).toBe('/tmp/happier.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:///tmp/happier.sqlite')).toBe('/tmp/happier.sqlite');
-    expect(resolveSqliteDatabaseFilePath('file:///tmp/happy%20server%20%23light/happier.sqlite')).toBe('/tmp/happy server #light/happier.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:///tmp/happy%20server%20%23light/happier.sqlite')).toBe('/tmp/happy%20server%20%23light/happier.sqlite');
+    expect(resolveSqliteDatabaseFilePath('file:/tmp/happy#server/happier.sqlite?socket_timeout=30')).toBe('/tmp/happy#server/happier.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:relative.sqlite')).toBe('relative.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:relative.sqlite?socket_timeout=30')).toBe('relative.sqlite');
     expect(resolveSqliteDatabaseFilePath('file:/tmp/%zz.sqlite?socket_timeout=30#fragment')).toBe('/tmp/%zz.sqlite');

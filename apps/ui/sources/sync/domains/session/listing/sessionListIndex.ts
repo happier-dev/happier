@@ -46,7 +46,6 @@ export type SessionListIndexItem =
 export type SessionListIndexFolderDragEligibilityReason =
     | 'eligible'
     | 'feature-disabled'
-    | 'direct-session'
     | 'unsupported-item';
 
 export type SessionListIndexFolderDragEligibility = Readonly<{
@@ -317,14 +316,6 @@ export function resolveSessionListIndexFolderDragEligibility(
 
     if (item.type === 'session') {
         const storageKind = item.storageKind ?? 'persisted';
-        if (storageKind === 'direct') {
-            return {
-                canUseSessionFolders: false,
-                foldersFeatureEnabled: true,
-                reason: 'direct-session',
-                storageKind,
-            };
-        }
         return {
             canUseSessionFolders: true,
             foldersFeatureEnabled: true,

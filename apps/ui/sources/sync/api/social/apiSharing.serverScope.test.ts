@@ -1,3 +1,4 @@
+import { matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -26,7 +27,8 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/http/client')>()),
     serverFetch: serverFetchMock,
 }));
 
@@ -87,10 +89,10 @@ describe('apiSharing server-scoped session routes', () => {
         expect(shares).toEqual([]);
         expect(serverFetchMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
-            'https://owner.example/v1/sessions/session-1/shares',
+            matchServerFetchUrl('https://owner.example/v1/sessions/session-1/shares'),
             expect.objectContaining({ method: 'GET' }),
         );
-        const sharesCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
+        const sharesCall = runtimeFetchMock.mock.calls.find((call) => matchServerFetchUrl('https://owner.example/v1/sessions/session-1/shares').asymmetricMatch(call[0]));
         expect(sharesCall).toBeTruthy();
         expectHeaderValue(sharesCall?.[1]?.headers, 'Authorization', `Bearer ${OWNER_TOKEN}`);
     });
@@ -132,13 +134,13 @@ describe('apiSharing server-scoped session routes', () => {
         expect(share.id).toBe('share-1');
         expect(serverFetchMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
-            'https://owner.example/v1/sessions/session-1/shares',
+            matchServerFetchUrl('https://owner.example/v1/sessions/session-1/shares'),
             expect.objectContaining({
                 method: 'POST',
                 body: JSON.stringify({ userId: 'user-2', accessLevel: 'edit' }),
             }),
         );
-        const createCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
+        const createCall = runtimeFetchMock.mock.calls.find((call) => matchServerFetchUrl('https://owner.example/v1/sessions/session-1/shares').asymmetricMatch(call[0]));
         expect(createCall).toBeTruthy();
         expectHeaderValue(createCall?.[1]?.headers, 'Authorization', `Bearer ${OWNER_TOKEN}`);
         expectHeaderValue(createCall?.[1]?.headers, 'Content-Type', 'application/json');
@@ -175,10 +177,10 @@ describe('apiSharing server-scoped session routes', () => {
         expect(friends.map((friend) => friend.id)).toEqual(['user-2']);
         expect(serverFetchMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
-            'https://owner.example/v1/friends',
+            matchServerFetchUrl('https://owner.example/v1/friends'),
             expect.objectContaining({ method: 'GET' }),
         );
-        const friendsCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/friends');
+        const friendsCall = runtimeFetchMock.mock.calls.find((call) => matchServerFetchUrl('https://owner.example/v1/friends').asymmetricMatch(call[0]));
         expect(friendsCall).toBeTruthy();
         expectHeaderValue(friendsCall?.[1]?.headers, 'Authorization', `Bearer ${OWNER_TOKEN}`);
     });

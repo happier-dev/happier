@@ -19,7 +19,7 @@ describe('resolveRedisAdapterValidationRedisUrl', () => {
         expect(loadRedisMemoryServer).not.toHaveBeenCalled();
     });
 
-    it('fails with an explicit actionable message when the optional redis-memory-server dependency is unavailable', async () => {
+    it('fails with an explicit actionable message when the development redis-memory-server dependency is unavailable', async () => {
         const loadRedisMemoryServer = vi.fn(async () => {
             throw new Error("Cannot find package 'redis-memory-server'");
         });

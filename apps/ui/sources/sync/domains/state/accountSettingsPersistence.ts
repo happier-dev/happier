@@ -12,10 +12,33 @@ import {
 } from '@/sync/domains/settings/serverIdentityKeyMigration';
 import {
     accountSettingsScopeKeySuffix,
+    createAccountSettingsScope,
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 import { getPersistenceStorage, loadPendingSettings, loadSettings, parsePendingSettings } from './persistence';
+import { mergeThemeProfileMigrationEdits, parseThemeProfileMigrationIntent } from '@/theme/profiles/themeProfileMigrationEdits';
+import type { ThemeProfileMigrationIntent } from '@/theme/profiles/themeProfileTypes';
+
+const THEME_MIGRATION_EDITS_KEY = '__themeProfileMigrationEditsV1';
+
+// Startup themes read the same scoped settings cache that the active store writes.
+export function saveActiveAccountSettingsScope(scope: AccountSettingsScope | null): void {
+    if (scope) getPersistenceStorage().set('active-account-settings-scope', JSON.stringify(scope));
+    else getPersistenceStorage().delete('active-account-settings-scope');
+}
+
+export function loadActiveAccountSettingsScope(): AccountSettingsScope | null {
+    const raw = getPersistenceStorage().getString('active-account-settings-scope');
+    if (!raw) return null;
+    try {
+        const value: unknown = JSON.parse(raw);
+        return isPlainRecord(value) ? createAccountSettingsScope(value.serverId, value.accountId) : null;
+    } catch {
+        console.error('Failed to parse active account settings scope');
+        return null;
+    }
+}
 
 function accountSettingsKey(scope: AccountSettingsScope): string {
     return `account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
@@ -286,7 +309,17 @@ export function prepareAccountSettingsScopeForActivation(
         } = splitLocalOnlySettings(legacyPendingMigration.settings as Partial<Settings>);
         if (Object.keys(legacyPending).length > 0) {
             const currentPending = loadPendingAccountSettings(scope);
-            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending));
+            const legacyIntent = loadPendingAccountSettingsState(legacyScope).themeProfileMigration;
+            const currentIntent = loadPendingAccountSettingsState(scope).themeProfileMigration;
+            const acknowledged = currentIntent?.acknowledged ? currentIntent : legacyIntent?.acknowledged ? legacyIntent : null;
+            savePendingAccountSettings(scope, mergeSettingsForScopeMigration(legacyPending, currentPending),
+                legacyIntent || currentIntent ? {
+                    edits: mergeThemeProfileMigrationEdits(legacyIntent?.edits ?? [], currentIntent?.edits ?? []),
+                    legacyProfileIds: { ...legacyIntent?.legacyProfileIds, ...currentIntent?.legacyProfileIds, ...acknowledged?.legacyProfileIds },
+                    representedLegacyProfileIds: { ...legacyIntent?.representedLegacyProfileIds, ...currentIntent?.representedLegacyProfileIds },
+                    attemptedLegacyProfileIds: { ...legacyIntent?.attemptedLegacyProfileIds, ...currentIntent?.attemptedLegacyProfileIds },
+                    ...(acknowledged ? { acknowledged: true as const } : {}),
+                } : null);
             savePendingAccountSettings(legacyScope, {});
         }
         if (Object.keys(legacyPendingLocalOnlySettings).length > 0) {
@@ -401,22 +434,40 @@ export function prepareAccountSettingsScopeForActivation(
     }
 }
 
-export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial<Settings> {
+export function loadPendingAccountSettingsState(scope: AccountSettingsScope): Readonly<{
+    settings: Partial<Settings>;
+    themeProfileMigration: ThemeProfileMigrationIntent | null;
+}> {
     const raw = getPersistenceStorage().getString(pendingAccountSettingsKey(scope));
-    if (!raw) return {};
+    if (!raw) return { settings: {}, themeProfileMigration: null };
+    let parsed: unknown;
     try {
-        return stripMigratedSessionOrganizationSettings(parsePendingSettings(JSON.parse(raw)) as Record<string, unknown>) as Partial<Settings>;
+        parsed = JSON.parse(raw);
     } catch {
-        return {};
+        console.error('Failed to parse pending account settings');
+        return { settings: {}, themeProfileMigration: null };
     }
+    return {
+        settings: stripMigratedSessionOrganizationSettings(parsePendingSettings(parsed) as Record<string, unknown>) as Partial<Settings>,
+        themeProfileMigration: parseThemeProfileMigrationIntent(isPlainRecord(parsed) ? parsed[THEME_MIGRATION_EDITS_KEY] : undefined),
+    };
 }
 
-export function savePendingAccountSettings(scope: AccountSettingsScope, settings: Partial<Settings>): void {
+export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial<Settings> {
+    return loadPendingAccountSettingsState(scope).settings;
+}
+
+export function savePendingAccountSettings(scope: AccountSettingsScope, settings: Partial<Settings>,
+    intent?: ThemeProfileMigrationIntent | null): void {
     const key = pendingAccountSettingsKey(scope);
     const sanitizedSettings = stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Partial<Settings>;
     if (Object.keys(sanitizedSettings).length === 0) {
         getPersistenceStorage().delete(key);
         return;
     }
-    getPersistenceStorage().set(key, JSON.stringify(sanitizedSettings));
+    const pendingIntent = sanitizedSettings.themeProfiles
+        ? intent === undefined ? loadPendingAccountSettingsState(scope).themeProfileMigration : intent : null;
+    getPersistenceStorage().set(key, JSON.stringify({ ...sanitizedSettings,
+        ...(pendingIntent ? { [THEME_MIGRATION_EDITS_KEY]: pendingIntent } : {}),
+    }));
 }

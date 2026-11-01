@@ -1,0 +1,24 @@
+ │ text.
+ │ SYNTHETIC harmless fixture line 24: inspect only this task-owned public
+ │ text.
+ │ SYNTHETIC harmless fixture line 25: inspect only this task-owned public
+ │ text.
+ │ SYNTHETIC harmless fixture line 26: inspect only this task-owned public
+ │ text.
+ │ SYNTHETIC harmless fixture line 27: inspect only this task-owned public
+ │ text.
+ │ SYNTHETIC harmless fixture line 28: inspect only this task-owned public
+ │ text.
+ │ SYNTHETIC harmless fixture line 29: inspect only this task-owned public
+ │ text.
+ │ ISSUE671_SYNTHETIC_EOF
+ │ printf '%s\n' ISSUE671_SAFE_COMMAND_DONE
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Permission rule Bash(cat *) requires confirmation for this command.
+ /permissions to update rules
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

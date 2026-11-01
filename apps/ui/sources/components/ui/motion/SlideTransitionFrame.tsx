@@ -10,8 +10,8 @@
  *
  * Each layer is wrapped in an `Animated.View` whose style is computed via
  * `useAnimatedStyle` calling the worklet-safe `resolveSlideLayerStyle`. Optionally
- * overlaid with a per-layer `SlideTransitionBlurLayer` (web → CSS filter; native →
- * BlurView via animated intensity) when `blur === true`.
+ * overlaid with a per-layer `SlideTransitionBlurLayer` (web → CSS filter; iOS →
+ * BlurView via animated intensity; Android → none) when `blur === true`.
  *
  * Reduced motion: blur layer is not mounted at all (zero cost).
  */

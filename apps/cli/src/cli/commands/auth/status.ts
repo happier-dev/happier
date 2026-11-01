@@ -85,7 +85,7 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
         ...(validatedAccountId ? { accountId: validatedAccountId } : {}),
         accountLabel: validatedAccountLabel,
         relayHost,
-        encryption: { type: credentials.encryption.type },
+        encryption: { type: credentials.encryption?.type ?? 'tokenOnly' },
         machineRegistered,
         ...(machineRegistered && machineId ? { machineId } : {}),
         host: os.hostname(),

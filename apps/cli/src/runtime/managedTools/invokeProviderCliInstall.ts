@@ -30,6 +30,7 @@ export type ProviderCliInstallInvocationResult =
         | 'install-not-available'
         | 'install-confirmation-required'
         | 'install-failed'
+        | 'archive-expanded-byte-limit'
         | 'update-not-available';
       errorMessage: string;
       logPath: string | null;
@@ -50,6 +51,7 @@ export async function invokeProviderCliInstall(params: Readonly<{
   env?: NodeJS.ProcessEnv;
   nodePlatform?: string;
   installProviderCli?: typeof installProviderCliDefault;
+  signal?: AbortSignal;
 }>): Promise<ProviderCliInstallInvocationResult> {
   const nodePlatform = params.nodePlatform ?? process.platform;
   const platform = resolveProviderCliInstallPlatform({
@@ -80,6 +82,7 @@ export async function invokeProviderCliInstall(params: Readonly<{
     skipIfInstalled,
     allowVendorRecipeExecution,
     env: params.env ?? process.env,
+    ...(params.signal ? { signal: params.signal } : {}),
     ...(intent ? { intent, updateTarget: params.params?.updateTarget ?? null } : {}),
   });
 
@@ -91,8 +94,8 @@ export async function invokeProviderCliInstall(params: Readonly<{
           ? 'install-not-available'
           : result.errorCode === 'vendor-recipe-disallowed'
             ? 'install-confirmation-required'
-            : result.errorCode === 'update-not-available'
-              ? 'update-not-available'
+            : result.errorCode === 'update-not-available' || result.errorCode === 'archive-expanded-byte-limit'
+              ? result.errorCode
               : 'install-failed',
       errorMessage: result.errorMessage,
       logPath: result.logPath ?? null,

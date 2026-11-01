@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { resolveChannelForCliVersion, resolvePublishedCliTag, resolvePublishedStableBaseline, stageCliReleaseAssets } from './desktop-setup-artifacts.mjs';
-import { planPromptResponse, runHsetupTask } from './desktop-setup-driver.mjs';
+import { planPromptResponse, resolvePredecessorSetupParams, runHsetupTask } from './desktop-setup-driver.mjs';
 import { evaluateFreshSetup, evaluateUpgrade } from './desktop-setup.mjs';
 import * as desktopSetup from './desktop-setup.mjs';
 
@@ -226,6 +226,23 @@ test('the released predecessor sets up the persisted relay, not a caller-only UR
     },
   });
   assert.equal(previousSetup.result.ok, true, 'old setup and its service must use the Docker relay');
+});
+
+test('predecessor setup params are what each released desktop sent, filled from the run target', () => {
+  const target = { relayUrl: 'http://relay:3005', webappUrl: 'http://relay:3005', channel: 'stable', accountId: 'acct-1' };
+  // ui-desktop-v0.2.12 sent fixed params and ignored any relay target.
+  assert.deepEqual(resolvePredecessorSetupParams('ui-desktop-v0.2.12', target), { surface: 'desktop.ui', target: 'thisComputer' });
+  // ui-desktop-v0.2.17 requires the explicit relay, account and channel of the signed-in app.
+  assert.deepEqual(resolvePredecessorSetupParams('ui-desktop-v0.2.17', target), {
+    activeRelayUrl: 'http://relay:3005',
+    activeWebappUrl: 'http://relay:3005',
+    activeLocalRelayUrl: null,
+    channel: 'stable',
+    expectedAccountId: 'acct-1',
+    surface: 'desktop.ui',
+  });
+  // An uncharacterized release has no params, so the upgrade scenario reports BLOCKED.
+  assert.equal(resolvePredecessorSetupParams('ui-desktop-v0.2.99', target), null);
 });
 
 test('upgrade fails when the service keeps running the previous CLI (stale daemon)', () => {

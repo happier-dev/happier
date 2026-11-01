@@ -2,9 +2,11 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createServerFetchWithReachabilityProbe, matchServerFetchUrl } from '@/dev/testkit/mocks/serverFetch';
+import { createStorageModuleStub, createStorageStoreProxy } from '@/dev/testkit/mocks/storage';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
@@ -14,6 +16,8 @@ import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSessionId = 'session-1';
+let mockNavigationFocused = true;
+const realStorageRef = vi.hoisted(() => ({ current: null as typeof import('@/sync/domains/state/storageStore')['storage'] | null }));
 let mockServerId: string | undefined;
 let mockSession: any = null;
 let isDataReady = true;
@@ -39,11 +43,10 @@ type ArchiveSpyResult = Readonly<{
     code?: string;
 }>;
 const sessionArchiveSpy = vi.fn(async (): Promise<ArchiveSpyResult> => ({ success: true, archivedAt: 1 }));
-const sessionDeleteSpy = vi.fn(async () => ({ success: true }));
+const deleteBoundarySpies: Array<{ mockRestore(): void }> = [];
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
 const modalPromptSpy = vi.fn(async () => 'urgent, review');
-const applySessionListRenderablePatchesSpy = vi.fn();
 const createDefaultActionExecutorSpy = vi.fn<(options: unknown) => unknown>();
 const completeSessionForkNavigationSpy = vi.fn<(params: unknown) => Promise<void>>(async () => undefined);
 const setPinnedSessionKeysV1Spy = vi.fn();
@@ -126,6 +129,7 @@ const hydrateSpy = vi.fn((sessionId: string, _tag: string, options?: { serverId?
 );
 
 const routerMock = createExpoRouterMock({
+    navigation: { isFocused: () => mockNavigationFocused },
     router: {
         push: routerPushSpy,
         navigate: routerNavigateSpy,
@@ -165,16 +169,14 @@ installSessionRouteCommonModuleMocks({
             },
         }).module;
     },
-    storageModule: async (importOriginal) =>
-        createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                storage: {
-                    getState: () => ({
-                        settings: { ...settingsDefaults, actionsSettingsV1: actionsSettings },
-                        applySessionListRenderablePatches: applySessionListRenderablePatchesSpy,
-                    }),
-                } as any,
+    storageModule: async () => {
+        const store = createStorageStoreProxy(() => {
+            if (!realStorageRef.current) throw new Error('Real storage must be initialized before rendering');
+            return realStorageRef.current;
+        });
+        return createStorageModuleStub({
+                storage: store,
+                getStorage: () => store,
                 useSession: (sessionId: string) => useSessionSpy(sessionId),
                 useIsDataReady: () => isDataReady,
                 useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
@@ -211,8 +213,8 @@ installSessionRouteCommonModuleMocks({
                     }
                     return [null, vi.fn()];
                 },
-            },
-        }),
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -259,15 +261,18 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => useHappyActionMock(fn) }));
-vi.mock('@/sync/ops', () => ({
-    sessionArchiveWithServerScope: sessionArchiveSpy,
-    sessionDelete: sessionDeleteSpy,
-    sessionDeleteWithServerScope: sessionDeleteSpy,
-    sessionRename: vi.fn(),
-    sessionSetManualReadStateWithServerScope: sessionReadStateSpy,
-    sessionStop: sessionStopSpy,
-    sessionStopWithServerScope: sessionStopSpy,
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops')>();
+    return {
+        sessionArchiveWithServerScope: sessionArchiveSpy,
+        sessionDelete: actual.sessionDelete,
+        sessionDeleteWithServerScope: actual.sessionDeleteWithServerScope,
+        sessionRename: vi.fn(),
+        sessionSetManualReadStateWithServerScope: sessionReadStateSpy,
+        sessionStop: sessionStopSpy,
+        sessionStopWithServerScope: sessionStopSpy,
+    };
+});
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
     return {
@@ -297,19 +302,11 @@ vi.mock('@/components/sessions/shell/move-sheet/useSessionListMoveSheet', () => 
         openMoveSheet: openMoveSheetSpy,
     }),
 }));
-vi.mock('@/auth/storage/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
     TokenStorage: {
         getCredentialsForServerUrl: vi.fn(async () => ({ token: 'token' })),
     },
-}));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => (
-        profile.serverIdentityId ?? profile.id
-    ),
-    getServerProfileById: (serverId: string) => ({
-        id: serverId,
-        serverUrl: 'https://server.example.test',
-    }),
 }));
 vi.mock('@/sync/ops/sessionFolders', () => ({
     setSessionFolderAssignment: setSessionFolderAssignmentSpy,
@@ -394,7 +391,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
         },
     };
 });
-vi.mock('@/utils/sessions/sessionUtils', () => ({
+vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/sessions/sessionUtils')>(),
     getSessionName: () => 'name',
     useSessionStatus: (...args: unknown[]) => {
         useSessionStatusSpy(...args);
@@ -418,10 +416,26 @@ vi.mock('@/sync/domains/profiles/profileUtils', () => ({ resolveProfileById: () 
 vi.mock('@/components/profiles/profileDisplay', () => ({ getProfileDisplayName: () => 'profile' }));
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { screenPaddingHorizontal: 16 } }));
 
+const { storage } = await import('@/sync/domains/state/storageStore');
+realStorageRef.current = storage;
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { apiSocket } = await import('@/sync/api/session/apiSocket');
+const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+const runtimeFetch = await import('@/utils/system/runtimeFetch');
+const { HappyError } = await import('@/utils/errors/errors');
+const { default: Screen } = await import('@/app/(app)/session/[id]/info');
+
 describe('/session/[id]/info', () => {
     beforeEach(() => {
+        for (const serverId of ['server-1', 'server-b', 'server-cache-info', 'server_preferred_info', 'server_reactive_info']) {
+            upsertServerProfile({ serverUrl: `https://${serverId}` });
+        }
+        setActiveServerId('server-1');
+        storage.setState(storage.getInitialState(), true);
         actionsSettings = settingsDefaults.actionsSettingsV1;
+        storage.getState().applySettingsLocal({ actionsSettingsV1: actionsSettings });
         mockSessionId = 'session-1';
+        mockNavigationFocused = true;
         mockServerId = undefined;
         mockSession = null;
         isDataReady = true;
@@ -439,7 +453,6 @@ describe('/session/[id]/info', () => {
         sessionStopSpy.mockClear();
         sessionReadStateSpy.mockClear();
         sessionArchiveSpy.mockClear();
-        sessionDeleteSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
         modalPromptSpy.mockClear();
@@ -522,10 +535,11 @@ describe('/session/[id]/info', () => {
     afterEach(() => {
         clearTempData();
         standardCleanup();
+        while (deleteBoundarySpies.length > 0) deleteBoundarySpies.pop()?.mockRestore();
     });
 
     async function renderInfoScreen() {
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
+        storage.getState().applySettingsLocal({ actionsSettingsV1: actionsSettings });
         return renderScreen(<Screen />);
     }
 
@@ -600,7 +614,6 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
         const screen = await renderScreen(<Screen />);
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledTimes(1);
 
@@ -675,7 +688,6 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
         const screen = await renderScreen(<Screen />);
         useSessionStatusSpy.mockClear();
 
@@ -708,7 +720,6 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
         const screen = await renderScreen(<Screen />);
         expect(itemListRenderSpy).toHaveBeenCalled();
         itemListRenderSpy.mockClear();
@@ -757,7 +768,7 @@ describe('/session/[id]/info', () => {
         const executorOptions = createDefaultActionExecutorSpy.mock.calls[0]?.[0] as any;
         expect(executorOptions?.openSession).toEqual(expect.any(Function));
 
-        await executorOptions.openSession('child-session');
+        await act(async () => { await executorOptions.openSession('child-session'); });
 
         expect(completeSessionForkNavigationSpy).toHaveBeenCalledWith({
             childSessionId: 'child-session',
@@ -767,8 +778,8 @@ describe('/session/[id]/info', () => {
         });
 
         const helperParams = completeSessionForkNavigationSpy.mock.calls[0]?.[0] as any;
-        helperParams.navigate('next-child');
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b', expect.any(Object));
+        await act(async () => { helperParams.navigate('next-child'); });
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/next-child?serverId=server-b');
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -1364,7 +1375,7 @@ describe('/session/[id]/info', () => {
         expect(sessionOrganizationOps.setSessionPin).toHaveBeenCalledWith({
             credentials: { token: 'token' },
             serverId: 'server-b',
-            serverUrl: 'https://server.example.test',
+            serverUrl: 'https://server-b',
             sessionId: 'session-1',
             pinned: true,
         });
@@ -1379,7 +1390,7 @@ describe('/session/[id]/info', () => {
         expect(sessionOrganizationOps.setSessionTagAssignments).toHaveBeenCalledWith({
             credentials: { token: 'token' },
             serverId: 'server-b',
-            serverUrl: 'https://server.example.test',
+            serverUrl: 'https://server-b',
             sessionId: 'session-1',
             tags: ['urgent', 'review'],
         });
@@ -1559,7 +1570,7 @@ describe('/session/[id]/info', () => {
         expect(sessionOrganizationOps.setSessionFolderAssignment).toHaveBeenCalledWith(expect.objectContaining({
             credentials: { token: 'token' },
             serverId: 'server-1',
-            serverUrl: 'https://server.example.test',
+            serverUrl: 'https://server-1',
             sessionId: 'session-1',
             folderId: 'folder-1',
         }));
@@ -1689,8 +1700,8 @@ describe('/session/[id]/info', () => {
         expect(itemByTitle('sessionInfo.copyMetadata')?.props.onPress).toBeUndefined();
     });
 
-    it('wires developer debug information through item-local copy feedback and omits unknown provider artifact lines', async () => {
-        localDevModeEnabled = true;
+    it('offers session information copying outside developer mode and omits unknown provider artifact lines', async () => {
+        localDevModeEnabled = false;
         mockAgentCore = {
             resume: {
                 vendorResumeIdField: 'codexSessionId',
@@ -2016,40 +2027,47 @@ describe('/session/[id]/info', () => {
         mockServerId = 'server-b';
         setSessionOwnerServer('server-b');
         sessionIsConnected = false;
-        mockSession = {
-            id: 'session-1',
-            active: false,
-            accessLevel: null,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            seq: 1,
-            metadata: {},
-            archivedAt: null,
-        };
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: buildSessionListRenderableFromSession(session) }],
+        } });
+        const token = 'header.eyJzdWIiOiJtZSJ9.signature';
+        deleteBoundarySpies.push(vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token }));
+        const activeRequest = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ success: true }));
+        deleteBoundarySpies.push(activeRequest);
+        const transport = createServerFetchWithReachabilityProbe(
+            async () => Response.json({ success: true }),
+        );
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async (input, init) => {
+            const response = await transport(input, init);
+            if (!(response instanceof Response)) throw new Error('Expected an HTTP response from the transport fixture');
+            return response;
+        });
+        deleteBoundarySpies.push(fetch);
 
         const screen = await renderInfoScreen();
-        screen.pressByTestId('sessionInfo.deleteSession');
+        const confirmation = createDeferred<boolean>();
+        modalConfirmSpy.mockReturnValueOnce(confirmation.promise);
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
 
-        expect(modalAlertSpy).toHaveBeenCalledWith(
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
             'sessionInfo.deleteSession',
             'sessionInfo.deleteSessionWarning',
-            expect.arrayContaining([
-                expect.objectContaining({ text: 'common.cancel', style: 'cancel' }),
-                expect.objectContaining({ text: 'sessionInfo.deleteSession', style: 'destructive' }),
-            ]),
+            expect.objectContaining({ destructive: true }),
         );
 
-        const alertButtons = modalAlertSpy.mock.calls[0]?.[2];
-        const deleteButton = alertButtons?.find((button: { text?: string }) => button.text === 'sessionInfo.deleteSession');
-        if (!deleteButton?.onPress) {
-            throw new Error('expected delete confirmation button to expose onPress');
-        }
+        expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+        expect(activeRequest).not.toHaveBeenCalled();
 
-        await act(async () => {
-            await deleteButton.onPress();
-        });
+        confirmation.resolve(true);
+        await deletion;
 
-        expect(sessionDeleteSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
+        const request = fetch.mock.calls.find(([, init]) => init?.method === 'DELETE');
+        expect(request?.[0]).toEqual(matchServerFetchUrl('https://server-b/v1/sessions/session-1'));
+        expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        expect(activeRequest).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListViewDataByServerId['server-b']).toEqual([]);
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
         expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
@@ -2060,6 +2078,107 @@ describe('/session/[id]/info', () => {
             router: expect.any(Object),
             fallbackHref: '/',
         });
+    });
+
+    it('removes the deleted session without navigating when the info route loses focus before deletion completes', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionIsConnected = false;
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: buildSessionListRenderableFromSession(session) }],
+        } });
+        deleteBoundarySpies.push(vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: 'header.eyJzdWIiOiJtZSJ9.signature',
+        }));
+        const response = createDeferred<Response>();
+        const deleteStarted = createDeferred<void>();
+        const transport = createServerFetchWithReachabilityProbe(async (_input, init) => {
+            if (init?.method === 'DELETE') {
+                deleteStarted.resolve();
+                return response.promise;
+            }
+            return Response.json({});
+        });
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockImplementation(async (input, init) => {
+            const result = await transport(input, init);
+            if (!(result instanceof Response)) throw new Error('Expected an HTTP response from the transport fixture');
+            return result;
+        });
+        deleteBoundarySpies.push(fetch);
+        const screen = await renderInfoScreen();
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
+        await deleteStarted.promise;
+
+        mockNavigationFocused = false;
+        response.resolve(Response.json({ success: true }));
+        await deletion;
+
+        expect(storage.getState().sessionListViewDataByServerId['server-b']).toEqual([]);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the session when it becomes active while delete confirmation is open', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionIsConnected = false;
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        const renderable = buildSessionListRenderableFromSession(session);
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: renderable }],
+        } });
+        deleteBoundarySpies.push(vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: 'header.eyJzdWIiOiJtZSJ9.signature',
+        }));
+        const activeRequest = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ success: true }));
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockResolvedValue(Response.json({ success: true }));
+        deleteBoundarySpies.push(activeRequest, fetch);
+        const screen = await renderInfoScreen();
+        const confirmation = createDeferred<boolean>();
+        modalConfirmSpy.mockReturnValueOnce(confirmation.promise);
+        const deletion = screen.pressByTestIdAsync('sessionInfo.deleteSession');
+        const rejectedDeletion = expect(deletion).rejects.toBeInstanceOf(HappyError);
+        expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            'sessionInfo.deleteSessionWarning',
+            expect.objectContaining({ destructive: true }),
+        );
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: { ...renderable, active: true } }],
+        } });
+
+        confirmation.resolve(true);
+        await rejectedDeletion;
+
+        expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+        expect(activeRequest).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListViewDataByServerId['server-b']?.some((row) => row.type === 'session' && row.session.id === session.id)).toBe(true);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the info screen and session when delete confirmation is cancelled', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        sessionIsConnected = false;
+        const session = createSessionFixture({ id: 'session-1', serverId: 'server-b', active: false, presence: 0 });
+        mockSession = session;
+        storage.setState({ sessionListViewDataByServerId: {
+            'server-b': [{ type: 'session', serverId: 'server-b', session: buildSessionListRenderableFromSession(session) }],
+        } });
+        const activeRequest = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ success: true }));
+        const fetch = vi.spyOn(runtimeFetch, 'runtimeFetch').mockResolvedValue(Response.json({ success: true }));
+        deleteBoundarySpies.push(activeRequest, fetch);
+        modalConfirmSpy.mockResolvedValueOnce(false);
+
+        const screen = await renderInfoScreen();
+        await screen.pressByTestIdAsync('sessionInfo.deleteSession');
+
+        expect(fetch).not.toHaveBeenCalled();
+        expect(activeRequest).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListViewDataByServerId['server-b']?.some((row) => row.type === 'session' && row.session.id === session.id)).toBe(true);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
     });
 
     it('archives an active session by stopping it first and then archiving it', async () => {
@@ -2081,7 +2200,7 @@ describe('/session/[id]/info', () => {
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
 
         expect(sessionStopSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
-        expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
+        expect(sessionArchiveSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b', signal: expect.any(AbortSignal) });
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
     });
 
@@ -2102,6 +2221,28 @@ describe('/session/[id]/info', () => {
 
         expect(screen.findByTestId('sessionInfo.stopSession')?.props.loading).toBe(true);
         expect(screen.findByTestId('sessionInfo.archiveSession')?.props.loading).toBe(true);
+    });
+
+    it('reflects an archive started elsewhere and prevents another stop or archive', async () => {
+        mockServerId = 'server-b';
+        setSessionOwnerServer('server-b');
+        mockSession = {
+            id: 'session-1', active: true, accessLevel: null,
+            createdAt: 1, updatedAt: 1, seq: 1, metadata: {}, archivedAt: null,
+        };
+        const operation = storage.getState().beginSessionArchive('session-1', 'server-b');
+        if (!operation) throw new Error('Expected archive admission');
+        try {
+            const screen = await renderInfoScreen();
+            expect(screen.findByTestId('sessionInfo.stopSession')?.props.disabled).toBe(true);
+            expect(screen.findByTestId('sessionInfo.archiveSession')?.props.loading).toBe(true);
+            await screen.pressByTestIdAsync('sessionInfo.archiveSession');
+            expect(sessionStopSpy).not.toHaveBeenCalled();
+            expect(sessionArchiveSpy).not.toHaveBeenCalled();
+            expect(safeRouterBackSpy).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { storage.getState().finishSessionArchive(operation); });
+        }
     });
 
     it('does not offer archive for active shared sessions even when the viewer has admin access', async () => {

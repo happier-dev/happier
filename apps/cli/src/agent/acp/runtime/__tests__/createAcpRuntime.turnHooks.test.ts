@@ -143,6 +143,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         markRolledBack: async () => {},
         touchActiveTurn: async () => {},
         hasActiveTurn: () => false,
+        observeProviderTurnEvent: () => {},
       },
     });
 
@@ -195,6 +196,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         markRolledBack: async () => {},
         touchActiveTurn: async () => {},
         hasActiveTurn: () => false,
+        observeProviderTurnEvent: () => {},
       },
     });
 
@@ -255,6 +257,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         markRolledBack: async () => {},
         touchActiveTurn: async () => {},
         hasActiveTurn: () => false,
+        observeProviderTurnEvent: () => {},
       },
     });
 

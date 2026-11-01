@@ -322,9 +322,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .mobile-control/.node-version
 
       - name: Bind built candidate identity
         id: candidate
@@ -376,7 +374,7 @@ jobs:
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
             --release-message "${{ inputs.release_message }}" \
-            "${store_args[@]}" \
+            ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
       - name: Persist Android candidate identity for recovery
@@ -443,7 +441,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -544,9 +542,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .testflight-control/.node-version
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -588,7 +584,7 @@ jobs:
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
             --release-message "${{ inputs.release_message }}" \
-            "${store_args[@]}" \
+            ${store_args[@]+"${store_args[@]}"} \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -639,7 +635,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Checkout production submit candidate for bound notes
         if: ${{ inputs.environment == 'production' }}
@@ -763,7 +759,7 @@ jobs:
             --project-dir "$submit_workspace" \
             --path "$aab" \
             --wait true \
-            "${store_args[@]}"
+            ${store_args[@]+"${store_args[@]}"}
 
   retry_store_publication:
     name: Resume production store publication (existing binary)
@@ -794,7 +790,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Publish exact uploaded store binary with bound release notes
         env:
@@ -868,7 +864,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Attach existing processed build to TestFlight groups
         env:
@@ -966,9 +962,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -1014,7 +1008,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn

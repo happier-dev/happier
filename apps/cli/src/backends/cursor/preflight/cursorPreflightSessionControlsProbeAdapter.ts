@@ -41,7 +41,6 @@ function createCursorProbeBackend(params: PreflightSessionControlsProbeParams): 
     },
     mcpServers: {},
     permissionMode: 'default',
-    parameterizedModelPicker: true,
     permissionHandler: {
       handleToolCall: async () => ({ decision: 'abort' }),
     },

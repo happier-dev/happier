@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_PERMISSION_MODES = [
   'default',
@@ -101,7 +102,7 @@ export function createSessionPermissionModeInputSchema(zod: typeof z) {
   );
 }
 
-export const SessionPermissionModeInputSchema = createSessionPermissionModeInputSchema(z);
+export const SessionPermissionModeInputSchema = lazySchema(() => createSessionPermissionModeInputSchema(z));
 
 /**
  * Parse behavior:
@@ -112,4 +113,4 @@ export function createSessionPermissionModeSchema(zod: typeof z) {
   return zod.enum(SESSION_PERMISSION_MODES).catch('default');
 }
 
-export const SessionPermissionModeSchema = createSessionPermissionModeSchema(z);
+export const SessionPermissionModeSchema = lazySchema(() => createSessionPermissionModeSchema(z));

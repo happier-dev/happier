@@ -52,6 +52,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     onAbortRequested?: (() => void | Promise<void>) | null;
     toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
     triggerAbortCallbackOnAbortDecision?: boolean;
+    requestScope?: 'foreground' | 'execution_run';
   }) {
     super(params.session, {
       pushSender: params.pushSender ?? null,
@@ -60,6 +61,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       onAbortRequested: params.onAbortRequested,
       toolTrace: params.toolTrace ?? null,
       triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
+      requestScope: params.requestScope,
     });
     this.logPrefix = params.logPrefix;
     this.isWriteLikeToolName = params.isWriteLikeToolName ?? isDefaultWriteLikeToolName;

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import * as accountUsageModule from './accountUsage.js';
+import { ConnectedServiceQuotaSnapshotV1Schema, SealedConnectedServiceQuotaSnapshotV1Schema } from './connectedServiceSchemas.js';
 import * as protocol from '../index.js';
 import { ReleasedProviderAccountUsageSnapshotV1Schema, ReleasedSealedProviderAccountUsageSnapshotV1Schema, ReleasedProviderAccountUsagePlainWriteSchema } from './fixtures/releasedV0216AccountUsage.js';
 
@@ -142,6 +143,8 @@ describe('provider account usage protocol', () => {
     const subscription = { status: 'subscribed', renewal: 'off', observedAtMs: 900, staleAfterMs: 60_000, currentPeriodEndAtMs: 1_800_000_000_000 };
     const recoveryCreditDetails = { grant: { remainingCount: 2, appliesToProviderLimitIds: ['five_hour', 'seven_day'], unavailableReason: 'cooldown' } };
     const sealed = seal({ material, snapshot: { ...base, subscription, recoveryCreditDetails }, randomBytes: (length: number) => new Uint8Array(length).fill(3) });
+    const quotaEnvelope = SealedConnectedServiceQuotaSnapshotV1Schema.parse(sealed);
+    expect(open({ material, sealed: quotaEnvelope })).toEqual({ ...base, subscription, recoveryCreditDetails });
     expect(accountUsageModule.openProviderAccountUsageSnapshotCiphertext({ material, ciphertext: sealed.ciphertext })?.value).toEqual(base);
     expect(open({ material, sealed })).toEqual({ ...base, subscription, recoveryCreditDetails });
     const other = createSnapshot({ recordKey: { ...base.recordKey, accountSubjectId: 'other' } });
@@ -358,6 +361,31 @@ describe('provider account usage protocol', () => {
       }),
       meters: snapshot.meters,
     }));
+  });
+
+  it('preserves organization quota scope without replacing the provider account identity', () => {
+    const recordKey = {
+      providerId: 'claude', accountSubjectId: 'acct-user', subjectKind: 'account',
+      quotaScope: 'organization', quotaScopeId: 'org-work',
+    };
+    const projected = accountUsageModule.projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+      accountUsageModule.ProviderAccountUsageSnapshotV1Schema.parse(createSnapshot({ recordKey })),
+      { serviceId: 'anthropic', profileId: 'work', bindingKind: 'profile' },
+    );
+
+    expect(ConnectedServiceQuotaSnapshotV1Schema.parse(projected)).toMatchObject({
+      activeAccountId: 'acct-user',
+      providerOrganizationId: 'org-work',
+    });
+    expect(ReleasedProviderAccountUsageSnapshotV1Schema.safeParse(createSnapshot({ recordKey })).success).toBe(true);
+  });
+
+  it('does not invent organization context for account-only quota snapshots', () => {
+    const projected = accountUsageModule.projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
+      accountUsageModule.ProviderAccountUsageSnapshotV1Schema.parse(createSnapshot()),
+      { serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' },
+    );
+    expect(projected).not.toHaveProperty('providerOrganizationId');
   });
 
   it('does not export the connected-service quota back-projection helper', () => {

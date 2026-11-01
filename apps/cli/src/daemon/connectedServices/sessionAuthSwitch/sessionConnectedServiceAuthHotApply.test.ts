@@ -272,7 +272,8 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     });
   });
 
-  it('threads exact group currentness into the provider writer and reports typed supersession', async () => {
+  it.each(['credential_revision_superseded', 'credential_revision_missing'])(
+    'threads group write currentness and preserves retryable %s from the provider', async (errorCode) => {
     const validateGroupMutationCurrentness = vi.fn(async () => ({
       current: false as const,
       authoritativeTarget: {
@@ -288,7 +289,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       hotApply: async (input) => {
         const currentness = await input.validateCurrentBeforeMutation?.();
         return currentness?.current === false
-          ? { applied: false, status: 'superseded_after_apply' }
+          ? { applied: false, reason: errorCode }
           : { applied: true };
       },
       recoverAfterRuntimeAuthSwitch: async () => ({}),
@@ -332,7 +333,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       ]]),
     })).resolves.toMatchObject({
       ok: false,
-      errorCode: 'credential_revision_superseded',
+      errorCode,
     });
     expect(validateGroupMutationCurrentness).toHaveBeenCalledWith({
       serviceId: 'claude-subscription',

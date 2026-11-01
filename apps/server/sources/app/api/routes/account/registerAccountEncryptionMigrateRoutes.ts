@@ -1,5 +1,7 @@
+import { verifyAccountContentPublicKeyBinding } from "@happier-dev/protocol";
 import { type Fastify } from "../../types";
 import { afterTx, inTx } from "@/storage/inTx";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     AccountEncryptionMigrateRequestSchema,
@@ -31,7 +33,14 @@ import { buildAccountSettingsChangedUpdate } from "@/app/events/eventPayloadBuil
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { migrateNewSessionDraftsForAccountModeInTx } from "@/app/account/sessionDrafts/sessionDraftService";
+import { migrateMachineAccountEncryptionInTx, MachineAccountEncryptionMigrationConflictError } from "@/app/machines/migrateMachineAccountEncryptionInTx";
 import { recordAccountSettingsSnapshotsForWrite } from "@/app/accountSettings/accountSettingsHistoryRepository";
+
+class AccountEncryptionMigrationMachineRejectedError extends Error {
+    constructor(readonly status: "requires_upgrade" | "incomplete" | "invalid_content") {
+        super(`Machine migration rejected: ${status}`);
+    }
+}
 
 class AccountEncryptionMigrationCredentialRejectedError extends Error {
     constructor(status: string) {
@@ -56,9 +65,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const { toMode, expectedSettingsVersion, settingsContent, connectedServices, automations, sessionDrafts, keyProof } = request.body;
+        const { toMode, expectedSettingsVersion, settingsContent, connectedServices, automations, sessionDrafts, machines, keyProof } = request.body;
 
         const encryptionEnv = readEncryptionFeatureEnv(process.env);
+        if (toMode === "plain" && machines?.action === "migrate" && machines.items.length > 0
+            && !isServerFeatureEnabledForRequest("encryption.plaintextMachine", process.env)) {
+            return reply.code(404).send({ error: "not_found" });
+        }
 
         if (toMode === "plain") {
             if (encryptionEnv.storagePolicy === "required_e2ee") {
@@ -155,11 +168,11 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         if (contentPublicKeySig.length !== tweetnacl.sign.signatureLength) {
                             return { type: "invalid-params" as const };
                         }
-                        const binding = Buffer.concat([
-                            Buffer.from("Happy content key v1\u0000", "utf8"),
-                            Buffer.from(contentPublicKey),
-                        ]);
-                        const contentSigOk = tweetnacl.sign.detached.verify(binding, contentPublicKeySig, publicKeyBytes);
+                        const contentSigOk = verifyAccountContentPublicKeyBinding({
+                            signingPublicKeyHex: publicKeyHex,
+                            contentPublicKeyB64: keyProof!.contentPublicKey,
+                            contentPublicKeySigB64: keyProof!.contentPublicKeySig,
+                        });
                         if (!contentSigOk) {
                             return { type: "invalid-params" as const };
                         }
@@ -264,6 +277,9 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         currentRevision: sessionDraftMigration.currentRevision,
                     };
                 }
+
+                const machineMigration = await migrateMachineAccountEncryptionInTx({ tx, accountId: userId, toMode, directive: machines });
+                if (machineMigration !== "applied") throw new AccountEncryptionMigrationMachineRejectedError(machineMigration);
 
                 const nextSettingsDbValue =
                     toMode === "plain"
@@ -485,6 +501,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 ...(result.sessionDraftRecords ? { sessionDrafts: { records: result.sessionDraftRecords } } : {}),
             });
         } catch (error) {
+            if (error instanceof AccountEncryptionMigrationMachineRejectedError) {
+                if (error.status === "invalid_content") return reply.code(400).send({ error: "invalid-params" });
+                return reply.code(400).send({ error: error.status === "requires_upgrade" ? "machines_require_upgrade" : "machines_migration_incomplete" });
+            }
+            if (error instanceof MachineAccountEncryptionMigrationConflictError) {
+                return reply.code(400).send({ error: "machines_migration_incomplete" });
+            }
             if (error instanceof AccountEncryptionMigrationCredentialRejectedError) {
                 return reply.code(400).send({ error: "invalid-params" });
             }

@@ -57,6 +57,7 @@ describe('sessionOrganizationApi', () => {
                 includeAllFolderAssignments: true,
                 includeAllTagAssignments: true,
                 includeAttentionStandings: true,
+                includeSessionAppearances: true,
                 assignmentSessionIds: ['s1', 's2'],
                 folderIds: ['folder-a'],
                 tagIds: ['tag-a'],
@@ -82,6 +83,7 @@ describe('sessionOrganizationApi', () => {
         expect(requestUrl.searchParams.get('includeAllFolderAssignments')).toBe('true');
         expect(requestUrl.searchParams.get('includeAllTagAssignments')).toBe('true');
         expect(requestUrl.searchParams.get('includeAttentionStandings')).toBe('true');
+        expect(requestUrl.searchParams.get('includeSessionAppearances')).toBe('true');
         expect(requestUrl.searchParams.get('assignmentSessionIds')).toBe('s1,s2');
         expect(requestUrl.searchParams.get('folderIds')).toBe('folder-a');
         expect(requestUrl.searchParams.get('tagIds')).toBe('tag-a');

@@ -16,6 +16,7 @@ const NON_TERMINAL_RUNTIME_AUTH_RECOVERY_STATUS_CODES = new Set([
   'recovery_retry_scheduled',
   'temporary_retry_armed',
   'switch_attempted_no_eligible_member',
+  'switch_attempted_quota_proof_unavailable',
   'switch_attempted_switch_limit_reached',
 ]);
 

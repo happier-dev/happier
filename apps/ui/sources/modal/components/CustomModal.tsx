@@ -143,6 +143,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         <BaseModal
             visible={visible}
             onClose={handleClose}
+            accessibilityLabel={typeof chrome?.title === 'string' ? chrome.title : undefined}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
             zIndexBase={zIndexBase}

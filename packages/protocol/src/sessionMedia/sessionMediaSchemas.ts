@@ -1,20 +1,21 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_MEDIA_MESSAGE_META_KIND_V1 = 'session_media.v1' as const;
 export const SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1 = 256;
 
-const SafeStringSchema = z.string().trim().min(1).max(512);
-const OriginIdentifierSchema = z.string().trim().min(1).max(16_384);
-const SessionMediaOriginSourceV1Schema = z.enum([
+const SafeStringSchema = lazySchema(() => z.string().trim().min(1).max(512));
+const OriginIdentifierSchema = lazySchema(() => z.string().trim().min(1).max(16_384));
+const SessionMediaOriginSourceV1Schema = lazySchema(() => z.enum([
   'user-upload',
   'provider-generated',
   'tool-output',
   'acp-content',
   'mcp-content',
   'local-file',
-]);
+]));
 
-const SessionMediaPathSchema = z
+const SessionMediaPathSchema = lazySchema(() => z
   .string()
   .trim()
   .min(1)
@@ -40,9 +41,9 @@ const SessionMediaPathSchema = z
     if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
       ctx.addIssue({ code: 'custom', message: 'Session media path must not contain empty or traversal segments' });
     }
-  });
+  }));
 
-export const SessionMediaOriginV1Schema = z
+export const SessionMediaOriginV1Schema = lazySchema(() => z
   .object({
     source: SessionMediaOriginSourceV1Schema,
     agentId: OriginIdentifierSchema.optional(),
@@ -51,18 +52,18 @@ export const SessionMediaOriginV1Schema = z
     providerEventId: OriginIdentifierSchema.optional(),
     providerFileId: OriginIdentifierSchema.optional(),
   })
-  .strict();
+  .strict());
 
-export const SessionMediaReferenceV1Schema = z
+export const SessionMediaReferenceV1Schema = lazySchema(() => z
   .object({
     mediaKind: z.literal('image'),
     path: SessionMediaPathSchema,
     mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']),
     sizeBytes: z.number().int().positive(),
   })
-  .strict();
+  .strict());
 
-export const SessionMediaItemV1Schema = z
+export const SessionMediaItemV1Schema = lazySchema(() => z
   .object({
     id: SafeStringSchema,
     role: z.enum(['input', 'output']),
@@ -80,18 +81,18 @@ export const SessionMediaItemV1Schema = z
     references: z.array(SessionMediaReferenceV1Schema).max(64).optional(),
     origin: SessionMediaOriginV1Schema,
   })
-  .strict();
+  .strict());
 
-export const SessionMediaUnavailableOriginV1Schema = z
+export const SessionMediaUnavailableOriginV1Schema = lazySchema(() => z
   .object({
     source: SessionMediaOriginSourceV1Schema,
     agentId: SafeStringSchema.optional(),
     toolCallIdHash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
     generationIdHash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
   })
-  .strict();
+  .strict());
 
-export const SessionMediaUnavailableV1Schema = z
+export const SessionMediaUnavailableV1Schema = lazySchema(() => z
   .object({
     id: SafeStringSchema,
     role: z.enum(['input', 'output']),
@@ -100,9 +101,9 @@ export const SessionMediaUnavailableV1Schema = z
     code: z.string().trim().min(1).max(128).regex(/^[a-z0-9._-]+$/),
     origin: SessionMediaUnavailableOriginV1Schema,
   })
-  .strict();
+  .strict());
 
-export const SessionMediaMessagePayloadV1Schema = z
+export const SessionMediaMessagePayloadV1Schema = lazySchema(() => z
   .object({
     media: z.array(SessionMediaItemV1Schema).max(SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1),
     unavailable: z.array(SessionMediaUnavailableV1Schema).max(SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1).optional(),
@@ -119,14 +120,14 @@ export const SessionMediaMessagePayloadV1Schema = z
         message: `Session media envelope must contain at most ${SESSION_MEDIA_MESSAGE_MAX_ENTRIES_V1} entries`,
       });
     }
-  });
+  }));
 
-export const SessionMediaMessageMetaEnvelopeV1Schema = z
+export const SessionMediaMessageMetaEnvelopeV1Schema = lazySchema(() => z
   .object({
     kind: z.literal(SESSION_MEDIA_MESSAGE_META_KIND_V1),
     payload: SessionMediaMessagePayloadV1Schema,
   })
-  .strict();
+  .strict());
 
 export type SessionMediaOriginV1 = z.infer<typeof SessionMediaOriginV1Schema>;
 export type SessionMediaReferenceV1 = z.infer<typeof SessionMediaReferenceV1Schema>;

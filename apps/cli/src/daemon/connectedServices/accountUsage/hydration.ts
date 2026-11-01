@@ -1,18 +1,22 @@
+import { connectedServiceUsageRequiresOrganizationId } from '@happier-dev/protocol';
 import {
   ConnectedServiceUsageSourceV1Schema,
   isConnectedServiceQuotaObservationFresh,
+  isProviderAccountUsageOrganizationContextMatch,
   ProviderAccountUsageRecordIdSchema,
   ProviderAccountUsageSnapshotV1Schema,
   openSealedProviderAccountUsageSnapshot as decryptProviderAccountUsageSnapshot,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageSnapshotV1,
+  type ProviderAccountUsageOrganizationContext,
   type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { AGENTS_CORE } from '@happier-dev/agents';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
+import { getConnectedAccountDescriptor } from '../descriptors/connectedAccountDescriptors';
 import type { ProviderAccountUsageStore } from './store';
 
 type ProviderAccountUsageHydrationApi = Readonly<{
@@ -43,6 +47,10 @@ export type ProviderAccountUsageCurrentSourceHydrationDisposition = Readonly<{
   status: 'hydrated_fresh' | 'hydrated_stale' | 'missing' | 'ownership_unproven';
   recordId?: ProviderAccountUsageRecordId;
 }>;
+
+export type ProviderAccountUsageCurrentSourceIdentityResolver = (
+  source: ConnectedServiceUsageSourceV1,
+) => Promise<ProviderAccountUsageOrganizationContext | null>;
 
 function parseConnectedServiceUsageSources(value: unknown): readonly ConnectedServiceUsageSourceV1[] {
   const parsed = ConnectedServiceUsageSourceV1Schema.array().safeParse(value ?? []);
@@ -76,6 +84,7 @@ function isProviderCompatibleWithConnectedServiceSource(input: Readonly<{
 }
 
 function accountScopedMaterial(credentials: Credentials): Parameters<typeof decryptProviderAccountUsageSnapshot>[0]['material'] {
+  requireEncryptionCredentials(credentials);
   return credentials.encryption.type === 'legacy'
     ? { type: 'legacy', secret: credentials.encryption.secret }
     : { type: 'dataKey', machineKey: credentials.encryption.machineKey };
@@ -152,6 +161,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
     fetchedAt: number | null;
     staleAfterMs: number | null;
   }> | null>;
+  resolveCurrentProviderAccountIdentityForSource?: ProviderAccountUsageCurrentSourceIdentityResolver;
   api: ProviderAccountUsageHydrationApi;
   credentials: Credentials;
   store: Pick<ProviderAccountUsageStore, 'recordSnapshot'>;
@@ -210,9 +220,15 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
     const accountIdentityProven = hydrated.snapshot.recordKey.subjectKind === 'account'
       && providerAccountId.length > 0
       && hydrated.snapshot.recordKey.accountSubjectId === providerAccountId;
+    const requiresOrganizationScope = connectedServiceUsageRequiresOrganizationId(source.serviceId);
+    const currentIdentity = requiresOrganizationScope
+      ? await input.resolveCurrentProviderAccountIdentityForSource?.(source).catch(() => null) ?? null
+      : null;
+    const currentContextProven = !requiresOrganizationScope
+      || isProviderAccountUsageOrganizationContextMatch(hydrated.snapshot.recordKey, currentIdentity);
     const freshnessProven = (resolved?.fetchedAt === null || resolved?.fetchedAt === hydrated.snapshot.fetchedAtMs)
       && (resolved?.staleAfterMs === null || resolved?.staleAfterMs === hydrated.snapshot.staleAfterMs);
-    if (!sourceProven || !accountIdentityProven || !freshnessProven || !isProviderCompatibleWithConnectedServiceSource({
+    if (!sourceProven || !accountIdentityProven || !currentContextProven || !freshnessProven || !isProviderCompatibleWithConnectedServiceSource({
       providerId: hydrated.snapshot.providerId,
       source,
     })) {

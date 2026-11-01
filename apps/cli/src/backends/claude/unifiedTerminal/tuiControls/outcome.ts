@@ -86,11 +86,28 @@ const DEFERRED_TIMINGS: ReadonlySet<RuntimeConfigOutcomeTimingV1> = new Set([
   'next_idle',
 ]);
 
-function isDeferredTiming(timing: RuntimeConfigOutcomeTimingV1 | undefined): boolean {
+export function isDeferredTiming(timing: RuntimeConfigOutcomeTimingV1 | undefined): timing is ControlScheduleTiming {
   return timing !== undefined && DEFERRED_TIMINGS.has(timing);
 }
 
-function blocksPrompt(change: RuntimeConfigChangeOutcome): boolean {
+/** Both effort controls report the same native effort, in execution order. */
+export function readVerifiedRuntimeConfigEffort(outcome: Readonly<{
+  status: RuntimeConfigOutcomeStatusV1;
+  timing?: RuntimeConfigOutcomeTimingV1 | undefined;
+  changes: readonly Pick<RuntimeConfigChangeOutcome, 'key' | 'effective' | 'reason'>[];
+}>): string | null {
+  if (outcome.status !== 'applied' || isDeferredTiming(outcome.timing)) return null;
+  let effort: string | null = null;
+  for (const change of outcome.changes) {
+    if ((change.key === 'reasoningEffort' || change.key === 'launchOption')
+      && change.reason !== 'delivered_unverified' && typeof change.effective === 'string') {
+      effort = change.effective;
+    }
+  }
+  return effort;
+}
+
+export function isRuntimeConfigChangePromptBlocking(change: RuntimeConfigChangeOutcome): boolean {
   return isBlockingStatus(change.status) || isDeferredTiming(change.timing);
 }
 
@@ -134,7 +151,7 @@ export function aggregateApplyOutcome(
 ): RuntimeConfigApplyOutcome {
   const status = aggregateStatus(changes);
   const timing = aggregateTiming(changes);
-  const promptMayProceed = !changes.some((c) => blocksPrompt(c));
+  const promptMayProceed = !changes.some(isRuntimeConfigChangePromptBlocking);
   return {
     status,
     timing,

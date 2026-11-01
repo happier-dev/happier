@@ -1,3 +1,4 @@
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from '@/agent';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
@@ -37,7 +38,7 @@ import {
 import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted, reconcileOpenCodeCommittedHistoryIdentities } from './openCodeSessionMessageImport';
 import { extractOpenCodeTaskChildSessionId, importOpenCodeTaskSidechainBestEffort } from './openCodeTaskSidechainImport';
 import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStreamBridge';
-import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
+import { asRecord, normalizeString, normalizeStringArray, readOpenCodeEventIdentity, type OpenCodeEventIdentity } from './openCodeParsing';
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import {
   createOpenCodeConnectedServiceRuntimeAuthAdapter,
@@ -104,6 +105,7 @@ import {
   classifyOpenCodePartForProjection,
 } from '../transcriptProjection';
 import {
+  hasOpenCodeInternalFlag,
   readOpenCodeNestedRecord,
   readOpenCodeTimestampMs,
 } from '../transcriptProjection/openCodeProjectionParsing';
@@ -279,16 +281,17 @@ export function createOpenCodeServerRuntime(params: {
         ? Object.assign(error, { runtimeAuthClassification })
         : { ...(asRecord(error) ?? {}), runtimeAuthClassification }
       : error;
-    if (runtimeAuthClassification) {
+    const reportFailure = (classification = runtimeAuthClassification): void => {
+      if (!classification) return;
       void reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: params.session.sessionId,
         switchesThisTurn: 0,
-        classification: runtimeAuthClassification,
+        classification,
         logPrefix: '[opencode]',
       }).then((recoveryReport) => {
         projectConnectedServiceRuntimeAuthRecoveryReport({
           report: recoveryReport,
-          classification: runtimeAuthClassification,
+          classification,
           sendGenericStatusMessage: (message) => {
             params.session.sendSessionEvent({ type: 'message', message });
             return true;
@@ -300,19 +303,33 @@ export function createOpenCodeServerRuntime(params: {
           },
         });
       });
-    }
+    };
+    let acceptedFailure = false;
     void surfacePrimarySessionRuntimeIssue({
       cause,
       provider,
       providerTurnId,
       error: errorWithClassification,
       session: params.session,
+      suppressUntrustedDuplicate: true,
+      onFailureTurn: ({ issue }) => {
+        acceptedFailure = true;
+        reportFailure(runtimeAuthClassification
+          ? { ...runtimeAuthClassification, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(issue) } : null);
+      },
     }).catch((surfaceError) => {
       logger.debug('[opencode] Failed to persist primary session runtime issue (non-fatal)', surfaceError);
     });
+    // An idle provider diagnostic has no accepted failed-turn witness; retain diagnostic coalescing.
+    if (!acceptedFailure) reportFailure();
   };
 
   let client: OpenCodeServerRuntimeClient | null = null;
+  let clientAcquisition: {
+    cancelled: boolean;
+    promise: Promise<OpenCodeServerRuntimeClient>;
+  } | null = null;
+  let resetInFlight: Promise<void> | null = null;
   let sessionId: string | null = null;
   let subscriptionAbort: AbortController | null = null;
   let serverConnectedDeferred = createDeferred<void>();
@@ -728,20 +745,41 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const ensureClient = async (): Promise<OpenCodeServerRuntimeClient> => {
+    if (resetInFlight) throw new Error('OpenCode runtime reset');
     if (client) return client;
-    connectedBrokerPreflight = null;
-    resetServerConnectedReadiness();
-    client = await createClient({
-      directory: params.directory,
-      env,
-      messageBuffer: params.messageBuffer,
-      onManagedServerIdentityChanged: (change) => {
-        connectedBrokerPreflight = null;
-        resetServerConnectedReadiness();
-        managedServerTurnSupervisor?.handleManagedServerIdentityChange(change);
-      },
-    });
-    return client;
+    if (!clientAcquisition) {
+      connectedBrokerPreflight = null;
+      resetServerConnectedReadiness();
+      const acquisition = {
+        cancelled: false,
+        promise: Promise.resolve().then(async (): Promise<OpenCodeServerRuntimeClient> => {
+          if (acquisition.cancelled) throw new Error('OpenCode runtime reset');
+          const acquiredClient = await createClient({
+            directory: params.directory,
+            env,
+            messageBuffer: params.messageBuffer,
+            onManagedServerIdentityChanged: (change) => {
+              connectedBrokerPreflight = null;
+              resetServerConnectedReadiness();
+              managedServerTurnSupervisor?.handleManagedServerIdentityChange(change);
+            },
+          });
+          if (acquisition.cancelled) {
+            await acquiredClient.dispose();
+            throw new Error('OpenCode runtime reset');
+          }
+          client = acquiredClient;
+          return acquiredClient;
+        }),
+      };
+      clientAcquisition = acquisition;
+    }
+    const acquisition = clientAcquisition;
+    try {
+      return await acquisition.promise;
+    } finally {
+      if (clientAcquisition === acquisition) clientAcquisition = null;
+    }
   };
 
   const readCurrentServerConnectedGenerationKey = (): string =>
@@ -1109,9 +1147,8 @@ export function createOpenCodeServerRuntime(params: {
 
   let scheduleAuthoritativeRequestInventoryRefresh: () => void = () => {};
 
-  const attachSubscriptionIfNeeded = async (): Promise<void> => {
+  const attachSubscriptionIfNeeded = (c: OpenCodeServerRuntimeClient): void => {
     if (subscriptionAbort) return;
-    const c = await ensureClient();
     const controller = new AbortController();
     subscriptionAbort = controller;
     let acceptedConnectionBoundarySeen = false;
@@ -1123,6 +1160,14 @@ export function createOpenCodeServerRuntime(params: {
         const eventType = normalizeString(evt.payload.type);
         if (delivery.provenance === 'connection-boundary' && eventType !== 'server.connected') {
           return;
+        }
+        if (delivery.provenance === 'accepted-live') {
+          const identity = readOpenCodeEventIdentity(eventType, evt.payload.properties);
+          if (identity && identity.sessionId === sessionId
+            && !isPrePromptMessageId(identity.messageId)
+            && !hasOpenCodeInternalFlag(identity.record)) {
+            params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
+          }
         }
         const isInitialConnectionBoundary = delivery.provenance === 'connection-boundary'
           && eventType === 'server.connected'
@@ -3448,13 +3493,11 @@ export function createOpenCodeServerRuntime(params: {
       });
   };
 
-  const handleSessionNextGuardEvent = (type: string, propsRaw: unknown): boolean => {
+  const handleSessionNextGuardEvent = (type: string, identity: OpenCodeEventIdentity | null): boolean => {
     if (!type.startsWith('session.next.')) return false;
-    const rec = asRecord(propsRaw);
-    if (!rec) return false;
-    const eventSessionId = normalizeString(rec.sessionID)
-      || normalizeString(rec.sessionId)
-      || normalizeString(asRecord(rec.session)?.id);
+    if (!identity) return false;
+    const rec = identity.record;
+    const eventSessionId = identity.sessionId;
     const nativeChildSidechainId = sidechainIdByRemoteSessionId.get(eventSessionId)?.sidechainId;
     if (!eventSessionId || (eventSessionId !== sessionId && !nativeChildSidechainId)) return true;
     if (eventSessionId !== sessionId && !type.startsWith('session.next.tool.')) return true;
@@ -3569,6 +3612,7 @@ export function createOpenCodeServerRuntime(params: {
     const payload = evt.payload;
     const type = normalizeString(payload.type);
     const props = payload.properties;
+    const identity = readOpenCodeEventIdentity(type, props);
     shapeLogger.log(`event:${type || 'unknown'}`, payload);
 
     if (type === 'server.connected') {
@@ -3617,7 +3661,7 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     const eventRecord = asRecord(props);
-    const childSessionId = normalizeString(eventRecord?.sessionID);
+    const childSessionId = identity?.sessionId ?? '';
     if (childSessionId && childSessionId !== sessionId && sidechainIdByRemoteSessionId.has(childSessionId)) {
       const outcome = eventRecord?.executionOutcome;
       if (outcome === 'succeeded') return settleNativeChild(childSessionId);
@@ -3629,11 +3673,10 @@ export function createOpenCodeServerRuntime(params: {
       }
     }
 
-    if (handleSessionNextGuardEvent(type, props)) return;
+    if (handleSessionNextGuardEvent(type, identity)) return;
 
     if (type === 'todo.updated') {
-      const eventSessionId = normalizeString(asRecord(props)?.sessionID)
-        || normalizeString(asRecord(asRecord(props)?.session)?.id);
+      const eventSessionId = identity?.sessionId ?? '';
       if (!eventSessionId || eventSessionId === sessionId) {
         publishNativeTodosWorkStateBestEffort();
       }
@@ -3641,9 +3684,9 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     if (type === 'message.updated') {
-      const info = asRecord(asRecord(props)?.info);
+      const info = identity?.record;
       if (!info) return;
-      const infoSessionId = normalizeString(info.sessionID);
+      const infoSessionId = identity?.sessionId ?? '';
       if (!infoSessionId) return;
       if (infoSessionId !== sessionId) {
         if (!sidechainIdByRemoteSessionId.has(infoSessionId)) return;
@@ -3722,9 +3765,9 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     if (type === 'message.part.updated' || type === 'message.part.created') {
-      const part = asRecord(asRecord(props)?.part);
+      const part = identity?.record;
       if (!part) return;
-      const sessionID = normalizeString(part.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID) return;
       const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
       if (sessionID !== sessionId && !sidechainId) return;
@@ -3817,7 +3860,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'message.part.delta') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID) return;
       const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
       if (sessionID !== sessionId && !sidechainId) return;
@@ -3912,7 +3955,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.status') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       const statusRec = asRecord(rec.status);
       const statusType = normalizeString(statusRec?.type);
@@ -3944,7 +3987,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.idle') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       providerObservedBusy = false;
       if (turnPromptActive) {
@@ -3962,7 +4005,7 @@ export function createOpenCodeServerRuntime(params: {
     if (type === 'session.error') {
       const rec = asRecord(props);
       if (!rec) return;
-      const sessionID = normalizeString(rec.sessionID);
+      const sessionID = identity?.sessionId ?? '';
       if (!sessionID || sessionID !== sessionId) return;
       const isExpectedExplicitCancelError = suppressSessionErrorAbortNotificationForSessionId === sessionID;
       const detail = extractOpenCodeErrorText(rec.error);
@@ -4230,12 +4273,17 @@ export function createOpenCodeServerRuntime(params: {
     async startOrLoad(opts: { resumeId?: string | null } = {}): Promise<string> {
       invalidateMcpServersForCurrentDirectory();
       const c = await ensureClient();
+      const assertCurrentClient = (): void => {
+        if (resetInFlight || client !== c) throw new Error('OpenCode runtime reset');
+      };
+      assertCurrentClient();
 
       scheduleMcpServersForCurrentDirectoryBestEffort();
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
       if (resumeId) {
         const existing = await c.sessionGet({ sessionId: resumeId });
+        assertCurrentClient();
         sessionId = existing.id ?? resumeId;
         foregroundToolTracker.resetForProviderSession(sessionId);
         omitCustomMessageIdForResumedSession = true;
@@ -4254,7 +4302,8 @@ export function createOpenCodeServerRuntime(params: {
           scheduleMcpServersForCurrentDirectoryBestEffort();
         }
         await c.sessionUpdate({ sessionId: sessionId!, permission: [...resolveSessionPermissionRuleset()] as unknown[] });
-        await attachSubscriptionIfNeeded();
+        assertCurrentClient();
+        attachSubscriptionIfNeeded(c);
         publishDynamicSessionOptionsBestEffort();
         publishNativeTodosWorkStateBestEffort();
         const snapshot = params.session.getMetadataSnapshot();
@@ -4302,6 +4351,7 @@ export function createOpenCodeServerRuntime(params: {
       }
 
       const created: OpenCodeSession = await c.sessionCreate({ permission: [...resolveSessionPermissionRuleset()] as unknown[] });
+      assertCurrentClient();
       sessionId = created.id;
       foregroundToolTracker.resetForProviderSession(sessionId);
       omitCustomMessageIdForResumedSession = false;
@@ -4319,7 +4369,7 @@ export function createOpenCodeServerRuntime(params: {
         invalidateMcpServersForCurrentDirectory();
         scheduleMcpServersForCurrentDirectoryBestEffort();
       }
-      await attachSubscriptionIfNeeded();
+      attachSubscriptionIfNeeded(c);
       publishDynamicSessionOptionsBestEffort();
       publishNativeTodosWorkStateBestEffort();
       await drainPendingAfterStartOrLoad();
@@ -4819,62 +4869,75 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async reset(): Promise<void> {
-      rejectTurn(new Error('OpenCode runtime reset'));
-      resetRuntimeState();
-      connectedBrokerPreflight = null;
-      resetServerConnectedReadiness();
-      setThinking(false);
-      sessionId = null;
-      const childSessionIds = Array.from(sidechainIdByRemoteSessionId.keys());
-      sidechainIdByRemoteSessionId.clear();
-      for (const childSessionId of childSessionIds) retireNativeChildAttention(childSessionId);
-      backgroundTaskByRemoteSessionId.clear();
-      completedBackgroundTaskCallKeys.clear();
-      sidechainStreamSeenBySidechainId.clear();
-      pendingTaskSidechainImportsBySidechainId.clear();
-      externalHistoryReconciliationPending = false;
-      foregroundToolTracker.resetForProviderSession(null);
-      selectedAgent = null;
-      selectedModel = null;
-      selectedModelWasQualifiedOverride = false;
-      currentContextWindowTokens = null;
-      omitCustomMessageIdForResumedSession = false;
-      suppressSessionErrorAbortNotificationForSessionId = null;
-      for (const key of Object.keys(configOverrides)) delete configOverrides[key];
-      // OpenCode owns MCP registrations per directory and server name. Because another Happier
-      // session cannot replace this session's projected names, teardown removes only registrations
-      // that this runtime successfully established.
-      invalidateMcpServersForCurrentDirectory();
-      mcpServerRegistrationRerunRequested = false;
-      const registrationInFlight = mcpServerRegistrationInFlight;
-      if (registrationInFlight) await registrationInFlight;
-      if (client) {
-        for (const registration of registeredMcpServers.splice(0)) {
-          try {
-            await client.mcpDisconnect(registration);
-          } catch (error) {
-            logger.debug('[OpenCodeServer] Failed to disconnect session-scoped MCP server (non-fatal)', {
-              ...registration,
-              error,
-            });
+      if (resetInFlight) return resetInFlight;
+      const acquisition = clientAcquisition;
+      if (acquisition) acquisition.cancelled = true;
+      const operation = Promise.resolve().then(async () => {
+        rejectTurn(new Error('OpenCode runtime reset'));
+        resetRuntimeState();
+        connectedBrokerPreflight = null;
+        resetServerConnectedReadiness();
+        setThinking(false);
+        sessionId = null;
+        const childSessionIds = Array.from(sidechainIdByRemoteSessionId.keys());
+        sidechainIdByRemoteSessionId.clear();
+        for (const childSessionId of childSessionIds) retireNativeChildAttention(childSessionId);
+        backgroundTaskByRemoteSessionId.clear();
+        completedBackgroundTaskCallKeys.clear();
+        sidechainStreamSeenBySidechainId.clear();
+        pendingTaskSidechainImportsBySidechainId.clear();
+        externalHistoryReconciliationPending = false;
+        foregroundToolTracker.resetForProviderSession(null);
+        selectedAgent = null;
+        selectedModel = null;
+        selectedModelWasQualifiedOverride = false;
+        currentContextWindowTokens = null;
+        omitCustomMessageIdForResumedSession = false;
+        suppressSessionErrorAbortNotificationForSessionId = null;
+        for (const key of Object.keys(configOverrides)) delete configOverrides[key];
+        // Acquisition owns disposal when reset overtakes it, before any caller can use its client.
+        await acquisition?.promise.catch(() => {});
+        // OpenCode owns MCP registrations per directory and server name. Because another Happier
+        // session cannot replace this session's projected names, teardown removes only registrations
+        // that this runtime successfully established.
+        invalidateMcpServersForCurrentDirectory();
+        mcpServerRegistrationRerunRequested = false;
+        const registrationInFlight = mcpServerRegistrationInFlight;
+        if (registrationInFlight) await registrationInFlight;
+        if (client) {
+          for (const registration of registeredMcpServers.splice(0)) {
+            try {
+              await client.mcpDisconnect(registration);
+            } catch (error) {
+              logger.debug('[OpenCodeServer] Failed to disconnect session-scoped MCP server (non-fatal)', {
+                ...registration,
+                error,
+              });
+            }
           }
         }
-      }
-      if (subscriptionAbort) {
-        try {
-          subscriptionAbort.abort();
-        } catch {
-          // ignore
+        if (subscriptionAbort) {
+          try {
+            subscriptionAbort.abort();
+          } catch {
+            // ignore
+          }
+          subscriptionAbort = null;
         }
-        subscriptionAbort = null;
-      }
-      if (client) {
-        try {
-          await client.dispose();
-        } catch (e) {
-          logger.debug('[OpenCodeServer] Failed to dispose client (non-fatal)', e);
+        if (client) {
+          try {
+            await client.dispose();
+          } catch (e) {
+            logger.debug('[OpenCodeServer] Failed to dispose client (non-fatal)', e);
+          }
+          client = null;
         }
-        client = null;
+      });
+      resetInFlight = operation;
+      try {
+        await operation;
+      } finally {
+        if (resetInFlight === operation) resetInFlight = null;
       }
     },
 

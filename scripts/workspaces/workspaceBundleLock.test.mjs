@@ -8,6 +8,66 @@ import { fileURLToPath } from 'node:url';
 
 import { withWorkspaceBundleLock, withWorkspaceBundleLockSync } from './workspaceBundleLock.mjs';
 
+test('withWorkspaceBundleLock cancels a live legacy-owner wait without removing its lock', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-bootstrap-lock-cancel-'));
+  const lockPath = join(tempRoot, 'bootstrap.lock');
+  const legacyOwner = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 600_000 });
+  writeFileSync(lockPath, legacyOwner);
+  const controller = new AbortController();
+  const reason = new Error('cancel bootstrap');
+  let entered = false;
+  try {
+    const waiting = withWorkspaceBundleLock(() => { entered = true; }, {
+      lockPath,
+      timeoutMs: null,
+      pollIntervalMs: 50,
+      staleAfterMs: 300_000,
+      signal: controller.signal,
+      onWait: () => controller.abort(reason),
+    });
+    let watchdog;
+    try {
+      await assert.rejects(Promise.race([
+        waiting,
+        new Promise((_resolve, reject) => { watchdog = setTimeout(() => reject(new Error('lock wait did not cancel')), 500); }),
+      ]), (error) => error === reason);
+    } finally {
+      clearTimeout(watchdog);
+      waiting.catch(() => {});
+    }
+    assert.equal(entered, false);
+    assert.equal(readFileSync(lockPath, 'utf8'), legacyOwner);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('withWorkspaceBundleLock permits an explicit unlimited wait beyond the build deadline', async (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-bootstrap-lock-unlimited-'));
+  const lockPath = join(tempRoot, 'bootstrap.lock');
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+  const realNow = Date.now;
+  let elapsed = 0;
+  t.mock.method(Date, 'now', () => realNow() + elapsed);
+  let waits = 0;
+  try {
+    const result = await withWorkspaceBundleLock(() => 'installed', {
+      lockPath,
+      timeoutMs: null,
+      pollIntervalMs: 1,
+      staleAfterMs: 300_000,
+      onWait: () => {
+        elapsed += 300_000;
+        if (++waits === 2) rmSync(lockPath);
+      },
+    });
+    assert.equal(result, 'installed');
+    assert.equal(waits, 2);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 async function waitForFile(path, { timeoutMs = 1_000 } = {}) {
   const startedAt = Date.now();
   while (!existsSync(path)) {

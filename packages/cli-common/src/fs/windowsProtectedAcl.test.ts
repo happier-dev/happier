@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import { promisify } from 'node:util';
@@ -31,9 +31,12 @@ describe('Windows protected ACL boundary', () => {
     vi.unstubAllEnvs();
   });
 
-  it('uses the same native System32 command map through the asynchronous boundary', async () => {
+  it('pins native tools and isolates PowerShell modules through the asynchronous boundary', async () => {
     vi.stubEnv('SystemRoot', 'C:\\WINDOWS');
     vi.stubEnv('PATH', 'C:\\Program Files\\Git\\usr\\bin;C:\\WINDOWS\\System32');
+    vi.stubEnv('PSModulePath', 'C:\\Program Files\\PowerShell\\7\\Modules');
+    vi.stubEnv('psmodulepath', 'C:\\incompatible-modules');
+    const parentEnvironment = { ...process.env };
     childProcessMocks.execFile.mockImplementation((...rawArgs) => {
       const [command, , , callback] = rawArgs as [
         string,
@@ -70,11 +73,23 @@ describe('Windows protected ACL boundary', () => {
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ]);
+    for (const [, , options] of childProcessMocks.execFile.mock.calls.slice(2)) {
+      expect(options.env).toMatchObject({
+        SystemRoot: 'C:\\WINDOWS',
+        PATH: process.env.PATH,
+        PSModulePath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      });
+      expect(Object.keys(options.env).filter((key) => key.toLowerCase() === 'psmodulepath')).toEqual(['PSModulePath']);
+    }
+    expect({ ...process.env }).toEqual(parentEnvironment);
   });
 
-  it('uses native System32 ACL commands even when Git tools shadow whoami on PATH', () => {
+  it('pins native tools and isolates PowerShell modules through the synchronous boundary', () => {
     vi.stubEnv('SystemRoot', 'C:\\WINDOWS');
     vi.stubEnv('PATH', 'C:\\Program Files\\Git\\usr\\bin;C:\\WINDOWS\\System32');
+    vi.stubEnv('PSModulePath', 'C:\\Program Files\\PowerShell\\7\\Modules');
+    vi.stubEnv('psmodulepath', 'C:\\incompatible-modules');
+    const parentEnvironment = { ...process.env };
     childProcessMocks.spawnSync.mockImplementation((command) => {
       const normalizedCommand = String(command).toLowerCase();
       if (normalizedCommand.endsWith('\\whoami.exe')) {
@@ -109,6 +124,15 @@ describe('Windows protected ACL boundary', () => {
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ]);
+    for (const [, , options] of childProcessMocks.spawnSync.mock.calls.slice(2)) {
+      expect(options.env).toMatchObject({
+        SystemRoot: 'C:\\WINDOWS',
+        PATH: process.env.PATH,
+        PSModulePath: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      });
+      expect(Object.keys(options.env).filter((key) => key.toLowerCase() === 'psmodulepath')).toEqual(['PSModulePath']);
+    }
+    expect({ ...process.env }).toEqual(parentEnvironment);
   });
 
   it('fails explicitly when the Windows system root is unavailable', () => {
@@ -259,21 +283,33 @@ describe('Windows protected ACL boundary', () => {
     expect(message).toContain(JSON.stringify(extraRule));
   });
 
-  it.runIf(process.platform === 'win32')('removes a real explicit Users grant before accepting a protected directory', async () => {
-    const { execFile } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  it.runIf(process.platform === 'win32').each(['async', 'sync'] as const)('isolates incompatible modules and enforces real ACLs through the %s boundary', async mode => {
+    const { execFile, spawnSync } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
     childProcessMocks.execFile.mockImplementation(execFile);
+    childProcessMocks.spawnSync.mockImplementation(spawnSync);
     const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
     if (!systemRoot) throw new Error('Windows system root is unavailable');
     const root = await mkdtemp(join(tmpdir(), 'happier-acl-'));
-    const boundary = createWindowsProtectedAclBoundary();
+    const boundary = mode === 'async' ? createWindowsProtectedAclBoundary() : createWindowsProtectedAclBoundarySync();
+    const verify = async (path = root) => await boundary.verify({ path, kind: 'directory' });
     try {
+      // Synthetic distribution module: Windows PowerShell must not load the
+      // incompatible Security module advertised by its caller's search path.
+      const moduleRoot = join(root, 'foreign-modules');
+      const securityModule = join(moduleRoot, 'Microsoft.PowerShell.Security');
+      await mkdir(securityModule, { recursive: true });
+      await writeFile(join(securityModule, 'Microsoft.PowerShell.Security.psd1'),
+        "@{ ModuleVersion = '99.0'; PowerShellVersion = '7.0'; RootModule = 'Security.psm1'; FunctionsToExport = @('Get-Acl', 'Set-Acl') }");
+      await writeFile(join(securityModule, 'Security.psm1'), 'throw "Incompatible synthetic distribution module"');
+      vi.stubEnv('PSModulePath', moduleRoot);
       await boundary.applyAndVerify({ path: root, kind: 'directory' });
       await promisify(execFile)(win32.join(systemRoot, 'System32', 'icacls.exe'), [
         root, '/grant', '*S-1-5-32-545:R',
       ]);
-      await expect(boundary.verify({ path: root, kind: 'directory' })).rejects.toThrow(/ACL entries/u);
+      await expect(verify()).rejects.toThrow(/ACL entries/u);
       await boundary.applyAndVerify({ path: root, kind: 'directory' });
-      await expect(boundary.verify({ path: root, kind: 'directory' })).resolves.toBeUndefined();
+      await expect(verify()).resolves.toBeUndefined();
+      await expect(verify(join(root, 'missing'))).rejects.toThrow(/powershell\.exe.*exit 1/u);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -300,6 +336,23 @@ describe('Windows protected ACL boundary', () => {
     });
 
     expect(() => boundary.applyAndVerify({ path: 'C:\\unsafe.json', kind: 'file' })).toThrow(/inherits ACL/u);
+  });
+
+  it.each(['async', 'sync'] as const)('preserves bounded diagnostics for a malformed %s inspection result', async mode => {
+    const runCommand = (command: string) => command === 'whoami.exe'
+      ? { exitCode: 0, stdout: '"USER","S-1-5-21-123"', stderr: '' }
+      : { exitCode: 0, stdout: 'sensitive-invalid-output', stderr: `module import failed\r\n${'x'.repeat(600)}` };
+    const boundary = mode === 'async'
+      ? createWindowsProtectedAclBoundary({ runCommand: async (command) => runCommand(command) })
+      : createWindowsProtectedAclBoundarySync({ runCommand });
+    const error = await Promise.resolve().then(() => boundary.verify({ path: 'C:\\private.json', kind: 'file' }))
+      .then(() => null, (error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    const message = error instanceof Error ? error.message : '';
+    expect(message).toMatch(/invalid JSON.*module import failed/u);
+    expect(message).toContain('…');
+    expect(message).not.toContain('x'.repeat(513));
+    expect(message).not.toContain('sensitive-invalid-output');
   });
 
   it('reports command, exit code, and bounded stderr without exposing stdout', () => {

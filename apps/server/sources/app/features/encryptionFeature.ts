@@ -19,6 +19,7 @@ export function resolveEncryptionFeature(env: NodeJS.ProcessEnv): FeaturesPayloa
         features: {
             encryption: {
                 plaintextStorage: { enabled: plaintextStorageEnabled },
+                plaintextMachine: { enabled: plaintextStorageEnabled },
                 accountOptOut: { enabled: accountOptOutEnabled },
             },
         },

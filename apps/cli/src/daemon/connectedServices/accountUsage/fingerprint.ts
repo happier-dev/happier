@@ -84,9 +84,14 @@ export function deriveProviderAccountUsageFingerprintKey(input: Readonly<{
   serverScope: string;
   accountScope: string;
 }>): ProviderAccountUsageFingerprintKey {
-  const sourceMaterial = input.credentials.encryption.type === 'legacy'
-    ? input.credentials.encryption.secret
-    : input.credentials.encryption.machineKey;
+  // Plain-account fingerprints are dedupe metadata, independent of bearer token rotation.
+  const sourceMaterial = input.credentials.encryption
+    ? input.credentials.encryption.type === 'legacy'
+      ? input.credentials.encryption.secret
+      : input.credentials.encryption.machineKey
+    : createHash('sha256')
+        .update(`plain:${input.serverScope}:${input.accountScope}:${PROVIDER_ACCOUNT_USAGE_FINGERPRINT_INFO}`, 'utf8')
+        .digest();
   return new Uint8Array(hkdfSync(
     'sha256',
     toBuffer(sourceMaterial),

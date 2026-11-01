@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { isVersionAtLeast, parseCodexVersionInfo } from '../mcp/version';
-import { resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
+import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
 
 const SHARED_CONTROL_MIN_VERSION_UNIX = { major: 0, minor: 131, patch: 0 } as const;
 
@@ -30,7 +30,7 @@ export async function resolveCodexSharedControlSupport(params: Readonly<{
       args: ['--version'],
       cwd: params.cwd,
       processEnv,
-      overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+      overrideEnvVarKeys: CODEX_APP_SERVER_OVERRIDE_ENV_KEYS,
       targetLabel: 'Codex CLI',
     });
     const invocation = resolveWindowsCommandInvocation({

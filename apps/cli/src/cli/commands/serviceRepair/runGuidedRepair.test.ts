@@ -1,37 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { RunningDaemonCliMismatch } from '@/diagnostics/doctorRepair';
+import type { RepairFinding, RunningDaemonCliMismatch } from '@/diagnostics/doctorRepair';
 
 const {
-  buildHappyCliSubprocessLaunchSpecMock,
   promptInputMock,
   spawnSyncMock,
 } = vi.hoisted(() => ({
-  buildHappyCliSubprocessLaunchSpecMock: vi.fn((args: string[]) => ({
-    runtime: 'node' as const,
-    filePath: '/opt/happier/bin/happier',
-    args,
-    env: undefined,
-  })),
   promptInputMock: vi.fn(async () => ''),
   spawnSyncMock: vi.fn(() => ({ status: 0 })),
 }));
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
   spawnSync: spawnSyncMock,
 }));
 
 vi.mock('@/terminal/prompts/promptInput', () => ({
   promptInput: promptInputMock,
 }));
-
-vi.mock('@/utils/spawnHappyCLI', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/spawnHappyCLI')>();
-  return {
-    ...actual,
-    buildHappyCliSubprocessLaunchSpec: buildHappyCliSubprocessLaunchSpecMock,
-  };
-});
 
 function makeRunningDaemonCliMismatch(): RunningDaemonCliMismatch {
   return {
@@ -58,12 +44,25 @@ function makeRunningDaemonCliMismatch(): RunningDaemonCliMismatch {
 
 describe('runGuidedRepair running daemon CLI mismatch repair', () => {
   afterEach(() => {
-    buildHappyCliSubprocessLaunchSpecMock.mockClear();
     promptInputMock.mockReset();
     promptInputMock.mockImplementation(async () => '');
     spawnSyncMock.mockReset();
     spawnSyncMock.mockImplementation(() => ({ status: 0 }));
     vi.restoreAllMocks();
+  });
+
+  it('stops the stale repair walk after a successful self update', async () => {
+    const { runGuidedRepair } = await import('./runGuidedRepair');
+    const findings: RepairFinding[] = [{
+      kind: 'cli_self_update_available', severity: 'info', autoApplyWithoutPrompt: false,
+      releaseChannel: 'dev', currentVersion: '0.12.0', latestVersion: '0.12.1',
+    }, makeRunningDaemonCliMismatch()];
+    const applyOldPlan = await runGuidedRepair({
+      findings, currentCli: { releaseChannel: 'dev', version: '0.12.0', invoker: 'hdev' },
+    });
+    expect(applyOldPlan).toBe(false);
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining(['self', 'update', '--dev']), expect.any(Object));
   });
 
   it('keeps the default interactive answer on daemon restart only', async () => {
@@ -78,13 +77,13 @@ describe('runGuidedRepair running daemon CLI mismatch repair', () => {
       },
     });
 
-    expect(buildHappyCliSubprocessLaunchSpecMock).toHaveBeenCalledWith([
+    expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining([
       'daemon',
       'restart',
       '--takeover',
-    ]);
-    expect(buildHappyCliSubprocessLaunchSpecMock).not.toHaveBeenCalledWith(
-      expect.arrayContaining(['--restart-session-runners']),
+    ]), expect.any(Object));
+    expect(spawnSyncMock).not.toHaveBeenCalledWith(
+      expect.any(String), expect.arrayContaining(['--restart-session-runners']), expect.any(Object),
     );
   });
 
@@ -101,11 +100,11 @@ describe('runGuidedRepair running daemon CLI mismatch repair', () => {
       },
     });
 
-    expect(buildHappyCliSubprocessLaunchSpecMock).toHaveBeenCalledWith([
+    expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining([
       'daemon',
       'restart',
       '--takeover',
       '--restart-session-runners',
-    ]);
+    ]), expect.any(Object));
   });
 });

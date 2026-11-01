@@ -23,6 +23,7 @@ export function createAccountFeaturesResponse(
         features: {
             ...base.features,
             encryption: {
+                plaintextMachine: { enabled: false },
                 plaintextStorage: {
                     enabled: overrides.encryptionPlaintextStorageEnabled ?? (overrides.encryptionAccountOptOutEnabled ?? false),
                 },

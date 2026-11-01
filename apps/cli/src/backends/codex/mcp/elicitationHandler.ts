@@ -13,15 +13,16 @@ import {
     type ReviewDecision,
 } from './elicitationTypes';
 import { getElicitationResponseStyle, type CodexVersionInfo, type ElicitationResponseStyle } from './version';
+import { lazySchema } from '@happier-dev/protocol';
 
 export type CodexMcpPermissionHandler = {
     handleToolCall: (toolCallId: string, toolName: string, input: unknown) => Promise<PermissionResult>;
 };
 
-const ElicitRequestSchemaWithExtras = RequestSchema.extend({
+const ElicitRequestSchemaWithExtras = lazySchema(() => RequestSchema.extend({
     method: z.literal('elicitation/create'),
     params: z.any()
-});
+}));
 
 function buildElicitationResponse(
     style: ElicitationResponseStyle,
@@ -118,6 +119,7 @@ export function registerCodexPermissionHandlers(params: {
     versionInfo: CodexVersionInfo;
     getPermissionHandler: () => CodexMcpPermissionHandler | null;
     pendingAmendments: Map<string, string[]>;
+    onProviderTurnEvent?: () => void;
 }): void {
     const responseStyle = getElicitationResponseStyle(params.versionInfo);
     logger.debug('[CodexMCP] Elicitation response style', {
@@ -128,6 +130,7 @@ export function registerCodexPermissionHandlers(params: {
     params.client.setRequestHandler(
         ElicitRequestSchemaWithExtras,
         async (request: { params?: unknown }) => {
+            params.onProviderTurnEvent?.();
             const requestParams = (request.params ?? {}) as Record<string, unknown>;
             logger.debugLargeJson('[CodexMCP] Received elicitation request', requestParams);
 

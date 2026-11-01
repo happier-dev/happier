@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionComposerSend } from './resolveSessionComposerSend';
 
 describe('resolveSessionComposerSend', () => {
+    it('uses the continuation prompt only for blank input, preserving authored text and commands', () => {
+        for (const input of ['', ' \n\t ']) {
+            expect(resolveSessionComposerSend({ input, executionRunsEnabled: true, emptyInputFallback: 'Continue' }))
+                .toEqual({ kind: 'send', text: 'Continue' });
+            expect(resolveSessionComposerSend({ input, executionRunsEnabled: true }))
+                .toEqual({ kind: 'send', text: input });
+        }
+        expect(resolveSessionComposerSend({ input: '  do this instead  ', executionRunsEnabled: true, emptyInputFallback: 'Continue' }))
+            .toEqual({ kind: 'send', text: '  do this instead  ' });
+        expect(resolveSessionComposerSend({ input: '//', executionRunsEnabled: true, emptyInputFallback: 'Continue' }))
+            .toEqual({ kind: 'noop' });
+    });
+
     it('passes through normal input unchanged', () => {
         expect(resolveSessionComposerSend({ input: 'hello', executionRunsEnabled: true })).toEqual({
             kind: 'send',

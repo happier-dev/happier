@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ExternalOAuthParamsResponseSchema = z.object({ url: z.string().min(1) }).strict();
+export const ExternalOAuthParamsResponseSchema = lazySchema(() => z.object({ url: z.string().min(1) }).strict());
 export type ExternalOAuthParamsResponse = z.infer<typeof ExternalOAuthParamsResponseSchema>;
 
-export const ExternalOAuthErrorResponseSchema = z.object({ error: z.string().min(1) }).strict();
+export const ExternalOAuthErrorResponseSchema = lazySchema(() => z.object({ error: z.string().min(1) }).strict());
 export type ExternalOAuthErrorResponse = z.infer<typeof ExternalOAuthErrorResponseSchema>;
 
-export const ExternalOAuthFinalizeAuthRequestSchema = z
+export const ExternalOAuthFinalizeAuthRequestSchema = lazySchema(() => z
   .object({
     pending: z.string().min(1),
     proof: z.string().min(1).optional(),
@@ -28,23 +29,23 @@ export const ExternalOAuthFinalizeAuthRequestSchema = z
         message: 'contentPublicKey and contentPublicKeySig must be provided together',
       });
     }
-  });
+  }));
 
 export type ExternalOAuthFinalizeAuthRequest = z.infer<typeof ExternalOAuthFinalizeAuthRequestSchema>;
 
-export const ExternalOAuthFinalizeAuthSuccessResponseSchema = z
+export const ExternalOAuthFinalizeAuthSuccessResponseSchema = lazySchema(() => z
   .object({ success: z.literal(true), token: z.string().min(1) })
-  .strict();
+  .strict());
 export type ExternalOAuthFinalizeAuthSuccessResponse = z.infer<typeof ExternalOAuthFinalizeAuthSuccessResponseSchema>;
 
-export const ExternalOAuthFinalizeConnectRequestSchema = z
+export const ExternalOAuthFinalizeConnectRequestSchema = lazySchema(() => z
   .object({
     pending: z.string().min(1),
     username: z.string().min(1),
   })
-  .strict();
+  .strict());
 
 export type ExternalOAuthFinalizeConnectRequest = z.infer<typeof ExternalOAuthFinalizeConnectRequestSchema>;
 
-export const ExternalOAuthFinalizeConnectSuccessResponseSchema = z.object({ success: z.literal(true) }).strict();
+export const ExternalOAuthFinalizeConnectSuccessResponseSchema = lazySchema(() => z.object({ success: z.literal(true) }).strict());
 export type ExternalOAuthFinalizeConnectSuccessResponse = z.infer<typeof ExternalOAuthFinalizeConnectSuccessResponseSchema>;

@@ -13,6 +13,8 @@ import {
     DirectSessionTranscriptDeltaEphemeralSchema,
     MachineUpdateMetadataRequestSchema,
     type MachineUpdateMetadataResponse,
+    machineUpdateMatchesStoredMode,
+    isPlainMachineDataKeyMarker,
 } from "@happier-dev/protocol";
 import { validateCurrentMachineSocket } from "@/app/machines/validateCurrentMachineSocket";
 import { readHappierSocketData } from "./socketData";
@@ -161,6 +163,13 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             if (!machineId) return;
             const parsed = ActionOperationRevisionEphemeralV1Schema.safeParse(data);
             if (!parsed.success || parsed.data.machineId !== machineId) return;
+            const machine = await db.machine.findFirst({
+                where: { accountId: userId, id: machineId, revokedAt: null, replacedByMachineId: null },
+                select: { dataEncryptionKey: true },
+            });
+            if (!machine || isPlainMachineDataKeyMarker(machine.dataEncryptionKey) !== (parsed.data.content.t === 'plain')) return;
+            if (parsed.data.content.t === 'plain'
+                && (parsed.data.content.v.scope.accountId !== userId || parsed.data.content.v.scope.machineId !== machineId)) return;
 
             eventRouter.emitEphemeral({
                 userId,
@@ -201,7 +210,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
+                    select: { metadataVersion: true, metadata: true, dataEncryptionKey: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
@@ -216,13 +225,17 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     return null;
                 }
 
+                if (!machineUpdateMatchesStoredMode({ dataEncryptionKey: machine.dataEncryptionKey, metadata })) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine storage mode mismatch' }));
+                    return null;
+                }
                 if (machine.metadataVersion !== expectedVersion) {
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: machine.metadataVersion, metadata: machine.metadata }));
                     return null;
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
+                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
                     data: { metadata, metadataVersion: expectedVersion + 1 },
                 });
 
@@ -304,7 +317,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
+                    select: { daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, revokedAt: true, replacedByMachineId: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
@@ -319,13 +332,17 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                     return null;
                 }
 
+                if (!machineUpdateMatchesStoredMode({ dataEncryptionKey: machine.dataEncryptionKey, daemonState })) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine storage mode mismatch' }));
+                    return null;
+                }
                 if (machine.daemonStateVersion !== expectedVersion) {
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: machine.daemonStateVersion, daemonState: machine.daemonState }));
                     return null;
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
+                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, dataEncryptionKey: machine.dataEncryptionKey, revokedAt: null, replacedByMachineId: null },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,

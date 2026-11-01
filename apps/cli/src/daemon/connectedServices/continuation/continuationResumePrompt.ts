@@ -14,12 +14,14 @@ export function buildContinuationResumePrompt(input: Readonly<{
   resumePromptMode: SessionContinuationResumePromptModeV1;
   customResumePrompt?: string | null;
   recoveryKind?: ConnectedServiceRuntimeAuthFailureKind | null;
+  afterUsageLimitReset?: boolean;
 }>): string {
   if (input.resumePromptMode === 'custom') {
     const custom = input.customResumePrompt?.trim() ?? '';
     if (custom.length > 0) return custom;
   }
-  return input.recoveryKind === 'usage_limit' || input.recoveryKind === 'rate_limit'
+  return input.afterUsageLimitReset === true
+    && (input.recoveryKind === 'usage_limit' || input.recoveryKind === 'rate_limit')
     ? USAGE_LIMIT_CONTINUATION_RESUME_PROMPT
     : GENERIC_CONTINUATION_RESUME_PROMPT;
 }

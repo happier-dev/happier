@@ -304,6 +304,7 @@ describe('buildTranscriptRowShellSignature', () => {
             expect(resolveType(toolUnitItem('tool-2'))).toBe('tool-group-tool');
             expect(resolveType({
                 kind: 'tool-group-footer',
+                hasVisibleTools: false,
                 id: `${groupId}#footer`,
                 groupId,
                 toolMessageIds,
@@ -486,9 +487,20 @@ describe('buildTranscriptRowShellSignature', () => {
             expect(siblingRunning.rowState).toBe('stable');
         });
 
+        it('invalidates the footer height when the group gains or loses visible tools', () => {
+            const footer = {
+                kind: 'tool-group-footer' as const, id: `${groupId}#footer`, groupId,
+                toolMessageIds, expanded: false, createdAt: 1, hasVisibleTools: false,
+            };
+            const collapsed = buildSignature({ item: footer, messagesById });
+            const preview = buildSignature({ item: { ...footer, hasVisibleTools: true }, messagesById });
+            expect(preview.structuralKey).not.toBe(collapsed.structuralKey);
+        });
+
         it('keeps the footer signature stable across message and expansion churn', () => {
             const footerItem = (expanded: boolean): TranscriptRowShellItem => ({
                 kind: 'tool-group-footer',
+                hasVisibleTools: false,
                 id: `${groupId}#footer`,
                 groupId,
                 toolMessageIds,

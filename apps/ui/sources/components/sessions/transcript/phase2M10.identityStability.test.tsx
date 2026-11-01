@@ -493,6 +493,7 @@ describe('phase2 M10 hook identity stability', () => {
         const members = {
             chatListNativeId: 'chat-list:s1',
             itemsRef: createRef([]),
+            listRef: createRef(null),
             listContentHeightRef: createRef(0),
             listLayoutHeightRef: createRef(0),
             olderPaginationSnapshotRef: createRef({ phase: 'idle', suspendedReasons: [] }),

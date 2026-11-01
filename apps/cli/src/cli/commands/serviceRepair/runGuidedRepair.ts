@@ -230,6 +230,12 @@ export async function runGuidedRepair(params: Readonly<{
     const ok = dispatchFindingAction(finding);
     if (ok) {
       console.log(`${FINDING_BODY_INDENT}${glyph.success()} done.`);
+      if (finding.kind === 'cli_self_update_available') {
+        // The updater handles service follow-up through the activated CLI.
+        // Remaining findings and any pending plan belong to the old inventory.
+        console.log(`${FINDING_BODY_INDENT}Re-run ${code(`${params.currentCli.invoker} doctor repair`)} to reassess any remaining findings.`);
+        return false;
+      }
     } else {
       const hint = retryHintFor(finding, params.currentCli.invoker);
       console.log(`${FINDING_BODY_INDENT}${glyph.error()} ${severity.error('failed')} — ${hint}`);

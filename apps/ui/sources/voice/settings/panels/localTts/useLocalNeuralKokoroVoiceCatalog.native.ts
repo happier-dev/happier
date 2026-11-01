@@ -4,6 +4,7 @@ import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voice
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { getModelPackInstallSummary } from '@/voice/modelPacks/installer.native';
+import { fileUriToNativePath } from '@/voice/modelPacks/nativePath';
 
 export type KokoroVoiceSummary = Readonly<{
   id: string;
@@ -13,10 +14,6 @@ export type KokoroVoiceSummary = Readonly<{
 
 type InstallSummary = Awaited<ReturnType<typeof getModelPackInstallSummary>>;
 
-function uriToFilePath(uri: string): string {
-  if (uri.startsWith('file://')) return uri.slice('file://'.length);
-  return uri;
-}
 
 function normalizeManifestVoiceRow(row: unknown): KokoroVoiceSummary | null {
   if (!row || typeof row !== 'object') return null;
@@ -51,7 +48,7 @@ export function useLocalNeuralKokoroVoiceCatalog(params: {
 
       if ((params.installSummary as any)?.installed && typeof (params.installSummary as any)?.packDirUri === 'string') {
         const assetsDirUri = String((params.installSummary as any).packDirUri);
-        const assetsDirPath = uriToFilePath(assetsDirUri);
+        const assetsDirPath = fileUriToNativePath(assetsDirUri);
 
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires

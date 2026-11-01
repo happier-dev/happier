@@ -59,6 +59,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
             randomBytes: () => new Uint8Array(24).fill(1),
         });
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn().mockResolvedValue({
                 analyticsOptOut: true,
@@ -106,6 +107,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
         const applySettingsForScope = vi.fn();
         const machineKey = new Uint8Array(32).fill(7);
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn(),
         } as any;
@@ -149,6 +151,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
         const applySettings = vi.fn();
         const machineKey = new Uint8Array(32).fill(7);
         const encryption = {
+            hasEncryptionMaterial: () => true,
             getContentPrivateKey: () => machineKey,
             decryptRaw: vi.fn(),
         } as any;

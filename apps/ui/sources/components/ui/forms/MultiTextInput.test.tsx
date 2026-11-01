@@ -702,11 +702,154 @@ describe('MultiTextInput', () => {
         });
         expect(mockTextarea.scrollTop).toBe(250);
 
-        // The parent confirm of that same edit re-runs the measurement pass.
+        // The parent confirm of that same edit is deduped against the change
+        // handler's measurement of the same text/style/maxHeight, so no second
+        // collapse-to-measure pass runs and the scroll position stays put.
         await act(async () => {
             tree.update(renderInput(editedValue));
         });
         expect(mockTextarea.scrollTop).toBe(250);
+    });
+
+    it('runs one collapse-to-measure pass per self-edit keystroke cycle', async () => {
+        // A self-edit keystroke measures in the change handler; the parent's
+        // confirm render used to repeat the identical measurement — a pure
+        // duplicate collapse with its own forced layout flushes. One keystroke
+        // cycle (edit + parent confirm) must produce exactly one `height:
+        // auto` collapse write.
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const initialValue = 'a'.repeat(600);
+        let backingValue = initialValue;
+        let autoWriteCount = 0;
+        const styleValues: Record<string, string> = {};
+        const style = {} as Record<string, string>;
+        const mockTextareaBase = {
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 2000,
+            style,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        Object.defineProperty(style, 'height', {
+            get: () => styleValues.height ?? '',
+            set: (next: string) => {
+                styleValues.height = next;
+                if (next === 'auto') autoWriteCount += 1;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        Object.defineProperty(mockTextareaBase, 'value', {
+            get: () => backingValue,
+            set: (next: string) => {
+                backingValue = next;
+            },
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
+
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(renderInput(initialValue), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
+                },
+            });
+        });
+        expect(autoWriteCount).toBe(1);
+        autoWriteCount = 0;
+
+        const input = tree.root.findByType('textarea' as any);
+        const editedValue = `${initialValue}x`;
+        await act(async () => {
+            backingValue = editedValue;
+            input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+        });
+        expect(autoWriteCount).toBe(1);
+
+        // The parent confirm of that same edit must not collapse again: the
+        // text, textarea style, and max height are all unchanged since the
+        // change handler measured them in the same task.
+        await act(async () => {
+            tree.update(renderInput(editedValue));
+        });
+        expect(autoWriteCount).toBe(1);
+    });
+
+    it('re-measures on a textarea style change even when the text is unchanged', async () => {
+        // Guards the measurement dedupe key's style dimension: a new
+        // textStyle prop identity with identical text must still collapse and
+        // re-measure (font metrics change the content height).
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const value = 'a'.repeat(600);
+        let autoWriteCount = 0;
+        const styleValues: Record<string, string> = {};
+        const style = {} as Record<string, string>;
+        const mockTextareaBase = {
+            value,
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 2000,
+            style,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        Object.defineProperty(style, 'height', {
+            get: () => styleValues.height ?? '',
+            set: (next: string) => {
+                styleValues.height = next;
+                if (next === 'auto') autoWriteCount += 1;
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        const mockTextarea = mockTextareaBase as typeof mockTextareaBase & { value: string };
+
+        const renderInput = (textStyle: { fontSize: number }) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                maxHeight={144}
+                textStyle={textStyle}
+                onChangeText={() => {}}
+            />
+        );
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(renderInput({ fontSize: 14 }), {
+                createNodeMock: (element) => {
+                    if (element.type === 'textarea') return mockTextarea;
+                    return null;
+                },
+            });
+        });
+        expect(autoWriteCount).toBe(1);
+        autoWriteCount = 0;
+
+        await act(async () => {
+            tree.update(renderInput({ fontSize: 14 }));
+        });
+
+        expect(autoWriteCount).toBe(1);
     });
 
     it('re-applies a consumed web scroll restore after adopting an external value, but never after self-edit confirms', async () => {
@@ -1684,6 +1827,223 @@ describe('MultiTextInput', () => {
         expect(mockTextarea.setSelectionRange).not.toHaveBeenCalled();
         expect(onSelectionChange).not.toHaveBeenCalled();
         expect(onStateChange).not.toHaveBeenCalled();
+    });
+
+    it('keeps uncommitted web IME composition local and emits the committed text once at compositionend', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onChangeText = vi.fn();
+        const onStateChange = vi.fn();
+        const onSelectionChange = vi.fn();
+        const mockTextarea = {
+            value: 'hi ',
+            selectionStart: 3,
+            selectionEnd: 3,
+            scrollTop: 0,
+            scrollHeight: 30,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                onChangeText={onChangeText}
+                onStateChange={onStateChange}
+                onSelectionChange={onSelectionChange}
+            />
+        );
+        const typeInto = async (input: renderer.ReactTestInstance, text: string, isComposing: boolean) => {
+            mockTextarea.value = text;
+            mockTextarea.selectionStart = text.length;
+            mockTextarea.selectionEnd = text.length;
+            await act(async () => {
+                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea, nativeEvent: { isComposing } });
+            });
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(renderInput('hi '), {
+                createNodeMock: (element) => (element.type === 'textarea' ? mockTextarea : null),
+            });
+        });
+        const input = tree!.root.findByType('textarea' as any);
+
+        // Pinyin composition: every update is uncommitted and must stay inside the textarea.
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+        await typeInto(input, 'hi n', true);
+        await typeInto(input, 'hi ni', true);
+        await act(async () => {
+            input.props.onSelect({ target: mockTextarea });
+        });
+        // Chromium delivers the committed text in a final composing input before compositionend.
+        await typeInto(input, 'hi 你', true);
+        // A parent re-render with its last confirmed value must not roll the live composition back.
+        await act(async () => {
+            tree!.update(renderInput('hi '));
+        });
+
+        expect(mockTextarea.value).toBe('hi 你');
+        expect(mockTextarea.style.height).toBe('30px');
+        expect(onChangeText).not.toHaveBeenCalled();
+        expect(onStateChange).not.toHaveBeenCalled();
+        expect(onSelectionChange).not.toHaveBeenCalled();
+
+        await act(async () => {
+            input.props.onCompositionEnd({ currentTarget: mockTextarea });
+        });
+
+        expect(onChangeText.mock.calls).toEqual([['hi 你']]);
+        expect(onStateChange.mock.calls).toEqual([[{ text: 'hi 你', selection: { start: 4, end: 4 } }]]);
+        expect(onSelectionChange.mock.calls).toEqual([[{ start: 4, end: 4 }]]);
+
+        // WebKit delivers the committed text in an input AFTER compositionend: it must not re-emit it.
+        await typeInto(input, 'hi 你', false);
+        expect(onChangeText).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree!.update(renderInput('hi 你'));
+        });
+        // Ordinary typing after the composition emits normally.
+        await typeInto(input, 'hi 你!', false);
+        expect(onChangeText.mock.calls).toEqual([['hi 你'], ['hi 你!']]);
+        expect(onStateChange).toHaveBeenLastCalledWith({ text: 'hi 你!', selection: { start: 5, end: 5 } });
+    });
+
+    it('emits a held web composition only when it crosses the field emptiness edge', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onChangeText = vi.fn();
+        const onStateChange = vi.fn();
+        const mockTextarea = {
+            value: '',
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 30,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+        const renderInput = (value: string) => (
+            <MultiTextInput
+                testID="composer-input"
+                value={value}
+                onChangeText={onChangeText}
+                onStateChange={onStateChange}
+            />
+        );
+        const compose = async (input: renderer.ReactTestInstance, text: string) => {
+            mockTextarea.value = text;
+            mockTextarea.selectionStart = text.length;
+            mockTextarea.selectionEnd = text.length;
+            await act(async () => {
+                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea, nativeEvent: { isComposing: true } });
+            });
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(renderInput(''), {
+                createNodeMock: (element) => (element.type === 'textarea' ? mockTextarea : null),
+            });
+        });
+        const input = tree!.root.findByType('textarea' as any);
+
+        // Gboard composes every word: the first word into an empty field must enable send.
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+        await compose(input, 'h');
+        expect(onChangeText.mock.calls).toEqual([['h']]);
+        await act(async () => {
+            tree!.update(renderInput('h'));
+        });
+        await compose(input, 'he');
+        await compose(input, 'hel');
+        expect(onChangeText).toHaveBeenCalledTimes(1);
+        // Whitespace-only is empty to the send button, so it crosses the edge back.
+        await compose(input, ' ');
+        expect(onChangeText.mock.calls).toEqual([['h'], [' ']]);
+        await act(async () => {
+            tree!.update(renderInput(' '));
+        });
+        await compose(input, ' hello');
+        expect(onChangeText.mock.calls).toEqual([['h'], [' '], [' hello']]);
+        await act(async () => {
+            tree!.update(renderInput(' hello'));
+        });
+        await compose(input, ' hello w');
+
+        await act(async () => {
+            input.props.onCompositionEnd({ currentTarget: mockTextarea });
+        });
+
+        expect(onChangeText.mock.calls).toEqual([['h'], [' '], [' hello'], [' hello w']]);
+        expect(onStateChange).toHaveBeenLastCalledWith({ text: ' hello w', selection: { start: 8, end: 8 } });
+    });
+
+    it('does not emit a text change when an IME composition is cancelled back to the committed text', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onChangeText = vi.fn();
+        const onStateChange = vi.fn();
+        const mockTextarea = {
+            value: 'hello',
+            selectionStart: 5,
+            selectionEnd: 5,
+            scrollTop: 0,
+            scrollHeight: 30,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+            focus: vi.fn(),
+            blur: vi.fn(),
+            getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="hello"
+                    onChangeText={onChangeText}
+                    onStateChange={onStateChange}
+                />,
+                {
+                    createNodeMock: (element) => (element.type === 'textarea' ? mockTextarea : null),
+                },
+            );
+        });
+        const input = tree!.root.findByType('textarea' as any);
+
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+        mockTextarea.value = 'hellon';
+        mockTextarea.selectionStart = 6;
+        mockTextarea.selectionEnd = 6;
+        await act(async () => {
+            input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea, nativeEvent: { isComposing: true } });
+        });
+        // Escape: the browser removes the uncommitted text and ends the composition.
+        mockTextarea.value = 'hello';
+        mockTextarea.selectionStart = 5;
+        mockTextarea.selectionEnd = 5;
+        await act(async () => {
+            input.props.onCompositionEnd({ currentTarget: mockTextarea });
+        });
+
+        expect(onChangeText).not.toHaveBeenCalled();
+        expect(onStateChange.mock.calls).toEqual([[{ text: 'hello', selection: { start: 5, end: 5 } }]]);
     });
 
     it('prevents the default paste behavior when web files are pasted and forwards the files', async () => {

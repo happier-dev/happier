@@ -428,10 +428,10 @@ describe('sessionRunnerRespawnDescriptor', () => {
   });
 
   it('persists only safe runtime locator environment variables in the respawn descriptor while keeping connected-services bindings', () => {
-    const credentials: Credentials = {
+    const credentials = {
       token: 't',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
-    };
+    } satisfies Credentials;
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },

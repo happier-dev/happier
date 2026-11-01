@@ -28,6 +28,24 @@ const THIRD_PARTY_NATIVE_PATCH = `diff --git a/node_modules/react-native-unistyl
 +// third-party pods still build from source
 `;
 
+const TASK_MANAGER_ANDROID_PATCH = `--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+@@ -1,3 +1,4 @@
++// Keep React Native timers active during the background task.
+`;
+
+const TASK_MANAGER_JS_PATCH = `--- a/node_modules/expo-task-manager/src/TaskManager.ts
++++ b/node_modules/expo-task-manager/src/TaskManager.ts
+@@ -1,3 +1,4 @@
++// Register the Android headless task callback.
+`;
+
+const NOTIFICATIONS_ANDROID_PATCH = `--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/delegates/ExpoHandlingDelegate.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/service/delegates/ExpoHandlingDelegate.kt
+@@ -1,3 +1,4 @@
++// Use foreground startup for the default notification tap.
+`;
+
 const APP_CONFIG_WITH_SOURCE_BUILD = `const plugin = [
     "expo-build-properties",
     { android: {}, ios: { buildReactNativeFromSource: true, deploymentTarget: '16.0' } },
@@ -54,6 +72,7 @@ test('passes when no patch touches React Native core native sources', () => {
     const uiDir = createUiDir({
         'patches/react-native+0.81.5.patch': JS_ONLY_PATCH,
         'patches/react-native-unistyles+3.2.4.patch': THIRD_PARTY_NATIVE_PATCH,
+        'patches/expo-task-manager+14.0.9.patch': TASK_MANAGER_JS_PATCH,
         'app.config.js': APP_CONFIG_WITHOUT_SOURCE_BUILD,
     });
 
@@ -62,6 +81,62 @@ test('passes when no patch touches React Native core native sources', () => {
     assert.equal(result.ok, true);
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.warnings, []);
+});
+
+test('requires source compilation for the patched Expo TaskManager Android implementation', () => {
+    const uiDir = createUiDir({
+        'patches/expo-task-manager+14.0.9.patch': TASK_MANAGER_ANDROID_PATCH,
+        'package.json': JSON.stringify({ expo: { autolinking: { searchPaths: ['../../node_modules', './node_modules'] } } }),
+    });
+
+    const missingConfig = verifyNativePatchCompilation({ uiDir });
+    assert.equal(missingConfig.ok, false);
+    assert.equal(missingConfig.errors.length, 1);
+    assert.match(missingConfig.errors[0], /expo\.autolinking\.android\.buildFromSource/);
+    assert.match(missingConfig.errors[0], /TaskService\.java/);
+
+    for (const [project, expected] of [['expo-task-manager-extra', false], ['expo-task-manager', true]]) {
+        fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify({
+            expo: { autolinking: { android: { buildFromSource: [project, 'unimodules-app-loader'] } } },
+        }));
+        const configured = verifyNativePatchCompilation({ uiDir });
+        assert.equal(configured.ok, expected);
+        assert.equal(configured.errors.length, expected ? 0 : 1);
+    }
+});
+
+test('requires the loader Gradle project used by TaskManager when compiling its patch from source', () => {
+    const uiDir = createUiDir({
+        'patches/expo-task-manager+14.0.9.patch': TASK_MANAGER_ANDROID_PATCH,
+        'package.json': JSON.stringify({
+            expo: { autolinking: { android: { buildFromSource: ['expo-task-manager'] } } },
+        }),
+    });
+
+    const result = verifyNativePatchCompilation({ uiDir });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0], /unimodules-app-loader/);
+});
+
+test('requires source compilation for the patched Expo Notifications Android implementation', () => {
+    const buildFromSource = ['expo-task-manager', 'unimodules-app-loader'];
+    const uiDir = createUiDir({
+        'patches/expo-notifications+0.32.16.patch': NOTIFICATIONS_ANDROID_PATCH,
+        'package.json': JSON.stringify({ expo: { autolinking: { android: { buildFromSource } } } }),
+    });
+
+    const missingConfig = verifyNativePatchCompilation({ uiDir });
+    assert.equal(missingConfig.ok, false);
+    assert.equal(missingConfig.errors.length, 1);
+    assert.match(missingConfig.errors[0], /expo-notifications/);
+    assert.match(missingConfig.errors[0], /ExpoHandlingDelegate\.kt/);
+
+    fs.writeFileSync(path.join(uiDir, 'package.json'), JSON.stringify({
+        expo: { autolinking: { android: { buildFromSource: [...buildFromSource, 'expo-notifications'] } } },
+    }));
+    assert.equal(verifyNativePatchCompilation({ uiDir }).ok, true);
 });
 
 test('fails when an iOS core patch exists but app.config.js does not declare a source build', () => {

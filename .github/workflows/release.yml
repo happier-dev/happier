@@ -295,7 +295,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Resolve public profile
         id: profile
         env:
@@ -399,7 +399,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Snapshot open issues from the source channel
         id: snapshot
         env:
@@ -454,7 +454,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Verify successful existing CI for exact source
         id: existing_ci
         if: ${{ inputs.dry_run != true && inputs.waive_ci != true }}
@@ -557,7 +557,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Compute changed components (current target..authorized source)
         id: plan
@@ -779,7 +779,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Validate installer and updater trust roots
         run: |
           set -euo pipefail
@@ -805,7 +805,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Enforce stable and risk-selected publication admission
         env:
           CHECKS_PROFILE: ${{ needs.plan.outputs.checks_profile }}
@@ -844,7 +844,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Checkout exact authorized release source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -944,7 +944,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
 
       - name: Compute deploy plan (deploy/<env>/* behind release source?)
         id: plan
@@ -1036,7 +1036,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Bind one exact promoted release-candidate SHA
         id: source
         env:
@@ -1441,7 +1441,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Verify rolling references bind the candidate SHA
         env:
           EXPECTED_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -1521,7 +1521,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Render the formula from the published release
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1585,7 +1585,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Reconcile the snapshotted issues
         env:
           DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
@@ -1637,7 +1637,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .release-control/.node-version
 
       - name: Project release status facts
         env:

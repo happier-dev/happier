@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export function createAcpConfiguredBackendV1Schema(zod: typeof z) {
   return zod.object({
@@ -9,7 +10,7 @@ export function createAcpConfiguredBackendV1Schema(zod: typeof z) {
   }).passthrough();
 }
 
-export const AcpConfiguredBackendV1Schema = createAcpConfiguredBackendV1Schema(z);
+export const AcpConfiguredBackendV1Schema = lazySchema(() => createAcpConfiguredBackendV1Schema(z));
 export type AcpConfiguredBackendV1 = z.infer<typeof AcpConfiguredBackendV1Schema>;
 
 export function buildAcpConfiguredBackendV1(params: Readonly<{

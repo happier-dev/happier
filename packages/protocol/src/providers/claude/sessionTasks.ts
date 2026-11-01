@@ -5,10 +5,11 @@ import {
   buildVendorSessionWorkStateItemId,
 } from '../../sessionWorkState/sessionWorkStateItemIds.js';
 import type { SessionWorkStateItemV1, SessionWorkStateStatusV1 } from '../../sessionWorkState/sessionWorkStateV1.js';
+import { lazySchema } from '../../lazySchema.js';
 
 const CLAUDE_TASK_TOOL_WORK_STATE_SOURCE_FAMILY = 'claude.task';
 
-export const ClaudeTaskEventSchema = z
+export const ClaudeTaskEventSchema = lazySchema(() => z
   .object({
     type: z.string().min(1),
     task_id: z.string().min(1),
@@ -18,19 +19,19 @@ export const ClaudeTaskEventSchema = z
     start_time: z.union([z.string(), z.number()]).optional(),
     end_time: z.union([z.string(), z.number()]).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ClaudeTaskEvent = z.infer<typeof ClaudeTaskEventSchema>;
 
-export const ClaudeTodoWriteTodoSchema = z
+export const ClaudeTodoWriteTodoSchema = lazySchema(() => z
   .object({
     content: z.string().trim().min(1),
     status: z.string().min(1),
     activeForm: z.string().trim().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ClaudeTodoWriteTodo = z.infer<typeof ClaudeTodoWriteTodoSchema>;
 
-export const ClaudeTaskToolInputSchema = z
+export const ClaudeTaskToolInputSchema = lazySchema(() => z
   .object({
     taskId: z.union([z.string(), z.number()]).optional(),
     subject: z.string().trim().min(1).optional(),
@@ -40,12 +41,12 @@ export const ClaudeTaskToolInputSchema = z
     activeForm: z.string().trim().min(1).optional(),
     status: z.string().trim().min(1).optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ClaudeTaskToolInput = z.infer<typeof ClaudeTaskToolInputSchema>;
 
-export const ClaudeTaskToolRecordSchema = ClaudeTaskToolInputSchema.extend({
+export const ClaudeTaskToolRecordSchema = lazySchema(() => ClaudeTaskToolInputSchema.extend({
   id: z.union([z.string(), z.number()]).optional(),
-});
+}));
 export type ClaudeTaskToolRecord = z.infer<typeof ClaudeTaskToolRecordSchema>;
 
 function normalizeTimestampMs(value: unknown): number | null {

@@ -55,6 +55,7 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
     serverUrl: configuration.apiServerUrl,
     publicKey: publicKeyB64,
     supportsV2: true,
+    supportsTokenOnly: true,
     claimSecretHash,
   });
   pairing = applyTerminalAuthRequestExpiry(pairing, response);

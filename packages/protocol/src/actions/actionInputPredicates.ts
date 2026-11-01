@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ActionInputPathSchema = z.string().min(1);
+export const ActionInputPathSchema = lazySchema(() => z.string().min(1));
 export type ActionInputPath = z.infer<typeof ActionInputPathSchema>;
 
-export const ActionInputPrimitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export const ActionInputPrimitiveSchema = lazySchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
 export type ActionInputPrimitive = z.infer<typeof ActionInputPrimitiveSchema>;
 
-export const ActionInputPredicateSchema: z.ZodType<any> = z.lazy(() =>
+export const ActionInputPredicateSchema: z.ZodType<any> = lazySchema(() => z.lazy(() =>
   z.union([
     z
       .object({
@@ -47,7 +48,7 @@ export const ActionInputPredicateSchema: z.ZodType<any> = z.lazy(() =>
       })
       .strict(),
   ]),
-);
+));
 export type ActionInputPredicate = z.infer<typeof ActionInputPredicateSchema>;
 
 function getValueAtPath(input: unknown, path: string): unknown {

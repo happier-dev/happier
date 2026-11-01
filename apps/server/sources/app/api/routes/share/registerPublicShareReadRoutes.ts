@@ -1,7 +1,7 @@
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
-import { logPublicShareAccess, getIpAddress, getUserAgent } from "@/app/share/accessLogger";
+import { logPublicShareAccess, getUserAgent } from "@/app/share/accessLogger";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { createHash } from "crypto";
 import { auth } from "@/app/auth/auth";
@@ -101,7 +101,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
         // Optional auth: never call `app.authenticate()` here because it sends a reply on failure,
         // which can cause "Reply was already sent" issues for public routes.
         const userId = await getOptionalAuthenticatedUserId(request);
-        const ipAddress = getIpAddress(request.headers);
+        const ipAddress = request.ip;
         const userAgent = getUserAgent(request.headers);
 
         // Use transaction to atomically check limits and increment use count

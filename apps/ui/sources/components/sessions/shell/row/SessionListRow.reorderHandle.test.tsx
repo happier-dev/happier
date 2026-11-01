@@ -212,7 +212,7 @@ function lineResolved(): UseSessionInlineDragResolvedDrop {
         targetId: 'session:server_a:sess_target',
         geometry: { top: 40, left: 16, width: 320, height: 2 },
     };
-    return { result, geometry };
+    return { result, geometry, destinationKey: 'workspace-root:server_a:slot:0' };
 }
 
 function triggerHoverEnter(node: ReactTestInstance) {

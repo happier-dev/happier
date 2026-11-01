@@ -8,6 +8,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { installProfilesCommonModuleMocks } from '../profilesTestHelpers';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
+import { EnvironmentVariableCard } from './EnvironmentVariableCard';
 
 (
     globalThis as typeof globalThis & {
@@ -46,7 +47,7 @@ const useEnvironmentVariablesMock = vi.fn(
         isLoading: false,
     }),
 );
-const environmentVariableCardProps: Array<Record<string, unknown>> = [];
+
 
 vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
     useEnvironmentVariables: (
@@ -60,16 +61,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
 
-vi.mock('./EnvironmentVariableCard', () => ({
-    EnvironmentVariableCard: (props: Record<string, unknown>) => {
-        environmentVariableCardProps.push(props);
-        return React.createElement('EnvironmentVariableCard', props);
-    },
-}));
+
 
 type UseEnvironmentVariablesArgs = [
     string | null,
@@ -91,6 +84,7 @@ async function renderList(params: {
             machineId: 'machine-1',
             profileDocs: params.profileDocs ?? null,
             onChange,
+            onAddVariable: ({ variable }) => onChange([...params.environmentVariables, variable]),
             sourceRequirementsByName: {},
             onUpdateSourceRequirement: () => {},
             getDefaultSecretNameForSourceVar: () => null,
@@ -109,7 +103,7 @@ function getLastUseEnvironmentVariablesCall(): UseEnvironmentVariablesArgs {
 describe('EnvironmentVariablesList', () => {
     beforeEach(() => {
         useEnvironmentVariablesMock.mockClear();
-        environmentVariableCardProps.length = 0;
+
     });
 
     describe('inline add interaction', () => {
@@ -190,7 +184,7 @@ describe('EnvironmentVariablesList', () => {
                 shellConfigExample: '',
             };
 
-            await renderList({
+            const { screen } = await renderList({
                 environmentVariables: [{ name: 'MAGIC', value: '${HOME}' }],
                 profileDocs,
             });
@@ -199,9 +193,9 @@ describe('EnvironmentVariablesList', () => {
             expect(keys).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
             expect(options?.sensitiveKeys ?? []).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
 
-            expect(environmentVariableCardProps).toHaveLength(1);
-            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
-            expect(environmentVariableCardProps[0]?.expectedValue).toBe('***');
+            expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(1);
+            expect(screen.findByType(EnvironmentVariableCard).props.isSecret).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.expectedValue).toBe('***');
         });
 
         it('respects daemon-forced sensitivity in card props', async () => {
@@ -222,14 +216,14 @@ describe('EnvironmentVariablesList', () => {
                 isLoading: false,
             });
 
-            await renderList({
+            const { screen } = await renderList({
                 environmentVariables: [{ name: 'AUTH_MODE', value: 'interactive', isSecret: false }],
             });
 
-            expect(environmentVariableCardProps).toHaveLength(1);
-            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
-            expect(environmentVariableCardProps[0]?.isForcedSensitive).toBe(true);
-            expect(environmentVariableCardProps[0]?.secretOverride).toBe(false);
+            expect(screen.findAllByType(EnvironmentVariableCard)).toHaveLength(1);
+            expect(screen.findByType(EnvironmentVariableCard).props.isSecret).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.isForcedSensitive).toBe(true);
+            expect(screen.findByType(EnvironmentVariableCard).props.secretOverride).toBe(false);
         });
     });
 });

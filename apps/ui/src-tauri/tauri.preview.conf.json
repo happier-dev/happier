@@ -1,6 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier (preview)",
+  "mainBinaryName": "happier-desktop-preview",
   "identifier": "dev.happier.app.preview",
   "plugins": {
     "deep-link": {

@@ -31,10 +31,76 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
         orderEntries: input.orderEntries ?? [],
         labels: input.labels ?? [],
         attentionStandings: input.attentionStandings,
+        sessionAppearances: input.sessionAppearances,
     };
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it('keeps another workspace’s confirmed display when an earlier workspace edit fails', () => {
+        const harness = createHarness();
+        const original = { labelKind: 'workspace', scopeKey: 'wl_a', display: { t: 'plain', v: { label: 'Project A', color: { kind: 'accent', key: 'blue' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 } as const;
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ labels: [original] }));
+        const failed = harness.get().upsertSessionOrganizationLabelOptimistic('srv-a', { ...original, display: { t: 'plain', v: { label: 'Project A', color: { kind: 'accent', key: 'red' } } }, updatedAt: 2 });
+        const other = { ...original, scopeKey: 'wl_b', display: { t: 'plain', v: { color: { kind: 'accent', key: 'green' } } }, updatedAt: 3 } as const;
+        const confirmed = harness.get().upsertSessionOrganizationLabelOptimistic('srv-a', other);
+        harness.get().commitSessionOrganizationOptimistic(confirmed);
+        harness.get().rollbackSessionOrganizationOptimistic(failed);
+        expect(harness.get().sessionOrganizationLabelsByLabelKey).toEqual({ 'srv-a:workspace:wl_a': original, 'srv-a:workspace:wl_b': other });
+    });
+    it.each([[0, 1], [1, 0]])('restores the original appearance when overlapping writes fail (%s, %s)', (first, second) => {
+        const harness = createHarness();
+        const original = { sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } }, updatedAt: 1 } as const;
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ sessionAppearances: [original] }));
+        const writes = [
+            harness.get().setSessionAppearanceOptimistic('srv-a', 's1', null),
+            harness.get().setSessionAppearanceOptimistic('srv-a', 's1', { ...original, display: { t: 'plain', v: { color: { kind: 'accent', key: 'green' } } }, updatedAt: 2 }),
+        ];
+        harness.get().rollbackSessionOrganizationOptimistic(writes[first]!);
+        harness.get().rollbackSessionOrganizationOptimistic(writes[second]!);
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey['srv-a:s1']).toBe(original);
+        expect(harness.get().sessionOrganizationOptimisticRecords).toEqual({});
+    });
+    it('preserves unchanged appearance records while another appearance changes and ignores display key order', () => {
+        const harness = createHarness();
+        const first = { sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } }, updatedAt: 1 } as const;
+        const second = { ...first, sessionId: 's2' };
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ sessionAppearances: [first, second] }));
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 2, sessionAppearances: [{ ...first, updatedAt: 2 }, structuredClone(second)] }));
+        expect(harness.get().sessionOrganizationAppearancesBySessionKey['srv-a:s2']).toBe(second);
+        const before = harness.get();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 2, sessionAppearances: [{ ...first, updatedAt: 2, display: { t: 'plain', v: { color: { key: 'blue', kind: 'accent' } } } }, second] }));
+        expect(harness.get()).toBe(before);
+    });
+    it('does not notify on equivalent appearance snapshots and keeps colour record identities', () => {
+        const harness = createHarness();
+        const snapshot = emptySnapshot({ sessionAppearances: [{ sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } }, updatedAt: 1 }] });
+        harness.get().applySessionOrganizationSnapshot('srv-a', snapshot, { includeSessionAppearances: true });
+        const before = harness.get();
+        let notifications = 0;
+        const unsubscribe = harness.subscribe(() => { notifications += 1; });
+        harness.get().applySessionOrganizationSnapshot('srv-a', structuredClone(snapshot), { includeSessionAppearances: true });
+        expect(harness.get()).toBe(before);
+        expect(notifications).toBe(0);
+        unsubscribe();
+    });
+    it('negotiates appearance support only from requested snapshots and preserves omitted state', () => {
+        const harness = createHarness();
+        const appearance = { sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } }, updatedAt: 1 } as const;
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ sessionAppearances: [appearance] }), { includeSessionAppearances: true });
+        expect(harness.get()).toMatchObject({
+            sessionOrganizationSessionAppearancesSupportedByServerId: { 'srv-a': true },
+            sessionOrganizationAppearancesBySessionKey: { 'srv-a:s1': appearance },
+        });
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 2 }));
+        expect(harness.get()).toMatchObject({ sessionOrganizationSessionAppearancesSupportedByServerId: { 'srv-a': true } });
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 3 }), { includeSessionAppearances: true });
+        expect(harness.get()).toMatchObject({
+            sessionOrganizationSessionAppearancesSupportedByServerId: { 'srv-a': false },
+            sessionOrganizationAppearancesBySessionKey: { 'srv-a:s1': appearance },
+        });
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ version: 4, sessionAppearances: [] }), { includeSessionAppearances: true });
+        expect(harness.get()).toMatchObject({ sessionOrganizationSessionAppearancesSupportedByServerId: { 'srv-a': true }, sessionOrganizationAppearancesBySessionKey: {} });
+    });
     it.each([{ failureOrder: [0, 1] }, { failureOrder: [1, 0] }])('restores the due reminder when both overlapping writes fail in order $failureOrder', ({ failureOrder }) => {
         const harness = createHarness();
         const original = { sessionId: 's1', standing: true, remindAt: 1000, updatedAt: 1 };

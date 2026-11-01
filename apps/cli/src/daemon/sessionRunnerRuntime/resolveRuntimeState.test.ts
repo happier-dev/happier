@@ -40,6 +40,17 @@ function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession
 }
 
 describe('resolveSessionRunnerRuntimeState', () => {
+  it.each(['项目', 'M-iM-!M-9M-gM^[M-.'])('characterizes pinned snapshot freshness under a Unicode or escaped path prefix (%s)', prefix => {
+    const state = resolveSessionRunnerRuntimeState({
+      sessionId: 'sess-1',
+      tracked: trackedSession({
+        processCommand: `node /Users/alice/${prefix}/.runner-snapshots/30bb29f6afae521d/index.mjs claude --happy-starting-mode remote --started-by daemon`,
+      }),
+      currentIdentity: { status: 'known', source: 'launch_spec', comparableId: 'snapshot:30bb29f6afae521d', entrypointVersion: null },
+    });
+    expect(state.versionState).toBe('current');
+  });
+
   it('reports current only when runner and canonical launch identities match', () => {
     const state = resolveSessionRunnerRuntimeState({
       sessionId: 'sess-1',

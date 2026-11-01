@@ -1,33 +1,34 @@
 import { z } from 'zod';
 
 import { PromptPlacementV1Schema, type PromptPlacementV1 } from './promptPlacementV1.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const PromptStackRefV1Schema = z.object({
+export const PromptStackRefV1Schema = lazySchema(() => z.object({
   kind: z.enum(['doc', 'bundle']),
   artifactId: z.string().min(1),
-});
+}));
 
 export type PromptStackRefV1 = z.infer<typeof PromptStackRefV1Schema>;
 
-export const PromptStackEditPolicyV1Schema = z.enum([
+export const PromptStackEditPolicyV1Schema = lazySchema(() => z.enum([
   'user_only',
   'agent_may_propose_requires_approval',
-]);
+]));
 
 export type PromptStackEditPolicyV1 = z.infer<typeof PromptStackEditPolicyV1Schema>;
 
-export const PromptStackEntryV1Schema = z.object({
+export const PromptStackEntryV1Schema = lazySchema(() => z.object({
   id: z.string().min(1),
   ref: PromptStackRefV1Schema,
   enabled: z.boolean().default(true),
   placement: PromptPlacementV1Schema.default('system_append' satisfies PromptPlacementV1),
   maxChars: z.number().int().min(1).optional(),
   editPolicy: PromptStackEditPolicyV1Schema.default('user_only'),
-});
+}));
 
 export type PromptStackEntryV1 = z.infer<typeof PromptStackEntryV1Schema>;
 
-export const PromptStacksV1Schema = z
+export const PromptStacksV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1).default(1),
     surfaces: z
@@ -38,6 +39,6 @@ export const PromptStacksV1Schema = z
       })
       .default({ coding: [], voice: [], profilesById: {} }),
   })
-  .catch({ v: 1, surfaces: { coding: [], voice: [], profilesById: {} } });
+  .catch({ v: 1, surfaces: { coding: [], voice: [], profilesById: {} } }));
 
 export type PromptStacksV1 = z.infer<typeof PromptStacksV1Schema>;

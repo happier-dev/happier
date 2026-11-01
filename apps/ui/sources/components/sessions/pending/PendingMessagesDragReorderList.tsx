@@ -10,6 +10,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import { createDragHapticsSession, type DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 
 import {
     findTargetIndexAtCenterY,
@@ -26,7 +27,7 @@ export type PendingMessagesDragReorderListProps = Readonly<{
     onScrollToOffset?: ((y: number) => void) | null;
     viewportHeightPx?: number | null;
     scrollOffsetY?: number | null;
-    onReorderIds?: ((ids: string[]) => void) | null;
+    onReorderIds?: ((ids: string[]) => DragHapticsOutcome | void | Promise<DragHapticsOutcome | void>) | null;
     renderItem: (args: {
         message: PendingMessage;
         index: number;
@@ -143,10 +144,41 @@ const ReorderableRow = React.memo((props: {
     startScrollOffsetY: SharedValue<number>;
     viewportHeightSv: SharedValue<number>;
     scrollToOffset: (y: number) => void;
-    onReorderIds?: ((ids: string[]) => void) | null;
+    onReorderIds?: PendingMessagesDragReorderListProps['onReorderIds'];
     renderItem: PendingMessagesDragReorderListProps['renderItem'];
 }) => {
     const messageId = props.message.id;
+    const initialOrderSv = useSharedValue<string[]>([]);
+    const hapticsRef = React.useRef<ReturnType<typeof createDragHapticsSession> | null>(null);
+    const initialIdsRef = React.useRef<ReadonlyArray<string>>([]);
+    const beginDrag = React.useCallback((ids: string[], index: number) => {
+        hapticsRef.current?.cancel();
+        initialIdsRef.current = ids;
+        hapticsRef.current = createDragHapticsSession(String(index));
+    }, []);
+    const updateDragDestination = React.useCallback((index: number) => {
+        hapticsRef.current?.updateDestination(String(index));
+    }, []);
+    const cancelDrag = React.useCallback(() => {
+        hapticsRef.current?.cancel();
+        hapticsRef.current = null;
+    }, []);
+    const finishDrag = React.useCallback(async (ids: string[]) => {
+        const haptics = hapticsRef.current;
+        hapticsRef.current = null;
+        if (!haptics) return;
+        if (ids.length === initialIdsRef.current.length && ids.every((id, index) => id === initialIdsRef.current[index])) {
+            haptics.finish('unchanged');
+            return;
+        }
+        try {
+            haptics.finish(await props.onReorderIds?.(ids) ?? 'unknown');
+        } catch {
+            console.warn('Pending message reorder result could not be confirmed.');
+            haptics.finish('unknown');
+        }
+    }, [props.onReorderIds]);
+    React.useEffect(() => cancelDrag, [cancelDrag]);
 
     const translateY = useDerivedValue(() => {
         const heights = props.heightsSv.value;
@@ -183,9 +215,11 @@ const ReorderableRow = React.memo((props: {
             .onStart(() => {
                 'worklet';
                 props.activeIdSv.value = messageId;
+                initialOrderSv.value = props.orderedIdsSv.value.slice();
                 props.startDragY.value = resolveRowOffsetPx(props.orderedIdsSv.value, props.heightsSv.value, messageId);
                 props.dragY.value = props.startDragY.value;
                 props.startScrollOffsetY.value = props.scrollOffsetYSv.value;
+                scheduleOnRN(beginDrag, props.orderedIdsSv.value.slice(), props.orderedIdsSv.value.indexOf(messageId));
             })
             .onUpdate((e) => {
                 'worklet';
@@ -201,6 +235,7 @@ const ReorderableRow = React.memo((props: {
                 const next = moveIdToIndex(order, messageId, targetIndex);
                 if (next.join('|') !== order.join('|')) {
                     props.orderedIdsSv.value = next;
+                    scheduleOnRN(updateDragDestination, next.indexOf(messageId));
                 }
 
                 const viewportHeightPx = props.viewportHeightSv.value;
@@ -224,20 +259,28 @@ const ReorderableRow = React.memo((props: {
                     }
                 }
             })
-            .onEnd(() => {
+            .onEnd((_event, success) => {
                 'worklet';
                 const ids = props.orderedIdsSv.value.slice();
+                if (success === false) props.orderedIdsSv.value = initialOrderSv.value;
                 props.activeIdSv.value = null;
-                if (props.onReorderIds) {
-                    scheduleOnRN(props.onReorderIds, ids);
-                }
+                if (success !== false) scheduleOnRN(finishDrag, ids);
             })
-            .onFinalize(() => {
+            .onFinalize((_event, success) => {
                 'worklet';
+                if (success === false && props.activeIdSv.value === messageId) {
+                    props.orderedIdsSv.value = initialOrderSv.value;
+                }
                 props.activeIdSv.value = null;
+                scheduleOnRN(cancelDrag);
             });
     }, [
         messageId,
+        initialOrderSv,
+        beginDrag,
+        updateDragDestination,
+        finishDrag,
+        cancelDrag,
         props.activeIdSv,
         props.dragY,
         props.heightsSv,

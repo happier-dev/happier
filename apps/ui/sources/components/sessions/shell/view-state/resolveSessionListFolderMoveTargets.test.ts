@@ -31,10 +31,14 @@ describe('resolveSessionListFolderMoveTargets', () => {
         const targets = resolve([item('s1'), item('s2', '/other')], { [sessionTagKey('server-a', 's1')]: 'planning' });
         expect(targets).toMatchObject([{ folderId: null, disabled: false }]);
     });
-    it('excludes direct sessions when resolving the destination scope', () => {
+    it('shares folder destinations across storage kinds while respecting every selected workspace', () => {
         const base = item('direct', '/other');
         const direct = { ...base, session: { ...base.session, metadata: { path: '/other', machineId: 'machine-a', directSessionV1: { v: 1 as const } } } };
-        expect(resolve([item('s1'), direct]).map((target) => target.folderId)).toEqual([null, 'planning']);
-        expect(resolve([direct])).toEqual([]);
+        const sameWorkspaceDirect = { ...direct, workspace, session: { ...direct.session, metadata: { ...direct.session.metadata, path: '/repo' } } };
+        expect(resolve([sameWorkspaceDirect]).map((target) => target.folderId)).toEqual([null, 'planning']);
+        expect(resolve([item('s1'), sameWorkspaceDirect]).map((target) => target.folderId)).toEqual([null, 'planning']);
+        expect(resolve([item('s1'), direct]).map((target) => target.folderId)).toEqual([null]);
+        expect(resolve([sameWorkspaceDirect], { [sessionTagKey('server-a', 'direct')]: 'planning' }))
+            .toMatchObject([{ folderId: null, disabled: false }, { folderId: 'planning', disabled: true }]);
     });
 });

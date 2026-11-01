@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 
 import {
   DEFAULT_CLI_DIST_RUNTIME_IMPORT_TIMEOUT_MS,
@@ -62,7 +64,17 @@ test('readCliDistBuildManifest reads the manifest fingerprint without rehashing 
   }
 });
 
-test('probeCliDistRuntimeImport resolves a valid ESM entrypoint', async () => {
+test('probeCliDistRuntimeImport resolves a valid ESM entrypoint without opening a Windows console', async (t) => {
+  const originalSpawn = childProcess.spawn;
+  t.mock.method(childProcess, 'spawn', (command, args, options) => {
+    assert.equal(options.windowsHide, true);
+    return originalSpawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
   const tmp = await mkdtemp(join(tmpdir(), 'happy-cli-dist-runtime-probe-ok-'));
   try {
     const entrypoint = join(tmp, 'index.mjs');

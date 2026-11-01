@@ -149,9 +149,23 @@ function buildTopologyDropZones(
     return dropZones;
 }
 
-function buildTopology(tree: SessionListTreeModel): SessionListDragTopology {
+function buildTopology(tree: SessionListTreeModel, sourceRowId: string): SessionListDragTopology {
+    const rows = buildTopologyRows(tree.rowMetadataById);
+    const insertionPositionsByContainerId = new Map<string, Map<string | null, number>>();
+    for (const row of rows) {
+        if (row.rowId === sourceRowId) continue;
+        let positions = insertionPositionsByContainerId.get(row.containerId);
+        if (!positions) {
+            positions = new Map([[null, 0]]);
+            insertionPositionsByContainerId.set(row.containerId, positions);
+        }
+        const index = positions.get(null) ?? 0;
+        positions.set(row.rowId, index);
+        positions.set(null, index + 1);
+    }
     return {
-        rows: buildTopologyRows(tree.rowMetadataById),
+        insertionPositionsByContainerId,
+        rows,
         dropZones: buildTopologyDropZones(tree.containerMetadataById, tree.rowMetadataById),
         rowMetadataById: tree.rowMetadataById,
         containerMetadataById: tree.containerMetadataById,
@@ -189,7 +203,7 @@ export function buildSessionListDragSnapshot(input: SessionListDragSnapshotInput
         }),
         frozenItems: input.items,
         frozenViewItems: input.viewItems,
-        topology: buildTopology(tree),
+        topology: buildTopology(tree, sourceRowId),
         source,
         folderSortMode: input.folderSortMode,
         foldersFeatureEnabled: input.foldersFeatureEnabled,

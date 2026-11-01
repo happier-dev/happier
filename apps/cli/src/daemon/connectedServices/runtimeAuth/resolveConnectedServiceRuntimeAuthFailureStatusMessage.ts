@@ -169,6 +169,12 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   }
   if (outerResult?.status !== 'switch_attempted') return null;
   const switchResult = readRecord(outerResult.result);
+  if (switchResult?.status === 'quota_proof_unavailable') {
+    return toStatusNote(
+      'switch_attempted_quota_proof_unavailable',
+      'Connected-service account quota is not yet verified; waiting to recheck recovery.',
+    );
+  }
   if (switchResult?.status === 'no_eligible_member') {
     return toStatusNote(
       'switch_attempted_no_eligible_member',

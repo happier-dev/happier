@@ -11,7 +11,6 @@ import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 
-import { KiloTerminalDisplay } from '@/backends/kilo/ui/KiloTerminalDisplay';
 import { createKiloAcpRuntime } from '@/backends/kilo/acp/runtime';
 
 export async function runKilo(opts: StandardAcpProviderRunOptions & {
@@ -26,7 +25,7 @@ export async function runKilo(opts: StandardAcpProviderRunOptions & {
     waitingForCommandLabel: 'Kilo',
     agentMessageType: 'kilo',
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: KiloTerminalDisplay,
+    loadTerminalDisplay: async () => (await import('@/backends/kilo/ui/KiloTerminalDisplay')).KiloTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
     createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createKiloAcpRuntime({
       directory,

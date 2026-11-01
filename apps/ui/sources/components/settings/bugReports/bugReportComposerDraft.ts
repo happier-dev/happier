@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 import type { BugReportDeploymentType, BugReportFrequency, BugReportSeverity } from './bugReportFallback';
 import type { BugReportComposerSubmissionInput } from './bugReportSubmissionFlow';
 
+export const BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH = 5000;
+
 function toOptionalValue(raw: string): string | undefined {
     const value = raw.trim();
     return value.length > 0 ? value : undefined;

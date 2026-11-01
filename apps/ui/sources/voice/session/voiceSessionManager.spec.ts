@@ -90,6 +90,25 @@ describe('voiceSessionManager (core)', () => {
     expect(snap.canStop).toBe(true);
   });
 
+  it('settles the snapshot to the adapter state when the adapter toggle rejects', async () => {
+    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const failing: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async () => {
+        throw new Error('start failed');
+      },
+    };
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => failing.id,
+      getAdapter: (id) => (id === failing.id ? failing : null),
+    });
+
+    await expect(mgr.toggle('s1')).rejects.toThrow('start failed');
+
+    // Not left on the optimistic 'connecting' placeholder.
+    expect(mgr.getSnapshot().status).toBe('disconnected');
+  });
+
   it('stops the active adapter when toggled from connected', async () => {
     const a = makeAdapter('test_adapter' as VoiceAdapterId);
     const mgr = createVoiceSessionManager({

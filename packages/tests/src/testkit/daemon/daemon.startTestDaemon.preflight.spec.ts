@@ -29,6 +29,7 @@ import {
   resolveTestDaemonOwnershipLeasesDir,
   sanitizeDaemonEnvForSpawn,
   startTestDaemon,
+  waitForDaemonState,
 } from './daemon';
 import { repoRootDir } from '../paths';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
@@ -133,7 +134,23 @@ async function writeReplacementDaemonScript(scriptPath: string, opts: { serverId
 }
 
 describe('startTestDaemon', () => {
-  it('launches the exact caller-supplied prepared daemon snapshot through the canonical resolver', async () => {
+  it('waits for fresh daemon state past a retired root state when the replacement writes per-server state', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-fresh-state-'));
+    try {
+      await writeFile(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: 111, httpPort: 32_231 }), 'utf8');
+      const serverDir = resolve(homeDir, 'servers', 'replacement');
+      await mkdir(serverDir, { recursive: true });
+      await writeFile(resolve(serverDir, 'daemon.state.json'), JSON.stringify({ pid: 222, httpPort: 32_232 }), 'utf8');
+
+      const state = await waitForDaemonState(homeDir, { excludePid: 111 });
+
+      expect(state).toMatchObject({ pid: 222, httpPort: 32_232 });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('launches the exact caller-supplied prepared daemon snapshot and restarts after its process retires', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-prepared-dist-exact-candidate-'));
     const homeDir = resolve(testDir, 'home');
     const snapshotDir = resolve(testDir, 'immutable-cli-candidate');
@@ -165,6 +182,13 @@ describe('startTestDaemon', () => {
         'daemon',
         'start-sync',
       ]);
+      const originalPid = daemon.state.pid;
+      const originalArguments = daemon.proc.child.spawnargs;
+      await daemon.proc.stop();
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockImplementationOnce(actualResolveCliTestLaunchSpec);
+      daemon = await daemon.restart();
+      expect(daemon.state.pid).not.toBe(originalPid);
+      expect(daemon.proc.child.spawnargs).toEqual(originalArguments);
     } finally {
       if (daemon) await daemon.stop();
       await rm(testDir, { recursive: true, force: true });

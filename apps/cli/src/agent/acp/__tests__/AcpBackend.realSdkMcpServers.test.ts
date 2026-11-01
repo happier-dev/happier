@@ -29,7 +29,6 @@ describe('AcpBackend with real ACP SDK stub provider', () => {
 
     expect((backend as any).buildAcpMcpServersForSessionRequest()).toEqual([
       {
-        type: 'stdio',
         name: 'happier',
         command: process.execPath,
         args: ['-e', 'process.exit(0)'],

@@ -31,6 +31,13 @@ class FakeSession {
     return this.agentState;
   }
 
+  async updateAgentStateRequestSettlement(updater: Parameters<FakeSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
+
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;
@@ -59,6 +66,69 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
 }
 
 describe('CodexLikePermissionHandler', () => {
+  it('retires saved foreground prompts after reconstruction without canceling an execution run', async () => {
+    const session = new FakeSession();
+    const previous = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Previous]' });
+    const abandoned = previous.handleToolCall('saved-foreground', 'Write', { path: '/tmp/foreground' });
+    void abandoned.catch(() => undefined);
+    const executionOwner = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[ExecutionRun]' });
+    const run = createRunScopedExecutionPermissionHandler({ runId: 'run-kept', handler: executionOwner });
+    const execution = run.handler.handleToolCall('call_1', 'Write', { path: '/tmp/background' });
+    const executionId = Object.keys(session.agentState.requests).find((id) => id !== 'saved-foreground')!;
+    const resumed = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Resumed]' });
+
+    await resumed.abortPendingRequestsAndFlush();
+
+    expect(session.agentState.requests['saved-foreground']).toBeUndefined();
+    expect(session.agentState.completedRequests['saved-foreground']).toMatchObject({ status: 'canceled', decision: 'abort' });
+    expect(session.agentState.requests[executionId]).toBeDefined();
+    expect(await settledState(execution)).toBe('pending');
+    run.dispose('Test cleanup');
+    await expect(execution).resolves.toMatchObject({ decision: 'abort' });
+  });
+
+  it('keeps saved foreground prompts when a reconstructed execution-run owner resets', async () => {
+    const session = new FakeSession();
+    const foreground = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Foreground]' });
+    const foregroundDecision = foreground.handleToolCall('foreground-kept', 'Write', { path: '/tmp/foreground' });
+    const previous = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Previous execution]' });
+    const run = createRunScopedExecutionPermissionHandler({ runId: 'run-retired', handler: previous });
+    const abandoned = run.handler.handleToolCall('call_1', 'Write', { path: '/tmp/background' });
+    void abandoned.catch(() => undefined);
+    const executionId = Object.keys(session.agentState.requests).find((id) => id !== 'foreground-kept')!;
+    const resumed = new CodexLikePermissionHandler({
+      session: session as any, logPrefix: '[ExecutionRun]', requestScope: 'execution_run',
+    });
+
+    await resumed.abortPendingRequestsAndFlush();
+
+    expect(session.agentState.requests[executionId]).toBeUndefined();
+    expect(session.agentState.completedRequests[executionId]).toMatchObject({ status: 'canceled', decision: 'abort' });
+    expect(session.agentState.requests['foreground-kept']).toBeDefined();
+    expect(await settledState(foregroundDecision)).toBe('pending');
+    await session.rpcHandlerManager.handlers.get('permission')!({ id: 'foreground-kept', approved: false, decision: 'denied' });
+    await expect(foregroundDecision).resolves.toMatchObject({ decision: 'denied' });
+  });
+
+  it('does not adopt an independent execution-run prompt through foreground cancellation or legacy RPC', async () => {
+    const session = new FakeSession();
+    const owner = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[ExecutionRun]' });
+    const run = createRunScopedExecutionPermissionHandler({ runId: 'run-routed', handler: owner });
+    const execution = run.handler.handleToolCall('call_1', 'Write', { path: '/tmp/background' });
+    const executionId = Object.keys(session.agentState.requests)[0]!;
+    // Exercise the direct-handler boundary as well as the shared router path.
+    Object.assign(session, { getOrCreatePermissionRpcRouter: undefined });
+    const foreground = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Foreground]' });
+
+    expect(foreground.cancelPendingRequest(executionId, 'Foreground stopped')).toBe(false);
+    await session.rpcHandlerManager.handlers.get('permission')!({ id: executionId, approved: true });
+
+    expect(session.agentState.requests[executionId]).toBeDefined();
+    expect(await settledState(execution)).toBe('pending');
+    run.dispose('Test cleanup');
+    await expect(execution).resolves.toMatchObject({ decision: 'abort' });
+  });
+
   it('hard-denies write-like tools in read-only mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
@@ -697,10 +767,11 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
-  it('does not emit unhandledRejection when updateAgentState rejects while resolving pending requests', async () => {
+  it('keeps the provider pending and permits retry when request settlement fails', async () => {
     const session = new FakeSession();
+    let failing = true;
     session.updateAgentState = async () => {
-      throw new Error('updateAgentState failed');
+      if (failing) throw new Error('updateAgentState failed');
     };
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
 
@@ -711,6 +782,15 @@ describe('CodexLikePermissionHandler', () => {
 
       handler.setPermissionMode('read-only', 10);
 
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(await settledState(promise)).toBe('pending');
+      failing = false;
+      session.updateAgentState = (updater) => {
+        session.agentState = updater(session.agentState);
+        return session.agentState;
+      };
+      const respond = session.rpcHandlerManager.handlers.get('permission')!;
+      await respond({ id: 'tool-1', approved: false, decision: 'denied' });
       await expect(promise).resolves.toEqual({ decision: 'denied' });
 
       // Give Node a chance to surface an unhandled rejection if one was created.

@@ -45,5 +45,6 @@ export function buildSessionOrganizationSnapshotFromProjection(
         orderEntries: Object.values(projection.orderEntriesByScopeKey).flatMap((entries) => [...entries]),
         labels: Object.values(projection.labelsByLabelKey),
         attentionStandings: Object.values(projection.attentionStandingsBySessionId),
+        ...(projection.sessionAppearancesSupported ? { sessionAppearances: Object.values(projection.sessionAppearancesBySessionId) } : {}),
     };
 }

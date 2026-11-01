@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  readPrismaSqliteConnectionParams,
+  resolvePrismaSqliteDatabaseFilePath as resolveSqliteDatabaseFilePath,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { parseBooleanEnv } from '@/config/env';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
@@ -201,38 +204,10 @@ async function canSafelyRecordAlreadyAppliedMigration(params: Readonly<{
   return probedStatements > 0;
 }
 
-export function resolveSqliteDatabaseFilePath(databaseUrl: string): string {
-  const raw = String(databaseUrl ?? '').trim();
-  if (!raw) return '';
-  if (!raw.startsWith('file:')) return '';
-  const value = raw.slice('file:'.length);
-  if (!value) return '';
-  const valueWithoutQuery = value.replace(/[?#].*$/, '');
-  const shouldPreserveRelativePath =
-    !valueWithoutQuery.startsWith('/') &&
-    !valueWithoutQuery.startsWith('//') &&
-    !/^[A-Za-z]:[\\/]/.test(valueWithoutQuery);
-  if (shouldPreserveRelativePath) {
-    return valueWithoutQuery;
-  }
-  try {
-    const url = new URL(raw);
-    // For file: URLs, pathname is already decoded and starts with / on unix.
-    if (url.protocol !== 'file:') return '';
-    return fileURLToPath(url);
-  } catch {
-    // Prisma accepts file:/path and file:relative forms; treat them as best-effort paths.
-    return valueWithoutQuery.startsWith('//') ? valueWithoutQuery.replace(/^\/+/, '/') : valueWithoutQuery;
-  }
-}
+export { resolveSqliteDatabaseFilePath };
 
 export function resolveSqliteMigrationBusyTimeoutMs(databaseUrl: string): number {
-  const raw = String(databaseUrl ?? '').trim();
-  const queryStart = raw.indexOf('?');
-  if (queryStart < 0) return 0;
-  const fragmentStart = raw.indexOf('#', queryStart);
-  const query = raw.slice(queryStart + 1, fragmentStart >= 0 ? fragmentStart : undefined);
-  const socketTimeoutSecondsRaw = new URLSearchParams(query).get('socket_timeout');
+  const socketTimeoutSecondsRaw = readPrismaSqliteConnectionParams(databaseUrl).get('socket_timeout');
   if (socketTimeoutSecondsRaw == null) return 0;
   if (!/^\d+$/.test(socketTimeoutSecondsRaw)) {
     throw new Error(`[sqlite-migrations] invalid DATABASE_URL socket_timeout: ${socketTimeoutSecondsRaw}`);

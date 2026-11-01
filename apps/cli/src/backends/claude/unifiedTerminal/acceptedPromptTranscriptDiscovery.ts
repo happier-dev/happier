@@ -57,6 +57,7 @@ type ControlCommandBinding = {
   commandUuid: string | null;
   promptId: string | null;
   commandText: string;
+  commandKind: 'command' | 'shell_command';
   transcriptTimestampMs: number | null;
   observedAtMs: number;
   expiresAtMs: number;
@@ -69,7 +70,10 @@ type ControlCommandBinding = {
 };
 
 type NativeQueuedCommandOperation = Readonly<{
-  content: string;
+  content: string | null;
+  commandUuid: string | null;
+  deliveryId: string | null;
+  reason: string | null;
   operation: 'enqueue' | 'remove';
   sessionId: string;
   timestamp: string;
@@ -78,6 +82,8 @@ type NativeQueuedCommandOperation = Readonly<{
 
 type NativeQueuedCommandConsumption = Readonly<{
   prompt: string;
+  commandUuid: string | null;
+  deliveryId: string | null;
   sessionId: string;
   transcriptKey: string;
   transcriptTimestampMs: number;
@@ -90,6 +96,10 @@ type NativeQueuedCommandCustody = {
   enqueuedAtMs: number;
   episodeOrder: number;
   removedAtMs: number | null;
+  removalReason: string | null;
+  commandUuid: string | null;
+  deliveryId: string | null;
+  consumption: NativeQueuedCommandConsumption | null;
   sessionId: string;
 };
 
@@ -220,10 +230,14 @@ function readNativeQueuedCommandOperation(value: unknown): NativeQueuedCommandOp
   const content = readNonEmptyString(record.content);
   const sessionId = readNonEmptyString(record.sessionId);
   const timestamp = readNonEmptyString(record.timestamp);
-  if (!content || !sessionId || sessionId.trim().length === 0 || !timestamp) return null;
+  const commandUuid = readNonEmptyString(record.commandUuid);
+  const deliveryId = readNonEmptyString(record.deliveryId);
+  if ((!content && (operation === 'enqueue' || (!commandUuid && !deliveryId)))
+    || !sessionId || sessionId.trim().length === 0 || !timestamp) return null;
   const timestampMs = Date.parse(timestamp);
   if (!Number.isFinite(timestampMs)) return null;
-  return { content, operation, sessionId, timestamp, timestampMs };
+  return { content, operation, sessionId, timestamp, timestampMs, commandUuid, deliveryId,
+    reason: readNonEmptyString(record.reason) };
 }
 
 function readNativeQueuedCommandConsumption(value: unknown): NativeQueuedCommandConsumption | null {
@@ -250,6 +264,8 @@ function readNativeQueuedCommandConsumption(value: unknown): NativeQueuedCommand
   if (!Number.isFinite(transcriptTimestampMs)) return null;
   return {
     prompt: command.prompt,
+    commandUuid: readNonEmptyString(attachment.source_uuid),
+    deliveryId: readNonEmptyString(attachment.delivery_id),
     sessionId,
     transcriptKey: `uuid:${transcriptUuid}`,
     transcriptTimestampMs,
@@ -357,6 +373,10 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   const acceptedPrompts: AcceptedPrompt[] = [];
   const independentControlCommands: IndependentControlCommand[] = [];
   const controlCommandBindings = new Map<string, ControlCommandBinding>();
+  // Native no-query shell episodes explicitly precede the input with a meta caveat.
+  // Its UUID is the input's parentUuid (Claude Code 2.1.302); output alone cannot
+  // establish completion because ordinary shell commands may continue into inference.
+  const localCommandCaveats = new Map<string, number>();
   const nowMs = opts.nowMs ?? Date.now;
   const acceptedPromptWindowMs = Math.max(100, Math.trunc(opts.acceptedPromptWindowMs));
   const controlCommandBindingRetentionMs = acceptedPromptWindowMs * 2;
@@ -390,10 +410,20 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
         independentControlCommands.splice(index, 1);
       }
     }
-    for (const [key, binding] of controlCommandBindings) {
-      if (binding.expiresAtMs < referenceMs) controlCommandBindings.delete(key);
-    }
     const liveAcceptedPromptIds = new Set(acceptedPrompts.map((prompt) => prompt.id));
+    for (const [key, binding] of controlCommandBindings) {
+      // Echo retention cannot retire the completion evidence for an ongoing local
+      // command. Provider acceptance removes its prompt registration before stdout
+      // necessarily arrives; its binding remains authoritative until completion.
+      const awaitingAttemptLocalCompletion = binding.origin.kind === 'attempt'
+        && binding.completionOwner === 'local_stdout'
+        && !binding.completionEmitted
+        && (binding.acceptedConfirmed || liveAcceptedPromptIds.has(binding.origin.acceptedPromptId));
+      if (binding.expiresAtMs < referenceMs && !awaitingAttemptLocalCompletion) controlCommandBindings.delete(key);
+    }
+    for (const [uuid, expiresAtMs] of localCommandCaveats) {
+      if (expiresAtMs < referenceMs) localCommandCaveats.delete(uuid);
+    }
     for (let index = nativeQueuedCommandCustody.length - 1; index >= 0; index -= 1) {
       const custody = nativeQueuedCommandCustody[index];
       if (!custody) continue;
@@ -581,10 +611,12 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
       return existing;
     }
     const shape = readClaudeControlCommandRowShape(message);
-    if (!shape || shape.kind !== 'command') {
+    if (!shape || (shape.kind !== 'command' && shape.kind !== 'shell_command')) {
       throw new Error('bindControlCommandRow requires a command row');
     }
-    const commandText = `${shape.name}${shape.args.length > 0 ? ` ${shape.args}` : ''}`;
+    const commandText = shape.kind === 'shell_command'
+      ? shape.command
+      : `${shape.name}${shape.args.length > 0 ? ` ${shape.args}` : ''}`;
     const transcriptTimestampMs = readMessageTimestampMs(message);
     const observedAtMs = transcriptTimestampMs ?? nowMs();
     const binding: ControlCommandBinding = {
@@ -592,10 +624,15 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
       commandUuid: identity.uuid,
       promptId: identity.promptId,
       commandText,
+      commandKind: shape.kind,
       transcriptTimestampMs,
       observedAtMs,
       expiresAtMs: observedAtMs + controlCommandBindingRetentionMs,
-      completionOwner: resolveClaudeControlCommandCompletionOwner(shape.name),
+      completionOwner: shape.kind === 'shell_command'
+        ? localCommandCaveats.has(readNonEmptyString((message as Record<string, unknown>).parentUuid) ?? '')
+          ? 'local_stdout'
+          : 'external_lifecycle'
+        : resolveClaudeControlCommandCompletionOwner(shape.name),
       origin: { kind: 'unknown' },
       attemptDeliveryIdentity: null,
       acceptedConfirmed: false,
@@ -613,19 +650,31 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   function observeControlCommandTranscript(value: unknown): boolean {
     const message = parseRawJsonLinesObject(value);
     if (!message) return false;
+    if (message.isSidechain === true || readObject((message as Record<string, unknown>).origin)?.kind === 'peer') return false;
     const shape = readClaudeControlCommandRowShape(message);
     if (!shape) return false;
+    pruneExpired(nowMs());
     const identity = readTranscriptIdentity(message);
-    opts.onControlCommandConsumed?.(message);
-    if (shape.kind === 'command') {
+    if (shape.kind === 'local_caveat') {
+      if (identity.uuid) {
+        localCommandCaveats.set(identity.uuid, (readMessageTimestampMs(message) ?? nowMs()) + controlCommandBindingRetentionMs);
+      }
+      return true;
+    }
+    // Shell input/output remain visible; only slash-control bookkeeping is consumed.
+    if (shape.kind === 'command' || shape.kind === 'stdout') opts.onControlCommandConsumed?.(message);
+    if (shape.kind === 'command' || shape.kind === 'shell_command') {
       bindControlCommandRow(message);
       return true;
     }
     const record = message as Record<string, unknown>;
     const parentUuid = readNonEmptyString(record.parentUuid);
     const matchingBindings = [...controlCommandBindings.values()].filter((binding) => (
-      (parentUuid !== null && binding.commandUuid === parentUuid)
-      || (identity.promptId !== null && binding.promptId === identity.promptId)
+      binding.commandKind === (shape.kind === 'shell_output' ? 'shell_command' : 'command')
+      && (shape.kind === 'shell_output'
+        ? parentUuid !== null && binding.commandUuid === parentUuid
+        : (parentUuid !== null && binding.commandUuid === parentUuid)
+          || (identity.promptId !== null && binding.promptId === identity.promptId))
     ));
     if (matchingBindings.length === 1) {
       const binding = matchingBindings[0];
@@ -649,6 +698,7 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   function findAcceptedPromptForNativeQueueEnqueue(
     operation: NativeQueuedCommandOperation,
   ): AcceptedPrompt | null {
+    if (operation.content === null) return null;
     const normalizedContent = normalizeClaudeUnifiedPromptIdentityText(operation.content);
     const assignedAcceptedPromptIds = new Set(
       nativeQueuedCommandCustody.map((custody) => custody.acceptedPromptId),
@@ -662,16 +712,36 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
     return matchingPrompts.length === 1 ? matchingPrompts[0] ?? null : null;
   }
 
+  function nativeQueueIdentityCompatible(
+    left: Pick<NativeQueuedCommandCustody, 'commandUuid' | 'deliveryId'>,
+    right: Pick<NativeQueuedCommandOperation, 'commandUuid' | 'deliveryId'>,
+  ): boolean {
+    return !(left.commandUuid && right.commandUuid && left.commandUuid !== right.commandUuid)
+      && !(left.deliveryId && right.deliveryId && left.deliveryId !== right.deliveryId);
+  }
+
+  function nativeQueueIdentityRank(
+    left: Pick<NativeQueuedCommandCustody, 'commandUuid' | 'deliveryId'>,
+    right: Pick<NativeQueuedCommandOperation, 'commandUuid' | 'deliveryId'>,
+  ): number {
+    return Number(Boolean(left.commandUuid && left.commandUuid === right.commandUuid))
+      + Number(Boolean(left.deliveryId && left.deliveryId === right.deliveryId));
+  }
+
   function observeNativeQueuedCommandOperation(operation: NativeQueuedCommandOperation): void {
     if (operation.operation === 'enqueue') {
       const acceptedPrompt = findAcceptedPromptForNativeQueueEnqueue(operation);
-      if (!acceptedPrompt) return;
+      if (!acceptedPrompt || operation.content === null) return;
       nativeQueuedCommandCustody.push({
         acceptedPromptId: acceptedPrompt.id,
         content: operation.content,
         enqueuedAtMs: operation.timestampMs,
         episodeOrder: nextNativeQueuedCommandEpisodeOrder++,
         removedAtMs: null,
+        removalReason: null,
+        commandUuid: operation.commandUuid,
+        deliveryId: operation.deliveryId,
+        consumption: null,
         sessionId: operation.sessionId,
       });
       return;
@@ -679,13 +749,18 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
 
     const candidate = nativeQueuedCommandCustody
       .filter((custody) => (
-        custody.removedAtMs === null
+        (custody.removedAtMs === null || nativeQueueIdentityRank(custody, operation) > 0)
         && custody.sessionId === operation.sessionId
-        && custody.content === operation.content
+        && (operation.content === null || custody.content === operation.content)
+        && nativeQueueIdentityCompatible(custody, operation)
       ))
-      .sort((left, right) => left.episodeOrder - right.episodeOrder)[0];
-    if (!candidate) return;
+      .sort((left, right) => nativeQueueIdentityRank(right, operation) - nativeQueueIdentityRank(left, operation)
+        || left.episodeOrder - right.episodeOrder)[0];
+    if (!candidate || candidate.removedAtMs !== null) return;
     candidate.removedAtMs = operation.timestampMs;
+    candidate.removalReason = operation.reason;
+    candidate.commandUuid ??= operation.commandUuid;
+    candidate.deliveryId ??= operation.deliveryId;
   }
 
   function closeTranscriptEvidence(transcriptKey: string | null): void {
@@ -695,20 +770,44 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
   function findNativeQueuedCommandConsumptionMatch(
     message: unknown,
   ): ClaudeUnifiedAcceptedPromptTranscriptMatch | null {
-    const consumption = readNativeQueuedCommandConsumption(message);
-    if (!consumption || closedTranscriptEvidence.has(consumption.transcriptKey)) return null;
+    const incoming = readNativeQueuedCommandConsumption(message);
+    if (incoming && closedTranscriptEvidence.has(incoming.transcriptKey)) return null;
+    const operation = incoming ? null : readNativeQueuedCommandOperation(message);
+    if (!incoming && operation?.operation !== 'remove') return null;
+    const identity = incoming ?? operation;
+    if (!identity) return null;
+    const prompt = incoming?.prompt ?? operation?.content;
     const custody = nativeQueuedCommandCustody
       .filter((candidate) => (
-        candidate.removedAtMs !== null
-        && candidate.sessionId === consumption.sessionId
-        && candidate.content === consumption.prompt
+        candidate.sessionId === identity.sessionId
+        && (prompt == null || candidate.content === prompt)
+        && nativeQueueIdentityCompatible(candidate, identity)
+        && (incoming !== null || candidate.consumption !== null)
       ))
-      .sort((left, right) => left.episodeOrder - right.episodeOrder)[0];
+      .sort((left, right) => nativeQueueIdentityRank(right, identity) - nativeQueueIdentityRank(left, identity)
+        || left.episodeOrder - right.episodeOrder)[0];
     if (!custody) {
-      const candidates = acceptedPrompts.filter((candidate) => (
-        candidate.normalizedText === normalizeClaudeUnifiedPromptIdentityText(consumption.prompt)
-      ));
-      if (candidates.length > 1) closeTranscriptEvidence(consumption.transcriptKey);
+      if (incoming) {
+        const candidates = acceptedPrompts.filter((candidate) => (
+          candidate.normalizedText === normalizeClaudeUnifiedPromptIdentityText(incoming.prompt)
+        ));
+        if (candidates.length > 1) closeTranscriptEvidence(incoming.transcriptKey);
+      }
+      return null;
+    }
+    if (incoming) {
+      custody.consumption = incoming;
+      custody.commandUuid ??= incoming.commandUuid;
+      custody.deliveryId ??= incoming.deliveryId;
+    }
+    const consumption = custody.consumption;
+    if (!consumption || custody.removedAtMs === null) return null;
+    // Claude Code 2.1.310 uses these removals for cancellation/plugin discard,
+    // rather than consumption. Other reasons and historical reasonless rows
+    // retain their existing interpretation.
+    if (custody.removalReason === 'cleared_on_cancel' || custody.removalReason === 'dropped_by_hook') {
+      closeTranscriptEvidence(consumption.transcriptKey);
+      // Retain the assigned episode until its existing retirement owner releases it.
       return null;
     }
     const acceptedPrompt = acceptedPrompts.find((candidate) => candidate.id === custody.acceptedPromptId);
@@ -738,6 +837,7 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
     for (const message of messages) {
       const record = readObject(message);
       const parsedMessage = parseRawJsonLinesObject(message);
+      if (record?.isSidechain === true || readObject(record?.origin)?.kind === 'peer') continue;
       const providerPromptId = readNonEmptyString(record?.promptId);
       const providerSessionId = readNonEmptyString(record?.sessionId);
       if (parsedMessage && providerPromptId && providerSessionId
@@ -746,11 +846,11 @@ export function createClaudeUnifiedAcceptedPromptTranscriptDiscovery(opts: Reado
         continue;
       }
       const controlShape = parsedMessage ? readClaudeControlCommandRowShape(parsedMessage) : null;
-      if (parsedMessage && controlShape?.kind === 'stdout') {
+      if (parsedMessage && (controlShape?.kind === 'stdout' || controlShape?.kind === 'shell_output' || controlShape?.kind === 'local_caveat')) {
         observeControlCommandTranscript(parsedMessage);
         continue;
       }
-      if (parsedMessage && controlShape?.kind === 'command') {
+      if (parsedMessage && (controlShape?.kind === 'command' || controlShape?.kind === 'shell_command')) {
         const identity = readTranscriptIdentity(parsedMessage);
         if (closedTranscriptEvidence.has(identity.transcriptKey)) continue;
         observeControlCommandTranscript(parsedMessage);

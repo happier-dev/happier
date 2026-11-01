@@ -20,6 +20,50 @@ const classification: ConnectedServiceRuntimeFailureClassification = {
 };
 
 describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
+  it.each([1_500, 20_000])('arms a persisted wait across replacement at daemon time %i without synchronous recovery', async (restartAtMs) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-startup-timer-'));
+    const recover = vi.fn(async () => ({ status: 'session_not_found' as const }));
+    let scheduler: ReturnType<typeof createRuntimeAuthRecoverySchedulerForDaemon>['scheduler'] | undefined;
+    try {
+      const first = createRuntimeAuthRecoverySchedulerForDaemon({
+        activeServerDir, nowMs: () => 1_000, recover,
+      });
+      await first.scheduler.enqueueHandlerFailure({
+        sessionId: 'session-startup-timer', switchesThisTurn: 0, classification,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }),
+      });
+      const [waiting] = first.scheduler.hydratePassive();
+      expect(waiting?.status).toBe('waiting');
+      expect(waiting?.nextRetryAtMs).toEqual(expect.any(Number));
+      first.scheduler.dispose();
+
+      vi.useFakeTimers();
+      vi.setSystemTime(restartAtMs);
+      const replacement = createRuntimeAuthRecoverySchedulerForDaemon({
+        activeServerDir, nowMs: () => Date.now(), recover,
+      });
+      scheduler = replacement.scheduler;
+      expect(recover).not.toHaveBeenCalled();
+      replacement.scheduler.hydrate();
+      expect(recover).not.toHaveBeenCalled();
+      const delayMs = Math.max(0, waiting!.nextRetryAtMs! - restartAtMs);
+      if (delayMs > 0) {
+        await vi.advanceTimersByTimeAsync(delayMs - 1);
+        expect(recover).not.toHaveBeenCalled();
+      }
+      await vi.advanceTimersByTimeAsync(delayMs > 0 ? 1 : 0);
+      // The timer enters the normal recovery owner with its original failure,
+      // rather than applying auth or continuing during hydration itself.
+      await vi.waitFor(() => expect(recover).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        sessionId: 'session-startup-timer', source: 'scheduler_retry', classification: expect.objectContaining(classification),
+      })));
+    } finally {
+      scheduler?.dispose();
+      vi.useRealTimers();
+      await rm(activeServerDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  });
+
   it.each([
     ['missing', false],
     ['corrupt', true],

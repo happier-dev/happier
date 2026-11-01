@@ -1,6 +1,6 @@
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
+import { withOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { decodeOpenCodeDirectAfterCursor, encodeOpenCodeDirectAfterCursor } from './openCodeDirectAfterCursor';
 import { mapOpenCodeMessageToDirectItem } from './mapOpenCodeMessageToDirectItem';
 import { measureDirectTranscriptItemBytes } from './measureDirectTranscriptItemBytes';
@@ -14,9 +14,8 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
   maxBytes: number;
   maxItems: number;
 }>): Promise<DirectSessionTranscriptReadAfter> {
-  const client = await createOpenCodeDirectClient(params.source);
+  return await withOpenCodeDirectClient(params.source, async (client) => {
 
-  try {
     const rawMessages = await client.sessionMessagesList({ sessionId: params.remoteSessionId });
     const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
@@ -82,7 +81,5 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
       truncated: hasMore,
       ...(hasMore ? { truncationReason: 'page_limit' as const } : {}),
     };
-  } finally {
-    await client.dispose().catch(() => {});
-  }
+  });
 }

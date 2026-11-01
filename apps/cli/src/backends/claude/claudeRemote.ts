@@ -30,11 +30,12 @@ import {
     type ClaudeRemoteProviderPromptTransportFailureHandler,
 } from './remote/providerPromptAcceptance';
 import type { createClaudeProviderRuntimeActivityAdapter } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
-import { isClaudeLegacyRequiredHookObservationFailure } from './remote/runtimeActivityEvidence';
+import { isClaudeLegacyRequiredHookObservationFailure, isReplaySdkMessage } from './remote/runtimeActivityEvidence';
 import { materializeClaudeMcpConfigArgsForSpawn } from './utils/materializeClaudeMcpConfigArgsForSpawn';
 import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
-import { hasClaudeQueuedUserTurns } from './remote/resultTurnBoundary';
 import type { ClaudeEffectiveModelObservation } from './sessionModels/effectiveModelUpdate';
+import { readClaudeMainChainAssistantModelId } from './sessionModels/readClaudeMainChainAssistantModelId';
+import { isLivePrimaryClaudeProviderMessage, isSidechainSessionHook } from './utils/sessionHookAttribution';
 
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
@@ -132,7 +133,7 @@ export async function claudeRemote(opts: {
         toolName: string,
         input: unknown,
         mode: EnhancedMode,
-        options: { signal: AbortSignal; toolUseId?: string | null },
+        options: { signal: AbortSignal; toolUseId?: string | null; agentId?: string | null },
     ) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string,
@@ -150,6 +151,8 @@ export async function claudeRemote(opts: {
     onSessionFound: (id: string) => void,
     onThinkingChange?: (thinking: boolean) => void,
     onMessage: (message: SDKMessage) => void,
+    /** Live provider ingress, before transcript filtering or buffering. */
+    onProviderEvent?: () => void,
     onEffectiveModel?: (facts: ClaudeEffectiveModelObservation) => void,
     onCompletionEvent?: (event: ClaudeCompletionEvent) => void,
     onSessionReset?: () => void,
@@ -250,6 +253,7 @@ export async function claudeRemote(opts: {
         supportedLevels: resolveModeEffortLevelsForModel(initial.mode, argOverrides.model ?? initial.mode.model),
     });
     const rawExtraArgs = [
+        '--replay-user-messages',
         ...(opts.hookPluginDir ? ['--plugin-dir', opts.hookPluginDir] : []),
         ...effortArgs,
         ...(settingSourcesArgs ?? []),
@@ -296,8 +300,10 @@ export async function claudeRemote(opts: {
         // The authenticated hook plugin is the canonical permission bridge. Register the legacy
         // stdio prompt tool only as a fallback when hook installation was explicitly unavailable.
         ...(opts.hookPluginDir ? {} : {
-            canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null }) =>
-                opts.canCallTool(toolName, input, mode, options),
+            canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null; agentId?: string | null }) => {
+                if (!isSidechainSessionHook({ agentId: options.agentId })) opts.onProviderEvent?.();
+                return opts.canCallTool(toolName, input, mode, options);
+            },
         }),
         executable: runtimeExecutable,
         abort: opts.signal,
@@ -320,13 +326,30 @@ export async function claudeRemote(opts: {
 
     const messages = new PushableAsyncIterable<SDKUserMessage>();
     let ownsQuery = true;
+    let currentProviderSessionId = startFrom;
+    let unpublishedLaunchEffort: string | undefined = effortArgs[1];
     // Start the loop
     const response = query({
         prompt: messages,
         options: sdkOptions,
         onMessageReceived: (message) => {
+            if (isLivePrimaryClaudeProviderMessage(message, id => !currentProviderSessionId || id === currentProviderSessionId)) {
+                if (message.type === 'system' && (message.subtype === 'init' || message.subtype === 'compact_boundary')
+                    && typeof message.session_id === 'string') currentProviderSessionId = message.session_id;
+                opts.onProviderEvent?.();
+            }
+            if (promptSettlements.observeProviderMessage(message)) return;
             if (isClaudeHookLifecycleStreamMessage(message)) return;
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
+            const observedModelId = isReplaySdkMessage(message) ? null : readClaudeMainChainAssistantModelId(message);
+            if (observedModelId) {
+                const reasoningEffort = unpublishedLaunchEffort;
+                unpublishedLaunchEffort = undefined;
+                opts.onEffectiveModel?.({
+                    modelId: observedModelId,
+                    ...(reasoningEffort ? { reasoningEffort } : {}),
+                });
+            }
             opts.onMessage(message);
         },
         onProcessExited: async ({ nativeExited, processTreeStopped }) => {
@@ -348,12 +371,12 @@ export async function claudeRemote(opts: {
     opts.setUserMessageSender?.((message: SDKUserMessage) => messages.push(message));
     messages.push({
         type: 'user',
+        uuid: promptSettlements.submit(initial),
         message: {
             role: 'user',
             content: initial.message,
         },
     });
-    promptSettlements.accept(initial);
 
     const interruptTurn = async (): Promise<void> => {
         try {
@@ -370,7 +393,6 @@ export async function claudeRemote(opts: {
     opts.setTurnInterrupt?.(interruptTurn);
 
     updateThinking(true);
-    let currentProviderSessionId = startFrom;
     try {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
 
@@ -387,11 +409,8 @@ export async function claudeRemote(opts: {
                 updateThinking(true);
 
                 const systemInit = message as SDKSystemMessage;
-                if (typeof systemInit.model === 'string' && systemInit.model.trim() && effortArgs[1]) {
-                    opts.onEffectiveModel?.({ modelId: systemInit.model.trim(), reasoningEffort: effortArgs[1] });
-                }
                 if (systemInit.session_id) {
-                    currentProviderSessionId = systemInit.session_id;
+                    // Raw ingress already owns current identity; iterator lag must not rewind it.
                     // Do not block on filesystem writes here.
                     // The session scanner can handle missing files via watcher retries + UI warnings.
                     logger.debug(`[claudeRemote] Session initialized: ${systemInit.session_id}`);
@@ -407,7 +426,7 @@ export async function claudeRemote(opts: {
             if (message.type === 'result') {
                 // The CLI already owns these sends; keep draining its result stream rather
                 // than waiting for another Pending message while that work is still running.
-                if (hasClaudeQueuedUserTurns(message)) continue;
+                if (promptSettlements.shouldRetainForegroundForResult(message)) continue;
                 updateThinking(false);
                 logger.debug('[claudeRemote] Result received, exiting claudeRemote');
 
@@ -429,8 +448,7 @@ export async function claudeRemote(opts: {
                 }
                 promptSettlements.track(next);
                 mode = next.mode;
-                messages.push({ type: 'user', message: { role: 'user', content: next.message } });
-                promptSettlements.accept(next);
+                messages.push({ type: 'user', uuid: promptSettlements.submit(next), message: { role: 'user', content: next.message } });
             }
 
             // Handle tool result

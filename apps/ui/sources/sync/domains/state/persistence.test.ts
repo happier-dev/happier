@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults, settingsParse } from '../settings/settings';
 import type { ServerAccountScope } from '../scope/serverAccountScope';
+import { saveAccountSettings, saveActiveAccountSettingsScope } from './accountSettingsPersistence';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -147,6 +148,25 @@ describe('persistence', () => {
     });
 
     describe('theme runtime local state', () => {
+        it('loads the active account cache with device activation and isolates a switched account at startup', () => {
+            const profile = {
+                schemaVersion: 1, id: 'ocean', name: 'Ocean',
+                createdAt: '2026-10-01', updatedAt: '2026-10-01',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} },
+            };
+            saveAccountSettings(sessionLocalScopeA, settingsParse({ themeProfiles: [profile] }), 1);
+            saveActiveAccountSettingsScope(sessionLocalScopeA);
+            store.set('local-settings', JSON.stringify({
+                themePreference: 'dark', themeProfileSelection: { light: null, dark: 'ocean' },
+            }));
+            expect(loadThemeRuntimeLocalState().themeProfiles).toMatchObject({
+                profiles: [profile], activeProfileIds: { light: null, dark: 'ocean' },
+            });
+            saveActiveAccountSettingsScope(sessionLocalScopeB);
+            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+            saveActiveAccountSettingsScope(null);
+            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+        });
         it('returns default theme runtime state when local settings JSON is malformed', () => {
             store.set('local-settings', '{not json');
             const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});

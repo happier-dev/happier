@@ -7,16 +7,17 @@ import {
   isAuthenticationStatus,
 } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { lazySchema } from '@happier-dev/protocol';
 
-const AutomationRunSummarySchema = z.object({
+const AutomationRunSummarySchema = lazySchema(() => z.object({
   id: z.string().min(1),
   automationId: z.string().min(1),
   state: z.enum(['queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled', 'expired']),
-}).passthrough();
+}).passthrough());
 
-const RunAutomationNowResponseSchema = z.object({
+const RunAutomationNowResponseSchema = lazySchema(() => z.object({
   run: AutomationRunSummarySchema,
-});
+}));
 
 export type AutomationRunSummary = z.infer<typeof AutomationRunSummarySchema>;
 

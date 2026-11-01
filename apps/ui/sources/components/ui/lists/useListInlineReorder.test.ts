@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import * as Haptics from 'expo-haptics';
+import { Platform } from 'react-native';
 
 import { renderHook } from '@/dev/testkit';
 import {
@@ -10,6 +12,15 @@ import {
 } from '@/components/ui/treeDragDrop';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('expo-haptics', () => ({
+    impactAsync: vi.fn(),
+    selectionAsync: vi.fn(),
+    notificationAsync: vi.fn(),
+    AndroidHaptics: { Reject: 'reject', Context_Click: 'context', Segment_Tick: 'tick', Drag_Start: 'start' },
+    ImpactFeedbackStyle: { Light: 'light', Medium: 'medium' },
+    NotificationFeedbackType: { Error: 'error', Success: 'success' },
+}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -98,11 +109,69 @@ describe('resolveFlatReorderTargetIndex', () => {
 });
 
 describe('useListInlineReorder', () => {
+    const originalPlatform = Platform.OS;
+    beforeEach(() => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    });
+    afterEach(() => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+    });
     type Row = { id: string };
 
     function reportLayouts(result: any, rows: Row[]) {
         for (const row of rows) result.onRowLayout(row.id, layoutEvent(300, 56));
     }
+
+    it('ticks only when the insertion slot changes and settles after the commit resolves', async () => {
+        const { useListInlineReorder } = await import('./useListInlineReorder');
+        vi.mocked(Haptics.impactAsync).mockClear();
+        vi.mocked(Haptics.selectionAsync).mockClear();
+        let apply: (() => void) | undefined;
+        const applied = new Promise<void>((resolve) => { apply = resolve; });
+        const hook = await renderHook(() => useListInlineReorder({
+            items: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+            overlayShared: overlayShared(),
+            onCommitOrder: async () => { await applied; return 'applied' as const; },
+        }));
+        const gesture = hook.getCurrent().gestureForRow('a') as unknown as TestGesture;
+        await act(async () => { gesture.__handlers.onStart?.(); });
+        expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            gesture.__handlers.onUpdate?.({ translationY: 2 });
+            gesture.__handlers.onUpdate?.({ translationY: 4 });
+        });
+        expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+        await act(async () => {
+            gesture.__handlers.onUpdate?.({ translationY: 70 });
+            gesture.__handlers.onUpdate?.({ translationY: 75 });
+        });
+        expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
+        await act(async () => { gesture.__handlers.onEnd?.(); gesture.__handlers.onFinalize?.(); });
+        expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+        await act(async () => { apply?.(); await applied; });
+        expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+        await hook.unmount();
+    });
+
+    it.each(['refused', 'unknown', 'unchanged', undefined] as const)('does not settle a changed drop with outcome %s', async (outcome) => {
+        const { useListInlineReorder } = await import('./useListInlineReorder');
+        vi.mocked(Haptics.impactAsync).mockClear();
+        vi.mocked(Haptics.notificationAsync).mockClear();
+        const hook = await renderHook(() => useListInlineReorder({
+            items: [{ id: 'a' }, { id: 'b' }],
+            overlayShared: overlayShared(),
+            onCommitOrder: async () => outcome,
+        }));
+        const gesture = hook.getCurrent().gestureForRow('a') as unknown as TestGesture;
+        await act(async () => {
+            gesture.__handlers.onStart?.();
+            gesture.__handlers.onUpdate?.({ translationY: 80 });
+            gesture.__handlers.onEnd?.();
+        });
+        expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+        expect(Haptics.notificationAsync).toHaveBeenCalledTimes(outcome === 'refused' ? 1 : 0);
+        await hook.unmount();
+    });
 
     it('freezes the order during a drag and commits the reordered ids on drop', async () => {
         const { useListInlineReorder } = await import('./useListInlineReorder');
@@ -170,7 +239,7 @@ describe('useListInlineReorder', () => {
         await hook.unmount();
     });
 
-    it('does not commit when the drag is cancelled', async () => {
+    it.each(['finalize', 'unsuccessful-end'] as const)('does not commit when the drag is cancelled by %s', async (ending) => {
         const { useListInlineReorder } = await import('./useListInlineReorder');
         const overlay = overlayShared();
         const onCommitOrder = vi.fn();
@@ -190,6 +259,7 @@ describe('useListInlineReorder', () => {
         expect(overlay.overlayVisible.value).toBe(1);
 
         await act(async () => {
+            if (ending === 'unsuccessful-end') gesture.__handlers.onEnd?.({}, false);
             gesture.__handlers.onFinalize?.();
         });
 

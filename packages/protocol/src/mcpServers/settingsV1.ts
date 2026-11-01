@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 const SERVER_NAME_REGEX = /^[a-z0-9_-]+$/;
 const RESERVED_SERVER_NAMES = new Set(['happier', '__proto__', 'prototype', 'constructor']);
@@ -6,20 +7,20 @@ const RESERVED_SERVER_NAMES = new Set(['happier', '__proto__', 'prototype', 'con
 const ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 const HEADER_KEY_REGEX = /^[A-Za-z0-9-]+$/;
 
-export const McpValueRefV1Schema = z.discriminatedUnion('t', [
+export const McpValueRefV1Schema = lazySchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('literal'), v: z.string() }),
   z.object({ t: z.literal('savedSecret'), secretId: z.string().min(1) }),
-]);
+]));
 
 export type McpValueRefV1 = z.infer<typeof McpValueRefV1Schema>;
 
-const McpEnvVarKeyV1Schema = z.string().regex(ENV_KEY_REGEX, 'Invalid environment variable name');
-const McpHeaderKeyV1Schema = z.string().regex(HEADER_KEY_REGEX, 'Invalid header name');
+const McpEnvVarKeyV1Schema = lazySchema(() => z.string().regex(ENV_KEY_REGEX, 'Invalid environment variable name'));
+const McpHeaderKeyV1Schema = lazySchema(() => z.string().regex(HEADER_KEY_REGEX, 'Invalid header name'));
 
-export const McpServerCatalogEntryTransportV1Schema = z.enum(['stdio', 'http', 'sse']);
+export const McpServerCatalogEntryTransportV1Schema = lazySchema(() => z.enum(['stdio', 'http', 'sse']));
 export type McpServerCatalogEntryTransportV1 = z.infer<typeof McpServerCatalogEntryTransportV1Schema>;
 
-export const McpServerCatalogEntryV1Schema = z
+export const McpServerCatalogEntryV1Schema = lazySchema(() => z
   .object({
     id: z.string().min(1),
     name: z
@@ -62,7 +63,7 @@ export const McpServerCatalogEntryV1Schema = z
     if (!value.remote) {
       ctx.addIssue({ code: 'custom', message: 'Missing remote config', path: ['remote'] });
     }
-  });
+  }));
 
 export type McpServerCatalogEntryV1 = z.infer<typeof McpServerCatalogEntryV1Schema>;
 
@@ -74,7 +75,7 @@ function isAbsolutePath(value: string): boolean {
   return false;
 }
 
-export const McpServerBindingTargetV1Schema = z.discriminatedUnion('t', [
+export const McpServerBindingTargetV1Schema = lazySchema(() => z.discriminatedUnion('t', [
   z.object({ t: z.literal('allMachines') }),
   z.object({ t: z.literal('machine'), machineId: z.string().min(1) }),
   z.object({
@@ -82,13 +83,13 @@ export const McpServerBindingTargetV1Schema = z.discriminatedUnion('t', [
     machineId: z.string().min(1),
     workspaceRoot: z.string().min(1).refine(isAbsolutePath, 'workspaceRoot must be an absolute path'),
   }),
-]);
+]));
 
 export type McpServerBindingTargetV1 = z.infer<typeof McpServerBindingTargetV1Schema>;
 
-const McpValueRefOrNullV1Schema = z.union([McpValueRefV1Schema, z.null()]);
+const McpValueRefOrNullV1Schema = lazySchema(() => z.union([McpValueRefV1Schema, z.null()]));
 
-export const McpServerBindingOverridesV1Schema = z.object({
+export const McpServerBindingOverridesV1Schema = lazySchema(() => z.object({
   stdio: z
     .object({
       command: z.string().min(1).optional(),
@@ -102,11 +103,11 @@ export const McpServerBindingOverridesV1Schema = z.object({
     })
     .optional(),
   envPatch: z.record(McpEnvVarKeyV1Schema, McpValueRefOrNullV1Schema).optional(),
-});
+}));
 
 export type McpServerBindingOverridesV1 = z.infer<typeof McpServerBindingOverridesV1Schema>;
 
-export const McpServerBindingV1Schema = z.object({
+export const McpServerBindingV1Schema = lazySchema(() => z.object({
   id: z.string().min(1),
   serverId: z.string().min(1),
   enabled: z.boolean(),
@@ -114,11 +115,11 @@ export const McpServerBindingV1Schema = z.object({
   overrides: McpServerBindingOverridesV1Schema.optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
-});
+}));
 
 export type McpServerBindingV1 = z.infer<typeof McpServerBindingV1Schema>;
 
-export const McpServersSettingsV1Schema = z
+export const McpServersSettingsV1Schema = lazySchema(() => z
   .preprocess(
     (raw) => {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -160,6 +161,6 @@ export const McpServersSettingsV1Schema = z
           }
         }
       }),
-  );
+  ));
 
 export type McpServersSettingsV1 = z.infer<typeof McpServersSettingsV1Schema>;

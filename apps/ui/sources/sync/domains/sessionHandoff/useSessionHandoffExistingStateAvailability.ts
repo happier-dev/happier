@@ -1,10 +1,15 @@
 import * as React from 'react';
-import { SessionHandoffCapabilityV2Schema } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { supportsExistingSessionHandoffState, type AgentId } from '@happier-dev/agents';
+import { probeSessionHandoffCapability } from './probeSessionHandoffCapability';
 
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { resolveSessionHandoffRuntimeConfig } from './sessionHandoffRuntimeConfig';
+export type SessionHandoffExistingStateAvailability =
+    | Readonly<{ status: 'checking' | 'available' | 'unavailable' | 'unsupported_agent' }>
+    | Readonly<{ status: 'error'; errorCode: string; errorMessage: string }>;
+
+const CHECKING = { status: 'checking' } as const;
+const AVAILABLE = { status: 'available' } as const;
+const UNAVAILABLE = { status: 'unavailable' } as const;
+const UNSUPPORTED_AGENT = { status: 'unsupported_agent' } as const;
 
 /** A picker-only read. The daemon independently admits both peers before mutation. */
 export function useSessionHandoffExistingStateAvailability(input: Readonly<{
@@ -12,32 +17,25 @@ export function useSessionHandoffExistingStateAvailability(input: Readonly<{
     sourceMachineId: string | null;
     targetMachineId: string | null;
     agentId: AgentId | null;
-}>): 'checking' | 'available' | 'unavailable' | 'unsupported_agent' {
+}>): SessionHandoffExistingStateAvailability {
     const { serverId, sourceMachineId, targetMachineId, agentId } = input;
     const agentSupported = supportsExistingSessionHandoffState(agentId);
     const scope = `${serverId ?? ''}:${sourceMachineId ?? ''}:${targetMachineId ?? ''}`;
-    const [result, setResult] = React.useState<Readonly<{ scope: string; available: boolean }> | null>(null);
+    const [result, setResult] = React.useState<Readonly<{ scope: string; availability: SessionHandoffExistingStateAvailability }> | null>(null);
     React.useEffect(() => {
         if (!agentSupported || !sourceMachineId || !targetMachineId || sourceMachineId === targetMachineId) return;
         let cancelled = false;
-        const probe = async (machineId: string): Promise<boolean> => {
-            try {
-                const raw = await machineRpcWithServerScope<unknown, Record<string, never>>({
-                    serverId, machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
-                    payload: {}, timeoutMs: resolveSessionHandoffRuntimeConfig().machineRpcPollTimeoutMs,
-                });
-                const parsed = SessionHandoffCapabilityV2Schema.safeParse(raw);
-                return parsed.success && parsed.data.existingState === true;
-            } catch {
-                // The read has no effects; an unavailable proof keeps the option disabled.
-                return false;
-            }
-        };
-        void Promise.all([probe(sourceMachineId), probe(targetMachineId)]).then(([source, target]) => {
-            if (!cancelled) setResult({ scope, available: source && target });
+        void Promise.all([
+            probeSessionHandoffCapability({ serverId, machineId: sourceMachineId }),
+            probeSessionHandoffCapability({ serverId, machineId: targetMachineId }),
+        ]).then(([source, target]) => {
+            const failure = source.status === 'error' ? source : target.status === 'error' ? target : null;
+            const availability = failure ?? (source.status === 'supported' && source.capability.existingState
+                && target.status === 'supported' && target.capability.existingState ? AVAILABLE : UNAVAILABLE);
+            if (!cancelled) setResult({ scope, availability });
         });
         return () => { cancelled = true; };
     }, [agentSupported, scope, serverId, sourceMachineId, targetMachineId]);
-    if (!agentSupported) return 'unsupported_agent';
-    return result?.scope === scope ? (result.available ? 'available' : 'unavailable') : 'checking';
+    if (!agentSupported) return UNSUPPORTED_AGENT;
+    return result?.scope === scope ? result.availability : CHECKING;
 }

@@ -8,8 +8,10 @@ import {
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
 } from '@/components/sessions/actions/sessionActionIds';
+import { buildSessionAppearanceColorMenuItem } from '@/components/sessions/shell/appearance/sessionAppearanceColorMenu';
 import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessionActionAvailability';
 import { t } from '@/text';
 
@@ -104,7 +106,22 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
     const primaryItems: DropdownMenuItem[] = [];
     const remainingItems: DropdownMenuItem[] = [];
     let moveToFolderItem: DropdownMenuItem | null = null;
-    for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'rowMenu' })) {
+    let appearanceItem: DropdownMenuItem | null = null;
+    for (const actionId of listVisibleSessionActionIds({
+        target: params.target,
+        surface: 'rowMenu',
+        sessionAppearancesSupported: params.appearance != null,
+    })) {
+        if (actionId === SESSION_ACTION_SET_APPEARANCE_COLOR_ID) {
+            if (!params.appearance) continue;
+            appearanceItem = buildSessionAppearanceColorMenuItem({
+                ...params.appearance,
+                menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+                iconColor: params.iconColor,
+                base: createSessionActionDropdownItem({ actionId, iconColor: params.iconColor }),
+            });
+            continue;
+        }
         if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
             if (params.canMoveToFolder === false) continue;
             moveToFolderItem = {
@@ -135,6 +152,7 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
 
     return [
         ...primaryItems,
+        ...(appearanceItem ? [appearanceItem] : []),
         ...(params.target.attentionStandingAction.visible ? [createReminderPresetItem(
             params.iconColor,
             params.reminderPresets,
@@ -144,5 +162,6 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
         ...(params.leadingItems ?? []),
         ...remainingItems,
         ...(moveToFolderItem ? [moveToFolderItem] : []),
+        ...(params.trailingItems ?? []),
     ];
 }

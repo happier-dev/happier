@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BackendTargetRefSchema, buildBackendTargetKey, matchesBackendTargetAgentId, type BackendTargetRefV1 } from './backendTargets/backendTargetRef.js';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * Transition divider contract — the ONLY transition history artifact.
@@ -37,7 +38,7 @@ export const SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE = 'Continued with another 
  */
 export const SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX = 'agent-transition:';
 
-export const SessionAgentTransitionDividerV1Schema = z
+export const SessionAgentTransitionDividerV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1),
     fromAgentId: z.string().trim().min(1).max(128),
@@ -94,7 +95,7 @@ export const SessionAgentTransitionDividerV1Schema = z
     if (divider.toBackendTarget && !matchesBackendTargetAgentId(divider.toBackendTarget, divider.toAgentId)) {
       ctx.addIssue({ code: 'custom', path: ['toBackendTarget'], message: 'Target Agent and backend target identities must agree.' });
     }
-  });
+  }));
 export type SessionAgentTransitionDividerV1 = z.infer<typeof SessionAgentTransitionDividerV1Schema>;
 
 /**

@@ -8,7 +8,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
-import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import { resolveScopedMachineEncryptionContext } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 import {
     MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
     measureMachineEncryptRawAttribution,
@@ -55,14 +55,6 @@ function createMachineRpcTimeoutError(params: Readonly<{
     return error;
 }
 
-function normalizeScopedMachineRpcEncryptedResult(value: unknown): string {
-    const unwrapped = Array.isArray(value) && value.length === 1 ? value[0] : value;
-    if (typeof unwrapped === 'string') return unwrapped;
-    throw createRpcCallError({
-        error: 'Invalid scoped machine RPC response',
-        errorCode: 'invalid_scoped_machine_rpc_response',
-    });
-}
 
 async function withMachineRpcTimeout<T>(
     promise: Promise<T>,
@@ -95,6 +87,7 @@ async function withMachineRpcTimeout<T>(
 function shouldFallbackToScopedMachineRpc(error: unknown): boolean {
     const rpcErrorCode = readRpcErrorCode(error);
     if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return true;
+    if (rpcErrorCode === 'machine_rpc_context_unavailable') return true;
     if (isMachineRpcTimeoutError(error)) return true;
     if (!(error instanceof Error)) return false;
     return error.message.includes('Machine encryption not found')
@@ -170,7 +163,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             throw new Error('Expected scoped server RPC context');
         }
 
-        const machineDataKey = await resolveScopedMachineDataKey({
+        const machineEncryptionContext = await resolveScopedMachineEncryptionContext({
             serverId: context.targetServerId,
             serverUrl: context.targetServerUrl,
             token: context.token,
@@ -179,7 +172,10 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             decryptEncryptionKey: (value) => context.encryption.decryptEncryptionKey(value),
         });
 
-        await context.encryption.initializeMachines(new Map([[context.machineId, machineDataKey]]));
+        await context.encryption.initializeMachines(
+            new Map([[context.machineId, machineEncryptionContext.mode === 'plain' ? null : machineEncryptionContext.dataKey]]),
+            machineEncryptionContext.mode === 'plain' ? { plainMachineIds: new Set([context.machineId]) } : undefined,
+        );
         const machineEncryption = context.encryption.getMachineEncryption(context.machineId);
         if (!machineEncryption) {
             throw new Error(`Machine encryption not found for ${context.machineId}`);
@@ -193,7 +189,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
         try {
             const encryptedPayload = await measureMachineEncryptRawAttribution(
                 resolveScopedMachineRpcEncryptRawAttributionEvent(params.method),
-                async () => await machineEncryption.encryptRaw(params.payload),
+                async () => await machineEncryption.encodeRpcPayload(params.payload),
             );
             const socketEmission = socket.timeout(context.timeoutMs);
             onIssued?.();
@@ -203,7 +199,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                     params: encryptedPayload,
                     ...(params.authorization ? { authorization: params.authorization } : {}),
                     timeoutMs: context.timeoutMs,
-                }) as Promise<SocketRpcResult>,
+                }) as Promise<SocketRpcResult<unknown>>,
                 {
                     scope: 'scoped',
                     method: params.method,
@@ -212,14 +208,12 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             );
 
             if (result.ok) {
-                const decoded = await machineEncryption.decryptRaw(
-                    normalizeScopedMachineRpcEncryptedResult(result.result),
-                ) as R;
+                const decoded = await machineEncryption.decodeRpcResult(result.result);
                 recordCachedMachineRpcDirectRouteViable({
                     serverId: context.targetServerId,
                     remoteMachineId: context.machineId,
                 });
-                return decoded;
+                return decoded as R;
             }
 
             throw createRpcCallError({

@@ -4,6 +4,18 @@ import { AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_TOKEN_URL } fro
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('refreshConnectedAccountOauthTokens', () => {
+  it('refuses to bind a refreshed token organization to a different retained provider user', async () => {
+    const { refreshConnectedAccountOauthTokens } = await import('./serviceRefreshers');
+    const fetcher: typeof fetch = async (url) => String(url).includes('/profile')
+      ? Response.json({ account: { uuid: 'different-user' }, organization: { uuid: 'different-organization' } })
+      : Response.json({ access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 });
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      await expect(refreshConnectedAccountOauthTokens({ serviceId: 'claude-subscription',
+        refreshToken: 'refresh', now: 1000, expectedProviderAccountId: 'original-user' }))
+        .rejects.toMatchObject({ providerErrorCode: 'provider_account_mismatch' });
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('honors containing-operation cancellation before refreshing a native imported grant', async () => {
     const { refreshConnectedAccountOauthTokens } = await import('./serviceRefreshers');
     const controller = new AbortController(); controller.abort();
@@ -153,6 +165,7 @@ describe('refreshConnectedAccountOauthTokens', () => {
       })).resolves.toMatchObject({
         accessToken: 'accepted-access',
         refreshToken: 'rotated-refresh',
+        raw: null,
       });
       expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {

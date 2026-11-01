@@ -28,9 +28,13 @@ public/monaco/
 
 # Vendored by postinstall for optional web-only runtimes (do not commit).
 public/vendor/*
-!public/vendor/kokoro/
+# No trailing slash: EAS copies match directories without one, so a
+# directory-only negation would leave the kokoro folder excluded.
+!public/vendor/kokoro
 public/vendor/kokoro/*
 !public/vendor/kokoro/kokoroTtsWorker.js
+!public/vendor/kokoro/resolveKokoroVoice.js
+!public/vendor/kokoro/resolveKokoroVoice.d.ts
 
 # Vendored by postinstall for Pierre diffs worker (do not commit).
 public/pierre-diff-worker*.js

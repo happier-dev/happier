@@ -70,7 +70,7 @@ export async function executeClaimedRun(params: {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   heartbeatMs: number;
   leaseDurationMs: number;
-  encryption: AutomationTemplateEncryption;
+  encryption?: AutomationTemplateEncryption;
   claimed: ClaimableRunPayload;
 }): Promise<void> {
   const {

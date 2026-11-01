@@ -4,6 +4,7 @@ import { readOpenCodeSessionRuntimeHandleFromMetadata } from '@/backends/opencod
 import type { SessionCatalogControlAdapter } from '@/session/catalogControls/sessionCatalogControlTypes';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from '../client';
+import { withSharedManagedOpenCodeServerAccess } from '../sharedManagedServer';
 
 type OpenCodeCatalogClient = Pick<OpenCodeServerRuntimeClient, 'appSkills' | 'dispose'>;
 type OpenCodeCatalogClientParams = Readonly<{
@@ -59,21 +60,23 @@ export function createOpenCodeServerCatalogControlAdapter(
         return unsupportedSkills('session_catalog_control_unavailable');
       }
 
-      let client: OpenCodeCatalogClient | null = null;
-      try {
-        client = await createClient({
-          directory: cwd,
-          baseUrlOverride: runtimeHandle.serverBaseUrl,
-        });
-        return {
-          supported: true,
-          skills: normalizeOpenCodeAppSkills(await client.appSkills()),
-        };
-      } catch {
-        return unsupportedSkills('session_catalog_control_unavailable');
-      } finally {
-        await client?.dispose().catch(() => {});
-      }
+      return await withSharedManagedOpenCodeServerAccess(async () => {
+        let client: OpenCodeCatalogClient | null = null;
+        try {
+          client = await createClient({
+            directory: cwd,
+            baseUrlOverride: runtimeHandle.serverBaseUrl!,
+          });
+          return {
+            supported: true,
+            skills: normalizeOpenCodeAppSkills(await client.appSkills()),
+          };
+        } catch {
+          return unsupportedSkills('session_catalog_control_unavailable');
+        } finally {
+          await client?.dispose().catch(() => {});
+        }
+      }, runtimeHandle.serverBaseUrl);
     },
   };
 }

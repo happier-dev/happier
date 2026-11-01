@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 export type ConfirmDiscardIo = Readonly<{
     isTty: boolean;
     write: (chunk: string) => void;
-    question: (prompt: string) => Promise<string>;
+    question: (prompt: string, signal?: AbortSignal) => Promise<string>;
 }>;
 
 export type ConfirmDiscardQueuedMessagesParams = Readonly<{
@@ -12,6 +12,7 @@ export type ConfirmDiscardQueuedMessagesParams = Readonly<{
     serverCount: number;
     serverPreview: readonly string[];
     io?: ConfirmDiscardIo;
+    signal?: AbortSignal;
 }>;
 
 function createNodeIo(): ConfirmDiscardIo {
@@ -20,11 +21,18 @@ function createNodeIo(): ConfirmDiscardIo {
         write: (chunk: string) => {
             process.stdout.write(chunk);
         },
-        question: async (prompt: string) => {
+        question: async (prompt: string, signal?: AbortSignal) => {
+            if (signal?.aborted) return '';
             const rl = createInterface({ input: process.stdin, output: process.stdout });
+            let onAbort: (() => void) | undefined;
             try {
-                return await new Promise<string>((resolve) => rl.question(prompt, resolve));
+                return await new Promise<string>((resolve) => {
+                    onAbort = () => resolve('');
+                    signal?.addEventListener('abort', onAbort, { once: true });
+                    rl.question(prompt, resolve);
+                });
             } finally {
+                if (onAbort) signal?.removeEventListener('abort', onAbort);
                 rl.close();
             }
         },
@@ -45,7 +53,9 @@ export async function confirmDiscardBeforeSwitchToLocal(opts: {
     pendingCount: number;
     pendingPreview: readonly string[];
     io?: ConfirmDiscardIo;
+    signal?: AbortSignal;
 }): Promise<boolean> {
+    if (opts.signal?.aborted) return false;
     const io = opts.io ?? createNodeIo();
     if (opts.queuedCount === 0 && opts.pendingCount === 0) {
         return true;
@@ -74,7 +84,8 @@ export async function confirmDiscardBeforeSwitchToLocal(opts: {
         io.write(`\n${blocks.join('\n\n')}\n\n`);
     }
 
-    const answer = await io.question('Discard these messages and switch to local mode? (y/N) ');
+    const answer = await io.question('Discard these messages and switch to local mode? (y/N) ', opts.signal);
+    if (opts.signal?.aborted) return false;
     const normalized = answer.trim().toLowerCase();
     return normalized === 'y' || normalized === 'yes';
 }
@@ -88,5 +99,6 @@ export async function confirmDiscardQueuedMessagesForSwitchToLocal(
         pendingCount: opts.serverCount,
         pendingPreview: opts.serverPreview,
         io: opts.io,
+        signal: opts.signal,
     });
 }

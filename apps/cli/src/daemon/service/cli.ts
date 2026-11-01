@@ -14,7 +14,15 @@ import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScri
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '@/cli/commands/server/commandUtilities';
 import { applyDaemonServiceInstallPlan, assertDaemonServiceCommandsAvailable, runDaemonServiceCommands } from './apply';
-import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
+import {
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  buildServiceCommandEnv,
+  isWindowsScheduledTaskLauncherActionExpected,
+  parseWindowsScheduledTaskStatusPowerShellJson,
+  splitQualifiedWindowsScheduledTaskName,
+  runWindowsScheduledTaskQuery,
+  validateWindowsServiceLauncherPe,
+} from '@happier-dev/cli-common/service';
 
 import { resolveCliVersionFromBinary } from './resolveCliVersionFromBinary';
 import {
@@ -441,10 +449,12 @@ async function stopCurrentWindowsServiceOwnerIfNeeded(params: Readonly<{
 
 function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: readonly string[] }>): { ok: boolean; out: string | null } {
   try {
-    const res = spawnBackgroundSync(command.cmd, command.args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
-    });
+    const res = command.cmd === 'schtasks' && command.args[0]?.toLowerCase() === '/query'
+      ? runWindowsScheduledTaskQuery(command.cmd, command.args)
+      : spawnBackgroundSync(command.cmd, command.args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
+        });
     const ok = (res.status ?? 1) === 0;
     const out = (res.stdout ? String(res.stdout) : '') + (res.stderr ? String(res.stderr) : '');
     return { ok, out: out.trim() ? out : null };
@@ -572,6 +582,41 @@ async function shouldRestartRunningDefaultFollowingServiceForSelectedRelay(param
   return runCommandCaptureBestEffort(params.healthCommand).ok;
 }
 
+type WindowsLaunchDiagnostics = Readonly<{
+  taskName: string;
+  stdoutPath: string;
+  stderrPath: string;
+  launcherPath: string;
+  launcherDiagnosticLogPath: string;
+}>;
+
+function doesExpectedWindowsLauncherActionMatch(params: WindowsLaunchDiagnostics & Readonly<{
+  definitionPath: string;
+}>): boolean {
+  try {
+    validateWindowsServiceLauncherPe(fs.readFileSync(params.launcherPath), params.launcherPath);
+  } catch {
+    return false;
+  }
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.taskName);
+  const result = runWindowsScheduledTaskQuery('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    buildReadWindowsScheduledTaskStatusPowerShellCommand({ taskName, taskPath }),
+  ]);
+  if (result.error || result.status !== 0) return false;
+  const status = parseWindowsScheduledTaskStatusPowerShellJson(String(result.stdout ?? ''));
+  return Boolean(status?.exists && isWindowsScheduledTaskLauncherActionExpected({
+    taskToRun: status.taskToRun,
+    launcherPath: params.launcherPath,
+    definitionPath: params.definitionPath,
+    diagnosticLogPath: params.launcherDiagnosticLogPath,
+  }));
+}
+
 async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
   platform: SupportedPlatform;
   expectedServiceLabel: string;
@@ -581,8 +626,20 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
   expectedInstalledServiceContents?: string | null;
   installedServicePath?: string | null;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
+  windowsLaunchDiagnostics?: WindowsLaunchDiagnostics | null;
 }>): Promise<boolean> {
   let stableSince: number | null = null;
+  if (
+    params.platform === 'win32'
+    && params.windowsLaunchDiagnostics
+    && params.installedServicePath
+    && !doesExpectedWindowsLauncherActionMatch({
+      ...params.windowsLaunchDiagnostics,
+      definitionPath: params.installedServicePath,
+    })
+  ) {
+    return false;
+  }
   return await waitForDaemonRunningWithinBudget({
     timeoutMs: params.timeoutMs,
     pollMs: params.pollMs,
@@ -659,11 +716,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
    * logs so the resulting error tells the user *why* the daemon never claimed
    * ownership instead of just "180000ms".
    */
-  windowsLaunchDiagnostics?: Readonly<{
-    taskName: string;
-    stdoutPath: string;
-    stderrPath: string;
-  }> | null;
+  windowsLaunchDiagnostics?: WindowsLaunchDiagnostics | null;
 }>): Promise<void> {
   const waitTimeoutOverrideRaw = String(process.env.HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS ?? '').trim();
   const defaultTimeoutMs = params.platform === 'win32' ? 120_000 : 15_000;
@@ -681,6 +734,9 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
   );
   const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS', 100);
   const stableMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS', 1000);
+  // Only install writes the task action. Start/restart of a task still registered with the
+  // legacy PowerShell action must keep working; status reports it as a launcher upgrade.
+  const launcherActionToVerify = params.action === 'install' ? params.windowsLaunchDiagnostics : null;
   const expectedOwnerObserved = await waitForExpectedDaemonServiceOwnership({
     platform: params.platform,
     expectedServiceLabel: params.expectedServiceLabel,
@@ -690,6 +746,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
     expectedInstalledServiceContents: params.expectedInstalledServiceContents,
     installedServicePath: params.installedServicePath,
     healthCommand: params.healthCommand,
+    windowsLaunchDiagnostics: launcherActionToVerify,
   });
   if (expectedOwnerObserved) {
     return;
@@ -709,6 +766,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
       expectedInstalledServiceContents: params.expectedInstalledServiceContents,
       installedServicePath: params.installedServicePath,
       healthCommand: params.healthCommand,
+      windowsLaunchDiagnostics: launcherActionToVerify,
     });
     if (expectedOwnerObservedDuringGrace) {
       return;
@@ -726,6 +784,8 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
       taskName: params.windowsLaunchDiagnostics.taskName,
       stdoutPath: params.windowsLaunchDiagnostics.stdoutPath,
       stderrPath: params.windowsLaunchDiagnostics.stderrPath,
+      launcherPath: params.windowsLaunchDiagnostics.launcherPath,
+      launcherDiagnosticLogPath: params.windowsLaunchDiagnostics.launcherDiagnosticLogPath,
     });
     if (diagnostics) {
       message += `\n\n${diagnostics}`;
@@ -1060,10 +1120,12 @@ export async function resolveDaemonServiceListEntries(
 
     return {
       ...entry,
-      installedDefinitionMatchesExpected: doesInstalledDaemonServiceDefinitionMatchExpected({
-        installedPath: entry.path,
-        expectedContents: expectedFile.content,
-      }),
+      installedDefinitionMatchesExpected:
+        doesInstalledDaemonServiceDefinitionMatchExpected({
+          installedPath: entry.path,
+          expectedContents: expectedFile.content,
+        })
+        && entry.windowsLauncherUpgradeNeeded !== true,
     };
   });
 }
@@ -1747,6 +1809,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
                     channel: installRuntime.channel,
                     targetMode: installRuntime.targetMode,
                   }),
+                  launcherPath: paths.launcherPath,
+                  launcherDiagnosticLogPath: paths.launcherDiagnosticLogPath,
                 }
               : null,
           });
@@ -2195,6 +2259,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
                     channel: runtime.channel,
                     targetMode: runtime.targetMode,
                   }),
+                  launcherPath: paths.launcherPath,
+                  launcherDiagnosticLogPath: paths.launcherDiagnosticLogPath,
                 }
               : null,
           });

@@ -113,7 +113,7 @@ describe('happier self update for binary installs', () => {
       argv: ['repair'],
       commandPath: 'happier doctor',
     });
-    expect(maybeRunDoctorRepairMock).toHaveBeenCalledWith({ migrationRan: false });
+    expect(maybeRunDoctorRepairMock).toHaveBeenCalledWith({ migrationRan: false, channel: 'stable' });
   });
 
   it('binds an exact --to version to the transaction', async () => {

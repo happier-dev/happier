@@ -114,6 +114,31 @@ FUSE 2 library package \`libfuse2\`; keep your existing FUSE 3 installation.
 See the [AppImage FUSE guide](https://docs.appimage.org/user-guide/troubleshooting/fuse.html)
 for other distributions and systems where mounting is unavailable.
 
+### Linux rendering and startup troubleshooting
+
+If scrolling or animations stutter in the AppImage, try the DEB or RPM above
+when your distribution supports it. The AppImage bundles WebKitGTK; native
+packages use your distribution's WebKitGTK, so rendering can differ. This is a
+comparison to try, not a guaranteed performance improvement. On other
+distributions, the [browser client](/getting-started/get-the-apps#in-a-browser)
+provides another way to use Happier.
+
+<Callout type="warn">
+Before switching package formats, send any pending messages and close Happier.
+[WebKitGTK 2.52 and newer change the local IndexedDB format](https://github.com/WebKit/WebKit/commit/4905ec5f9240c6826dca52cfea2ae496fbb7b8b3).
+After a newer runtime opens the desktop profile, WebKitGTK 2.50 may fail to open
+its databases. Keep the newer-runtime installation available, and do not delete
+app data to troubleshoot this error. Comparing with the browser client avoids
+changing the desktop profile.
+</Callout>
+
+On NVIDIA with Wayland, a native package can instead exit before opening a
+window with \`Error 71 (Protocol error) dispatching to Wayland display\`.
+For this specific startup failure, try launching the installed app from a
+terminal with \`__NV_DISABLE_EXPLICIT_SYNC=1\` set for that invocation. See
+[the upstream graphics issue](https://github.com/tauri-apps/tauri/issues/10702).
+This workaround does not address slow painting in the AppImage.
+
 Homebrew is coming for macOS, but is not published yet: once the \`happier\` cask is accepted into
 Homebrew, \`brew install --cask happier\` will install the same notarized DMG. The app keeps
 updating itself either way, so a plain \`brew upgrade\` leaves it alone; \`brew upgrade --greedy\`

@@ -110,17 +110,18 @@ export async function resolveClaudeConnectedServiceSwitchContinuity(
     return { mode: 'restart_same_home' };
   }
 
+  // A repeated group selection can carry a newer credential revision. Its
+  // proven shared auth surface supports the same in-place application as a
+  // member change; it does not require a provider Session restart.
+  if (isSameConnectedServiceAuthGroup(params) && targetsClaudeSharedGroupRuntimeConfig(params)) {
+    return { mode: 'hot_apply' };
+  }
+
   if (isExactSameConnectedServiceSelection(params)) {
     return await resolveClaudeRestartSameHomeContinuity(params);
   }
 
   if (isConnectedToConnectedServiceSwitch(params)) {
-    if (
-      isSameConnectedServiceAuthGroup(params)
-      && targetsClaudeSharedGroupRuntimeConfig(params)
-    ) {
-      return { mode: 'hot_apply' };
-    }
     return resolveConnectedServiceRestartContinuityAction({
       stateSharingDescriptor: claudeConnectedServiceStateSharingDescriptor,
       restartReason: CLAUDE_RESTART_REMATERIALIZE_REQUIRED_REASON,

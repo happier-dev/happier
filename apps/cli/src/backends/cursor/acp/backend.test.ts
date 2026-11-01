@@ -1,3 +1,4 @@
+import { withParsedAcpExtensionHandler } from '@/agent/acp/testkit/extensionHandlerHarness';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ClientApp } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@/agent/core';
@@ -41,29 +42,11 @@ describe('buildCursorAcpBackendOptions', () => {
     expect(options.authentication).toEqual({ kind: 'static', methodId: 'cursor_login' });
   });
 
-  it('does not negotiate the Cursor parameterized model picker for normal runtime sessions', () => {
+  it('negotiates Cursor model parameters for every ACP session', () => {
     process.env.PATH = '';
     process.env.HAPPIER_CURSOR_PATH = createFakeCursorAgent();
 
     const options = buildCursorAcpBackendOptions({ cwd: '/tmp', env: {} });
-    const request = buildInitializeRequest({
-      clientName: 'happier',
-      clientVersion: '0.0.0',
-      initializeClientCapabilitiesMeta: options.initializeClientCapabilitiesMeta,
-    });
-
-    expect(request.clientCapabilities?._meta).toBeUndefined();
-  });
-
-  it('can opt into the Cursor parameterized model picker for discovery probes', () => {
-    process.env.PATH = '';
-    process.env.HAPPIER_CURSOR_PATH = createFakeCursorAgent();
-
-    const options = buildCursorAcpBackendOptions({
-      cwd: '/tmp',
-      env: {},
-      parameterizedModelPicker: true,
-    });
     const request = buildInitializeRequest({
       clientName: 'happier',
       clientVersion: '0.0.0',
@@ -140,8 +123,8 @@ describe('buildCursorAcpBackendOptions', () => {
     if (!registration) throw new Error('missing Cursor generated-media request handler');
     let callback: ((context: Readonly<{ params: unknown; signal: AbortSignal }>) => unknown) | null = null;
     const app = {
-      onRequest: (_method: string, _parser: unknown, handler: typeof callback) => {
-        callback = handler;
+      onRequest: (_method: string, parser: unknown, handler: typeof callback) => {
+        callback = withParsedAcpExtensionHandler(parser, handler);
         return app;
       },
       onNotification: () => app,

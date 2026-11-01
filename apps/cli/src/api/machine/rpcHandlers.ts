@@ -14,10 +14,12 @@ import {
 } from '@/rpc/handlers/registerSessionHandlers';
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
   BackendTargetRefSchema,
+  BugReportLogSelectionSchema,
   ConnectedServiceBindingsV1Schema,
   PendingFirstInputV1Schema,
   RestartAllSessionRunnersRequestV1Schema,
@@ -36,6 +38,7 @@ import {
   SessionRunnerStatusGetRequestV1Schema,
   SessionSpawnSourceContextV1Schema,
   getActionSpec,
+  resolveSessionWorkspaceRootForMachine,
   type ConnectedServiceBindingsV1,
   type SessionForkRpcResult,
   type SessionHandoffStartRequest,
@@ -100,6 +103,8 @@ import {
 } from './rpcHandlers.promptRegistryTransfers';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
 import { registerMachineServerWorkRpcHandlers } from './rpcHandlers.serverWork';
+import { registerMachineNotificationRpcHandlers } from './rpcHandlers.notifications';
+import type { PushNotificationClient } from '../pushNotifications';
 import type { DaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type {
   CancelConnectedServiceRuntimeAuthRecovery,
@@ -261,6 +266,7 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  pushNotifications?: PushNotificationClient;
   connectedServiceImportAccount?: ConnectedServiceImportAccount;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
@@ -399,10 +405,15 @@ function parseEnvBoundedInt(
 
 export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  /** Receiver identity; callers without it retain raw paths but cannot use workspace mappings. */
+  machineId?: string;
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
+  if (params.deps?.pushNotifications) {
+    registerMachineNotificationRpcHandlers({ rpcHandlerManager, pushNotifications: params.deps.pushNotifications });
+  }
   const { spawnSession, stopSession, requestShutdown, resolveSpawnSessionByNonce, abandonSpawnSessionByNonce } = handlers;
   const stopSessionConfirmed = async (sessionId: string): Promise<boolean> => (
     normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'
@@ -1219,8 +1230,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       if (scope?.machineId === machineId) {
         return await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, {});
       }
-      const credentials = await readCredentials().catch(() => null);
-      if (!credentials) return null;
+      const credentials = await readCredentials();
+      if (!credentials) throw new RpcError('Authentication is required', 'not_authenticated');
       return await callMachineRpc(buildTrackedSessionHandoffMachineCall({
         credentials, machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, request: {},
       }));
@@ -1542,9 +1553,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const directory = typeof parentMetadata.path === 'string' && parentMetadata.path.trim().length > 0
-      ? parentMetadata.path.trim()
-      : '';
+    const directory = resolveSessionWorkspaceRootForMachine({
+      metadata: parentMetadata,
+      machineId: params.machineId ?? '',
+      candidatePath: typeof parentMetadata.path === 'string' ? parentMetadata.path.trim() : '',
+    }).machinePath;
     if (!directory) {
       return {
         ok: false,
@@ -2326,8 +2339,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async () => {
-    return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async (rawParams: unknown) => {
+    const request = rawParams && typeof rawParams === 'object' ? rawParams as Record<string, unknown> : null;
+    if (!request || (!('sessionId' in request) && !('logSelection' in request))) {
+      return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+    }
+    const logSelection = BugReportLogSelectionSchema.partial().safeParse(request.logSelection ?? {});
+    if (!logSelection.success || (request.sessionId !== undefined && typeof request.sessionId !== 'string')) {
+      throw new Error('Invalid bug report diagnostics request');
+    }
+    return await collectBugReportMachineDiagnosticsSnapshotForBugReport({
+      sessionId: typeof request.sessionId === 'string' ? request.sessionId : undefined,
+      logSelection: logSelection.data,
+    }, { machineId: params.machineId });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_GET_LOG_TAIL, async (params: any) => {

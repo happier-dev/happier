@@ -204,12 +204,13 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 }));
 
 vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
+    Popover: ({ open, children }: { open: boolean; children: (args: { maxHeight: number }) => React.ReactNode }) =>
+        open ? children({ maxHeight: 400 }) : null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: () => null,
+    FloatingOverlay: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
@@ -253,6 +254,91 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (send button accessibility)', () => {
+    it('exposes available send choices to assistive technology and dismisses without changing the draft', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { Popover } = await import('@/components/ui/popover');
+        const onSend = vi.fn();
+        const onChangeText = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Keep this draft"
+            placeholder="Type"
+            onChangeText={onChangeText}
+            onSend={onSend}
+            sendMenuModes={['server_pending', 'interrupt']}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const send = screen.findByTestId('session-composer-send');
+        await act(async () => { send?.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }); });
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-send-option-agent_queue')).toBeNull();
+        await act(async () => {
+            screen.root.findAllByType(Popover).find((popover) => popover.props.open)?.props.onRequestClose();
+        });
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeNull();
+        expect(onSend).not.toHaveBeenCalled();
+        expect(onChangeText).not.toHaveBeenCalled();
+        await act(async () => { screen.pressByTestId('session-composer-send'); });
+        expect(onSend).toHaveBeenCalledExactlyOnceWith(undefined);
+        await screen.unmount();
+    });
+
+    it.each([
+        { value: '', onMicPress: () => {} },
+        { value: '', showAbortButton: true, onAbort: () => {} },
+        { value: 'draft', disabled: true },
+        { value: 'draft', isSending: true },
+        { value: 'draft', armedContinuationTarget: { agentId: 'claude', label: 'Claude' } },
+    ])('keeps send choices off non-send or unavailable controls: %j', async (props) => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            {...props}
+            sessionId="session-1"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            sendMenuModes={['server_pending', 'interrupt']}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('session-composer-send')?.props.onLongPress).toBeUndefined();
+        expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeNull();
+        await screen.unmount();
+    });
+
+    it.each(['agent_queue', 'server_pending', 'interrupt'] as const)(
+        'opens send choices without submitting and sends once with the selected %s intent',
+        async (mode) => {
+            const { AgentInput } = await import('./AgentInput');
+            const onSend = vi.fn();
+            const onChangeText = vi.fn();
+            const screen = await renderScreen(<AgentInput
+                sessionId="session-1"
+                value="Keep this draft"
+                placeholder="Type"
+                onChangeText={onChangeText}
+                onSend={onSend}
+                sendMenuModes={['agent_queue', 'server_pending', 'interrupt']}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+            />);
+
+            const send = screen.findByTestId('session-composer-send');
+            expect(send?.props.onLongPress).toBeTypeOf('function');
+            await act(async () => { send?.props.onLongPress(); });
+            expect(onSend).not.toHaveBeenCalled();
+            expect(onChangeText).not.toHaveBeenCalled();
+            expect(screen.findByTestId(`agent-input-send-option-${mode}`)).toBeTruthy();
+
+            await act(async () => { screen.pressByTestId(`agent-input-send-option-${mode}`); });
+            expect(onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: mode });
+            expect(screen.findByTestId(`agent-input-send-option-${mode}`)).toBeNull();
+            expect(onChangeText).not.toHaveBeenCalledWith('');
+            await screen.unmount();
+        },
+    );
+
     afterEach(() => {
         translateOverride.fn = null;
         featureEnabledState.voice = true;
@@ -490,21 +576,13 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
-    it('names the armed switch on an untouched composer, and leaves the press inert', async () => {
-        // Arming IS the confirmation. The control the reader is about to press
-        // reports which Agent it would continue with from the moment the rail is
-        // used — requiring a keystroke first reinstates a confirm step made of
-        // typing. What an empty composer withholds is the PRESS, not the name: the
-        // same inert send it has always been, now saying what pressing it does.
-        //
-        // No `onMicPress`, so nothing else holds this button: a composer WITH Voice
-        // hands it to the microphone instead, which is the next test.
+    it.each(['', ' \n\t '])('submits an armed switch without requiring text (%j)', async (value) => {
         const { AgentInput } = await import('./AgentInput');
         const onSend = vi.fn();
 
         const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
-                    value=""
+                    value={value}
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={onSend}
@@ -517,30 +595,26 @@ describe('AgentInput (send button accessibility)', () => {
         if (!send) throw new Error('session-composer-send not found');
         expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
         expect(send.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
-        // Inert, exactly as the empty composer's send has always been — and it
-        // still explains why, the way the circular send does.
-        expect(send.props.disabled).toBe(true);
-        expect(send.props.accessibilityHint).toBe('session.inputPlaceholder');
+        expect(send.props.disabled).toBe(false);
+        expect(send.props.accessibilityHint).toBeUndefined();
 
         await screen.pressByTestIdAsync('session-composer-send');
-        expect(onSend).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalled();
 
         await screen.unmount();
     });
 
-    it('leaves the microphone alone when an Agent switch is armed but nothing is typed', async () => {
-        // With Voice configured this button IS the microphone until there is text —
-        // press starts dictating, it does not take the switch — so the armed name
-        // must not reach it, active mic or not.
+    it('submits an armed switch instead of starting voice on an empty composer', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onMicPress = vi.fn();
+        const onSend = vi.fn();
 
         const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
-                    onSend={() => {}}
+                    onSend={onSend}
                     onMicPress={onMicPress}
                     isMicActive={false}
                     armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
@@ -550,20 +624,16 @@ describe('AgentInput (send button accessibility)', () => {
 
         const send = screen.findByTestId('session-composer-send');
         if (!send) throw new Error('session-composer-send not found');
-        expect(send.props.accessibilityLabel).toBe('voiceAssistant.label');
-        expect(send.findAllByType('AgentIcon' as any)).toHaveLength(0);
-        expect(send.findAllByType('Image' as any)).toHaveLength(1);
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
 
         await screen.pressByTestIdAsync('session-composer-send');
-        expect(onMicPress).toHaveBeenCalledTimes(1);
+        expect(onMicPress).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalled();
 
         await screen.unmount();
     });
 
-    it('leaves the empty-composer Stop saying Stop, and stopping when pressed', async () => {
-        // The name follows the arm, but only onto the control the arm would use. A
-        // running turn takes this button for Stop, and "Continue with Codex" on it
-        // would name a switch that press aborts instead of taking.
+    it('submits an armed switch instead of stopping from an empty composer', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
         const onAbort = vi.fn();
@@ -584,12 +654,11 @@ describe('AgentInput (send button accessibility)', () => {
 
         const send = screen.findByTestId('session-composer-send');
         if (!send) throw new Error('session-composer-send not found');
-        expect(send.props.accessibilityLabel).toBe('runs.stop.stopRunA11y');
-        expect(send.findAllByType('AgentIcon' as any)).toHaveLength(0);
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
 
         await screen.pressByTestIdAsync('session-composer-send');
-        expect(onAbort).toHaveBeenCalledTimes(1);
-        expect(onSend).not.toHaveBeenCalled();
+        expect(onAbort).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalled();
 
         await screen.unmount();
     });
@@ -600,9 +669,7 @@ describe('AgentInput (send button accessibility)', () => {
         // a confirm step made of typing — the reader picks another Agent, the rail
         // ticks it, and the composer goes on naming the one that is running.
         //
-        // The send control answers the same question here — it is still the send,
-        // just an inert one — so it names the same Agent. Only the microphone or
-        // Stop taking the button changes that answer.
+        // The armed send names that same Agent and can submit without typing.
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput
@@ -697,6 +764,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     agentType="codex"
+                    metadata={{ path: '/repo', host: 'test.local', flavor: 'codex' }}
                     onAgentClick={() => {}}
                     armedContinuationTarget={null}
                     autocompleteKinds={[]}

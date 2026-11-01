@@ -86,6 +86,61 @@ function runStoppedProcessFixture(child: ControlledProcess, evidence: ReturnType
 }
 
 describe('claudeRemoteAgentSdk owned process exit', () => {
+    it.runIf(process.platform !== 'win32')('accepts and releases an attributed result through the installed SDK and a real native process', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happier-sdk-result-attribution-'));
+        const providerPath = join(dir, 'provider');
+        const providerPidPath = join(dir, 'pid');
+        const inputFinished = createDeferred<void>();
+        // Fake only the native Claude process boundary; use the actual installed SDK query,
+        // stdin/stdout transport, prompt settlement, turn release and owned process cleanup.
+        await writeFile(providerPath, `#!${process.execPath}
+            const fs = require('node:fs');
+            fs.writeFileSync(${JSON.stringify(providerPidPath)}, String(process.pid));
+            const send = value => console.log(JSON.stringify(value));
+            require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+                const message = JSON.parse(line);
+                if (message.type === 'control_request') {
+                    send({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id,
+                        response: { commands: [], models: [], agents: [] } } });
+                } else if (message.type === 'user') {
+                    send({ type: 'system', subtype: 'init', session_id: 'attributed-session' });
+                    send({ type: 'result', subtype: 'success', session_id: 'attributed-session', uuid: 'native-result',
+                        user_message_uuids: [message.uuid], queued_turn_count: 1, result: 'answered inside notification turn',
+                        origin: { kind: 'task-notification' }, is_error: false, num_turns: 1,
+                        duration_ms: 1, duration_api_ms: 1, total_cost_usd: 0,
+                        usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {}, permission_denials: [] });
+                    process.stdout.end(() => process.exit(0));
+                }
+            });
+        `, { mode: 0o755 });
+        let submitted = false;
+        const onReady = vi.fn();
+        const accepted = vi.fn();
+        const onMessage = vi.fn();
+        try {
+            await claudeRemoteAgentSdk({
+                sessionId: null, transcriptPath: null, path: dir, claudeExecutablePath: providerPath,
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+                nextMessage: async () => {
+                    if (submitted) { await inputFinished.promise; return null; }
+                    submitted = true;
+                    return { message: 'answer this prompt', mode: makeMode(), userMessageLocalIds: ['native-prompt'] };
+                },
+                onReady, onMessage, onSessionFound: () => {}, onPromptAcceptedByProvider: accepted,
+            });
+            expect(accepted).toHaveBeenCalledExactlyOnceWith({ maxUserMessageSeq: null, userMessageLocalIds: ['native-prompt'] });
+            expect(onReady).toHaveBeenCalledOnce();
+            expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'result', queued_turn_count: 1 }));
+            const providerPid = Number(await readFile(providerPidPath, 'utf8'));
+            expect(isPidAlive(providerPid)).toBe(false);
+        } finally {
+            inputFinished.resolve();
+            const providerPid = Number(await readFile(providerPidPath, 'utf8').catch(() => '0'));
+            if (providerPid > 0) await killProcessTree({ pid: providerPid });
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it.runIf(process.platform !== 'win32').each(['javascript-direct', 'native-direct', 'wrapper-exit', 'wrapper-cleanup'])('qualifies provider stop through SDK 0.2.123 and its actual OS invocation (%s)', async (kind) => {
         const dir = await mkdtemp(join(tmpdir(), 'happier-sdk-owned-invocation-'));
         const pidPath = join(dir, 'provider-pid');
@@ -123,12 +178,12 @@ describe('claudeRemoteAgentSdk owned process exit', () => {
         `, { mode: 0o755 });
         await writeFile(shimPath, 'Windows shell shim fixture\n');
         await writeFile(shellWrapper, `#!${process.execPath}
-            require('node:child_process').spawn(process.execPath, [${JSON.stringify(providerPath)}], { stdio: 'inherit' });
             process.on('SIGTERM', () => {});
             process.on('SIGUSR1', () => {
                 if (${kind === 'wrapper-exit'}) process.exit(0);
                 else process.stdout.end();
             });
+            require('node:child_process').spawn(process.execPath, [${JSON.stringify(providerPath)}], { stdio: 'inherit' });
         `, { mode: 0o755 });
         const activity = createSessionRuntimeActivity('supported');
         const snapshots: Array<{ state: string; activeCount: number }> = [];

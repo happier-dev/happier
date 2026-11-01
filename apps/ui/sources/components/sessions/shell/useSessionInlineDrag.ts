@@ -4,6 +4,7 @@ import { useSharedValue, useAnimatedStyle, withSpring, type AnimatedStyle } from
 import { Gesture, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useUnistyles } from 'react-native-unistyles';
+import { createDragHapticsSession, type DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 
 import {
     TREE_DROP_OVERLAY_KIND_LINE,
@@ -14,6 +15,7 @@ import {
     type TreeDropVisualGeometry,
     type WindowPointer,
 } from '@/components/ui/treeDragDrop';
+import type { SessionListTreeDropResult } from './drop-resolution/sessionListTreeTypes';
 
 const DRAGGED_SESSION_ROW_OPACITY = 0.38;
 
@@ -30,6 +32,8 @@ const CONTEXT_MENU_STATIONARY_TOUCH_TOLERANCE = 10;
 export type UseSessionInlineDragResolvedDrop = Readonly<{
     result: TreeDropResult;
     geometry: TreeDropVisualGeometry;
+    /** Stable effective insertion destination from the canonical resolver. */
+    destinationKey: string | null;
 }>;
 
 const IDLE_RESOLVED_DROP: UseSessionInlineDragResolvedDrop = Object.freeze({
@@ -38,6 +42,7 @@ const IDLE_RESOLVED_DROP: UseSessionInlineDragResolvedDrop = Object.freeze({
         visual: Object.freeze({ kind: 'none' }),
     }),
     geometry: Object.freeze({ kind: 'none' }),
+    destinationKey: null,
 });
 
 function isCommitEligibleResolvedDrop(resolved: UseSessionInlineDragResolvedDrop): boolean {
@@ -45,8 +50,10 @@ function isCommitEligibleResolvedDrop(resolved: UseSessionInlineDragResolvedDrop
     return kind !== 'idle' && kind !== 'blocked';
 }
 
-function shouldFallbackToLastResolvedDrop(resolved: UseSessionInlineDragResolvedDrop): boolean {
-    const instruction = resolved.result.instruction;
+/** Empty/unchanged targets may use the last eligible drop and otherwise end quietly. */
+export function isUnchangedSessionDropResult(result: SessionListTreeDropResult): boolean {
+    if (result.sessionListBlockReason) return false;
+    const instruction = result.instruction;
     return instruction.kind === 'idle'
         || (
             instruction.kind === 'blocked'
@@ -80,7 +87,7 @@ export type UseSessionInlineDragParams = Readonly<{
     enabled?: boolean;
     onDragStart: (sessionKey: string) => void;
     resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
-    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
+    onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | DragHapticsOutcome | Promise<void | DragHapticsOutcome>;
     onDragCancel?: (event: UseSessionInlineDragCancelEvent) => void;
     onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
     /** Flat-list data index of this row (used for drop indicator computation). */
@@ -197,6 +204,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     const didDragDuringTouch = useSharedValue(false);
     const didActivateLongPress = useSharedValue(false);
     const lastCommitEligibleResolvedDropRef = useRef<UseSessionInlineDragResolvedDrop | null>(null);
+    const dragHapticsRef = useRef<ReturnType<typeof createDragHapticsSession> | null>(null);
 
     const gesture = useMemo(() => {
         if (!sessionKey || enabled === false) return undefined;
@@ -204,6 +212,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         // Wrap ref reads in plain functions so the worklet can schedule them on
         // the JS thread. The ref.current is always the latest callback.
         const fireDragStart = (sk: string) => {
+            dragHapticsRef.current?.cancel();
+            dragHapticsRef.current = createDragHapticsSession();
             onDragStartRef.current(sk);
         };
         const resolveDropForPointer = (
@@ -227,6 +237,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
             } else {
                 lastCommitEligibleResolvedDropRef.current = null;
             }
+            dragHapticsRef.current?.updateDestination(resolved.destinationKey);
             writeOverlayGeometry(overlayShared, resolved.geometry);
             onDragUpdateRef.current?.({
                 sessionKey: sk,
@@ -235,21 +246,31 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 result: resolved.result,
             });
         };
-        const fireDragComplete = (sk: string, gk: string, absoluteX: number | null, absoluteY: number | null) => {
+        const fireDragComplete = async (sk: string, gk: string, absoluteX: number | null, absoluteY: number | null) => {
             const resolved = resolveDropForPointer(sk, gk, absoluteX, absoluteY);
-            const committed = shouldFallbackToLastResolvedDrop(resolved)
+            const committed = isUnchangedSessionDropResult(resolved.result)
                 ? lastCommitEligibleResolvedDropRef.current ?? resolved
                 : resolved;
             lastCommitEligibleResolvedDropRef.current = null;
+            const haptics = dragHapticsRef.current;
+            dragHapticsRef.current = null;
             hideOverlay(overlayShared);
-            onDropResultRef.current({
-                sessionKey: sk,
-                groupKey: gk,
-                dataIndex,
-                result: committed.result,
-            });
+            try {
+                const outcome = await onDropResultRef.current({
+                    sessionKey: sk,
+                    groupKey: gk,
+                    dataIndex,
+                    result: committed.result,
+                });
+                haptics?.finish(outcome ?? 'unknown');
+            } catch (error) {
+                haptics?.finish('unknown');
+                console.warn('Session reorder failed', error);
+            }
         };
         const fireDragCancel = (sk: string, gk: string) => {
+            dragHapticsRef.current?.cancel();
+            dragHapticsRef.current = null;
             lastCommitEligibleResolvedDropRef.current = null;
             hideOverlay(overlayShared);
             onDragCancelRef.current?.({
@@ -259,6 +280,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
             });
         };
         const clearOverlay = () => {
+            dragHapticsRef.current?.cancel();
+            dragHapticsRef.current = null;
             lastCommitEligibleResolvedDropRef.current = null;
             hideOverlay(overlayShared);
         };
@@ -321,7 +344,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 translateY.value = e.translationY;
                 scheduleOnRN(fireDragUpdate, sessionKey, groupKey, e.absoluteX, e.absoluteY);
             })
-            .onEnd((e) => {
+            .onEnd((e, success) => {
                 'worklet';
                 const didDrag = didStartDrag.value === true;
 
@@ -335,7 +358,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
                 isDragging.value = false;
                 if (didDrag) {
                     didDragDuringTouch.value = true;
-                    scheduleOnRN(fireDragComplete, sessionKey, groupKey, e.absoluteX, e.absoluteY);
+                    if (success === false) scheduleOnRN(fireDragCancel, sessionKey, groupKey);
+                    else scheduleOnRN(fireDragComplete, sessionKey, groupKey, e.absoluteX, e.absoluteY);
                 } else {
                     scheduleOnRN(clearOverlay);
                 }

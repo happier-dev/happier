@@ -1,15 +1,12 @@
 import type { UnistylesThemes } from 'react-native-unistyles';
+import { parseAccentColorKey, type AccentColorKey } from '@/theme/accentColors';
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
 
-export type RecipientAccentKey = keyof Theme['colors']['accent'];
+export type RecipientAccentKey = AccentColorKey;
 
 export function resolveRecipientAccentKey(value: string): RecipientAccentKey | null {
-    const key = value.trim().toLowerCase();
-    if (!key) return null;
-    const allowed = new Set(['blue', 'green', 'orange', 'yellow', 'red', 'indigo', 'purple']);
-    if (!allowed.has(key)) return null;
-    return key as RecipientAccentKey;
+    return parseAccentColorKey(value);
 }
 
 export function resolveRecipientAccentColor(params: Readonly<{ theme: Theme; accentName: string }>): string | undefined {

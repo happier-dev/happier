@@ -1,4 +1,4 @@
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { logger } from '@/ui/logger';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
@@ -15,6 +15,7 @@ export async function decryptAccountSettingsCiphertext(params: Readonly<{
   ciphertext: string;
 }>): Promise<Record<string, unknown> | null> {
   const { credentials, ciphertext } = params;
+  requireEncryptionCredentials(credentials);
   const opened = openAccountScopedBlobCiphertext({
     kind: 'account_settings',
     material:

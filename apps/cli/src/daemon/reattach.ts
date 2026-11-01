@@ -226,7 +226,7 @@ export function adoptSessionsFromMarkers(params: {
     if (respawnParsed.success) {
       try {
         const restoredSpawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(respawnParsed.data, {
-          encryptionMaterial: params.credentials?.encryption,
+          encryptionMaterial: params.credentials?.encryption ?? undefined,
         });
         spawnOptions = applyMarkerRuntimeSnapshot(restoredSpawnOptions, marker.metadata);
       } catch (error) {

@@ -14,6 +14,7 @@ import {
 } from '@/components/settings/appearance/themePreferenceTransition';
 import {
     loadLocalSettings as defaultLoadLocalSettings,
+    loadThemeRuntimeLocalState,
     saveLocalSettings as defaultSaveLocalSettings,
 } from '@/sync/domains/state/persistence';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -80,7 +81,7 @@ type ActivateThemeProfileInput = Readonly<{
     systemTheme?: AppThemeName | null;
     platform?: string;
     loadLocalSettings?: () => Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
-    saveLocalSettings?: (settings: LocalSettings) => void;
+    saveLocalSettings?: (settings: LocalSettings) => Pick<LocalSettings, 'themePreference' | 'themeProfiles'> | void;
     runThemePreferenceChange?: (input: ThemePreferenceChangeInput) => Promise<void>;
     applySelection?: (input: ApplyThemeRuntimeSelectionInput) => void;
     setStatusBarStyle?: (style: StatusBarStyle, animated?: boolean) => void;
@@ -303,8 +304,14 @@ const resolveActivationModes = (input: Readonly<{
 };
 
 export const activateThemeProfile = async (input: ActivateThemeProfileInput): Promise<void> => {
-    const loadLocalSettings = input.loadLocalSettings ?? defaultLoadLocalSettings;
-    const saveLocalSettings = input.saveLocalSettings ?? defaultSaveLocalSettings;
+    const loadLocalSettings = input.loadLocalSettings ?? (() => ({ ...defaultLoadLocalSettings(), ...loadThemeRuntimeLocalState() }));
+    const saveLocalSettings = input.saveLocalSettings ?? ((settings: LocalSettings) => {
+        defaultSaveLocalSettings({
+            ...settings,
+            themeProfiles: defaultLoadLocalSettings().themeProfiles,
+            themeProfileSelection: settings.themeProfiles.activeProfileIds,
+        });
+    });
     const runThemePreferenceChange = input.runThemePreferenceChange ?? defaultRunThemePreferenceChange;
     const applySelection = input.applySelection ?? applyThemeRuntimeSelection;
     const applyStatusBarStyle = input.setStatusBarStyle ?? setStatusBarStyle;
@@ -351,13 +358,13 @@ export const activateThemeProfile = async (input: ActivateThemeProfileInput): Pr
                 themeProfiles: resolveNextThemeProfiles(latestSettings.themeProfiles, latestSettings.themePreference),
             });
 
-            saveLocalSettings(latestNextSettings);
+            const acceptedSettings = saveLocalSettings(latestNextSettings) ?? latestNextSettings;
             applySelection({
-                themePreference: latestNextSettings.themePreference,
-                themeProfiles: latestNextSettings.themeProfiles,
+                themePreference: acceptedSettings.themePreference,
+                themeProfiles: acceptedSettings.themeProfiles,
                 systemTheme,
             });
-            applyStatusBarStyle(resolveStatusBarStyleForThemePreference(latestNextSettings.themePreference, systemTheme), true);
+            applyStatusBarStyle(resolveStatusBarStyleForThemePreference(acceptedSettings.themePreference, systemTheme), true);
         },
     });
 };

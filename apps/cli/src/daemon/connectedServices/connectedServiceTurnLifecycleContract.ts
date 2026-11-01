@@ -5,8 +5,9 @@ import {
   TrackedSessionTurnLifecycleResultSchema,
   type TrackedSessionTurnLifecycleResult,
 } from '../sessions/applyTrackedSessionTurnLifecycle';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ConnectedServiceTurnLifecycleRequestBodySchema = z.object({
+export const ConnectedServiceTurnLifecycleRequestBodySchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   event: z.enum([
     'prompt_or_steer',
@@ -18,13 +19,13 @@ export const ConnectedServiceTurnLifecycleRequestBodySchema = z.object({
   turnId: z.string().trim().min(1).max(512).optional(),
   requestedAction: PendingRequestedActionV1Schema.optional(),
   activeTurnId: z.string().trim().min(1).max(512).nullable().optional(),
-}).strict();
+}).strict());
 
 export type ConnectedServiceTurnLifecycleRequestBody =
   z.infer<typeof ConnectedServiceTurnLifecycleRequestBodySchema>;
 
 export const ConnectedServiceTurnLifecycleResultSchema =
-  z.discriminatedUnion('status', [
+  lazySchema(() => z.discriminatedUnion('status', [
     z.object({
       status: z.literal('continue'),
       turnCustody: TrackedSessionTurnLifecycleResultSchema,
@@ -33,7 +34,7 @@ export const ConnectedServiceTurnLifecycleResultSchema =
       status: z.literal('input_blocked'),
       reason: z.literal('request_auth_source_cutover'),
     }).strict(),
-  ]);
+  ]));
 
 export type ConnectedServiceTurnLifecycleResult =
   z.infer<typeof ConnectedServiceTurnLifecycleResultSchema>;

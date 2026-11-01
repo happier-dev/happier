@@ -1,14 +1,15 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const SessionContinuationResumePromptModeV1Schema = z.enum(['standard', 'off', 'custom']);
+export const SessionContinuationResumePromptModeV1Schema = lazySchema(() => z.enum(['standard', 'off', 'custom']));
 export type SessionContinuationResumePromptModeV1 =
   z.infer<typeof SessionContinuationResumePromptModeV1Schema>;
 
-export const SessionContinuationRecoverySelectionKindV1Schema = z.enum(['profile', 'group']);
+export const SessionContinuationRecoverySelectionKindV1Schema = lazySchema(() => z.enum(['profile', 'group']));
 export type SessionContinuationRecoverySelectionKindV1 =
   z.infer<typeof SessionContinuationRecoverySelectionKindV1Schema>;
 
-export const SessionContinuationRecoveryIdentityV1Schema = z
+export const SessionContinuationRecoveryIdentityV1Schema = lazySchema(() => z
   .object({
     serviceId: z.string().trim().min(1),
     selectionKind: SessionContinuationRecoverySelectionKindV1Schema,
@@ -40,6 +41,6 @@ export const SessionContinuationRecoveryIdentityV1Schema = z
         path: ['groupId'],
       });
     }
-  });
+  }));
 export type SessionContinuationRecoveryIdentityV1 =
   z.infer<typeof SessionContinuationRecoveryIdentityV1Schema>;

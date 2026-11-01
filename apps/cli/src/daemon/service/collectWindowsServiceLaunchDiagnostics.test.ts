@@ -28,6 +28,7 @@ describe('collectWindowsServiceLaunchDiagnostics', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
@@ -167,6 +168,34 @@ describe('collectWindowsServiceLaunchDiagnostics', () => {
     );
   });
 
+  it.each([
+    [undefined, 15_000, false],
+    ['2300', 2_300, true],
+  ])('bounds diagnostic queries and keeps log context after timeout (configured budget: %s)', async (configuredTimeout, expectedTimeout, fallbackTimesOut) => {
+    forceWindowsPlatform();
+    vi.stubEnv('HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS', configuredTimeout);
+    const observedTimeouts: Array<number | undefined> = [];
+    spawnSyncMock.mockImplementation((command: string, _args: readonly string[], options?: { timeout?: number }) => {
+      observedTimeouts.push(options?.timeout);
+      if (command === 'powershell.exe' || fallbackTimesOut) {
+        return { status: null, error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' }), stdout: '', stderr: '' };
+      }
+      return { status: 0, stdout: 'Status: Ready\nLast Result: 37\n', stderr: '' };
+    });
+    const stderrPath = join(homeDir, 'logs', 'daemon-service.default.err.log');
+    await writeFile(stderrPath, 'MODULE_NOT_FOUND\n', 'utf8');
+
+    const result = collectWindowsServiceLaunchDiagnostics({
+      taskName: 'Happier\\happier-daemon.default',
+      stdoutPath: join(homeDir, 'logs', 'daemon-service.default.out.log'),
+      stderrPath,
+    });
+
+    expect(result).toContain('MODULE_NOT_FOUND');
+    if (!fallbackTimesOut) expect(result).toContain('Last result:   37');
+    expect(observedTimeouts).toEqual([expectedTimeout, expectedTimeout]);
+  });
+
   it('decodes UTF-16 LE log files written by PowerShell `>>` redirects', async () => {
     // Real-world: PowerShell's append-redirect on Windows writes UTF-16 LE
     // with a BOM. Reading that as UTF-8 produces "every char is space-
@@ -211,5 +240,24 @@ describe('collectWindowsServiceLaunchDiagnostics', () => {
     expect(result).not.toBeNull();
     expect(result).not.toContain('Wrapper stdout');
     expect(result).toContain('Wrapper stderr');
+  });
+
+  it('reports a missing launcher and tails its stage diagnostics', async () => {
+    const launcherPath = join(homeDir, 'services', 'launcher-1', 'happier-service-launcher.exe');
+    const launcherDiagnosticLogPath = join(homeDir, 'services', 'daemon.launcher.log');
+    await mkdir(join(homeDir, 'services'), { recursive: true });
+    await writeFile(launcherDiagnosticLogPath, 'stage=create_process message=failed win32_error=2\n', 'utf8');
+
+    const result = collectWindowsServiceLaunchDiagnostics({
+      taskName: 'Happier\\happier-daemon.default',
+      stdoutPath: join(homeDir, 'logs', 'daemon-service.default.out.log'),
+      stderrPath: join(homeDir, 'logs', 'daemon-service.default.err.log'),
+      launcherPath,
+      launcherDiagnosticLogPath,
+    });
+
+    expect(result).toContain(`Windows service launcher is missing: ${launcherPath}`);
+    expect(result).toContain('Launcher diagnostics');
+    expect(result).toContain('stage=create_process');
   });
 });

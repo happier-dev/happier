@@ -258,7 +258,7 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     if (item.kind === 'tool-group-footer') {
         return {
             ...base,
-            structuralKey: buildStableJsonSignature({ groupId: item.groupId }),
+            structuralKey: buildStableJsonSignature({ groupId: item.groupId, hasVisibleTools: item.hasVisibleTools }),
             expansionKey: 'tools:none|thinking:none',
             rowState: 'stable',
         };

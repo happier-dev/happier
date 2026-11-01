@@ -18,6 +18,7 @@ vi.mock('react-native', async () => {
         Animated: {
             Value: class AnimatedValue {
                 constructor(public readonly value: number) {}
+                setValue() {}
             },
             View: 'NativeAnimatedView',
             loop: nativeAnimatedState.loop,
@@ -56,6 +57,27 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('StatusDot (native)', () => {
+    it('keeps the pulsing state visible while its animation is paused and resumes on demand', async () => {
+        nativeAnimatedState.loop.mockClear();
+        const { StatusDot } = await import('./StatusDot');
+        const props = { color: 'orange', isPulsing: true, testID: 'status-dot' };
+        const screen = await renderScreen(React.createElement(StatusDot, {
+            ...props,
+            animationEnabled: false,
+        }));
+
+        expect(screen.findHostByTestId('status-dot')).toBeTruthy();
+        expect(nativeAnimatedState.loop).not.toHaveBeenCalled();
+
+        await screen.update(React.createElement(StatusDot, { ...props, animationEnabled: true }));
+        const loop = nativeAnimatedState.loop.mock.results.at(-1)?.value;
+        expect(loop?.start).toHaveBeenCalledOnce();
+
+        await screen.update(React.createElement(StatusDot, { ...props, animationEnabled: false }));
+        expect(screen.findHostByTestId('status-dot')).toBeTruthy();
+        expect(loop?.stop).toHaveBeenCalledOnce();
+    });
+
     it('renders a plain View with no Reanimated hooks for a non-pulsing native dot', async () => {
         nativeAnimatedState.loop.mockClear();
         nativeAnimatedState.sequence.mockClear();

@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Typography } from '@/constants/Typography';
@@ -58,6 +59,7 @@ import {
     type SessionHandoffRuntimeAvailability,
 } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
@@ -94,7 +96,6 @@ import {
 } from '@/sync/domains/session/folders';
 import {
     setSessionFolderAssignment as setSessionOrganizationFolderAssignment,
-    setSessionPin as setSessionOrganizationPin,
     setSessionTagLabels as setSessionOrganizationTagLabels,
 } from '@/sync/ops/sessionOrganization';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
@@ -658,7 +659,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         return value.length > 0 ? value : null;
     }, [session.metadata]);
 
-    const handleExitAfterSessionMutation = useCallback(() => {
+    const navigateAwayAfterSessionMutation = useCallback(() => {
         safeRouterBack({
             router,
             fallbackHref: routeScope.buildHref(session.id),
@@ -672,6 +673,11 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const isArchivedSession = session.archivedAt != null;
     const resolvedServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
     const scopedMutationServerId = resolvedServerId ?? sessionServerId ?? routeScope.serverId ?? null;
+    const handleExitAfterSessionMutation = useSessionActionNavigation({
+        sessionId: session.id,
+        serverId: scopedMutationServerId,
+        onNavigate: navigateAwayAfterSessionMutation,
+    });
     const organizationProjection = useSessionOrganizationProjection(scopedMutationServerId);
     const organizationListViewState = React.useMemo(() => buildSessionOrganizationListViewState({
         serverId: scopedMutationServerId ?? '',
@@ -710,12 +716,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         ],
     );
     const canArchiveSession = sessionActionTarget.canArchive;
-    const canDeleteSession = sessionActionTarget.canDelete;
     const visibleSessionActionIds = React.useMemo(
         () => new Set(listVisibleSessionActionIds({ target: sessionActionTarget, surface: 'sessionInfo' })),
         [sessionActionTarget],
     );
     const canRenameSession = visibleSessionActionIds.has(SESSION_ACTION_RENAME_ID);
+    const canDeleteSession = visibleSessionActionIds.has(SESSION_ACTION_DELETE_ID);
     const sessionInfoTags = sessionSettingsKey
         ? getTagsForSession(organizationListViewState.sessionTagsV1 as Record<string, string[]> | null | undefined, sessionSettingsKey)
         : [];
@@ -761,20 +767,8 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         await executeSessionAction({
             actionId: isPinnedSession ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID,
             target: sessionActionTarget,
-            context: {
-                operations: {
-                    setPinned: async (_sessionId, pinned) => {
-                        const mutation = await getOrganizationMutationContext();
-                        await setSessionOrganizationPin({
-                            ...mutation,
-                            sessionId: session.id,
-                            pinned,
-                        });
-                    },
-                },
-            },
         });
-    }, [getOrganizationMutationContext, isPinnedSession, session.id, sessionActionTarget, sessionSettingsKey]);
+    }, [isPinnedSession, sessionActionTarget, sessionSettingsKey]);
     const [pinningSession, performTogglePinned] = useHappyAction(handleTogglePinned);
 
     const handleEditTags = useCallback(async () => {
@@ -870,6 +864,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         handleExitAfterSessionMutation();
     }, [handleExitAfterSessionMutation, hideInactiveSessions, sessionActionTarget]);
     const [archivingSession, performArchive] = useHappyAction(handleArchive);
+    const archivePending = useSessionArchivePending(session.id, scopedMutationServerId);
 
     // A launcher only, exactly like the Session header: strategy is chosen
     // before any fork effect is issued, from every UI entry point.
@@ -952,27 +947,15 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
     // Use HappyAction for deletion - it handles errors automatically
     const [deletingSession, performDelete] = useHappyAction(async () => {
-        await executeSessionAction({
+        const result = await executeSessionAction({
             actionId: SESSION_ACTION_DELETE_ID,
             target: sessionActionTarget,
         });
+        if (result === false) return;
         handleExitAfterSessionMutation();
     });
 
-    const handleDeleteSession = useCallback(() => {
-        Modal.alert(
-            t('sessionInfo.deleteSession'),
-            t('sessionInfo.deleteSessionWarning'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                {
-                    text: t('sessionInfo.deleteSession'),
-                    style: 'destructive',
-                    onPress: performDelete
-                }
-            ]
-        );
-    }, [performDelete]);
+    const handleDeleteSession = performDelete;
 
     const handleRenameSession = useCallback(async () => {
         if (!canRenameSession) return;
@@ -1115,14 +1098,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
                         onPress={handleNewSessionSameSetup}
                     />
-                    {devModeEnabled ? (
-                        <Item
-                            testID="session-info-copy-debug-information"
-                            title={t('sessionInfo.copyDebugInformation')}
-                            icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
-                            copy={sessionDebugInformation.text}
-                        />
-                    ) : null}
+                    <Item
+                        testID="session-info-copy-debug-information"
+                        title={t('sessionInfo.copyDebugInformation')}
+                        icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
+                        copy={sessionDebugInformation.text}
+                    />
                     {!session.accessLevel && handoffActionEnabled && handoffSupported && (
                         <Item
                             title={handoffActionSpec.title}
@@ -1220,13 +1201,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             {...stopInfoItemProps}
                             onPress={handleStopSession}
                             loading={stoppingSession}
+                            disabled={archivePending}
                         />
                     )}
                     {canArchiveSession && archiveInfoItemProps && (
                         <Item
                             {...archiveInfoItemProps}
                             onPress={handleArchiveSession}
-                            loading={archivingSession}
+                            loading={archivingSession || archivePending}
                         />
                     )}
                     {canDeleteSession && deleteInfoItemProps && (

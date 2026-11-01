@@ -16,7 +16,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fakeClaudeLogContainsUserText, postPlainUiTextMessage } from '../../src/testkit/sessionHandoffUiMessages';
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
-import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
+import { createDataKeyRpcClient, createRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 
@@ -928,8 +928,8 @@ describe('core e2e: session handoff via direct peer', () => {
       context: 'user-scoped socket connected for late cutover proof',
     });
 
-    const sourceMachineRpc = createDataKeyRpcClient(ui, sourceMachineKey);
-    const targetMachineRpc = createDataKeyRpcClient(ui, targetMachineKey);
+    const sourceMachineRpc = createRpcClient(ui, { type: 'plain' });
+    const targetMachineRpc = createRpcClient(ui, { type: 'plain' });
 
     const machineIds = await waitForMachineIds({
       baseUrl: server.baseUrl,

@@ -23,7 +23,9 @@ describe('isRecoveredHistoryTranscriptObservationProvenance', () => {
       source: 'history',
       untrusted: true,
     })).toBe(false);
-    expect(isRecoveredHistoryTranscriptObservationProvenance(null)).toBe(false);
+    for (const absent of [undefined, null]) {
+      expect(isRecoveredHistoryTranscriptObservationProvenance(absent)).toBe(false);
+    }
   });
 });
 

@@ -35,7 +35,7 @@ const STARTED_AT = Date.parse('2026-05-12T00:00:00.000Z');
 
 describe('retained execution-run current work', () => {
     it('keeps idle handles sendable while only the busy sibling counts and spins, then reopens work on send', async () => {
-        const messages: readonly ToolCallMessage[] = ['idle', 'busy'].map((runId) => ({
+        const messages: readonly ToolCallMessage[] = ['busy', 'idle'].map((runId) => ({
             kind: 'tool-call', id: `message-${runId}`, localId: null, createdAt: STARTED_AT,
             tool: {
                 id: `tool-${runId}`, name: 'SubAgentRun', state: 'completed',
@@ -56,14 +56,17 @@ describe('retained execution-run current work', () => {
             return { subagents, rows, counts: deriveAgentActivityCounts(merged.entries.map(toAgentActivityCountable)) };
         };
         const idle = project(false);
-        expect(idle.subagents[0]).toMatchObject({ status: 'running', isActive: false, capabilities: { canSend: true, canStop: true } });
+        expect(idle.subagents.find((subagent) => subagent.id === 'execution_run:idle'))
+            .toMatchObject({ status: 'running', isActive: false, capabilities: { canSend: true, canStop: true } });
         expect(idle.counts.live).toBe(1);
         expect(buildAgentActivitySectionModel({ entries: idle.rows }).sections.map((section) => [section.id, section.entries.map((row) => row.id)]))
             .toEqual([['working', ['execution_run:busy']], ['idle', ['execution_run:idle']]]);
 
         const { AgentActivityRow } = await import('../row/AgentActivityRow');
         const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
-        const screen = await renderScreen(<AgentActivityRow entry={idle.rows[0]!} onPress={() => {}} testID="idle-row" />);
+        const idleRow = idle.rows.find((row) => row.id === 'execution_run:idle');
+        expect(idleRow).toBeDefined();
+        const screen = await renderScreen(<AgentActivityRow entry={idleRow!} onPress={() => {}} testID="idle-row" />);
         expect(screen.findAllHostsByTestId('idle-row').some((host) => host.props.accessibilityState?.busy === false)).toBe(true);
         expect(screen.findAllHostsByTestId('idle-row:elapsed')).toHaveLength(0);
         expect(screen.tree.findAllByType(ActivitySpinner)).toHaveLength(0);

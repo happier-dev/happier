@@ -78,7 +78,7 @@ function isMissingAutomationEndpointError(error: unknown, expectedPathname: stri
 export function startAutomationWorker(params: {
   token: string;
   machineId: string;
-  encryption: AutomationTemplateEncryption;
+  encryption?: AutomationTemplateEncryption;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   budgetRegistry?: ExecutionBudgetRegistry;
   env?: NodeJS.ProcessEnv;

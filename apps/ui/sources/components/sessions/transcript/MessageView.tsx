@@ -11,8 +11,6 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { useLayoutMaxWidth } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
-import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { buildMessageRouteId, resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
 import { sync } from '@/sync/sync';
 import { Option, type OptionLongPressHandler } from '@/components/markdown/MarkdownView';
@@ -21,13 +19,14 @@ import { shouldShowTranscriptRowActions, shouldShowTranscriptRowPinAction } from
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import type { StructuredMessageRendererParams } from '@/components/sessions/transcript/structured/structuredMessageRegistry';
 import { useRouter } from 'expo-router';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { useMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
 import { StructuredReferencesRow } from '@/components/sessions/transcript/references/StructuredReferencesRow';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
+import { PeerMessageRow } from '@/components/sessions/transcript/peer/PeerMessageRow';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
@@ -52,6 +51,7 @@ import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { MessageSelectionCheckbox } from '@/components/sessions/transcript/messageSelection/MessageSelectionCheckbox';
 import { SelectMessageButton } from '@/components/sessions/transcript/messageSelection/SelectMessageButton';
 import { useOptionalTranscriptSelectionRow } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
+import { useTranscriptQuoteMarkdownProps } from '@/components/sessions/transcript/quote/TranscriptQuoteContext';
 import {
   resolveSelectableMessageText,
   stripLegacyAttachmentsBlock,
@@ -62,7 +62,6 @@ import { MessageActionRow } from '@/components/sessions/transcript/messageAction
 import { MessagePinButton } from '@/components/sessions/transcript/messageActions/MessagePinButton';
 import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
-import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
@@ -514,6 +513,7 @@ function UserTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
+  const quoteMarkdownProps = useTranscriptQuoteMarkdownProps(props.sessionId, !isDiscarded && props.historical !== true);
   const handleJumpToAnchor = useStructuredMessageJumpHandler(props.sessionId, props.canOpenFiles);
 
   const isVoiceAgentTurn = React.useMemo(() => {
@@ -830,7 +830,7 @@ function UserTextBlock(props: {
                 interaction={props.interaction}
                 onJumpToAnchor={handleJumpToAnchor}
               />
-              <MarkdownView markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
+              <MarkdownView {...quoteMarkdownProps} codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
               {sessionMediaInlineImages.length > 0 ? (
                 <SessionMediaInlineImages
                   sessionId={props.sessionId}
@@ -959,6 +959,7 @@ function AgentTextBlock(props: {
   messageDisplayCommon: TranscriptMessageDisplayCommon;
 }) {
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
+  const quoteMarkdownProps = useTranscriptQuoteMarkdownProps(props.sessionId, props.historical !== true && !props.message.isThinking);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
@@ -1188,6 +1189,7 @@ function AgentTextBlock(props: {
     motion?.config.preset !== 'off' &&
     props.historical !== true &&
     isStructuredOnly !== true &&
+    props.message.peer === undefined &&
     (streamSegmentMeta ? streamSegmentAssistantStreaming === true : true);
   const streaming = useStreamingTextSmoothing({
     enabled: streamingSmoothingEligible,
@@ -1317,6 +1319,7 @@ function AgentTextBlock(props: {
               shouldRenderStreamingMarkdown ? (
                 <MarkdownView
                   markdown={streamingMarkdownText}
+                  codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                   agentTexMath
                   onOptionPress={handleOptionPress}
                   onOptionLongPress={handleOptionLongPress}
@@ -1337,9 +1340,30 @@ function AgentTextBlock(props: {
                 >
                   {streaming.displayText}
                 </Text>
+              ) : props.message.peer ? (
+                <PeerMessageRow
+                  id={props.message.id}
+                  createdAt={props.message.createdAt}
+                  peer={props.message.peer}
+                  summary={deriveThinkingSummary(markdown)}
+                >
+                  <MarkdownView
+                    markdown={markdown}
+                    codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
+                    agentTexMath
+                    onOptionPress={handleOptionPress}
+                    onOptionLongPress={handleOptionLongPress}
+                    onLinkPress={handleMarkdownLinkPress}
+                    selectable={true}
+                    profile="transcript"
+                    textStyle={styles.transcriptMarkdownText}
+                  />
+                </PeerMessageRow>
               ) : (
                 <MarkdownView
+                  {...quoteMarkdownProps}
                   markdown={markdown}
+                  codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                   agentTexMath
                   onOptionPress={handleOptionPress}
                   onOptionLongPress={handleOptionLongPress}
@@ -1459,6 +1483,7 @@ function ForkMessageButton(props: {
 }) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const navigateToSession = useNavigateToSession();
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const hitSlop = Platform.OS === 'web' ? undefined : 15;
   const executionRunsEnabled = props.forkCommon.executionRunsEnabled;
@@ -1495,15 +1520,9 @@ function ForkMessageButton(props: {
       sourceMessageId: props.messageId,
       sourcePreview: restored,
       writeForkInitialPrompt: true,
-      // Keep the transcript row independent of the session-opening hook, but
-      // carry the fork's server scope into the route so child hydration and
-      // navigation agree on the same Session.
-      navigateToSession: (childSessionId, options) => {
-        router.push(buildScopedSessionRouteHref({
-          sessionId: childSessionId,
-          serverId: options?.serverId ?? serverId,
-        }) as any);
-      },
+      navigateToSession: (childSessionId, options) => navigateToSession(childSessionId, {
+        serverId: options?.serverId ?? serverId,
+      }),
       navigateToNewSession: (route) => {
         router.push(route as any);
       },
@@ -1511,6 +1530,7 @@ function ForkMessageButton(props: {
   }, [
     agentSwitchingEnabled,
     executionRunsEnabled,
+    navigateToSession,
     props.isForkAllowed,
     props.messageId,
     props.restoredDraftText,
@@ -1625,7 +1645,30 @@ function ToolCallBlock(props: {
   toolChromeCommon: TranscriptToolChromeCommon;
   toolRouteCommon: TranscriptToolRouteCommon;
 }) {
-  const structuredPinHost = useRowActionHoverHost();
+  const router = useRouter();
+  const sessionMedia = React.useMemo(
+    () => parseSessionMediaMessageMeta(props.message.meta),
+    [props.message.meta],
+  );
+  const handleOpenMediaPath = React.useCallback((filePath: string) => {
+    pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
+  }, [props.sessionId, router]);
+  const hasToolMedia = sessionMedia.inlineImages.length > 0 || sessionMedia.unavailableMedia.length > 0;
+  const toolMedia = hasToolMedia ? (
+    <>
+      {sessionMedia.inlineImages.length > 0 ? (
+        <SessionMediaInlineImages
+          sessionId={props.sessionId}
+          media={sessionMedia.inlineImages}
+          onOpenPath={handleOpenMediaPath}
+          fileOpenEnabled={props.interaction.canOpenFiles === true}
+          mediaPreviewEnabled={props.interaction.canPreviewMedia === true}
+        />
+      ) : null}
+      <SessionMediaUnavailableItems items={sessionMedia.unavailableMedia} />
+    </>
+  ) : null;
+
   const handleJumpToAnchor = useStructuredMessageJumpHandler(
     props.sessionId,
     props.interaction.canOpenFiles === true,
@@ -1642,17 +1685,6 @@ function ToolCallBlock(props: {
     interaction: props.interaction,
     onJumpToAnchor: handleJumpToAnchor,
   });
-  const toolForSession = resolveInactiveSessionToolCallFailure({
-    tool: props.message.tool,
-    permissionDisabledReason: props.interaction.permissionDisabledReason,
-  });
-  const statusKind = resolveToolStatusIndicatorKind(toolForSession);
-  const shouldForceToolChromeForStatus = statusKind === 'error' || statusKind === 'permission_blocked';
-  const shouldRenderToolChrome = !(
-    toolViewTimelineChromeMode === 'activity_feed' &&
-    structuredNode != null &&
-    !shouldForceToolChromeForStatus
-  );
   const toolRouteMessageId = props.interaction.disableToolNavigation
     ? undefined
     : resolveMessageRouteIdForDisplay({
@@ -1680,23 +1712,7 @@ function ToolCallBlock(props: {
   ];
   const containerContent = (
     <>
-      {structuredNode}
-      {!shouldRenderToolChrome && toolPinAction ? (
-        <RowActionRevealSlot
-          revealed={shouldShowTranscriptRowPinAction({
-            platformOS: Platform.OS,
-            isRowHovered: structuredPinHost.isHovered,
-            isActionHovered: false,
-            coarsePrimaryPointer: readCoarsePrimaryPointer(),
-            pinned: toolPinAction.pinned,
-          })}
-          style={styles.structuredToolPinAction}
-          testID={`transcript-tool-call-pin-slot:${props.message.id}`}
-        >
-          {toolPinAction.node}
-        </RowActionRevealSlot>
-      ) : null}
-      {shouldRenderToolChrome ? (toolViewTimelineChromeMode === 'activity_feed' ? (
+      {toolViewTimelineChromeMode === 'activity_feed' ? (
         <ToolTimelineRow
           tool={props.message.tool}
           metadata={props.metadata}
@@ -1708,7 +1724,10 @@ function ToolCallBlock(props: {
           approvalRequests={props.approvalRequests}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
-        />
+        >
+          {structuredNode}
+          {toolMedia}
+        </ToolTimelineRow>
       ) : (
         <ToolView
           tool={props.message.tool}
@@ -1722,30 +1741,15 @@ function ToolCallBlock(props: {
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
           embedded={props.layoutContext === 'tool_calls_group'}
-        />
-      )) : null}
+        >
+          {structuredNode}
+          {toolMedia}
+        </ToolView>
+      )}
     </>
   );
-  // The tool chrome (ToolView / ToolTimelineRow) owns the jump-landing attention
-  // when it renders. A suppressed-chrome structured row has no chrome to own it,
-  // so the row container carries the same treatment — one highlight store, one
-  // timing owner, one ring per landed row.
-  if (!shouldRenderToolChrome) {
-    return (
-      <TranscriptJumpAttention
-        sessionId={props.sessionId}
-        routeMessageId={toolRouteMessageId ?? null}
-        seq={toolSeq}
-        radius={TRANSCRIPT_MESSAGE_HIGHLIGHT_RADIUS}
-        viewProps={structuredPinHost.hoverProps}
-        style={containerStyle}
-      >
-        {containerContent}
-      </TranscriptJumpAttention>
-    );
-  }
   return (
-    <View {...structuredPinHost.hoverProps} style={containerStyle}>
+    <View style={containerStyle}>
       {containerContent}
     </View>
   );
@@ -1845,10 +1849,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   toolContainerEmbedded: {
     marginHorizontal: 0,
-  },
-  structuredToolPinAction: {
-    alignSelf: 'flex-end',
-    marginTop: 4,
   },
   toolContainerCards: {
     paddingBottom: 0,

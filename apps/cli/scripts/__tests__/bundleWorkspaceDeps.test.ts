@@ -75,6 +75,7 @@ describe('bundleWorkspaceDeps', () => {
       packageName: '@happier-dev/cli-common',
       manifestOverrides: {
         scripts: { postinstall: 'echo should-not-run' },
+        happierWorkspaceBundleFiles: ['native/windows/bin/windows-x64/happier-service-launcher.exe'],
         exports: {
           '.': { default: './dist/index.js' },
           './workspaceLockLease': { default: './workspaceLockLease.mjs' },
@@ -85,6 +86,7 @@ describe('bundleWorkspaceDeps', () => {
         'dist/index.js': 'export const z = 3;\n',
         'workspaceLockLease.mjs': 'export const lease = "canonical";\n',
         'workspaceBundleLock.mjs': 'export { lease } from "./workspaceLockLease.mjs";\n',
+        'native/windows/bin/windows-x64/happier-service-launcher.exe': 'synthetic launcher bytes',
       },
     });
     writeWorkspacePackageFixture({
@@ -173,6 +175,9 @@ describe('bundleWorkspaceDeps', () => {
     ).toBe(true);
     expect(
       existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'workspaceBundleLock.mjs')),
+    ).toBe(true);
+    expect(
+      existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', 'happier-service-launcher.exe')),
     ).toBe(true);
 
     expect(bundledConnectionSupervisorPkgJson.scripts).toBeUndefined();

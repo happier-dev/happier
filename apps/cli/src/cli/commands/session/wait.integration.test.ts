@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 
 import {
   deriveBoxPublicKeyFromSeed,
@@ -29,6 +30,8 @@ describe('happier session wait (integration)', () => {
   let sessionDataEncryptionKeyBase64 = '';
   let transcriptMessages: Array<Record<string, unknown>> = [];
   let transcriptFetchCount = 0;
+  let pendingCount = 0;
+  let latestTurnStatus: 'in_progress' | 'completed' | null | undefined;
   let socketOnConnect: ((socket: ReturnType<typeof createApiSessionSocketStub>) => void) | null = null;
 
   const waitForTranscriptFetch = async () => {
@@ -46,6 +49,8 @@ describe('happier session wait (integration)', () => {
     sessionId = 'sess_integration_wait_123';
     transcriptMessages = [];
     transcriptFetchCount = 0;
+    pendingCount = 0;
+    latestTurnStatus = undefined;
     const dek = new Uint8Array(32).fill(3);
     const machineKeySeed = new Uint8Array(32).fill(8);
     const recipientPublicKey = deriveBoxPublicKeyFromSeed(machineKeySeed);
@@ -89,7 +94,12 @@ describe('happier session wait (integration)', () => {
               metadataVersion: 0,
               agentState: initialAgentStateCiphertext,
               agentStateVersion: 0,
-              pendingCount: 0,
+              pendingCount,
+              ...(latestTurnStatus !== undefined ? {
+                latestTurnStatus,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+              } : {}),
               pendingVersion: 0,
               dataEncryptionKey: sessionDataEncryptionKeyBase64,
               share: null,
@@ -101,9 +111,25 @@ describe('happier session wait (integration)', () => {
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
         transcriptFetchCount += 1;
+        const afterSeq = url.searchParams.has('afterSeq') ? Number(url.searchParams.get('afterSeq')) : null;
+        const beforeSeq = url.searchParams.has('beforeSeq') ? Number(url.searchParams.get('beforeSeq')) : null;
+        const limit = Number(url.searchParams.get('limit') ?? 100);
+        const selected = transcriptMessages
+          .filter((row) => typeof row.seq === 'number'
+            && (afterSeq === null || row.seq > afterSeq)
+            && (beforeSeq === null || row.seq < beforeSeq))
+          .sort((a, b) => afterSeq === null ? Number(b.seq) - Number(a.seq) : Number(a.seq) - Number(b.seq));
+        const messages = selected.slice(0, limit);
+        const hasMore = selected.length > limit;
+        const boundarySeq = messages.at(-1)?.seq ?? null;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: transcriptMessages }));
+        res.end(JSON.stringify({
+          messages,
+          hasMore,
+          nextBeforeSeq: hasMore && afterSeq === null ? boundarySeq : null,
+          nextAfterSeq: hasMore && afterSeq !== null ? boundarySeq : null,
+        }));
         return;
       }
 
@@ -129,6 +155,16 @@ describe('happier session wait (integration)', () => {
         socketOnConnect?.(currentSocket);
       },
     });
+    const trigger = socket.trigger;
+    socket.trigger = (event, payload) => {
+      const parsed = UpdateContainerSchema.safeParse(payload);
+      if (event === 'update' && parsed.success && parsed.data.body.t === 'new-message') {
+        // The server persists each message before emitting its socket update.
+        const message = parsed.data.body.message;
+        if (!transcriptMessages.some((row) => row.id === message.id)) transcriptMessages.push({ ...message });
+      }
+      trigger(event, payload);
+    };
     bindApiSessionSocketMock(mockIo, socket);
 
     socketOnConnect = (currentSocket) => {
@@ -182,6 +218,65 @@ describe('happier session wait (integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_wait_123');
       expect(parsed.data?.idle).toBe(true);
       expect(typeof parsed.data?.observedAt).toBe('number');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    { name: 'after a completed turn', status: 'completed' as const },
+    { name: 'before the first turn', status: null },
+  ])('waits for queued input $name until its turn completes', async ({ status }) => {
+    initialAgentStateCiphertext = idleAgentStateCiphertext;
+    pendingCount = 1;
+    latestTurnStatus = status;
+    let notifySocketConnected: () => void = () => undefined;
+    const socketConnected = new Promise<void>((resolve) => { notifySocketConnected = resolve; });
+    socketOnConnect = (socket) => {
+      notifySocketConnected();
+      const publish = (status: 'in_progress' | 'completed', seq: number) => {
+        latestTurnStatus = status;
+        pendingCount = 0;
+        socket.trigger('update', {
+          id: `u-queued-${seq}`, seq, createdAt: Date.now(),
+          body: {
+            t: 'update-session', id: sessionId, latestTurnStatus: status,
+            pendingCount, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+          },
+        });
+      };
+      setTimeout(() => socket.trigger('update', {
+          id: 'u-previous-turn-ready', seq: 2, createdAt: Date.now(),
+          body: {
+            t: 'new-message', sid: sessionId,
+            message: {
+              id: 'previous-ready', seq: 2, localId: null, createdAt: Date.now(), updatedAt: Date.now(),
+              content: { t: 'plain', v: { role: 'agent', content: { type: 'event', data: { type: 'ready' } } } },
+            },
+          },
+      }), status === 'completed' ? 325 : 100);
+      setTimeout(() => publish('in_progress', 3), 450);
+      setTimeout(() => publish('completed', 4), 600);
+    };
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    try {
+      const result = handleSessionCommand(['wait', sessionId, '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey', publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed), machineKey: machineKeySeed,
+          },
+        }),
+      });
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await socketConnected;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(settled).toBe(false);
+      await result;
+      expect(output.json()).toMatchObject({ ok: true, data: { idle: true } });
     } finally {
       output.restore();
     }
@@ -252,7 +347,7 @@ describe('happier session wait (integration)', () => {
     }
   });
 
-  it('does not resolve from an initially idle active session while transcript activity still shows an in-flight task', async () => {
+  it.each([0, 24])('does not resolve from an idle agent while an in-flight task precedes %i tool results', async (toolResultCount) => {
     initialAgentStateCiphertext = idleAgentStateCiphertext;
     transcriptMessages = [
       {
@@ -284,19 +379,38 @@ describe('happier session wait (integration)', () => {
         },
       },
     ];
+    for (let index = 0; index < toolResultCount; index += 1) {
+      const seq = index + 3;
+      transcriptMessages.push({
+        id: `tool-result-${seq}`,
+        seq,
+        createdAt: seq,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'claude',
+              data: { type: 'tool-result', callId: `call-${seq}`, id: `result-${seq}`, output: 'ok' },
+            },
+          },
+        },
+      });
+    }
 
     socketOnConnect = (currentSocket) => {
       setTimeout(() => {
         currentSocket.trigger('update', {
           id: 'u_task_complete',
-          seq: 3,
+          seq: toolResultCount + 3,
           createdAt: Date.now(),
           body: {
             t: 'new-message',
             sid: sessionId,
             message: {
               id: 'm3',
-              seq: 3,
+              seq: toolResultCount + 3,
               localId: null,
               createdAt: Date.now(),
               updatedAt: Date.now(),

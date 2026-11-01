@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger';
-import { SESSION_RPC_METHODS, StructuredQuestionResponseV1Schema } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS, StructuredQuestionResponseV1Schema, SessionPermissionResponseToOccurrenceV1Schema } from '@happier-dev/protocol';
 import { PUBLIC_RPC_HANDLER_ERROR_CODES, PublicRpcHandlerError, isPublicRpcHandlerError } from '@happier-dev/protocol/rpcErrors';
 
 import type { SessionPermissionRpcPayload } from './sessionPermissionRpc';
@@ -41,6 +41,13 @@ export class SessionPermissionRpcRouter {
     this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY, async (payload) => {
       return this.dispatch(payload as SessionPermissionRpcPayload);
     });
+    this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1, async (payload) => {
+      const parsed = SessionPermissionResponseToOccurrenceV1Schema.safeParse(payload);
+      if (!parsed.success) {
+        return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', requestId: '' } satisfies SessionPermissionRpcRouterResult;
+      }
+      return this.dispatch(parsed.data);
+    });
     this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1, async (payload) => {
       const parsed = StructuredQuestionResponseV1Schema.safeParse(payload);
       if (!parsed.success) {
@@ -48,6 +55,7 @@ export class SessionPermissionRpcRouter {
       }
       const result = await this.dispatch({
         id: parsed.data.id,
+        occurrenceId: parsed.data.occurrenceId,
         approved: true,
         structuredAnswersV1: parsed.data.structuredAnswersV1,
       });
@@ -96,4 +104,20 @@ export class SessionPermissionRpcRouter {
     }
     return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', requestId };
   }
+}
+
+const routersByRpcHandlerManager = new WeakMap<RpcHandlerManagerLike, SessionPermissionRpcRouter>();
+
+/**
+ * A router owns the permission-response methods of one RPC handler manager, so each manager has
+ * exactly one: the live session client, the offline stub a provider starts on, and test sessions
+ * all reach the same router through the manager they expose.
+ */
+export function getOrCreateSessionPermissionRpcRouter(rpcHandlerManager: RpcHandlerManagerLike): SessionPermissionRpcRouter {
+  let router = routersByRpcHandlerManager.get(rpcHandlerManager);
+  if (!router) {
+    router = new SessionPermissionRpcRouter(rpcHandlerManager);
+    routersByRpcHandlerManager.set(rpcHandlerManager, router);
+  }
+  return router;
 }

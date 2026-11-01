@@ -457,7 +457,7 @@ export function createVoiceToolHandlers(
 
     if (!res.ok) {
       voiceActivityController.appendError(sessionId, resolveAdapterId(), 'permission_update_failed', 'permission_update_failed');
-      return jsonError('permission_update_failed', 'permission_update_failed', { sessionId, requestId });
+      return jsonError(res.errorCode ?? 'permission_update_failed', res.error ?? 'permission_update_failed', { sessionId, requestId });
     }
     const nestedFailure = getNestedActionFailure((res as any).result);
     if (nestedFailure) {

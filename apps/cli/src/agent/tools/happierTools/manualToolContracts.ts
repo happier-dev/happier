@@ -10,17 +10,18 @@ import {
   defaultPermissionModeForExecutionRunIntent,
   defaultRunClassForExecutionRunIntent,
 } from '@/session/services/executionRunStartDefaults';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const changeTitleToolInputSchema = z.object({
+export const changeTitleToolInputSchema = lazySchema(() => z.object({
   title: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-export const actionExecuteToolInputSchema = z.object({
+export const actionExecuteToolInputSchema = lazySchema(() => z.object({
   actionId: z.string().min(1),
   input: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 
-export const executionRunStartToolInputSchema = z.object({
+export const executionRunStartToolInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   intent: ExecutionRunIntentSchema,
   backendTarget: BackendTargetRefSchema.optional(),
@@ -46,7 +47,7 @@ export const executionRunStartToolInputSchema = z.object({
       message: 'backendTarget is required (or provide legacy backendId)',
     });
   }
-});
+}));
 
 export function normalizeExecutionRunStartToolInput(params: Readonly<{
   sessionId: string;

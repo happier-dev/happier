@@ -33,7 +33,7 @@ export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
     await speakKokoroText({
       text: sample,
       assetSetId: cfgTts.localNeural.assetId,
-      voiceId: cfgTts.localNeural.voiceId ?? 'af_heart',
+      voiceId: cfgTts.localNeural.voiceId ?? null,
       speed: cfgTts.localNeural.speed ?? 1,
       timeoutMs: resolveKokoroOperationTimeoutMs(networkTimeoutMs),
       registerPlaybackStopper: (_stopper) => () => {},

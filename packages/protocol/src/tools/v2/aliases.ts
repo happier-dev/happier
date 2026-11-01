@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
 /**
  * Provider tool names for a given canonical tool often differ.
@@ -35,7 +36,7 @@ export const CHANGE_TITLE_TOOL_NAME_ALIASES = [
   'happy_session_title_set',
 ] as const;
 
-export const ChangeTitleToolNameAliasSchema = z.enum(CHANGE_TITLE_TOOL_NAME_ALIASES);
+export const ChangeTitleToolNameAliasSchema = lazySchema(() => z.enum(CHANGE_TITLE_TOOL_NAME_ALIASES));
 export type ChangeTitleToolNameAlias = z.infer<typeof ChangeTitleToolNameAliasSchema>;
 
 const CHANGE_TITLE_TOOL_LIKE_ALIASES = new Set<string>([

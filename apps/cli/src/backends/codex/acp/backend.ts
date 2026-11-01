@@ -15,6 +15,7 @@ import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { withCodexNativeStartupLock } from '../utils/withCodexNativeStartupLock';
 
 export interface CodexAcpBackendOptions extends AgentFactoryOptions {
+  reasoningSummary?: 'auto' | 'none';
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
   /**
@@ -48,6 +49,7 @@ export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcp
   };
   const spawn = resolveCodexAcpSpawn({
     permissionMode: options.permissionMode,
+    reasoningSummary: options.reasoningSummary,
     env: mergedEnv,
   });
 

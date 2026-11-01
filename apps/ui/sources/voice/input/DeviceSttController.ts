@@ -1,5 +1,6 @@
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
-import { computeTurnEndpointDelayMs, normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { createTurnEndpointDetector, type TurnEndpointDetector } from '@/voice/input/TurnEndpointDetector';
+import { isHandsFreeSttEnabled, resolveHandsFreeTurnEndpointPolicy } from '@/voice/local/localVoiceSettings';
 import { Platform } from 'react-native';
 
 type DeviceSttStatePatch = {
@@ -11,10 +12,8 @@ type DeviceSttStatePatch = {
 type DeviceSttHandle = {
   sessionId: string;
   transcript: string;
-  isFinal: boolean;
-  pendingAutoStop: boolean;
   startedAt: number;
-  autoStopTimer: ReturnType<typeof setTimeout> | null;
+  endpointDetector: TurnEndpointDetector;
   module: any;
   resolveEnd: () => void;
   endPromise: Promise<void>;
@@ -40,68 +39,7 @@ export function createDeviceSttController(deps: {
 
   const isDomRuntime = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined';
 
-  const isHandsFreeDeviceSttEnabled = (): boolean => {
-    const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-    const stt = adapter?.stt ?? null;
-    const provider =
-      typeof stt?.provider === 'string'
-        ? stt.provider
-        : stt?.useDeviceStt === true
-          ? 'device'
-          : 'openai_compat';
-    const useDeviceStt = provider === 'device';
-    const handsFreeEnabled = adapter?.handsFree?.enabled === true;
-    return useDeviceStt && handsFreeEnabled;
-  };
-
-  const clearHandleTimer = () => {
-    if (!handle?.autoStopTimer) return;
-    clearTimeout(handle.autoStopTimer);
-    handle.autoStopTimer = null;
-  };
-
-  const scheduleHandsFreeStop = (sessionId: string, expectedHandle: DeviceSttHandle) => {
-    if (expectedHandle.autoStopTimer) {
-      clearTimeout(expectedHandle.autoStopTimer);
-      expectedHandle.autoStopTimer = null;
-    }
-
-    const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-    const policy = normalizeTurnEndpointPolicy({
-      silenceMs: adapter?.handsFree?.endpointing?.silenceMs ?? 450,
-      minSpeechMs: adapter?.handsFree?.endpointing?.minSpeechMs ?? 120,
-    });
-    const elapsedMs = Date.now() - expectedHandle.startedAt;
-    const waitMs = computeTurnEndpointDelayMs(policy, elapsedMs);
-
-    const triggerStop = () => {
-      expectedHandle.autoStopTimer = null;
-      if (!handle || handle !== expectedHandle || handle.sessionId !== sessionId) return;
-      if (!isHandsFreeDeviceSttEnabled()) return;
-      if (handsFreeSessionId !== sessionId) return;
-      if (!deps.canAutoStopTurn(sessionId)) return;
-      deps.onAutoStopTurn(sessionId);
-    };
-
-    if (waitMs <= 0) {
-      queueMicrotask(triggerStop);
-      return;
-    }
-
-    expectedHandle.autoStopTimer = setTimeout(triggerStop, waitMs);
-  };
+  const isHandsFreeDeviceSttEnabled = (): boolean => isHandsFreeSttEnabled(deps.getSettings());
 
   const cleanupListeners = () => {
     const subscriptions = handle?.subscriptions ?? [];
@@ -147,7 +85,7 @@ export function createDeviceSttController(deps: {
       }
     }
 
-    clearHandleTimer();
+    handle?.endpointDetector.cancel();
     cleanupListeners();
 
     let resolveEnd: null | (() => void) = null;
@@ -158,10 +96,14 @@ export function createDeviceSttController(deps: {
     const nextHandle: DeviceSttHandle = {
       sessionId,
       transcript: '',
-      isFinal: false,
-      pendingAutoStop: false,
       startedAt: Date.now(),
-      autoStopTimer: null,
+      endpointDetector: createTurnEndpointDetector({
+        onEndpoint: () => {
+          if (handle !== nextHandle || handsFreeSessionId !== sessionId) return;
+          if (!isHandsFreeDeviceSttEnabled() || !deps.canAutoStopTurn(sessionId)) return;
+          deps.onAutoStopTurn(sessionId);
+        },
+      }),
       module: ExpoSpeechRecognitionModule,
       resolveEnd: () => resolveEnd?.(),
       endPromise,
@@ -171,18 +113,27 @@ export function createDeviceSttController(deps: {
     handle = nextHandle;
 
     nextHandle.subscriptions.push(
+      ExpoSpeechRecognitionModule.addListener('speechstart', () => {
+        nextHandle.endpointDetector.cancel();
+      })
+    );
+
+    nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
         const results = Array.isArray(event?.results) ? event.results : [];
         const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
         if (!transcript) return;
 
         nextHandle.transcript = transcript;
-        if (event?.isFinal) {
-          nextHandle.isFinal = true;
-          if (!nextHandle.pendingAutoStop && isHandsFreeDeviceSttEnabled()) {
-            nextHandle.pendingAutoStop = true;
-            scheduleHandsFreeStop(sessionId, nextHandle);
-          }
+        if (isHandsFreeDeviceSttEnabled()) {
+          nextHandle.endpointDetector.observe({
+            transcript,
+            isEndpoint: event?.isFinal === true,
+            policy: resolveHandsFreeTurnEndpointPolicy(deps.getSettings()),
+            speechElapsedMs: Date.now() - nextHandle.startedAt,
+          });
+        } else {
+          nextHandle.endpointDetector.cancel();
         }
       })
     );
@@ -225,7 +176,7 @@ export function createDeviceSttController(deps: {
       return '';
     }
 
-    clearHandleTimer();
+    handle.endpointDetector.cancel();
 
     try {
       handle.module?.stop?.();
@@ -237,9 +188,7 @@ export function createDeviceSttController(deps: {
 
     const text = handle.transcript.trim();
     const subscriptions = handle.subscriptions;
-    if (handle.autoStopTimer) {
-      clearTimeout(handle.autoStopTimer);
-    }
+    handle.endpointDetector.cancel();
     handle = null;
 
     try {

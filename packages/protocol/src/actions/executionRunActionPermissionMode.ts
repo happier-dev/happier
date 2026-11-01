@@ -4,6 +4,7 @@ import {
   SESSION_PERMISSION_INTENT_INPUTS,
   parseSessionPermissionModeAlias,
 } from '../sessionMetadata/sessionPermissionModes.js';
+import { lazySchema } from '../lazySchema.js';
 
 /** Retained execution-run wire values for mixed-version daemon compatibility. */
 export const EXECUTION_RUN_ACTION_PERMISSION_MODES = [
@@ -39,10 +40,10 @@ function normalizeExecutionRunActionPermissionMode(value: unknown): unknown {
   }
 }
 
-export const ExecutionRunActionPermissionModeSchema = z.preprocess(
+export const ExecutionRunActionPermissionModeSchema = lazySchema(() => z.preprocess(
   normalizeExecutionRunActionPermissionMode,
   z.enum(EXECUTION_RUN_ACTION_PERMISSION_MODES),
 )
-  .describe(EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION);
+  .describe(EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION));
 
 export type ExecutionRunActionPermissionMode = z.infer<typeof ExecutionRunActionPermissionModeSchema>;

@@ -1,7 +1,8 @@
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { isLegacyAuthCredentials, isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { EncryptionMaterialUnavailableError } from '@/sync/encryption/encryption';
 import { decodeBase64 } from '@/encryption/base64';
 
 function assert32Bytes(label: string, bytes: Uint8Array): Uint8Array {
@@ -14,6 +15,7 @@ function assert32Bytes(label: string, bytes: Uint8Array): Uint8Array {
 export function resolveAccountScopedCryptoMaterialFromCredentials(
   credentials: AuthCredentials,
 ): AccountScopedCryptoMaterial {
+  if (!isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials)) throw new EncryptionMaterialUnavailableError();
   return isLegacyAuthCredentials(credentials)
     ? {
         type: 'legacy',

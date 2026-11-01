@@ -76,6 +76,7 @@ export type ConnectedServiceCredentialSealedResponse = Readonly<{
     kind: 'oauth' | 'token';
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    providerOrganizationId?: string | null;
     expiresAt?: number | null;
   };
 }> & ConnectedServiceCredentialRevisionBoundaryV1;
@@ -169,6 +170,7 @@ export function createConnectedServiceCredentialApi(
 export async function getAccountEncryptionMode(params: Readonly<{
   token: string;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }>): Promise<'e2ee' | 'plain' | 'unknown'> {
   const serverUrl = resolveServerHttpBaseUrl();
   try {
@@ -176,7 +178,7 @@ export async function getAccountEncryptionMode(params: Readonly<{
       `${serverUrl}/v1/account/encryption`,
       {
         headers: authHeaders(params.token),
-        timeout: resolveConnectedServicesServerApiTimeoutMs(),
+        timeout: params.timeoutMs ?? resolveConnectedServicesServerApiTimeoutMs(),
         signal: params.signal,
       },
     );
@@ -236,6 +238,7 @@ export async function getConnectedServiceCredentialSealed(params: Readonly<{
       kind: z.enum(['oauth', 'token']),
       providerEmail: z.string().nullable().optional(),
       providerAccountId: z.string().nullable().optional(),
+      providerOrganizationId: z.string().nullable().optional(),
       expiresAt: z.number().nullable().optional(),
     }).safeParse((raw as Record<string, unknown>).metadata);
 

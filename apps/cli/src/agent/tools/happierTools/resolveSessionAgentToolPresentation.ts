@@ -28,7 +28,9 @@ function toJsonSchema(inputSchema: unknown): Readonly<Record<string, unknown>> {
   if (!projected || typeof projected !== 'object' || Array.isArray(projected)) {
     throw new Error('Session-Agent tool input schema did not project to a JSON Schema object');
   }
-  return projected;
+  // Zod decorates the root with non-enumerable Standard Schema metadata.
+  // Record validation copies all own keys, making that metadata serializable.
+  return { ...projected };
 }
 
 export function resolveSessionAgentToolPresentation(params: Readonly<{

@@ -1,10 +1,13 @@
+import { assertCurrentAccountKeyForProvisioning } from '@/auth/flows/assertCurrentAccountKeyForProvisioning';
 import {
     deriveAccountMachineKeyFromRecoverySecret,
     sealTerminalProvisioningV3Payload,
     sealTerminalProvisioningV2Payload,
+    sealTerminalProvisioningV2TokenOnlyPayload,
+    sealTerminalProvisioningV3TokenOnlyPayload,
 } from '@happier-dev/protocol';
 
-import { isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isLegacyAuthCredentials, isTokenOnlyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -22,12 +25,18 @@ export function decideTerminalProvisioningMode(params: Readonly<{
 
 /**
  * The account content private key a terminal provisioning response seals: the data-key machine
- * key when the credentials carry one, otherwise derived from the legacy recovery secret.
+ * key when the credentials carry one, derived from the legacy recovery secret, or absent for
+ * token-only credentials.
  *
  * Shared by the manual terminal-connect flow and the desktop setup auto-approval so both seal the
  * same material; a second derivation would be a second place to get a key length wrong.
  */
-export function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
+export async function resolveTerminalProvisioningContentPrivateKey(
+    credentials: AuthCredentials,
+    options: Readonly<{ endpointUrl?: string }> = {},
+): Promise<Uint8Array | null> {
+    await assertCurrentAccountKeyForProvisioning(credentials, options);
+    if (isTokenOnlyAuthCredentials(credentials)) return null;
     if (!isLegacyAuthCredentials(credentials)) {
         const machineKey = decodeBase64(credentials.encryption.machineKey, 'base64');
         if (machineKey.length !== 32) {
@@ -65,6 +74,24 @@ export function buildTerminalResponseV3(params: Readonly<{
         ...params,
         randomBytes: getRandomBytes,
     });
+}
+
+export function buildTerminalResponseV2TokenOnly(params: Readonly<{
+    terminalEphemeralPublicKey: Uint8Array;
+}>): Uint8Array {
+    return sealTerminalProvisioningV2TokenOnlyPayload({
+        recipientPublicKey: params.terminalEphemeralPublicKey,
+        randomBytes: getRandomBytes,
+    });
+}
+
+export function buildTerminalResponseV3TokenOnly(params: Readonly<{
+    terminalEphemeralPublicKey: Uint8Array;
+    pairingSecret: Uint8Array;
+    createdAtMs: number;
+    expiresAtMs: number;
+}>): Uint8Array {
+    return sealTerminalProvisioningV3TokenOnlyPayload({ ...params, randomBytes: getRandomBytes });
 }
 
 export function buildTerminalResponseV1(params: Readonly<{

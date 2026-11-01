@@ -439,6 +439,7 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
   packageName: string;
   srcDir: string;
   destDir: string;
+  includeFiles?: string[];
 }> {
   const hostPackageJsonPath = resolve(params.hostPackageDir, 'package.json');
   if (!existsSync(hostPackageJsonPath)) {
@@ -454,10 +455,18 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
       throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
     }
 
+    const srcDir = resolve(params.repoRoot, 'packages', workspaceName);
+    const workspacePackageJson = readJson(resolve(srcDir, 'package.json'));
+    const includeFiles = Array.isArray(workspacePackageJson?.happierWorkspaceBundleFiles)
+      ? workspacePackageJson.happierWorkspaceBundleFiles
+        .map((value: unknown) => String(value ?? '').trim())
+        .filter((value: string) => Boolean(value) && !value.split(/[\\/]/u).includes('..'))
+      : [];
     return {
       packageName,
-      srcDir: resolve(params.repoRoot, 'packages', workspaceName),
+      srcDir,
       destDir: resolve(params.hostPackageDir, 'node_modules', ...packageName.split('/')),
+      ...(includeFiles.length > 0 ? { includeFiles } : {}),
     };
   });
 }
@@ -476,7 +485,7 @@ function collectExternalRuntimeDepNamesFromPackageJson(packageJson: any): Readon
   return [...required, ...optional];
 }
 
-function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packageName: string }>): Readonly<{
+export function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packageName: string }>): Readonly<{
   packageDir: string;
   packageJsonPath: string;
   packageJson: any;

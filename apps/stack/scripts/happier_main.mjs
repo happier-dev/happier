@@ -45,9 +45,10 @@ function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalSer
   const reconciliationEnv = { ...env, HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP: '1' };
   const result =
     resolvedCli.kind === 'runtime'
-      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...args], { stdio: 'ignore', env: reconciliationEnv })
+      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...args], { windowsHide: true, stdio: 'ignore', env: reconciliationEnv })
       : spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...args], {
           stdio: 'ignore',
+          windowsHide: true,
           env: reconciliationEnv,
         });
   if (result.error || result.status !== 0) {

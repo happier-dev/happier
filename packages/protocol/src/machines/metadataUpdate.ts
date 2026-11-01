@@ -1,14 +1,15 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const MachineUpdateMetadataRequestSchema = z.object({
+export const MachineUpdateMetadataRequestSchema = lazySchema(() => z.object({
   machineId: z.string().min(1).optional(),
   metadata: z.string(),
   expectedVersion: z.number().int().nonnegative(),
-});
+}));
 
 export type MachineUpdateMetadataRequest = z.infer<typeof MachineUpdateMetadataRequestSchema>;
 
-export const MachineUpdateMetadataResponseSchema = z.discriminatedUnion('result', [
+export const MachineUpdateMetadataResponseSchema = lazySchema(() => z.discriminatedUnion('result', [
   z.object({
     result: z.literal('error'),
     message: z.string().optional(),
@@ -23,6 +24,6 @@ export const MachineUpdateMetadataResponseSchema = z.discriminatedUnion('result'
     version: z.number().int().nonnegative(),
     metadata: z.string(),
   }),
-]);
+]));
 
 export type MachineUpdateMetadataResponse = z.infer<typeof MachineUpdateMetadataResponseSchema>;

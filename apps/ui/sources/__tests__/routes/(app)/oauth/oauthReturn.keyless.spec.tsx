@@ -11,6 +11,10 @@ import {
     setPendingExternalAuthServerMismatch,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 import { t } from '@/text';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+
+const keylessToken = `header.${Buffer.from(JSON.stringify({ sub: 'account-keyless' })).toString('base64url')}.signature`;
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,6 +22,7 @@ vi.mock('@shopify/react-native-skia', () => ({}));
 
 afterEach(() => {
     vi.unstubAllGlobals();
+    resetServerFeaturesClientForTests();
     resetOAuthHarness();
 });
 
@@ -56,7 +61,7 @@ describe('oauth/[provider] return (keyless)', () => {
         vi.stubGlobal('fetch', originalFetch);
     });
 
-    it('finalizes keyless oauth auth for a plaintext account and logs in with data-key credentials', async () => {
+    it('finalizes keyless oauth auth for a plaintext account and logs in with token-only credentials', async () => {
         replaceSpy.mockReset();
         loginWithCredentialsSpy.mockReset();
         clearPendingExternalAuthMock.mockReset();
@@ -71,6 +76,11 @@ describe('oauth/[provider] return (keyless)', () => {
 
         const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async (url: any, init?: any) => {
+            if (String(url).endsWith('/v1/features')) {
+                return new Response(JSON.stringify(createRootLayoutFeaturesResponse({
+                    features: { encryption: { plaintextMachine: { enabled: true } } },
+                })), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
             if (typeof url === 'string' && url.endsWith('/health')) {
                 return new Response(JSON.stringify({ ok: true }), {
                     status: 200,
@@ -82,7 +92,7 @@ describe('oauth/[provider] return (keyless)', () => {
                 if (body?.pending !== 'p1' || body?.proof !== 'proof_1') {
                     return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
                 }
-                return new Response(JSON.stringify({ success: true, token: 'tok_1' }), {
+                return new Response(JSON.stringify({ success: true, token: keylessToken }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 });
@@ -94,15 +104,7 @@ describe('oauth/[provider] return (keyless)', () => {
         await runWithOAuthScreen(async () => {
             expect(fetchMock).toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    token: 'tok_1',
-                    encryption: expect.objectContaining({
-                        publicKey: expect.any(String),
-                        machineKey: expect.any(String),
-                    }),
-                }),
-            );
+            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: keylessToken });
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
 

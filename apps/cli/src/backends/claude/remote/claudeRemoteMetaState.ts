@@ -1,16 +1,24 @@
 import { normalizeClaudeSettingSourcesV2 } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import {
     CLAUDE_UNIFIED_TERMINAL_HOSTS,
+    CLAUDE_REMOTE_PROVIDER_FIELDS,
+    CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
     CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
     type ClaudeUnifiedTerminalHost,
     type ClaudeUnifiedTerminalResumeChoice,
+    type ClaudeUnifiedTerminalResponseLocation,
+    CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS,
 } from '@happier-dev/agents';
 
 export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
+    claudeRemoteIdleReclaimEnabled: boolean;
+    claudeRemoteIdleReclaimTimeoutMinutes: number;
     claudeUnifiedTerminalEnabled: boolean;
     claudeUnifiedTerminalHost: ClaudeUnifiedTerminalHost;
     claudeUnifiedTerminalResumeChoice: ClaudeUnifiedTerminalResumeChoice;
+    claudeUnifiedTerminalQuestionResponseLocation: ClaudeUnifiedTerminalResponseLocation | null;
+    claudeUnifiedTerminalPermissionResponseLocation: ClaudeUnifiedTerminalResponseLocation | null;
     /**
      * v2 multi-select representation of Claude Code setting sources.
      *
@@ -65,9 +73,14 @@ function normalizeDebugCategories(raw: unknown): Array<'api' | 'mcp' | 'hooks' |
 
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
     claudeRemoteAgentSdkEnabled: true,
+    claudeRemoteIdleReclaimEnabled: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimEnabled,
+    claudeRemoteIdleReclaimTimeoutMinutes: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimTimeoutMinutes,
     claudeUnifiedTerminalEnabled: false,
     claudeUnifiedTerminalHost: 'auto',
     claudeUnifiedTerminalResumeChoice: 'ask_every_time',
+    // Preserve absence until the shared resolver can see an older explicit bridge opt-out.
+    claudeUnifiedTerminalQuestionResponseLocation: null,
+    claudeUnifiedTerminalPermissionResponseLocation: null,
     claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as const,
     // Default to loading BOTH user + project settings so Claude Code can see the user's
     // globally configured MCP servers (and other preferences) when launched by Happier.
@@ -99,9 +112,25 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
     };
 
     const record = meta as Record<string, unknown>;
+    for (const key of ['claudeUnifiedTerminalQuestionResponseLocation', 'claudeUnifiedTerminalPermissionResponseLocation'] as const) {
+        const value = record[key];
+        if (typeof value === 'string' && (CLAUDE_UNIFIED_TERMINAL_RESPONSE_LOCATIONS as readonly string[]).includes(value)) {
+            next[key] = value as ClaudeUnifiedTerminalResponseLocation;
+        }
+    }
 
     if (typeof record.claudeRemoteAgentSdkEnabled === 'boolean') {
         next.claudeRemoteAgentSdkEnabled = record.claudeRemoteAgentSdkEnabled;
+    }
+
+    if (typeof record.claudeRemoteIdleReclaimEnabled === 'boolean') {
+        next.claudeRemoteIdleReclaimEnabled = record.claudeRemoteIdleReclaimEnabled;
+    }
+    const idleTimeout = CLAUDE_REMOTE_PROVIDER_FIELDS.claudeRemoteIdleReclaimTimeoutMinutes.schema.safeParse(
+        record.claudeRemoteIdleReclaimTimeoutMinutes,
+    );
+    if (idleTimeout.success) {
+        next.claudeRemoteIdleReclaimTimeoutMinutes = idleTimeout.data;
     }
 
     if (typeof record.claudeUnifiedTerminalEnabled === 'boolean') {

@@ -5,6 +5,7 @@ import type { Credentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { z } from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 export type ProbedAgentConfigOptionValue = string | number | boolean | null;
 
@@ -36,22 +37,22 @@ const agentConfigOptionsProbeCache = new AsyncTtlCache<ProbedAgentConfigOptionsR
   successTtlMs: PROBE_CONFIG_OPTIONS_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS,
 });
-const ProbeNonEmptyStringSchema = z.string().trim().min(1);
-const ProbeDescriptionSchema = z.string();
-const ProbeOptionValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const ProbeConfigChoiceInputSchema = z.object({
+const ProbeNonEmptyStringSchema = lazySchema(() => z.string().trim().min(1));
+const ProbeDescriptionSchema = lazySchema(() => z.string());
+const ProbeOptionValueSchema = lazySchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
+const ProbeConfigChoiceInputSchema = lazySchema(() => z.object({
   value: z.unknown().optional(),
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
-});
-const ProbeConfigOptionInputSchema = z.object({
+}));
+const ProbeConfigOptionInputSchema = lazySchema(() => z.object({
   id: ProbeNonEmptyStringSchema,
   name: ProbeNonEmptyStringSchema,
   description: ProbeDescriptionSchema.optional(),
   type: ProbeNonEmptyStringSchema,
   currentValue: z.unknown().optional(),
   options: z.array(z.unknown()).optional(),
-});
+}));
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentConfigOptionsResult {
   return { provider: agentId, configOptions: [], source: 'static' };

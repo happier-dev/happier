@@ -1,16 +1,17 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
-export const ScmBackendIdSchema = z.enum(['git', 'sapling']);
+export const ScmBackendIdSchema = lazySchema(() => z.enum(['git', 'sapling']));
 export type ScmBackendId = z.infer<typeof ScmBackendIdSchema>;
 
-export const ScmBackendPreferenceSchema = z.object({
+export const ScmBackendPreferenceSchema = lazySchema(() => z.object({
   kind: z.literal('prefer'),
   backendId: ScmBackendIdSchema,
-});
+}));
 export type ScmBackendPreference = z.infer<typeof ScmBackendPreferenceSchema>;
 
-export const ScmRequestBaseSchema = z.object({
+export const ScmRequestBaseSchema = lazySchema(() => z.object({
   cwd: z.string().optional(),
   backendPreference: ScmBackendPreferenceSchema.optional(),
-});
+}));
 export type ScmRequestBase = z.infer<typeof ScmRequestBaseSchema>;

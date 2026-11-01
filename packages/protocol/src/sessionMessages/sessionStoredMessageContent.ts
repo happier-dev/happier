@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const SessionStoredMessageContentSchema = z.preprocess((value) => {
+export const SessionStoredMessageContentSchema = lazySchema(() => z.preprocess((value) => {
   // Backwards compatibility: older clients/servers stored message content as a bare ciphertext string.
   if (typeof value === 'string') {
     const ciphertext = value.trim();
@@ -24,6 +25,6 @@ export const SessionStoredMessageContentSchema = z.preprocess((value) => {
     t: z.literal('plain'),
     v: z.unknown(),
   }),
-]));
+])));
 
 export type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;

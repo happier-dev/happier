@@ -1,19 +1,20 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX = 2_147_483_647;
 
-export const SessionRuntimeActivityStateSchema = z.enum([
+export const SessionRuntimeActivityStateSchema = lazySchema(() => z.enum([
   'active',
   'idle',
   'unknown',
-]);
+]));
 
-export const SessionRuntimeActivityActiveCountSchema = z.number()
+export const SessionRuntimeActivityActiveCountSchema = lazySchema(() => z.number()
   .int()
   .nonnegative()
-  .max(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX);
+  .max(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX));
 
-export const SessionRuntimeActivitySnapshotSchema = z.object({
+export const SessionRuntimeActivitySnapshotSchema = lazySchema(() => z.object({
   state: SessionRuntimeActivityStateSchema,
   activeCount: SessionRuntimeActivityActiveCountSchema,
 }).strict().superRefine((snapshot, context) => {
@@ -27,9 +28,9 @@ export const SessionRuntimeActivitySnapshotSchema = z.object({
       message: 'Snapshot state and active count disagree',
     });
   }
-});
+}));
 
-export const SessionRuntimeActivityProjectionSchema = z.object({
+export const SessionRuntimeActivityProjectionSchema = lazySchema(() => z.object({
   state: SessionRuntimeActivityStateSchema,
   activeCount: SessionRuntimeActivityActiveCountSchema,
   observedAt: z.number().int().nonnegative().safe().nullable(),
@@ -66,11 +67,20 @@ export const SessionRuntimeActivityProjectionSchema = z.object({
       message: 'Only the unknown migration sentinel may omit observedAt at a positive revision',
     });
   }
-});
+}));
 
 export type SessionRuntimeActivityState = z.infer<typeof SessionRuntimeActivityStateSchema>;
 export type SessionRuntimeActivitySnapshot = z.infer<typeof SessionRuntimeActivitySnapshotSchema>;
 export type SessionRuntimeActivityProjection = z.infer<typeof SessionRuntimeActivityProjectionSchema>;
+
+/** Active work can require interruption consent even when its observation is stale. */
+export function hasActiveSessionRuntimeActivity(
+  snapshot: Readonly<{ state?: unknown; activeCount?: unknown }> | null | undefined,
+): boolean {
+  return snapshot?.state === 'active'
+    && typeof snapshot.activeCount === 'number'
+    && snapshot.activeCount > 0;
+}
 
 export const SESSION_RUNTIME_ACTIVITY_PROJECTION_FIELD_NAMES = [
   'runtimeActivityState',

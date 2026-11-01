@@ -72,6 +72,28 @@ function makeScopedSessionList(
 describe('buildInboxSessionState', () => {
     const now = 1_000_000;
 
+    it('does not offer a completed foreground turn for review while background work continues', () => {
+        const session = makeUnreadRenderable({
+            activeAt: now,
+            runtimeActivityState: 'active',
+            runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: now,
+        });
+        const input = {
+            sessions: [],
+            sessionListViewDataByServerId: { background: makeScopedSessionList('background', [session]) },
+            nowMs: now,
+        };
+        expect(buildInboxSessionState(input).reviewSessions).toEqual([]);
+        expect(buildInboxSessionSummary(input).hasContent).toBe(false);
+        expect(buildInboxSessionState({
+            ...input,
+            sessionListViewDataByServerId: {
+                background: makeScopedSessionList('background', [{ ...session, runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 }]),
+            },
+        }).reviewSessions.map(({ reason }) => reason)).toEqual(['ready']);
+    });
+
     it('does not surface or mark a still-working session merely because streaming made it unread', () => {
         const working = makeUnreadRenderable({
             id: 'working-unread',
@@ -580,10 +602,9 @@ describe('buildInboxSessionState', () => {
         expect(state.markAllReadTargets).toEqual([]);
     });
 
-    it('excludes stale terminal pending requests from actionable inbox attention', () => {
-        const session = makeSession({
+    it('keeps a pending request left after a completed turn actionable until its runtime goes offline', () => {
+        const pendingAfterCompletedTurn = {
             active: true,
-            presence: 'online',
             thinking: true,
             thinkingAt: now - 120_000,
             latestTurnStatus: 'completed',
@@ -599,14 +620,19 @@ describe('buildInboxSessionState', () => {
                     },
                 },
             },
-        });
+        } as const;
 
-        const state = buildInboxSessionState({
-            sessions: [session],
+        const liveState = buildInboxSessionState({
+            sessions: [makeSession({ ...pendingAfterCompletedTurn, presence: 'online' })],
+            nowMs: now,
+        });
+        const offlineState = buildInboxSessionState({
+            sessions: [makeSession({ ...pendingAfterCompletedTurn, presence: now - 1_000 })],
             nowMs: now,
         });
 
-        expect(state.sessionsNeedingAttention).toEqual([]);
+        expect(liveState.sessionsNeedingAttention.map((entry) => entry.session.id)).toEqual(['session-1']);
+        expect(offlineState.sessionsNeedingAttention).toEqual([]);
     });
 
     it('excludes hidden system sessions from inbox attention', () => {

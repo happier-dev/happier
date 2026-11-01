@@ -23,6 +23,7 @@ import {
 
 import {
   ConnectedServiceCredentialRecordV1Schema,
+  buildConnectedServiceCredentialMetadata,
   assertConnectedServiceCredentialRecordBinding,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
@@ -31,6 +32,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { sealConnectedServiceCredential } from './sealConnectedServiceCredential';
+import { invalidateConnectedServiceQuotaSnapshotForCredential } from './connectedServiceQuotaSnapshotStore';
 
 const CREDENTIAL_NOT_FOUND_ERROR = 'connect_credential_not_found';
 const PROVIDER_IDENTITY_MISMATCH_ERROR = 'connect_reconnect_provider_identity_mismatch';
@@ -185,7 +187,7 @@ export async function storeConnectedServiceCredentialForAccount(
       : initial?.revisionSemantics
         ?? (selectedReleasedServerV021Contract ? 'legacy_unfenced' : 'revisioned');
     try {
-      return await writeWithAmbiguousSettlement({
+      const stored = await writeWithAmbiguousSettlement({
         expectedCredentialRevision,
         write: () => registerConnectedServiceCredentialPlain(credentials, {
           serviceId: params.serviceId,
@@ -204,6 +206,8 @@ export async function storeConnectedServiceCredentialForAccount(
         },
         isIntendedContent: (content) => JSON.stringify(content) === JSON.stringify(intendedRecord),
       });
+      invalidateConnectedServiceQuotaSnapshotForCredential(credentials, intendedRecord);
+      return stored;
     } catch (error) {
       if (isConnectedServiceApiErrorCode(error, PROVIDER_IDENTITY_MISMATCH_ERROR)) {
         throw new ConnectedServiceCredentialIdentityMismatchError(expectedCredentialRevision, error);
@@ -213,12 +217,7 @@ export async function storeConnectedServiceCredentialForAccount(
   }
 
   const ciphertext = sealConnectedServiceCredential({ credentials, record: params.record, randomBytes: opts?.randomBytes });
-  const metadata = {
-    kind: params.record.kind,
-    providerEmail: (params.record.kind === 'oauth' ? params.record.oauth?.providerEmail : params.record.token?.providerEmail) ?? null,
-    providerAccountId: (params.record.kind === 'oauth' ? params.record.oauth?.providerAccountId : params.record.token?.providerAccountId) ?? null,
-    expiresAt: params.record.expiresAt ?? null,
-  } as const;
+  const metadata = buildConnectedServiceCredentialMetadata(params.record);
   const initial = opts && 'expectedCredentialRevision' in opts
     ? null
     : await readCurrentOrAbsent(() => getConnectedServiceCredentialSealed(credentials, params));
@@ -226,7 +225,7 @@ export async function storeConnectedServiceCredentialForAccount(
     ? opts.expectedCredentialRevision ?? null
     : initial?.credentialRevision ?? null;
   try {
-    return await writeWithAmbiguousSettlement({
+    const stored = await writeWithAmbiguousSettlement({
       expectedCredentialRevision,
       write: () => registerConnectedServiceCredentialSealed(credentials, {
         serviceId: params.serviceId,
@@ -249,8 +248,12 @@ export async function storeConnectedServiceCredentialForAccount(
         && (content.metadata.providerEmail ?? null) === metadata.providerEmail
         && (content.metadata.providerAccountId ?? null) === metadata.providerAccountId
         && (content.metadata.expiresAt ?? null) === metadata.expiresAt
+        && (content.metadata.providerOrganizationId === undefined
+          || content.metadata.providerOrganizationId === metadata.providerOrganizationId)
       ),
     });
+    invalidateConnectedServiceQuotaSnapshotForCredential(credentials, intendedRecord);
+    return stored;
   } catch (error) {
     if (isConnectedServiceApiErrorCode(error, PROVIDER_IDENTITY_MISMATCH_ERROR)) {
       throw new ConnectedServiceCredentialIdentityMismatchError(expectedCredentialRevision, error);

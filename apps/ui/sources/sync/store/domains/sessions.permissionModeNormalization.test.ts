@@ -23,6 +23,7 @@ function createHarness() {
     };
 
     const domain = createSessionsDomain({ get, set } as any);
+    set(domain);
     return { get, domain };
 }
 

@@ -57,7 +57,7 @@ export function buildUpdatesSummary(
         if (item.state === 'checking') checking = true;
         if (item.state === 'unchecked') unchecked = true;
         const completion = completions.get(item.id);
-        if (completion === 'done' || (completion === 'pendingRemote' && item.state === 'upToDate')) completed = true;
+        if (completion === 'done' || (completion === 'pendingRemote' && item.updateCompleted === true)) completed = true;
     }
 
     // One ranking for every entry (pill, header, Settings, tray): what needs the person first —

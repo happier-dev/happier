@@ -160,6 +160,20 @@ describe('PushNotificationTroubleshootingView', () => {
         expect(refreshRow?.props.loading).toBeFalsy();
     });
 
+    it('offers a deliberate remote test and explains when this phone has no registered target', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false });
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[phone]' });
+        fetchPushTokensMock.mockResolvedValue([]);
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        await flushHookEffects({ cycles: 20 });
+        const row = screen.findRow('settings-notifications-push-troubleshooting-test-remote');
+        expect(row).toBeTruthy();
+        await act(async () => { await row!.props.onPress(); });
+        expect(modalAlertMock).toHaveBeenCalledWith(expect.any(String), 'settingsNotifications.pushTroubleshooting.remoteTest.notRegistered');
+    });
+
     it('marks the current token as this device', async () => {
         const Notifications = await import('expo-notifications');
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({

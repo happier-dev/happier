@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, writeCredentialsDataKey } from '@/persistence';
+import { updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnly } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
@@ -192,7 +192,10 @@ describe('happier auth status --json', () => {
     }
   });
 
-  it('uses the ephemeral --server-url selection when resolving auth status', async () => {
+  it.each(['dataKey', 'tokenOnly'] as const)('uses the ephemeral --server-url selection with %s credentials when resolving auth status', async (credentialType) => {
+    const token = credentialType === 'tokenOnly'
+      ? `header.${Buffer.from(JSON.stringify({ sub: 'acct_1' })).toString('base64url')}.sig`
+      : 'token_ephemeral_server';
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -205,7 +208,7 @@ describe('happier auth status --json', () => {
             return;
           }
 
-          expect(req.headers.authorization).toBe('Bearer token_ephemeral_server');
+          expect(req.headers.authorization).toBe(`Bearer ${token}`);
           res.statusCode = 200;
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify({ id: 'acct_1', email: 'qa@example.test', username: 'qa' }));
@@ -230,11 +233,15 @@ describe('happier auth status --json', () => {
 
           const ephemeralServerId = configuration.activeServerId;
           const machineKey = new Uint8Array(32).fill(10);
-          await writeCredentialsDataKey({
-            token: 'token_ephemeral_server',
-            publicKey: deriveBoxPublicKeyFromSeed(machineKey),
-            machineKey,
-          });
+          if (credentialType === 'tokenOnly') {
+            await writeCredentialsTokenOnly({ token });
+          } else {
+            await writeCredentialsDataKey({
+              token,
+              publicKey: deriveBoxPublicKeyFromSeed(machineKey),
+              machineKey,
+            });
+          }
           await updateSettings((settings) => ({
             ...settings,
             machineIdByServerId: { ...(settings.machineIdByServerId ?? {}), [ephemeralServerId]: 'mid_ephemeral' },
@@ -253,12 +260,13 @@ describe('happier auth status --json', () => {
           const parsed = JSON.parse(output.text().trim()) as {
             ok: boolean;
             kind: string;
-            data?: { authenticated?: boolean; machineId?: string; accountId?: string; accountLabel?: string; relayHost?: string; serverId?: string };
+            data?: { authenticated?: boolean; encryption?: { type: string }; machineId?: string; accountId?: string; accountLabel?: string; relayHost?: string; serverId?: string };
             error?: { code?: string; serverId?: string };
           };
           expect(parsed.ok).toBe(true);
           expect(parsed.kind).toBe('auth_status');
           expect(parsed.data?.authenticated).toBe(true);
+          expect(parsed.data?.encryption).toEqual({ type: credentialType });
           expect(parsed.data?.serverId).toBe(configuration.activeServerId);
           expect(parsed.data?.machineId).toBe('mid_ephemeral');
           expect(parsed.data?.accountId).toBe('acct_1');

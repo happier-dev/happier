@@ -179,6 +179,7 @@ const SettingsAiAndAgentsSection = React.memo(function SettingsAiAndAgentsSectio
             )}
             {promptsLibraryEnabled ? (
                 <Item
+                    testID="settings-prompts"
                     title={t('settings.prompts')}
                     subtitle={t('settings.promptsSubtitle')}
                     icon={<Icon name="books" size={29} color={theme.colors.accent.blue} />}

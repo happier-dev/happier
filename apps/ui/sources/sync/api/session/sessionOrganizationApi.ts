@@ -18,6 +18,9 @@ import {
     SessionOrganizationSnapshotRequestSchema,
     SessionOrganizationSnapshotResponseSchema,
     SetSessionAttentionStandingResponseSchema,
+    SetSessionAppearanceResponseSchema,
+    type SetSessionAppearanceRequest,
+    type SetSessionAppearanceResponse,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinResponseSchema,
     SetSessionTagAssignmentsResponseSchema,
@@ -175,6 +178,7 @@ function buildSnapshotQuery(request: Partial<SessionOrganizationSnapshotRequest>
     appendBooleanParam(params, 'includeAllFolderAssignments', request.includeAllFolderAssignments);
     appendBooleanParam(params, 'includeAllTagAssignments', request.includeAllTagAssignments);
     appendBooleanParam(params, 'includeAttentionStandings', request.includeAttentionStandings);
+    appendBooleanParam(params, 'includeSessionAppearances', request.includeSessionAppearances);
     appendBooleanParam(params, 'includeAttentionReminderTimes', request.includeAttentionReminderTimes);
     appendArrayParam(params, 'assignmentSessionIds', request.assignmentSessionIds);
     appendArrayParam(params, 'folderIds', request.folderIds);
@@ -262,6 +266,19 @@ export async function setSessionAttentionStanding(params: Readonly<{
         },
     });
     return parseJsonResponse(response, SetSessionAttentionStandingResponseSchema, 'Failed to set session attention standing');
+}
+
+export async function setSessionAppearance(params: Readonly<{
+    credentials: AuthCredentials;
+    serverUrl?: string;
+    sessionId: string;
+    request: SetSessionAppearanceRequest;
+}>): Promise<SetSessionAppearanceResponse> {
+    const response = await fetchSessionOrganizationRoute({ ...params,
+        path: `${SESSION_ORGANIZATION_ROUTE}/appearances/${encodeURIComponent(params.sessionId)}`,
+        init: { method: 'PUT', headers: authHeaders(params.credentials), body: JSON.stringify(params.request) },
+    });
+    return parseJsonResponse(response, SetSessionAppearanceResponseSchema, 'Failed to set session appearance');
 }
 
 export async function reorderSessionOrganization(params: Readonly<{

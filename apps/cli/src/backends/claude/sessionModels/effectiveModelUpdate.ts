@@ -5,7 +5,7 @@ import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort'
 import { buildClaudeSessionModelsMetadataWithCurrentModelId } from '../remote/buildClaudeSessionModelsMetadataFromSupportedModels';
 
 export type ClaudeEffectiveModelUpdateSource = 'statusline' | 'transcript' | 'sdk' | 'control';
-export type ClaudeEffectiveModelObservation = Readonly<{ modelId: string; reasoningEffort: string }>;
+export type ClaudeEffectiveModelObservation = Readonly<{ modelId: string; reasoningEffort?: string }>;
 
 type ClaudeEffectiveModelUpdateClient = Readonly<{
   sendSessionEvent(event: { type: 'message'; message: string }, id?: string): void;
@@ -117,27 +117,30 @@ function resolveModelLabel(params: Readonly<{
 export function applyClaudeEffectiveModelUpdate(params: Readonly<{
   client: ClaudeEffectiveModelUpdateClient;
   reconcileModels?: typeof reconcileClaudeSessionModelsState;
-  modelId: string;
+  modelId?: string | null;
   displayName?: string | null;
   contextWindowTokens?: number | null;
   reasoningEffort?: string | null;
   source: ClaudeEffectiveModelUpdateSource;
   logPrefix: string;
 }>): void {
-  const modelId = readString(params.modelId);
+  const state = stateFor(params.client);
+  // Effort-only control evidence can refine the last observed model, never a catalog/selection seed.
+  const modelId = readString(params.modelId) ?? state.lastSeenModelId;
   if (!modelId) return;
 
   const displayName = readString(params.displayName);
   const contextWindowTokens = readPositiveTokens(params.contextWindowTokens);
   const reasoningEffort = readString(params.reasoningEffort);
   const metadataSnapshot = readMetadataSnapshot(params.client);
-  const state = stateFor(params.client);
   const previousModelId = readActiveClaudeModelId(metadataSnapshot) ?? state.lastSeenModelId;
   const metadataRequestKey = buildMetadataRequestKey({ modelId, displayName, contextWindowTokens, reasoningEffort });
 
   const alreadyAppliedInMemory = state.lastSeenModelId === modelId;
+  const appliedModel = metadataSnapshot?.sessionAppliedModelV1;
   const shouldUpdateMetadata =
-    (!alreadyAppliedInMemory && previousModelId !== modelId)
+    appliedModel?.provider !== 'claude' || appliedModel.modelId !== modelId
+    || (!alreadyAppliedInMemory && previousModelId !== modelId)
     || !hasRequestedModelDetails({ metadata: metadataSnapshot, modelId, displayName, contextWindowTokens, reasoningEffort });
   // Even when metadata already matches, record the live observation in the session's source
   // contributions so a later catalog/SDK publication cannot replace it with a catalog estimate.
@@ -159,6 +162,11 @@ export function applyClaudeEffectiveModelUpdate(params: Readonly<{
       params.client,
       (metadata) => ({
         ...metadata,
+        // Observed Claude runtime evidence owns Running; prompt acceptance proves input custody only.
+        sessionAppliedModelV1: metadata.sessionAppliedModelV1?.provider === 'claude'
+          && metadata.sessionAppliedModelV1.modelId === modelId
+          ? metadata.sessionAppliedModelV1
+          : { v: 1, provider: 'claude', modelId, updatedAt: Date.now() },
         ...(buildClaudeSessionModelsMetadataWithCurrentModelId({
           currentModelId: modelId,
           reconcileModels: params.reconcileModels,

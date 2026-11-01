@@ -2,10 +2,11 @@ import { z } from 'zod';
 
 import { sanitizeBugReportUrl } from '../bugReports/sanitize.js';
 import { CliUpdateFactsSchema } from '../machines/cliUpdateFacts.js';
+import { lazySchema } from '../lazySchema.js';
 
-const NonEmptyString = z.string().trim().min(1);
-const PublicReleaseChannelLabelSchema = z.enum(['stable', 'preview', 'dev']);
-const HappierInstallationSourceSchema = z.enum([
+const NonEmptyString = lazySchema(() => z.string().trim().min(1));
+const PublicReleaseChannelLabelSchema = lazySchema(() => z.enum(['stable', 'preview', 'dev']));
+const HappierInstallationSourceSchema = lazySchema(() => z.enum([
   'firstPartyManaged',
   'selfHostManaged',
   'stackManaged',
@@ -13,27 +14,27 @@ const HappierInstallationSourceSchema = z.enum([
   'npmGlobal',
   'pathBinary',
   'unknown',
-]);
-const HappierServicePlatformSchema = z.enum(['darwin', 'linux', 'win32']);
-const HappierServiceBackendSchema = z.enum([
+]));
+const HappierServicePlatformSchema = lazySchema(() => z.enum(['darwin', 'linux', 'win32']));
+const HappierServiceBackendSchema = lazySchema(() => z.enum([
   'launchd',
   'systemd-user',
   'systemd-system',
   'schtasks-user',
   'schtasks-system',
-]);
-const HappierServiceVerificationSchema = z.enum(['verified', 'candidate']);
-const HappierServiceTargetModeSchema = z.enum(['pinned', 'default-following']);
+]));
+const HappierServiceVerificationSchema = lazySchema(() => z.enum(['verified', 'candidate']));
+const HappierServiceTargetModeSchema = lazySchema(() => z.enum(['pinned', 'default-following']));
 /** The CLI's own autostart vocabulary (`DaemonServiceAutostartMode`), not a boolean. */
-const HappierServiceAutostartModeSchema = z.enum(['at-login', 'on-demand']);
-const HappierWarningSeveritySchema = z.enum(['info', 'warning', 'error']);
+const HappierServiceAutostartModeSchema = lazySchema(() => z.enum(['at-login', 'on-demand']));
+const HappierWarningSeveritySchema = lazySchema(() => z.enum(['info', 'warning', 'error']));
 
 function sanitizeUrl(raw: string): string {
   const sanitized = sanitizeBugReportUrl(raw) ?? raw;
   return sanitized.replace(/\/+$/, '');
 }
 
-export const DoctorSnapshotServerProfileSchema = z.object({
+export const DoctorSnapshotServerProfileSchema = lazySchema(() => z.object({
   id: NonEmptyString,
   name: NonEmptyString,
   serverUrl: NonEmptyString,
@@ -42,11 +43,11 @@ export const DoctorSnapshotServerProfileSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   lastUsedAt: z.number(),
-});
+}));
 
 export type DoctorSnapshotServerProfile = z.infer<typeof DoctorSnapshotServerProfileSchema>;
 
-export const DoctorSnapshotDaemonCredentialStateSchema = z.enum(['missing', 'rejected', 'valid', 'unknown']);
+export const DoctorSnapshotDaemonCredentialStateSchema = lazySchema(() => z.enum(['missing', 'rejected', 'valid', 'unknown']));
 
 export type DoctorSnapshotDaemonCredentialState = z.infer<typeof DoctorSnapshotDaemonCredentialStateSchema>;
 
@@ -55,16 +56,16 @@ export type DoctorSnapshotDaemonCredentialState = z.infer<typeof DoctorSnapshotD
  * authenticated control endpoint and owner evaluation rather than from the files
  * beside it. Optional because older CLIs did not emit it.
  */
-export const DoctorSnapshotDaemonRuntimeConvergenceSchema = z.object({
+export const DoctorSnapshotDaemonRuntimeConvergenceSchema = lazySchema(() => z.object({
   controlReachable: z.boolean(),
   serviceOwnsRunningDaemon: z.boolean(),
   machineIdMatches: z.boolean(),
   cliVersionMatches: z.boolean(),
-});
+}));
 
 export type DoctorSnapshotDaemonRuntimeConvergence = z.infer<typeof DoctorSnapshotDaemonRuntimeConvergenceSchema>;
 
-export const DoctorSnapshotDaemonStatusSchema = z.object({
+export const DoctorSnapshotDaemonStatusSchema = lazySchema(() => z.object({
   server: z.object({
     activeServerId: NonEmptyString,
     serverUrl: NonEmptyString,
@@ -128,20 +129,20 @@ export const DoctorSnapshotDaemonStatusSchema = z.object({
     latestVersion: NonEmptyString.nullable(),
     updateAvailable: z.boolean(),
   }).extend(CliUpdateFactsSchema.omit({ currentVersion: true, latestVersion: true }).partial().shape).nullable().optional(),
-});
+}));
 
 export type DoctorSnapshotDaemonStatus = z.infer<typeof DoctorSnapshotDaemonStatusSchema>;
 
-export const HappierDoctorActiveInvocationSchema = z.object({
+export const HappierDoctorActiveInvocationSchema = lazySchema(() => z.object({
   path: NonEmptyString,
   realPath: NonEmptyString.nullable(),
   invokerName: NonEmptyString.nullable(),
   ring: PublicReleaseChannelLabelSchema.nullable(),
   version: NonEmptyString.nullable(),
   installationId: NonEmptyString.nullable(),
-});
+}));
 
-export const HappierDoctorInstallationSchema = z.object({
+export const HappierDoctorInstallationSchema = lazySchema(() => z.object({
   id: NonEmptyString,
   source: HappierInstallationSourceSchema,
   components: z.array(NonEmptyString).min(1),
@@ -152,14 +153,14 @@ export const HappierDoctorInstallationSchema = z.object({
   shimName: NonEmptyString.nullable(),
   onPath: z.boolean(),
   managedRoot: NonEmptyString.nullable(),
-});
+}));
 
-export const HappierDoctorInstallationInventorySchema = z.object({
+export const HappierDoctorInstallationInventorySchema = lazySchema(() => z.object({
   activeInvocation: HappierDoctorActiveInvocationSchema.nullable(),
   installations: z.array(HappierDoctorInstallationSchema),
-});
+}));
 
-export const HappierDoctorServiceSchema = z.object({
+export const HappierDoctorServiceSchema = lazySchema(() => z.object({
   id: NonEmptyString,
   serviceType: NonEmptyString,
   platform: HappierServicePlatformSchema,
@@ -178,13 +179,13 @@ export const HappierDoctorServiceSchema = z.object({
   running: z.boolean(),
   configuredCliVersion: NonEmptyString.nullable().optional(),
   runningCliVersion: NonEmptyString.nullable().optional(),
-});
+}));
 
-export const HappierDoctorServiceInventorySchema = z.object({
+export const HappierDoctorServiceInventorySchema = lazySchema(() => z.object({
   services: z.array(HappierDoctorServiceSchema),
-});
+}));
 
-export const HappierDoctorRelaySchema = z.object({
+export const HappierDoctorRelaySchema = lazySchema(() => z.object({
   id: NonEmptyString,
   ring: PublicReleaseChannelLabelSchema,
   scope: z.enum(['user', 'system']),
@@ -195,20 +196,20 @@ export const HappierDoctorRelaySchema = z.object({
   serviceActive: z.boolean().nullable(),
   serviceEnabled: z.boolean().nullable(),
   warnings: z.array(NonEmptyString).optional(),
-});
+}));
 
-export const HappierDoctorRelayInventorySchema = z.object({
+export const HappierDoctorRelayInventorySchema = lazySchema(() => z.object({
   relays: z.array(HappierDoctorRelaySchema),
-});
+}));
 
-export const HappierDoctorWarningSchema = z.object({
+export const HappierDoctorWarningSchema = lazySchema(() => z.object({
   code: NonEmptyString,
   severity: HappierWarningSeveritySchema,
   message: NonEmptyString,
   repairCommands: z.array(NonEmptyString),
-});
+}));
 
-export const DoctorSnapshotSchema = z.object({
+export const DoctorSnapshotSchema = lazySchema(() => z.object({
   capturedAt: NonEmptyString,
   server: z.object({
     activeServerId: NonEmptyString,
@@ -233,7 +234,7 @@ export const DoctorSnapshotSchema = z.object({
     happier: HappierDoctorRelayInventorySchema.optional(),
   }).optional(),
   warnings: z.array(HappierDoctorWarningSchema).optional(),
-});
+}));
 
 export type DoctorSnapshot = z.infer<typeof DoctorSnapshotSchema>;
 

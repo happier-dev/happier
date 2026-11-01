@@ -60,6 +60,8 @@ export async function playAudioBytesWithStopper(opts: {
 
             const bytesCopy = opts.bytes.slice(0);
             const audioBuffer = await ctx.decodeAudioData(bytesCopy);
+            // Stopped while resuming/decoding: the stopper already resolved; never start audio.
+            if (settled) return;
             const s = ctx.createBufferSource();
             source = s;
             s.buffer = audioBuffer;
@@ -192,10 +194,16 @@ export async function playAudioBytesWithStopper(opts: {
       safeResolve();
     };
     clearStopper = opts.registerPlaybackStopper(stopPlayback);
+    if (settled) {
+      clearStopper();
+      return;
+    }
 
-    subscription = player.addListener('playbackStatusUpdate', (status: any) => {
-      if (!status?.didJustFinish) return;
-      safeResolve();
+    const progress: NativePlaybackProgress = { loaded: false, playing: false };
+    subscription = player.addListener('playbackStatusUpdate', (status: unknown) => {
+      const outcome = classifyNativePlaybackStatus(status, progress);
+      if (outcome === 'finished' || outcome === 'interrupted') safeResolve();
+      if (outcome === 'failed') safeReject(new Error('audio_playback_failed'));
     });
 
     try {
@@ -205,4 +213,50 @@ export async function playAudioBytesWithStopper(opts: {
       safeReject(error);
     }
   });
+}
+
+type NativePlaybackStatusOutcome = 'pending' | 'finished' | 'interrupted' | 'failed';
+
+type NativePlaybackProgress = { loaded: boolean; playing: boolean };
+
+/** Fields of expo-audio's `AudioStatus` this owner reads; updates may omit any of them. */
+type NativePlaybackStatus = Partial<{
+  didJustFinish: boolean;
+  playbackState: string;
+  playing: boolean;
+  isBuffering: boolean;
+}>;
+
+function readNativePlaybackStatus(status: unknown): NativePlaybackStatus {
+  if (!status || typeof status !== 'object') return {};
+  const record = status as Record<string, unknown>;
+  return {
+    didJustFinish: record.didJustFinish === true,
+    playbackState: typeof record.playbackState === 'string' ? record.playbackState : undefined,
+    playing: typeof record.playing === 'boolean' ? record.playing : undefined,
+    isBuffering: record.isBuffering === true,
+  };
+}
+
+/**
+ * Maps an expo-audio status update to a playback outcome, recording progress in `progress`.
+ * Besides `didJustFinish`, the player can fail (iOS item `failed`; Android drops back to `idle`
+ * after a player error) or be paused by the system (Android permanent audio-focus loss, iOS
+ * interruption without resume); no finish event arrives in those cases. A pause after playback
+ * started ends this speech segment.
+ */
+function classifyNativePlaybackStatus(raw: unknown, progress: NativePlaybackProgress): NativePlaybackStatusOutcome {
+  const status = readNativePlaybackStatus(raw);
+  if (status.didJustFinish) return 'finished';
+  const state = status.playbackState;
+  if (state === 'failed') return 'failed';
+  if (state === 'idle' && progress.loaded) return 'failed';
+  if (state === 'ready' || state === 'readyToPlay' || state === 'buffering') progress.loaded = true;
+
+  if (status.playing === true) {
+    progress.playing = true;
+    return 'pending';
+  }
+  if (progress.playing && status.playing === false && !status.isBuffering) return 'interrupted';
+  return 'pending';
 }

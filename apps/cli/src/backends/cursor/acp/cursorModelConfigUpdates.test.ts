@@ -18,6 +18,22 @@ function modelOption(options: SessionConfigOption['options']): SessionConfigOpti
 }
 
 describe('resolveCursorSessionModelConfigUpdate', () => {
+  it.each(['false', 'true'])('applies explicit fast=%s through a separate Cursor config control', (fast) => {
+    expect(resolveCursorSessionModelConfigUpdate({
+      modelId: `composer-2.5[fast=${fast}]`,
+      configOptions: [
+        modelOption([{ value: 'composer-2.5', name: 'Composer 2.5' }]),
+        {
+          id: 'fast', name: 'Fast', type: 'select', currentValue: 'true',
+          options: [{ value: 'false', name: 'Off' }, { value: 'true', name: 'On' }],
+        },
+      ],
+    })).toEqual({
+      modelId: 'composer-2.5',
+      configUpdates: [{ configId: 'fast', value: fast }],
+    });
+  });
+
   it('maps Cursor auto aliases to the ACP default model choice', () => {
     expect(resolveCursorSessionModelConfigUpdate({
       modelId: 'auto',

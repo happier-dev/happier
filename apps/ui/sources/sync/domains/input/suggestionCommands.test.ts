@@ -62,7 +62,7 @@ describe('suggestionCommands', () => {
     it('omits execution-run slash commands when the execution runs feature is disabled', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },
-            settings: { experiments: false, featureToggles: {} },
+            settings: { experiments: false, featureToggles: { 'execution.runs': false } },
         } as any);
         const { getAllCommands } = await import('./suggestionCommands');
         const commands = getAllCommands('s1');

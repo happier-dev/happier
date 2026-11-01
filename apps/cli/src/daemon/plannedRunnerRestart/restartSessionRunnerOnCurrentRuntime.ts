@@ -1,5 +1,5 @@
 import type { TrackedSession } from '@/daemon/types';
-import type { SessionRunnerRestartDisabledReason } from '@happier-dev/protocol';
+import { hasActiveSessionRuntimeActivity, type SessionRunnerRestartDisabledReason, type SessionRuntimeActivityState } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
@@ -32,6 +32,11 @@ type RequestRestart = (input: Readonly<{
 
 type RestartSessionRunnerEndpointSummary = NonNullable<RestartSessionRunnerResult['previous']>;
 type ResolveActivityDisabledReason = (sessionId: string) => SessionRunnerRestartDisabledReason | null;
+type ServerRuntimeActivity = Readonly<{
+  runtimeActivityState?: SessionRuntimeActivityState | null;
+  runtimeActivityActiveCount?: number | null;
+}>;
+type ReadServerRuntimeActivity = (sessionId: string) => Promise<ServerRuntimeActivity | null>;
 type RefreshTrackedSessionRuntimeSnapshot = (input: Readonly<{
   sessionId: string;
   tracked: TrackedSession;
@@ -75,6 +80,30 @@ function skipped(
     sessionId,
     ...(reasonCode ? { reasonCode } : {}),
   };
+}
+
+// The UI asks the user before sending this reason while background agents run, so only
+// unconfirmed restarts (daemon/CLI/doctor/self-update/startup passes) consult the server.
+const USER_CONFIRMED_RESTART_REASON: RestartSessionRunnerRequest['reason'] = 'ui_stale_runner_banner';
+
+/**
+ * Background agents/shells are invisible to the daemon's turn tracking; the server Runtime
+ * Activity projection is the only owner that sees them. An unreadable projection blocks the
+ * restart: a skipped restart stays recoverable, killed background work does not.
+ */
+async function hasServerProjectedBackgroundActivity(
+  sessionId: string,
+  readServerRuntimeActivity: ReadServerRuntimeActivity,
+): Promise<boolean> {
+  try {
+    const activity = await readServerRuntimeActivity(sessionId);
+    return hasActiveSessionRuntimeActivity({
+      state: activity?.runtimeActivityState,
+      activeCount: activity?.runtimeActivityActiveCount,
+    });
+  } catch {
+    return true;
+  }
 }
 
 function validateRestartContext(input: Readonly<{
@@ -168,6 +197,7 @@ export async function restartSessionRunnerOnCurrentRuntime(input: Readonly<{
   resolveActivityDisabledReason?: ResolveActivityDisabledReason;
   refreshTrackedSessionRuntimeSnapshot?: RefreshTrackedSessionRuntimeSnapshot;
   readTerminalAttachmentInfo?: typeof readTerminalAttachmentInfo;
+  readServerRuntimeActivity?: ReadServerRuntimeActivity;
 }>): Promise<RestartSessionRunnerResult> {
   const sessionId = normalizeString(input.request.sessionId);
   const tracked = input.tracked ?? null;
@@ -208,6 +238,13 @@ export async function restartSessionRunnerOnCurrentRuntime(input: Readonly<{
   const activityDisabledReason = input.resolveActivityDisabledReason?.(sessionId) ?? null;
   if (activityDisabledReason) {
     return skipped('busy', sessionId, activityDisabledReason);
+  }
+  if (
+    input.readServerRuntimeActivity
+    && input.request.reason !== USER_CONFIRMED_RESTART_REASON
+    && await hasServerProjectedBackgroundActivity(sessionId, input.readServerRuntimeActivity)
+  ) {
+    return skipped('busy', sessionId, 'turn_in_progress');
   }
 
   if (input.request.dryRun === true) {
@@ -263,6 +300,7 @@ export async function restartAllSessionRunnersOnCurrentRuntime(input: Readonly<{
   requestRestart: RequestRestart;
   resolveActivityDisabledReason?: ResolveActivityDisabledReason;
   refreshTrackedSessionRuntimeSnapshot?: RefreshTrackedSessionRuntimeSnapshot;
+  readServerRuntimeActivity?: ReadServerRuntimeActivity;
   /** Checked before each runner; returning false ends the pass with the results so far. */
   shouldContinue?: () => boolean;
 }>): Promise<RestartAllSessionRunnersResult> {
@@ -285,6 +323,7 @@ export async function restartAllSessionRunnersOnCurrentRuntime(input: Readonly<{
       ...(input.refreshTrackedSessionRuntimeSnapshot
         ? { refreshTrackedSessionRuntimeSnapshot: input.refreshTrackedSessionRuntimeSnapshot }
         : {}),
+      ...(input.readServerRuntimeActivity ? { readServerRuntimeActivity: input.readServerRuntimeActivity } : {}),
     }));
   }
 

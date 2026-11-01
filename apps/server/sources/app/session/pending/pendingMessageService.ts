@@ -1,3 +1,4 @@
+import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { applyPendingSessionStateChange } from "@/app/session/pending/applyPendingSessionStateChange";
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
@@ -328,17 +329,19 @@ export async function enqueuePendingMessage(params: {
         ? params.admissionMode
         : null;
     const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
-    const content =
+    const rawContent =
         "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionPendingMessageContent) : null;
     const requestedActionResult = PendingRequestedActionV1Schema.safeParse(params.requestedAction);
     if (!requestedActionResult.success) return { ok: false, error: "invalid-params" };
     const requestedAction = requestedActionResult.data;
 
-    if (!actorUserId || !sessionId || !localId || !content || deliveryMode === null || admissionMode === null) {
+    if (!actorUserId || !sessionId || !localId || !rawContent || deliveryMode === null || admissionMode === null) {
         return { ok: false, error: "invalid-params" };
     }
-    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) return { ok: false, error: "invalid-params" };
-    if (content.t === "plain" && !("v" in content)) return { ok: false, error: "invalid-params" };
+    if (rawContent.t === "encrypted" && (!rawContent.c || typeof rawContent.c !== "string")) return { ok: false, error: "invalid-params" };
+    if (rawContent.t === "plain" && !("v" in rawContent)) return { ok: false, error: "invalid-params" };
+    const content = normalizeSessionMessageContentForStorage(rawContent);
+    if (!content) return { ok: false, error: "invalid-params" };
     // A Pending row materializes into a transcript row under its own localId,
     // so every Pending ingress is a generic client-facing message ingress. The
     // reserved Agent-transition divider namespace is refused HERE, at the
@@ -656,12 +659,14 @@ export async function updatePendingMessage(params: {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const localId = readPendingLocalId(params.localId) ?? "";
     const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
-    const content =
+    const rawContent =
         "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionPendingMessageContent) : null;
 
-    if (!actorUserId || !sessionId || !localId || !content) return { ok: false, error: "invalid-params" };
-    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) return { ok: false, error: "invalid-params" };
-    if (content.t === "plain" && !("v" in content)) return { ok: false, error: "invalid-params" };
+    if (!actorUserId || !sessionId || !localId || !rawContent) return { ok: false, error: "invalid-params" };
+    if (rawContent.t === "encrypted" && (!rawContent.c || typeof rawContent.c !== "string")) return { ok: false, error: "invalid-params" };
+    if (rawContent.t === "plain" && !("v" in rawContent)) return { ok: false, error: "invalid-params" };
+    const content = normalizeSessionMessageContentForStorage(rawContent);
+    if (!content) return { ok: false, error: "invalid-params" };
 
     const access = await resolveSessionPendingEditAccess(actorUserId, sessionId);
     if (!access.ok) return { ok: false, error: access.error };

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { withTempDir } from '@/testkit/fs/tempDir';
+import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 
 type ApiFault = 'error' | 'disconnect' | 'timeout';
@@ -23,7 +23,7 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
 }>) => Promise<T>, options: Readonly<{ serverVersion?: string; maxInitialRequestBytes?: number; socketPath?: string;
   response?: (method: string, params: Record<string, unknown>) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 }> = {}): Promise<T> {
-  return await withTempDir('herdr-api-', async (directory) => {
+  return await withSocketTempDir(async (directory) => {
     // Only the version probe crosses this executable boundary. All Herdr API
     // operations still use the real socket client and the server below.
     const binary = await writeExecutableShim({ dir: directory,

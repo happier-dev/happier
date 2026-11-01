@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -7,44 +8,44 @@ import { z } from 'zod';
  * can be interpreted by different review engines (LLM prompt reviews, native CLIs).
  */
 
-export const ReviewChangeTypeSchema = z.enum(['all', 'committed', 'uncommitted']);
+export const ReviewChangeTypeSchema = lazySchema(() => z.enum(['all', 'committed', 'uncommitted']));
 export type ReviewChangeType = z.infer<typeof ReviewChangeTypeSchema>;
 
-export const ReviewBaseSchema = z.union([
+export const ReviewBaseSchema = lazySchema(() => z.union([
   z.object({ kind: z.literal('none') }).passthrough(),
   z.object({ kind: z.literal('branch'), baseBranch: z.string().min(1) }).passthrough(),
   z.object({ kind: z.literal('commit'), baseCommit: z.string().min(1) }).passthrough(),
-]);
+]));
 export type ReviewBase = z.infer<typeof ReviewBaseSchema>;
 
-export const ReviewEngineIdSchema = z.string().trim().min(1);
+export const ReviewEngineIdSchema = lazySchema(() => z.string().trim().min(1));
 export type ReviewEngineId = z.infer<typeof ReviewEngineIdSchema>;
 
-export const ReviewRunLocationSchema = z.enum(['execution_run', 'current_session']);
+export const ReviewRunLocationSchema = lazySchema(() => z.enum(['execution_run', 'current_session']));
 export type ReviewRunLocation = z.infer<typeof ReviewRunLocationSchema>;
 
-export const CodeRabbitReviewEngineInputSchema = z
+export const CodeRabbitReviewEngineInputSchema = lazySchema(() => z
   .object({
     configFiles: z.array(z.string().min(1)).optional(),
     plain: z.boolean().optional(),
     promptOnly: z.boolean().optional(),
     maxFiles: z.number().int().min(1).max(5000).optional(),
   })
-  .strict();
+  .strict());
 export type CodeRabbitReviewEngineInput = z.infer<typeof CodeRabbitReviewEngineInputSchema>;
 const DEFAULT_CODERABBIT_REVIEW_ENGINE_INPUT: CodeRabbitReviewEngineInput = CodeRabbitReviewEngineInputSchema.parse({});
 
-export const ReviewEngineInputsSchema = z
+export const ReviewEngineInputsSchema = lazySchema(() => z
   .object({
     // Default to `{}` so surfaces don't need to inject an "empty config" object
     // just to satisfy schema validation when the engine is selected.
     coderabbit: CodeRabbitReviewEngineInputSchema.optional().default(DEFAULT_CODERABBIT_REVIEW_ENGINE_INPUT),
   })
-  .passthrough();
+  .passthrough());
 export type ReviewEngineInputs = z.infer<typeof ReviewEngineInputsSchema>;
 const DEFAULT_REVIEW_ENGINE_INPUTS: ReviewEngineInputs = ReviewEngineInputsSchema.parse({});
 
-export const ReviewStartInputSchema = z
+export const ReviewStartInputSchema = lazySchema(() => z
   .object({
     sessionId: z.string().min(1).optional(),
     engineIds: z.array(ReviewEngineIdSchema).min(1),
@@ -57,7 +58,7 @@ export const ReviewStartInputSchema = z
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     permissionMode: z.string().min(1).default('read_only'),
   })
-  .passthrough()
+  .passthrough())
   // Intentionally no engine-specific requirements here: this is a generalized,
   // cross-surface intent input. Engines may interpret optional `engines.*` blocks.
   ;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
@@ -10,6 +10,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
+import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
@@ -67,9 +68,12 @@ export function resolveToolCallsGroupStatus(params: Readonly<{
 export function resolveToolCallsGroupUnitContainerStyle(
     variant: ToolCallsGroupChromeVariant,
     position: ToolCallsGroupUnitPosition,
+    hasVisibleTools = false,
 ): StyleProp<ViewStyle> {
     const pieces: StyleProp<ViewStyle>[] = [unitStyles.container];
-    if (position === 'footer') pieces.push(unitStyles.containerFooterMargin);
+    if (position === 'footer') {
+        pieces.push(variant === 'feed' && !hasVisibleTools ? unitStyles.containerPlainFeedFooterMargin : unitStyles.containerFooterMargin);
+    }
     if (variant === 'cards') {
         pieces.push(unitStyles.unitCards);
         if (position === 'header') pieces.push(unitStyles.unitCardsHeaderCap);
@@ -95,6 +99,7 @@ export function resolveToolCallsGroupUnitContainerStyle(
 export function ToolCallsGroupUnitRowFrame(props: Readonly<{
     variant: ToolCallsGroupChromeVariant;
     position: ToolCallsGroupUnitPosition;
+    hasVisibleTools?: boolean;
     unitTestID: string;
     children: React.ReactNode;
 }>) {
@@ -104,7 +109,7 @@ export function ToolCallsGroupUnitRowFrame(props: Readonly<{
             <View style={[unitStyles.centeredContent, { maxWidth: contentMaxWidth }]}>
                 <View
                     testID={props.unitTestID}
-                    style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position)}
+                    style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position, props.hasVisibleTools)}
                 >
                     {props.children}
                 </View>
@@ -132,7 +137,7 @@ export function ToolCallsGroupUnitRowScaffold(props: Readonly<{ children: React.
 
 /**
  * The grouped tool-calls header row: icon, title + count, status indicator, and the
- * collapse affordance (chevron + press) when expanded. Shared between the whole-card
+ * expansion toggle. Shared between the whole-card
  * ToolCallsGroupView and the per-unit header row.
  */
 export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHeaderChrome(props: Readonly<{
@@ -140,19 +145,22 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
     status: ToolCallsGroupStatus;
     count: number;
     expanded: boolean;
-    onCollapse: () => void;
+    onToggle: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const headerPressable = props.expanded;
 
     return (
         <Pressable
             testID="transcript-tool-calls-header"
-            onPress={headerPressable ? props.onCollapse : undefined}
-            disabled={!headerPressable}
+            onPress={props.onToggle}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('session.toolCalls')}: ${props.count}`}
+            accessibilityState={{ expanded: props.expanded }}
+            aria-expanded={props.expanded}
             style={({ pressed }) => [
                 chromeStyles.header,
-                headerPressable && pressed && (props.chromeMode === 'activity_feed' ? chromeStyles.headerFeedPressed : chromeStyles.headerCardsPressed),
+                Platform.OS === 'web' && !readCoarsePrimaryPointer() ? chromeStyles.headerDesktop : null,
+                pressed && (props.chromeMode === 'activity_feed' ? chromeStyles.headerFeedPressed : chromeStyles.headerCardsPressed),
             ]}
         >
             <View style={chromeStyles.headerGutter}>
@@ -172,13 +180,11 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                         <Icon name="check-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.success.foreground} />
                     )}
                 </View>
-                {props.expanded ? (
-                    <Icon
-                        name="caret-up"
-                        size={16}
-                        color={theme.colors.text.secondary}
-                    />
-                ) : null}
+                <Icon
+                    name={props.expanded ? 'caret-up' : 'caret-down'}
+                    size={16}
+                    color={theme.colors.text.secondary}
+                />
             </View>
         </Pressable>
     );
@@ -196,7 +202,11 @@ export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroup
         <Pressable
             testID="transcript-tool-calls-preview-more"
             onPress={props.onExpand}
-            style={({ pressed }) => [chromeStyles.previewMore, pressed && chromeStyles.previewMorePressed]}
+            style={({ pressed }) => [
+                chromeStyles.previewMore,
+                Platform.OS === 'web' && !readCoarsePrimaryPointer() ? chromeStyles.previewMoreDesktop : null,
+                pressed && chromeStyles.previewMorePressed,
+            ]}
         >
             <Text style={chromeStyles.previewMoreText}>
                 {t('session.toolCallsCollapsedPreviewMore', { count: props.hiddenCount })}
@@ -209,11 +219,15 @@ const GROUP_STATUS_ICON_SIZE_PX = ICON_SIZE.sm;
 
 const chromeStyles = StyleSheet.create((theme) => ({
     header: {
+        minHeight: Platform.OS === 'android' ? 48 : 44,
         flexDirection: 'row',
         alignItems: 'center',
         paddingTop: 4,
         paddingBottom: 6,
         gap: 8,
+    },
+    headerDesktop: {
+        minHeight: 28,
     },
     headerCardsPressed: {
         opacity: 0.92,
@@ -252,6 +266,9 @@ const chromeStyles = StyleSheet.create((theme) => ({
         paddingBottom: 6,
         alignSelf: 'flex-start',
     },
+    previewMoreDesktop: {
+        paddingTop: 2,
+    },
     previewMorePressed: {
         opacity: 0.9,
     },
@@ -274,6 +291,9 @@ const unitStyles = StyleSheet.create((theme) => ({
     },
     container: {
         marginHorizontal: 16,
+    },
+    containerPlainFeedFooterMargin: {
+        marginBottom: 8,
     },
     containerFooterMargin: {
         marginBottom: 22,

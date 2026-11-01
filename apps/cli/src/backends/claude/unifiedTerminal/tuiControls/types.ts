@@ -140,7 +140,7 @@ export type ClaudePromptSubmitMetadata = Readonly<{
  * Statusline-reported EFFECTIVE runtime facts (lane Y). The statusline is faster than
  * `UserPromptSubmit` and is the only live source of reasoning effort, so it acts as a second
  * effective-truth feed into `lastVerified`. Fields are optional because the payload shape is
- * Claude-owned (haiku omits effort); absent fields must be ignored, never reset.
+ * Claude-owned (haiku omits effort); absent effort is retained only for the same model.
  */
 export type ClaudeStatuslineRuntimeMetadata = Readonly<{
   model?: string | undefined;
@@ -164,6 +164,7 @@ export interface ClaudeUnifiedTuiControlController {
    */
   reconcileFromStatusline(metadata: ClaudeStatuslineRuntimeMetadata): void;
   getLastVerifiedRuntimeConfig(): ClaudeUnifiedVerifiedRuntimeConfig;
+  getPendingRuntimeConfig(): ClaudeDesiredRuntimeConfig;
   /** True while a control op holds the terminal lock; Lane E must not inject prompts while held. */
   isControlInFlight(): boolean;
   /** True only while a Happier-initiated slash control owns this registered follow-up dialog. */

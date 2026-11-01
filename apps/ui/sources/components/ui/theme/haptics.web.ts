@@ -1,11 +1,13 @@
-export function hapticsError() {
+export async function hapticsError(): Promise<void> {
     // No implementation
 }
 
-export function hapticsLight() {
+export async function hapticsLight(): Promise<void> {
     // No implementation
 }
 
-export function hapticsSelection() {
+export async function hapticsSelection(): Promise<void> {
     // No implementation
 }
+
+export async function hapticsDragStart(): Promise<void> {}

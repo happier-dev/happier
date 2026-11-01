@@ -316,6 +316,7 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   };
 
   const child = spawn(cmd, args, {
+    windowsHide: true,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell,
@@ -415,7 +416,7 @@ export async function run(cmd, args, options = {}) {
           : ['pipe', baseStdio, baseStdio]
         : baseStdio;
 
-    const proc = spawn(cmd, args, { shell, ...spawnOptions, stdio });
+    const proc = spawn(cmd, args, { windowsHide: true, shell, ...spawnOptions, stdio });
     if (input != null && proc.stdin) {
       writeChildStdinBestEffort(proc, input);
     }
@@ -444,7 +445,7 @@ export async function runCapture(cmd, args, options = {}) {
   const { timeoutMs, signal, shell: shellOverride, stdio: _stdioOverride, ...spawnOptions } = options ?? {};
   const shell = typeof shellOverride === 'boolean' ? shellOverride : resolveDefaultShellForCommand(cmd);
   return await new Promise((resolvePromise, rejectPromise) => {
-    const proc = spawn(cmd, args, { shell, ...spawnOptions, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(cmd, args, { windowsHide: true, shell, ...spawnOptions, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let settled = false;
@@ -521,7 +522,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
   const startedAt = Date.now();
   return await new Promise((resolvePromise) => {
     const stdio = input != null ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'];
-    const proc = spawn(cmd, args, { stdio, shell: false, ...spawnOptions });
+    const proc = spawn(cmd, args, { windowsHide: true, stdio, shell: false, ...spawnOptions });
     let out = '';
     let err = '';
     const label = String(streamLabel ?? '').trim();

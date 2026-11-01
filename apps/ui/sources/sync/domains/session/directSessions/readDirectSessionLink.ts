@@ -22,6 +22,11 @@ export type DirectSessionLink = z.infer<typeof DirectSessionLinkSchema>['directS
 };
 
 export function readDirectSessionLink(metadata: unknown): DirectSessionLink | null {
+    if (metadata === undefined || metadata === null) return null;
+    if (typeof metadata === 'object' && !Array.isArray(metadata)) {
+        const link = (metadata as Record<string, unknown>).directSessionV1;
+        if (link === undefined || link === null) return null;
+    }
     const parsed = DirectSessionLinkSchema.safeParse(metadata ?? {});
     if (!parsed.success) return null;
     return parsed.data.directSessionV1;

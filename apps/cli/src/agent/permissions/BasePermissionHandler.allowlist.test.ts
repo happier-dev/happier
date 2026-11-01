@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { SessionPermissionRpcRouter } from './sessionPermissionRpcRouter';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PUBLIC_RPC_HANDLER_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -12,11 +14,22 @@ class FakeRpcHandlerManager {
 
 class FakeSession {
   rpcHandlerManager = new FakeRpcHandlerManager();
+  private permissionRpcRouter: SessionPermissionRpcRouter | null = null;
+  getOrCreatePermissionRpcRouter(): SessionPermissionRpcRouter {
+    return this.permissionRpcRouter ??= new SessionPermissionRpcRouter(this.rpcHandlerManager);
+  }
   agentState: any = { requests: {}, completedRequests: {} };
 
   getAgentStateSnapshot() {
     return this.agentState;
   }
+
+  async updateAgentStateRequestSettlement(updater: Parameters<FakeSession['updateAgentState']>[0]): Promise<void> {
+
+    await this.updateAgentState(updater);
+
+  }
+
 
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
@@ -31,12 +44,6 @@ class TestPermissionHandler extends BasePermissionHandler {
 
   request(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
     return this.requestPermissionDecision(toolCallId, toolName, input);
-  }
-
-  requestLegacyWithoutAgentState(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-    return new Promise<PermissionResult>((resolve, reject) => {
-      this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-    });
   }
 
   isAllowed(toolName: string, input: unknown): boolean {
@@ -58,6 +65,49 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
 }
 
 describe('BasePermissionHandler allowlist', () => {
+  it.each(['old', 'new'] as const)('keeps the %s-id next-turn question routable after an older reset admission', async (newId) => {
+    const session = new FakeSession();
+    const router = new SessionPermissionRpcRouter(session.rpcHandlerManager);
+    Object.assign(session, { getOrCreatePermissionRpcRouter: () => router });
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const original = handler.request('old', 'Bash', { command: ['echo old'] });
+    const originalRejected = expect(original).rejects.toThrow('Session reset');
+    const admissions: (() => void)[] = [];
+    session.updateAgentStateRequestSettlement = async (updater) => {
+      updater(session.agentState); // Capture the exact journal intent before asynchronous disk admission.
+      await new Promise<void>((resolve) => { admissions.push(resolve); });
+      // Admission completes before the journal's separate transport replay.
+    };
+    handler.reset();
+    handler.reset();
+    admissions[0]!();
+    await originalRejected;
+    const input = { questions: [{ question: 'new question', options: [{ label: 'yes' }] }] };
+    const next = handler.request(newId, 'AskUserQuestion', input);
+    void next.catch(() => undefined);
+    admissions[1]!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const rpc = session.rpcHandlerManager.handlers.get('permission')!;
+    await rpc({ id: newId, approved: true, answers: { 'new question': 'yes' } });
+    expect(await settledState(next)).toBe('fulfilled');
+    await expect(next).resolves.toMatchObject({ decision: 'approved', answers: { 'new question': ['yes'] } });
+  });
+
+  it('continues Stop after failed settlement admission and retains exact cancellation for retry', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const request = handler.request('stop-request', 'Bash', { command: ['echo pending'] });
+    const rejected = expect(request).rejects.toThrow('Aborted by user');
+    session.updateAgentStateRequestSettlement = async () => { throw Object.assign(new Error('journal disk full'), { code: 'ENOSPC' }); };
+    await expect(handler.abortPendingRequestsAndFlush()).resolves.toBeUndefined();
+    await rejected;
+    expect(session.agentState.requests['stop-request']).toBeDefined();
+    session.updateAgentStateRequestSettlement = async (updater) => { session.updateAgentState(updater); };
+    await handler.abortPendingRequestsAndFlush();
+    expect(session.agentState.requests['stop-request']).toBeUndefined();
+    expect(session.agentState.completedRequests['stop-request']).toMatchObject({ status: 'canceled', decision: 'abort' });
+  });
+
   it('records the request kind for interactive tool prompts vs permissions', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -79,58 +129,19 @@ describe('BasePermissionHandler allowlist', () => {
     await expect(bashPromise).rejects.toThrow('Session reset');
   });
 
-  it('finalizes agentState requests even when the pending request map is missing the entry (lifecycle mismatch)', async () => {
-    const session = new FakeSession();
-    // Simulate a permission prompt that exists in UI state, but the handler has lost the pending promise
-    // (e.g. reconnect/race/reset). If we ignore the response, the UI can stay stuck forever.
-    session.agentState.requests['perm-1'] = {
-      tool: 'bash',
-      arguments: { command: ['bash', '-lc', 'echo hello'] },
-      createdAt: Date.now(),
-    };
-
-    const handler = new TestPermissionHandler(session as any);
-
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
-    expect(rpc).toBeDefined();
-
-    await rpc!({ id: 'perm-1', approved: false, decision: 'denied' });
-
-    expect(session.agentState.requests['perm-1']).toBeUndefined();
-    expect(session.agentState.completedRequests['perm-1']).toEqual(
-      expect.objectContaining({
-        tool: 'bash',
-        status: 'denied',
-        decision: 'denied',
-        completedAt: expect.any(Number),
-      })
-    );
-  });
-
-  it('derives per-session allow tools for approved_for_session even when finalizing a stale response (no pending promise)', async () => {
+  it('leaves persisted-only requests untouched without a local waiter or policy effects', async () => {
     const session = new FakeSession();
     const input = { command: ['bash', '-lc', 'echo hello'] };
-    session.agentState.requests['perm-1'] = {
-      tool: 'bash',
-      arguments: input,
-      createdAt: Date.now(),
-    };
+    const request = { tool: 'bash', arguments: input, createdAt: Date.now() };
+    session.agentState.requests['perm-1'] = request;
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const rpc = session.rpcHandlerManager.handlers.get('permission')!;
 
-    const handler = new TestPermissionHandler(session as any);
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
-    expect(rpc).toBeDefined();
-
-    await rpc!({ id: 'perm-1', approved: true, decision: 'approved_for_session' });
-
-    expect(handler.isAllowed('bash', input)).toBe(true);
-    expect(session.agentState.requests['perm-1']).toBeUndefined();
-    expect(session.agentState.completedRequests['perm-1']).toEqual(
-      expect.objectContaining({
-        decision: 'approved_for_session',
-        status: 'approved',
-        allowedTools: ['bash(echo hello)'],
-      }),
-    );
+    await expect(rpc({ id: 'perm-1', approved: true, decision: 'approved_for_session' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+    expect(handler.isAllowed('bash', input)).toBe(false);
+    expect(session.agentState.requests['perm-1']).toEqual(request);
+    expect(session.agentState.completedRequests['perm-1']).toBeUndefined();
   });
 
   it('ignores legacy UI responses for opaque claimed requests before terminal or allowlist effects', async () => {
@@ -180,22 +191,45 @@ describe('BasePermissionHandler allowlist', () => {
     expect(handler.isAllowed('bash', input)).toBe(false);
   });
 
-  it('ignores legacy pending responses that are not correlated with agentState', async () => {
+  it.each(['immediate', 'queued'] as const)('answers a retained live request after its %s persisted pending projection is lost', async (publicationMode) => {
     const session = new FakeSession();
+    let publication = Promise.resolve();
+    if (publicationMode === 'queued') {
+      const updateAgentState = session.updateAgentState.bind(session);
+      // Model the real client's serialized asynchronous state-write boundary.
+      session.updateAgentState = (updater) => {
+        publication = publication.then(() => { updateAgentState(updater); });
+        return publication;
+      };
+    }
     const input = { command: ['bash', '-lc', 'echo hello'] };
-    const handler = new TestPermissionHandler(session as any);
-    const pending = handler.requestLegacyWithoutAgentState('legacy-missing-state', 'bash', input);
+    const router = new SessionPermissionRpcRouter(session.rpcHandlerManager);
+    Object.assign(session, { getOrCreatePermissionRpcRouter: () => router });
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const pending = handler.request('missing-state', 'bash', input);
+    await publication;
+    expect(session.agentState.requests['missing-state']).toMatchObject({ occurrenceId: expect.any(String) });
+    const originalRequest = { ...session.agentState.requests['missing-state'] };
+    // The network/session snapshot can lose the pending projection while the coordinator still owns its waiter.
+    session.agentState.requests = {};
+
+    const occurrenceRpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1)!;
+    await expect(occurrenceRpc({
+      id: 'missing-state', occurrenceId: originalRequest.occurrenceId, approved: true,
+    })).resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+    expect(handler.isAllowed('bash', input)).toBe(false);
+    expect(session.agentState.completedRequests['missing-state']).toBeUndefined();
 
     const rpc = session.rpcHandlerManager.handlers.get('permission');
     expect(rpc).toBeDefined();
 
-    await rpc!({ id: 'legacy-missing-state', approved: true, decision: 'approved_for_session' });
+    await rpc!({ id: 'missing-state', approved: true, decision: 'approved_for_session' });
 
-    expect(handler.isAllowed('bash', input)).toBe(false);
-    expect(session.agentState.completedRequests['legacy-missing-state']).toBeUndefined();
-    expect(await settledState(pending)).toBe('pending');
-    handler.reset();
-    await expect(pending).rejects.toThrow('Session reset');
+    await expect(pending).resolves.toMatchObject({ decision: 'approved_for_session' });
+    expect(handler.isAllowed('bash', input)).toBe(true);
+    expect(session.agentState.completedRequests['missing-state']).toMatchObject({
+      ...originalRequest, status: 'approved', decision: 'approved_for_session',
+    });
   });
 
   it('remembers approved_for_session tool identifiers and clears them on reset', async () => {
@@ -405,6 +439,36 @@ describe('BasePermissionHandler allowlist', () => {
     await expect(owned).resolves.toEqual({ decision: 'approved', answers: { q1: ['a'] } });
   });
 
+  it('binds structured notification answers to the current occurrence through the canonical router', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const input = { questions: [{ question: 'q1', options: [{ label: 'a' }] }] };
+    const first = handler.request('reused-question', 'AskUserQuestion', input);
+    const rpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1)!;
+    const firstOccurrence = session.agentState.requests['reused-question'].occurrenceId;
+    expect(firstOccurrence).toEqual(expect.any(String));
+    await rpc({ id: 'reused-question', occurrenceId: firstOccurrence, structuredAnswersV1: { q1: ['a'] } });
+    await expect(first).resolves.toMatchObject({ decision: 'approved', answers: { q1: ['a'] } });
+
+    const replacement = handler.request('reused-question', 'AskUserQuestion', {
+      questions: [{ question: 'q1', options: [{ label: 'b' }] }],
+    });
+    const replacementOccurrence = session.agentState.requests['reused-question'].occurrenceId;
+    expect(replacementOccurrence).not.toBe(firstOccurrence);
+    // A stale response is rejected before its answers can be interpreted against the replacement.
+    await expect(rpc({
+      id: 'reused-question', occurrenceId: firstOccurrence, structuredAnswersV1: { q1: ['invalid-option'] },
+    })).rejects.toMatchObject({ rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER });
+    expect(await settledState(replacement)).toBe('pending');
+    expect(session.agentState.requests['reused-question'].occurrenceId).toBe(replacementOccurrence);
+    await rpc({ id: 'reused-question', occurrenceId: replacementOccurrence, structuredAnswersV1: { q1: ['b'] } });
+    await expect(replacement).resolves.toMatchObject({ decision: 'approved', answers: { q1: ['b'] } });
+
+    const ordinary = handler.request('ordinary-question', 'AskUserQuestion', input);
+    await rpc({ id: 'ordinary-question', structuredAnswersV1: { q1: ['a'] } });
+    await expect(ordinary).resolves.toMatchObject({ decision: 'approved', answers: { q1: ['a'] } });
+  });
+
   it('keeps an invalid structured answer retryable until a valid answer arrives', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -570,7 +634,8 @@ describe('BasePermissionHandler allowlist', () => {
       const write = vi.spyOn(session, 'updateAgentState');
       write.mockImplementationOnce(() => { throw new Error('updateAgentState failed'); });
       const rpc = session.rpcHandlerManager.handlers.get('permission');
-      await expect(rpc!({ id: 'perm-1', approved: true, decision: 'approved' })).rejects.toThrow('updateAgentState failed');
+      await expect(rpc!({ id: 'perm-1', approved: true, decision: 'approved' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_failed' });
       expect(await settledState(promise)).toBe('pending');
       expect(session.agentState.requests['perm-1']).toBeDefined();
       await rpc!({ id: 'perm-1', approved: true, decision: 'approved' });

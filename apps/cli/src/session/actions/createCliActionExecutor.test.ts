@@ -137,8 +137,8 @@ const env = process.env;
 
 function createPlainExecutor(extra: Partial<Parameters<typeof createCliActionExecutor>[0]> = {}) {
   return createCliActionExecutor({
-    // These existing launch fixtures represent the in-daemon OS boundary.
-    // Exact remote routing is exercised with the real creator/codec in its owner suite.
+    // These launch fixtures represent the in-daemon OS boundary. Exact remote
+    // routing is exercised with the real creator and codec in its owner suite.
     directSpawnTransport: { spawn: spawnDaemonSession, resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce },
     token: 'token',
     credentials: {

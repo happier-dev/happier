@@ -93,6 +93,7 @@ export async function resolveOpenCodeManagedServerTrackedPid(params: Readonly<{
     const output = execFileSync('netstat', ['-ano', '-p', 'tcp'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     });
     const listeningPid = parseListeningPidFromNetstat(output, port);
     if (!listeningPid || listeningPid === params.spawnPid) {

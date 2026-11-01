@@ -205,6 +205,11 @@ function parseTable(lines: string[], startIndex: number, options: ParseMarkdownB
     return { table, nextIndex: index };
 }
 
+/** Only a complete, dedicated option line is an interactive choice. */
+export function readMarkdownOption(line: string): string | null {
+    return line.trim().match(/^<option>(.*?)<\/option>$/)?.[1] ?? null;
+}
+
 export function parseMarkdownBlock(markdown: string, options: ParseMarkdownBlockOptions = {}) {
     const blocks: MarkdownBlock[] = [];
     const lines = markdown.split('\n');
@@ -264,18 +269,22 @@ export function parseMarkdownBlock(markdown: string, options: ParseMarkdownBlock
         }
 
         // Options block
-        if (trimmed.startsWith('<options>')) {
-            let items: string[] = [];
+        const hasOptionsWrapper = trimmed.startsWith('<options>');
+        const firstOption = readMarkdownOption(line);
+        if (hasOptionsWrapper || firstOption !== null) {
+            const items: string[] = firstOption === null ? [] : [firstOption];
             while (index < lines.length) {
                 const nextLine = lines[index];
                 if (nextLine.trim() === '</options>') {
                     index++;
                     break;
                 }
-                // Extract content from <option> tags
-                const optionMatch = nextLine.match(/<option>(.*?)<\/option>/);
-                if (optionMatch) {
-                    items.push(optionMatch[1]);
+                const option = readMarkdownOption(nextLine);
+                if (option !== null) {
+                    items.push(option);
+                } else if (!hasOptionsWrapper) {
+                    // Continuations have no enclosing block to delimit unrelated prose.
+                    break;
                 }
                 index++;
             }

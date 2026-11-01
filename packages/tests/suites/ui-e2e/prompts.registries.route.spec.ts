@@ -3,9 +3,10 @@ import { mkdir } from 'node:fs/promises';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -19,7 +20,7 @@ test.describe('ui e2e: prompts registries route', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(240_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(suiteDir, { recursive: true });
 
     server = await startServerLight({
@@ -65,4 +66,40 @@ test.describe('ui e2e: prompts registries route', () => {
     await expect(page.getByTestId('promptRegistries.sourceTitle')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('promptRegistries.sourceUrl')).toHaveCount(1, { timeout: 60_000 });
   });
+
+  for (const width of [390, 1440]) {
+    test(`returns from prompt settings sections to Prompts & Skills at ${width}px`, async ({ page }) => {
+      test.setTimeout(180_000);
+      if (!uiBaseUrl) throw new Error('missing ui base url');
+      await page.setViewportSize({ width, height: 900 });
+      const diagnostics = collectBrowserDiagnostics({ page });
+      try {
+        await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+        await page.goto(`${uiBaseUrl}/settings?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+        await page.getByTestId('settings-prompts').click();
+        for (const section of ['library-prompts', 'library-skills', 'folders', 'templates', 'stacks', 'assets', 'registries']) {
+          await page.getByTestId(`settings-prompts-${section}`).click();
+          await expect(page.getByTestId('debug-router-pathname')).not.toHaveText('/settings/prompts');
+          await page.getByTestId('desktop-route-header-content').filter({ visible: true })
+            .getByRole('button', { name: 'Back', exact: true }).click();
+          await expect(page.getByTestId('debug-router-pathname')).toHaveText('/settings/prompts');
+          await expect(page.getByTestId('settings-prompts-library-prompts')).toBeVisible();
+        }
+        await page.getByTestId('settings-prompts-library-prompts').click();
+        await page.getByTestId('promptLibrary.add.doc').click();
+        await page.getByTestId('desktop-route-header-content').filter({ visible: true })
+          .getByRole('button', { name: 'Back', exact: true }).click();
+        await expect(page.getByTestId('debug-router-pathname')).toHaveText('/settings/prompts/docs');
+        await page.getByTestId('desktop-route-header-content').filter({ visible: true })
+          .getByRole('button', { name: 'Back', exact: true }).click();
+        await expect(page.getByTestId('debug-router-pathname')).toHaveText('/settings/prompts');
+        await page.getByTestId('desktop-route-header-content').filter({ visible: true })
+          .getByRole('button', { name: 'Back', exact: true }).click();
+        await expect(page.getByTestId('debug-router-pathname')).toHaveText('/settings');
+      } catch (error) {
+        throw appendBrowserDiagnostics(error, diagnostics());
+      }
+    });
+  }
 });

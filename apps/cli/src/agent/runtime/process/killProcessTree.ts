@@ -18,6 +18,9 @@ export async function killProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeO
     if (error && typeof error === 'object' && 'code' in error && error.code === 'process_tree_termination_incomplete') {
       logger.infoFile('[process-tree] Owned process cleanup could not be verified', {
         code: 'process_tree_termination_incomplete',
+        discoveryFailed: 'discoveryFailed' in error && error.discoveryFailed === true,
+        probeFailed: 'probeFailed' in error && error.probeFailed === true,
+        signallingFailed: 'signallingFailed' in error && error.signallingFailed === true,
       });
     }
     throw error;

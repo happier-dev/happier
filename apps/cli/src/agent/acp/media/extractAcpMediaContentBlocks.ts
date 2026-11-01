@@ -22,6 +22,8 @@ type ExtractMediaOptions = Readonly<{
 export type ExtractedAcpMediaContent = Readonly<{
   media: SessionMediaSource[];
   diagnostics: SessionMediaDiagnostic[];
+  /** Inline payloads to redact from transcript copies, including rejected formats. */
+  inlineData: string[];
 }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -130,6 +132,7 @@ export function extractAcpMediaContentBlocks(
 ): ExtractedAcpMediaContent {
   const media: SessionMediaSource[] = [];
   const diagnostics: SessionMediaDiagnostic[] = [];
+  const inlineData: string[] = [];
 
   contentItems(content).forEach((item, contentIndex) => {
     const rawRecord = asRecord(item);
@@ -163,6 +166,7 @@ export function extractAcpMediaContentBlocks(
     const suggestedName = readSuggestedName(record);
 
     if (data) {
+      inlineData.push(data);
       const mimeType = sniffSessionMediaMimeTypeFromBase64(data);
       if (!mimeType) {
         diagnostics.push(diagnostic('unsupported_mime', contentIndex, 'Unsupported image MIME type'));
@@ -214,7 +218,7 @@ export function extractAcpMediaContentBlocks(
     diagnostics.push(diagnostic('malformed_media_block', contentIndex, 'Image media block has no data or URI'));
   });
 
-  return { media, diagnostics };
+  return { media, diagnostics, inlineData };
 }
 
 export function emitSessionMediaExtractionResult(params: Readonly<{

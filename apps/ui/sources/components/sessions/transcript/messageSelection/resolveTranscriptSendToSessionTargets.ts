@@ -1,9 +1,5 @@
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
-import {
-    compareSessionListSessionOrderingKeys,
-    readSessionListUpdatedOrderingKey,
-    type SessionListSessionOrderingKey,
-} from '@/sync/domains/session/listing/sessionListOrderingRules';
+import { sortSessionSelectionCandidates } from '@/components/sessions/selection/sortSessionSelectionCandidates';
 import {
     areServerProfileIdentifiersEquivalent,
     resolveServerProfileScopeIdForIdentifier,
@@ -24,33 +20,21 @@ function normalizeId(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-function readTimestamp(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function buildDestinationOrderingKey(candidate: TranscriptSendToSessionTargetCandidate): SessionListSessionOrderingKey {
-    return {
-        updated: readSessionListUpdatedOrderingKey(candidate),
-        createdAt: readTimestamp(candidate.createdAt),
-        stableId: normalizeId(candidate.id),
-    };
-}
-
 function isWritableSession(candidate: TranscriptSendToSessionTargetCandidate): boolean {
     return candidate.accessLevel !== 'view';
 }
 
-export function resolveTranscriptSendToSessionTargets(params: Readonly<{
+export function resolveTranscriptSendToSessionTargets<T extends TranscriptSendToSessionTargetCandidate>(params: Readonly<{
     sourceSessionId: string;
     sourceServerId: string | null | undefined;
-    sessions: ReadonlyArray<TranscriptSendToSessionTargetCandidate>;
-}>): ReadonlyArray<TranscriptSendToSessionTargetCandidate> {
+    sessions: ReadonlyArray<T>;
+}>): ReadonlyArray<T> {
     const sourceSessionId = normalizeId(params.sourceSessionId);
     const sourceServerIdRaw = normalizeId(params.sourceServerId);
     const sourceServerId = resolveServerProfileScopeIdForIdentifier(sourceServerIdRaw) || sourceServerIdRaw;
     if (!sourceSessionId || !sourceServerId) return [];
 
-    return params.sessions
+    return sortSessionSelectionCandidates(params.sessions
         .filter((session) => {
             const sessionId = normalizeId(session.id);
             if (!sessionId || sessionId === sourceSessionId) return false;
@@ -58,10 +42,5 @@ export function resolveTranscriptSendToSessionTargets(params: Readonly<{
             if (!candidateServerId || !areServerProfileIdentifiersEquivalent(candidateServerId, sourceServerId)) return false;
             if (!isWritableSession(session)) return false;
             return isUserFacingSession(session);
-        })
-        .sort((left, right) => compareSessionListSessionOrderingKeys(
-            buildDestinationOrderingKey(left),
-            buildDestinationOrderingKey(right),
-            'updated',
-        ));
+        }));
 }

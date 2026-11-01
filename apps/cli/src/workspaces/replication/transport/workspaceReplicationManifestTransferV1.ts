@@ -17,14 +17,15 @@ import {
   type TransferPayloadSource,
 } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceReplicationManifestDigestIndexEntry } from './workspaceReplicationManifestIndex';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const WORKSPACE_REPLICATION_MANIFEST_STREAM_MAGIC = 'HAPPIER_WORKSPACE_REPLICATION_MANIFEST_V1';
 
-const WorkspaceReplicationManifestHeaderSchema = z
+const WorkspaceReplicationManifestHeaderSchema = lazySchema(() => z
   .object({
     manifestFingerprint: ReplicationManifestFingerprintSchema.optional(),
   })
-  .strict();
+  .strict());
 
 async function readFilePrefixUtf8(filePath: string, maxBytes: number): Promise<string> {
   const handle = await open(filePath, 'r');

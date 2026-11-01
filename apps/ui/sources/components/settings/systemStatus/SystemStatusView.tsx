@@ -21,6 +21,7 @@ import { Modal } from '@/modal';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { createDiagnosticServerUrlKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { readCurrentAppRuntimeInfo } from '@/sync/runtime/readCurrentAppRuntimeInfo';
 import {
   useAllMachines,
@@ -476,7 +477,9 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                     if (fetchEntry.status === 'ready') {
                       const daemonServerUrl = fetchEntry.snapshot.server.serverUrl;
                       const daemonAccountId = fetchEntry.snapshot.accountId ?? t('status.unknown');
-                      const serverMismatch = activeServerUrl && daemonServerUrl && daemonServerUrl !== activeServerUrl;
+                      const activeServerKey = createDiagnosticServerUrlKey(activeServerUrl);
+                      const daemonServerKey = createDiagnosticServerUrlKey(daemonServerUrl);
+                      const serverMismatch = activeServerKey && daemonServerKey && daemonServerKey !== activeServerKey;
                       const accountMismatch = profile?.id && fetchEntry.snapshot.accountId && fetchEntry.snapshot.accountId !== profile.id;
 
                       const mismatchLabel = serverMismatch || accountMismatch ? ` • ${t('systemStatus.mismatch')}` : '';

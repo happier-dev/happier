@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
 import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
+import { Modal } from '@/modal';
 
 const loadFileVideoPreview = async () => (await import('@/components/sessions/files/content/FileVideoPreview')).FileVideoPreview;
 
@@ -158,7 +159,19 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreview
                 />
             ) : null}
             {typeof imagePreviewUri === 'string' && imagePreviewUri.trim().length > 0 ? (
-                <View
+                <Pressable
+                    testID="file-image-preview"
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`${t('common.open')}: ${filePath}`}
+                    disabled={!sessionId}
+                    onPress={async () => {
+                        if (!sessionId) return;
+                        const { AttachmentImagePreviewModal } = await import('@/components/sessions/attachments/preview/AttachmentImagePreviewModal');
+                        Modal.show({
+                            component: AttachmentImagePreviewModal,
+                            props: { images: [{ kind: 'session-image', sessionId, filePath, title: getBasename(filePath) }] },
+                        });
+                    }}
                     style={{
                         width: '100%',
                         maxWidth: 720,
@@ -181,7 +194,7 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreview
                             accessibilityLabel={t('files.binaryFile')}
                         />
                     )}
-                </View>
+                </Pressable>
             ) : null}
             <Text
                 style={{

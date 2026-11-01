@@ -1,149 +1,98 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
 
-import { parseDoctorSnapshotSafe } from '@happier-dev/protocol';
+import { parseDoctorSnapshotSafe, resolveBugReportLogSelection, type BugReportLogSelection } from '@happier-dev/protocol';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t, type TranslationKey } from '@/text';
+import type { collectBugReportDiagnosticsArtifacts } from './bugReportDiagnostics';
 
 import { type BugReportDeploymentType, type BugReportFrequency, type BugReportSeverity } from './bugReportFallback';
 import { BugReportChoiceRow } from './BugReportChoiceRow';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
+import { BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH } from './bugReportComposerDraft';
+import { BugReportExpandableSection } from './BugReportExpandableSection';
 
-type BugReportDiagnosticsKind = 'ui-mobile' | 'daemon' | 'server' | 'stack-service';
-
-const DIAGNOSTICS_KIND_OPTIONS: Array<{
-    kind: BugReportDiagnosticsKind;
-    titleKey: TranslationKey;
-    detailKey: TranslationKey;
-}> = [
-    {
-        kind: 'ui-mobile',
-        titleKey: 'bugReports.composer.diagnostics.kinds.app.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.app.detail',
-    },
-    {
-        kind: 'daemon',
-        titleKey: 'bugReports.composer.diagnostics.kinds.daemon.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.daemon.detail',
-    },
-    {
-        kind: 'stack-service',
-        titleKey: 'bugReports.composer.diagnostics.kinds.stackService.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.stackService.detail',
-    },
-    {
-        kind: 'server',
-        titleKey: 'bugReports.composer.diagnostics.kinds.server.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.server.detail',
-    },
+const LOG_OPTIONS: ReadonlyArray<{ kind: keyof BugReportLogSelection; title: TranslationKey; detail: TranslationKey }> = [
+    { kind: 'daemon', title: 'bugReports.composer.logOptions.daemonTitle', detail: 'bugReports.composer.logOptions.daemonDetail' },
+    { kind: 'session', title: 'bugReports.composer.logOptions.sessionTitle', detail: 'bugReports.composer.logOptions.sessionDetail' },
+    { kind: 'provider', title: 'bugReports.composer.logOptions.providerTitle', detail: 'bugReports.composer.logOptions.providerDetail' },
 ];
 
 export function BugReportDiagnosticsSection(props: Readonly<{
     includeDiagnostics: boolean;
     onIncludeDiagnosticsChange: (value: boolean) => void;
-    acceptedKinds: string[];
-    selectedKinds: string[];
-    onSelectedKindsChange: (kinds: string[]) => void;
+    logSelection: BugReportLogSelection;
+    onLogSelectionChange: (selection: BugReportLogSelection) => void;
+    collectionStatuses?: Awaited<ReturnType<typeof collectBugReportDiagnosticsArtifacts>>['collectionStatuses'];
     onPreviewDiagnostics: () => void;
     previewDisabled: boolean;
-    pastedCliDoctorSnapshotJson: string;
-    onPastedCliDoctorSnapshotJsonChange: (value: string) => void;
-    placeholderTextColor: string;
+    disabled?: boolean;
 }>): React.JSX.Element {
-    const acceptedSet = new Set(props.acceptedKinds);
-    const selectedSet = new Set(props.selectedKinds);
-
-    const toggleKind = (kind: BugReportDiagnosticsKind, enabled: boolean) => {
-        const next = new Set(selectedSet);
-        if (enabled) next.add(kind);
-        else next.delete(kind);
-        props.onSelectedKindsChange(Array.from(next));
-    };
-
-    return (
-        <View style={bugReportComposerStyles.section}>
-            <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.diagnostics.title')}</Text>
-                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.subtitle')}</Text>
+    const technicalOnly = !Object.values(props.logSelection).some(Boolean);
+    return <View style={bugReportComposerStyles.section}>
+        <View style={bugReportComposerStyles.toggleRow}>
+            <View style={{ flex: 1, gap: 4 }}>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.diagnostics.includeTitle')}</Text>
+                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.includeSubtitle')}</Text>
             </View>
-
-            <View style={bugReportComposerStyles.toggleRows}>
-                <View style={bugReportComposerStyles.toggleRow}>
-                    <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.includeTitle')}</Text>
-                        <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.includeSubtitle')}</Text>
-                    </View>
-                    <Switch value={props.includeDiagnostics} onValueChange={props.onIncludeDiagnosticsChange} />
-                </View>
-
-                {props.includeDiagnostics && (
-                    <>
-                        {DIAGNOSTICS_KIND_OPTIONS.map((option) => {
-                            const allowed = acceptedSet.has(option.kind);
-                            const selected = selectedSet.has(option.kind);
-                            return (
-                                <View key={option.kind} style={bugReportComposerStyles.toggleRow}>
-                                    <View style={{ flex: 1, gap: 4 }}>
-                                        <Text style={bugReportComposerStyles.label}>{t(option.titleKey)}</Text>
-                                        <Text style={bugReportComposerStyles.helperText}>
-                                            {t(option.detailKey)}
-                                            {allowed ? '' : t('bugReports.composer.diagnostics.disabledByServerSuffix')}
-                                        </Text>
-                                    </View>
-                                    <Switch
-                                        value={selected && allowed}
-                                        onValueChange={(value) => toggleKind(option.kind, value)}
-                                        disabled={!allowed}
-                                    />
-                                </View>
-                            );
-                        })}
-
-                        {acceptedSet.has('daemon') ? (
-                            <View style={bugReportComposerStyles.field}>
-                                <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.pasteDoctorJson.title')}</Text>
-                                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}</Text>
-                                <TextInput
-                                    value={props.pastedCliDoctorSnapshotJson}
-                                    onChangeText={props.onPastedCliDoctorSnapshotJsonChange}
-                                    placeholder={t('bugReports.composer.diagnostics.pasteDoctorJson.placeholder')}
-                                    placeholderTextColor={props.placeholderTextColor}
-                                    style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
-                                    editable
-                                    multiline
-                                    numberOfLines={4}
-                                    maxLength={200_000}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                    textContentType="none"
-                                />
-                                {props.pastedCliDoctorSnapshotJson.trim().length > 0 ? (
-                                    (() => {
-                                        const parsed = parseDoctorSnapshotSafe(props.pastedCliDoctorSnapshotJson);
-                                        if (!parsed.ok) {
-                                            return <Text style={bugReportComposerStyles.errorText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.invalid', { error: parsed.error })}</Text>;
-                                        }
-                                        return <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.valid')}</Text>;
-                                    })()
-                                ) : null}
-                            </View>
-                        ) : null}
-
-                        <Pressable
-                            style={[bugReportComposerStyles.previewButton, props.previewDisabled && bugReportComposerStyles.previewButtonDisabled]}
-                            onPress={props.onPreviewDiagnostics}
-                            disabled={props.previewDisabled}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('bugReports.composer.diagnostics.previewButton')}
-                        >
-                            <Text style={bugReportComposerStyles.previewButtonText}>{t('bugReports.composer.diagnostics.previewButton')}</Text>
-                        </Pressable>
-                    </>
-                )}
-            </View>
+            <Switch accessibilityLabel={t('bugReports.composer.diagnostics.includeTitle')} value={props.includeDiagnostics} onValueChange={props.onIncludeDiagnosticsChange} disabled={props.disabled} />
         </View>
-    );
+        {props.includeDiagnostics ? <>
+            {props.collectionStatuses?.scope ? <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.scopeChanged')}</Text> : null}
+            <View style={bugReportComposerStyles.toggleRow}>
+                <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.logOptions.technicalOnly')}</Text>
+                    <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.logOptions.technicalOnlyDetail')}</Text>
+                </View>
+                <Switch accessibilityLabel={t('bugReports.composer.logOptions.technicalOnly')}
+                    accessibilityHint={t('bugReports.composer.logOptions.technicalOnlyDetail')} testID="bug-report-technical-only"  value={technicalOnly} disabled={props.disabled}
+                    onValueChange={(value) => props.onLogSelectionChange(value
+                        ? { daemon: false, session: false, provider: false }
+                        : resolveBugReportLogSelection())} />
+            </View>
+            {LOG_OPTIONS.map((option) => {
+                const status = props.collectionStatuses?.[option.kind]?.status;
+                return <View key={option.kind} style={bugReportComposerStyles.toggleRow}>
+                    <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={bugReportComposerStyles.label}>{t(option.title)}</Text>
+                        <Text style={bugReportComposerStyles.helperText}>{t(option.detail)}</Text>
+                        {status ? <Text style={bugReportComposerStyles.helperText}>{t(`bugReports.composer.collection.${status}`)}</Text> : null}
+                    </View>
+                    <Switch accessibilityLabel={t(option.title)} accessibilityHint={t(option.detail)} testID={`bug-report-log-${option.kind}`} value={props.logSelection[option.kind]}
+                        disabled={props.disabled === true}
+                        onValueChange={(value) => props.onLogSelectionChange({ ...props.logSelection, [option.kind]: value })} />
+                </View>;
+            })}
+            <Pressable style={[bugReportComposerStyles.previewButton, props.previewDisabled && bugReportComposerStyles.previewButtonDisabled]}
+                onPress={props.onPreviewDiagnostics} disabled={props.previewDisabled} accessibilityRole="button"
+                accessibilityLabel={t('bugReports.composer.diagnostics.previewButton')}>
+                <Text style={bugReportComposerStyles.previewButtonText}>{t('bugReports.composer.diagnostics.previewButton')}</Text>
+            </Pressable>
+        </> : null}
+    </View>;
+}
+
+export function BugReportDoctorSnapshotField(props: Readonly<{
+    value: string;
+    onChange: (value: string) => void;
+    placeholderTextColor: string;
+    disabled: boolean;
+}>): React.JSX.Element {
+    const parsed = props.value.trim() ? parseDoctorSnapshotSafe(props.value) : null;
+    return <View style={bugReportComposerStyles.field}>
+        <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.pasteDoctorJson.title')}</Text>
+        <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}</Text>
+        <TextInput accessibilityLabel={t('bugReports.composer.diagnostics.pasteDoctorJson.title')} value={props.value} onChangeText={props.onChange}
+            placeholder={t('bugReports.composer.diagnostics.pasteDoctorJson.placeholder')}
+            placeholderTextColor={props.placeholderTextColor}
+            style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
+            editable={!props.disabled} multiline numberOfLines={4} maxLength={200_000}
+            autoCapitalize="none" autoCorrect={false} textContentType="none" />
+        {parsed && !parsed.ok ? <Text style={bugReportComposerStyles.errorText}>
+            {t('bugReports.composer.diagnostics.pasteDoctorJson.invalid', { error: parsed.error })}
+        </Text> : null}
+    </View>;
 }
 
 export function BugReportIssueDetailsSection(props: Readonly<{
@@ -164,6 +113,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
     placeholderTextColor: string;
     fieldErrors?: Partial<Record<'title' | 'summary', string>>;
     disabled: boolean;
+    children?: React.ReactNode;
 }>): React.JSX.Element {
     return (
         <View style={bugReportComposerStyles.section}>
@@ -175,12 +125,12 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 <View style={bugReportComposerStyles.sectionFields}>
                     <View style={bugReportComposerStyles.field}>
                       <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.titleLabel')}</Text>
-                      <TextInput
+                      <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.titleLabel')}
                           value={props.title}
                           onChangeText={props.onTitleChange}
                           placeholder={t('bugReports.composer.issueDetails.titlePlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
-                        style={[bugReportComposerStyles.input, props.fieldErrors?.title ? bugReportComposerStyles.inputError : null]}
+                        style={[bugReportComposerStyles.input, props.fieldErrors?.title && props.title.trim().length > 0 ? bugReportComposerStyles.inputError : null]}
                         editable={!props.disabled}
                         maxLength={200}
                     />
@@ -190,8 +140,31 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.summaryLabel')}</Text>
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.summaryLabel')}
+                        value={props.summary}
+                        onChangeText={props.onSummaryChange}
+                        placeholder={t('bugReports.composer.issueDetails.summaryPlaceholder')}
+                        placeholderTextColor={props.placeholderTextColor}
+                        style={[
+                            bugReportComposerStyles.input,
+                            bugReportComposerStyles.textArea,
+                            props.fieldErrors?.summary && props.summary.trim().length > 0 ? bugReportComposerStyles.inputError : null,
+                        ]}
+                        editable={!props.disabled}
+                        multiline
+                        numberOfLines={4}
+                        maxLength={800}
+                    />
+                    {props.fieldErrors?.summary && props.summary.trim().length > 0 && (
+                        <Text style={bugReportComposerStyles.errorText}>{props.fieldErrors.summary}</Text>
+                    )}
+                </View>
+
+                <BugReportExpandableSection title={t('bugReports.composer.addMoreDetails')} testID="bug-report-more-details">
+                <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.githubUsernameLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.githubUsernameLabel')}
                         value={props.reporterGithubUsername}
                         onChangeText={props.onReporterGithubUsernameChange}
                         placeholder={t('bugReports.composer.issueDetails.githubUsernamePlaceholder')}
@@ -205,30 +178,8 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.summaryLabel')}</Text>
-                    <TextInput
-                        value={props.summary}
-                        onChangeText={props.onSummaryChange}
-                        placeholder={t('bugReports.composer.issueDetails.summaryPlaceholder')}
-                        placeholderTextColor={props.placeholderTextColor}
-                        style={[
-                            bugReportComposerStyles.input,
-                            bugReportComposerStyles.textArea,
-                            props.fieldErrors?.summary ? bugReportComposerStyles.inputError : null,
-                        ]}
-                        editable={!props.disabled}
-                        multiline
-                        numberOfLines={4}
-                        maxLength={800}
-                    />
-                    {props.fieldErrors?.summary && props.summary.trim().length > 0 && (
-                        <Text style={bugReportComposerStyles.errorText}>{props.fieldErrors.summary}</Text>
-                    )}
-                </View>
-
-                <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.currentBehaviorLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.currentBehaviorLabel')}
                         value={props.currentBehavior}
                         onChangeText={props.onCurrentBehaviorChange}
                         placeholder={t('bugReports.composer.issueDetails.currentBehaviorPlaceholder')}
@@ -237,13 +188,13 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                         editable={!props.disabled}
                         multiline
                         numberOfLines={4}
-                        maxLength={5000}
+                        maxLength={BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH}
                     />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.expectedBehaviorLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.expectedBehaviorLabel')}
                         value={props.expectedBehavior}
                         onChangeText={props.onExpectedBehaviorChange}
                         placeholder={t('bugReports.composer.issueDetails.expectedBehaviorPlaceholder')}
@@ -258,7 +209,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.reproductionStepsLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.reproductionStepsLabel')}
                         value={props.reproductionStepsText}
                         onChangeText={props.onReproductionStepsTextChange}
                         placeholder={t('bugReports.composer.issueDetails.reproductionStepsPlaceholder')}
@@ -273,7 +224,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.whatChangedLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.issueDetails.whatChangedLabel')}
                         value={props.whatChangedRecently}
                         onChangeText={props.onWhatChangedRecentlyChange}
                         placeholder={t('bugReports.composer.issueDetails.whatChangedPlaceholder')}
@@ -285,6 +236,8 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                         maxLength={2000}
                     />
                 </View>
+                {props.children}
+                </BugReportExpandableSection>
             </View>
         </View>
     );
@@ -295,9 +248,10 @@ export function BugReportFrequencySeveritySection(props: Readonly<{
     onFrequencyChange: (value: BugReportFrequency) => void;
     severity: BugReportSeverity;
     onSeverityChange: (value: BugReportSeverity) => void;
+    embedded?: boolean;
 }>): React.JSX.Element {
     return (
-        <View style={bugReportComposerStyles.section}>
+        <View style={props.embedded ? bugReportComposerStyles.sectionFields : bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
                 <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.frequencySeverity.title')}</Text>
             </View>
@@ -351,9 +305,10 @@ export function BugReportEnvironmentSection(props: Readonly<{
     deploymentType: BugReportDeploymentType;
     onDeploymentTypeChange: (value: BugReportDeploymentType) => void;
     disabled: boolean;
+    embedded?: boolean;
 }>): React.JSX.Element {
     return (
-        <View style={bugReportComposerStyles.section}>
+        <View style={props.embedded ? bugReportComposerStyles.sectionFields : bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
                 <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.environment.title')}</Text>
             </View>
@@ -361,27 +316,27 @@ export function BugReportEnvironmentSection(props: Readonly<{
             <View style={bugReportComposerStyles.sectionFields}>
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.appVersionLabel')}</Text>
-                    <TextInput value={props.appVersion} onChangeText={props.onAppVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.appVersionLabel')} value={props.appVersion} onChangeText={props.onAppVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.platformLabel')}</Text>
-                    <TextInput value={props.platformValue} onChangeText={props.onPlatformValueChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.platformLabel')} value={props.platformValue} onChangeText={props.onPlatformValueChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.osVersionLabel')}</Text>
-                    <TextInput value={props.osVersion} onChangeText={props.onOsVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.osVersionLabel')} value={props.osVersion} onChangeText={props.onOsVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.deviceModelLabel')}</Text>
-                    <TextInput value={props.deviceModel} onChangeText={props.onDeviceModelChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.deviceModelLabel')} value={props.deviceModel} onChangeText={props.onDeviceModelChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.serverUrlLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.serverUrlLabel')}
                         value={props.serverUrl}
                         onChangeText={props.onServerUrlChange}
                         style={bugReportComposerStyles.input}
@@ -392,7 +347,7 @@ export function BugReportEnvironmentSection(props: Readonly<{
 
                 <View style={bugReportComposerStyles.field}>
                     <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.serverVersionLabel')}</Text>
-                    <TextInput
+                    <TextInput accessibilityLabel={t('bugReports.composer.environment.serverVersionLabel')}
                         value={props.serverVersion}
                         onChangeText={props.onServerVersionChange}
                         style={bugReportComposerStyles.input}
@@ -434,7 +389,7 @@ export function BugReportConsentSection(props: Readonly<{
                         <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.consent.understandTitle')}</Text>
                         <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.consent.understandSubtitle')}</Text>
                     </View>
-                    <Switch value={props.acceptedPrivacyNotice} onValueChange={props.onAcceptedPrivacyNoticeChange} />
+                    <Switch accessibilityLabel={t('bugReports.composer.consent.understandTitle')} value={props.acceptedPrivacyNotice} onValueChange={props.onAcceptedPrivacyNoticeChange} />
                 </View>
                 {props.errorText ? (
                     <Text style={bugReportComposerStyles.errorText}>{props.errorText}</Text>

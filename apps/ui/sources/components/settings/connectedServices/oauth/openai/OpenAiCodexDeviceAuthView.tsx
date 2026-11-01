@@ -11,7 +11,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
-import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { delay } from '@/utils/timing/time';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -51,9 +51,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
   const credentialsToken = auth.credentials?.token ?? '';
   const credentialsVariantKey = React.useMemo(() => {
     if (!auth.credentials) return '';
-    return isLegacyAuthCredentials(auth.credentials)
-      ? auth.credentials.secret
-      : `${auth.credentials.encryption.publicKey}:${auth.credentials.encryption.machineKey}`;
+    return resolveAuthCredentialsScopeKey(auth.credentials);
   }, [auth.credentials]);
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(asStringParam(props.serviceId).trim());
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;

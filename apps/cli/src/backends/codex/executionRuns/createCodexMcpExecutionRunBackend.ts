@@ -21,6 +21,7 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
   env?: NodeJS.ProcessEnv;
   modelId?: string;
   reasoningEffort?: string;
+  reasoningSummary?: 'auto' | 'none';
   permissionMode: PermissionMode;
 }>): AgentBackend {
   const client = new CodexMcpClient({ env: args.env });
@@ -123,6 +124,7 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
     const reasoningEffort = readNonBlankSessionControlIdentifier(args.reasoningEffort);
     return buildCodexMcpStartConfig({
       prompt,
+      reasoningSummary: args.reasoningSummary,
       cwd: args.cwd,
       sandbox: policy.sandbox,
       approvalPolicy: policy.approvalPolicy,

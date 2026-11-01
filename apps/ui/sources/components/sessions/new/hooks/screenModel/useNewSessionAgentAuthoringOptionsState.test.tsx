@@ -6,6 +6,8 @@ import { renderScreen } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/sessionAuthoring/rememberedEngineSelections';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { AgentId } from '@happier-dev/agents';
+import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
@@ -22,9 +24,10 @@ type PersistedDraft = Readonly<{
 }>;
 
 let latestSetSessionConfigOptionOverride: ((configId: string, value: string) => void) | null = null;
+let latestSetModelMode: React.Dispatch<React.SetStateAction<ModelMode>> | null = null;
 
 function HookProbe(props: Readonly<{
-    agentType?: 'claude' | 'codex';
+    agentType?: AgentId;
     backendTarget?: BackendTargetRefV1;
     persistedDraft: PersistedDraft | null;
     rememberedSelection?: RememberedEngineSelectionV1 | null;
@@ -38,6 +41,7 @@ function HookProbe(props: Readonly<{
     };
     const state = useNewSessionAgentAuthoringOptionsState(params);
     latestSetSessionConfigOptionOverride = state.setSessionConfigOptionOverride;
+    latestSetModelMode = state.setModelMode;
 
     return (
         <>
@@ -55,6 +59,23 @@ function HookProbe(props: Readonly<{
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('keeps an explicit model selected together with a different backend target, as the favorite picker does', async () => {
+        const screen = await renderScreen(<HookProbe agentType="codex" persistedDraft={null} />);
+        await act(async () => {
+            latestSetModelMode?.('gpt-6-luna');
+            await screen.update(<HookProbe agentType="fx" persistedDraft={null} />);
+        });
+        expect(screen.findByTestId('model-mode')?.props.children).toBe('gpt-6-luna');
+    });
+
+    it('replaces the previous agent model with the next agent default when switching from Codex to fx', async () => {
+        const draft = { agentType: 'codex', modelId: 'gpt-6.1-sol' } as const;
+        const screen = await renderScreen(<HookProbe agentType="codex" persistedDraft={draft} />);
+        expect(screen.findByTestId('model-mode')?.props.children).toBe('gpt-6.1-sol');
+        await screen.update(<HookProbe agentType="fx" persistedDraft={draft} />);
+        expect(screen.findByTestId('model-mode')?.props.children).toBe('default');
+    });
+
     it('preserves exact nonblank opaque mode identifiers from draft and remembered state', async () => {
         const draft = await renderScreen(<HookProbe
             persistedDraft={{ modelId: 'default', acpSessionModeId: ' plan\t' }}

@@ -5,9 +5,11 @@ export {
 
 export type {
   SherpaNativeCancelParams,
+  SherpaNativeExcludeFromBackupParams,
   SherpaNativeInitializeParams,
   SherpaNativeListVoicesParams,
   SherpaNativeModule,
+  SherpaNativeReleaseParams,
   SherpaNativeSynthesizeParams,
   SherpaNativeSynthesizeResult,
   SherpaNativeVoice,

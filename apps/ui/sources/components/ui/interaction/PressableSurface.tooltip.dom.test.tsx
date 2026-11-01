@@ -22,6 +22,32 @@ const { PressableSurface } = await import('./PressableSurface');
 await import('../overlays/AnchoredTooltip');
 
 describe('PressableSurface web tooltip', () => {
+    it.each(['switch', 'checkbox'] as const)('exposes checked state and Space activation for a %s', async (role) => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        function WrapControl() {
+            const [checked, setChecked] = React.useState(false);
+            return <PressableSurface accessibilityRole={role} accessibilityLabel="Wrap" accessibilityState={{ checked }} onPress={() => setChecked(value => !value)} />;
+        }
+        try {
+            await act(async () => root.render(<WrapControl />));
+            const control = container.querySelector<HTMLElement>(`[role="${role}"]`);
+            expect(control?.getAttribute('aria-checked')).toBe('false');
+            await act(async () => control?.click());
+            expect(control?.getAttribute('aria-checked')).toBe('true');
+            await act(async () => {
+                control?.focus();
+                control?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+                control?.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true }));
+            });
+            expect(control?.getAttribute('aria-checked')).toBe('false');
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it.each(['button', 'text'] as const)('reveals a portaled %s tooltip on hover and keyboard focus without moving focus', async (role) => {
         vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
         vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);

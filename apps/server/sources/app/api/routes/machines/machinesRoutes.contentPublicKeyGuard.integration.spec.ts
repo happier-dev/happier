@@ -107,12 +107,12 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
         });
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
-        expect(txDbMocks.db.machine.update).toHaveBeenCalled();
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({
                     id: "m1",
-                    dataEncryptionKey: "AAECAw==",
+                    dataEncryptionKey: "AAkJCQ==",
                 }),
             }),
         );
@@ -173,7 +173,7 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
         expect(dbMocks.db.account.updateMany).not.toHaveBeenCalled();
-        expect(txDbMocks.db.machine.update).toHaveBeenCalledTimes(1);
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({ id: "m1" }),
@@ -213,7 +213,7 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
 
         expect(reply.code).not.toHaveBeenCalledWith(400);
         expect(dbMocks.db.account.updateMany).toHaveBeenCalledTimes(1);
-        expect(txDbMocks.db.machine.update).toHaveBeenCalledTimes(1);
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
         expect(response).toEqual(
             expect.objectContaining({
                 machine: expect.objectContaining({ id: "m1" }),

@@ -20,7 +20,9 @@ import { configuration } from '@/configuration';
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
 import { Credentials } from '@/persistence';
 
-import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './client/encryptionKey';
+import { resolveSessionEncryptionContext } from './client/encryptionKey';
+import { resolveMachineRegistrationContent, resolvePublishedMachineContent } from './machine/resolveMachineRegistrationContent';
+import { decodeMachineStoredContent, encodeMachineStoredContent } from './machine/machineStoredContent';
 import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import { logServerEndpointFailure } from './client/serverEndpointFailureLog';
@@ -98,6 +100,7 @@ import { createScmConnectedAccountCredentialResolver } from './connectedServices
 import { resolveMachineRegistrationIdentity } from '@/daemon/machineIdentity/resolveMachineRegistrationIdentity';
 import { consumeMachineReplacementCandidateAfterRegistration } from '@/daemon/machineIdentity/machineReplacementCandidates';
 import { readSessionRuntimeActivityProjectionBoundary } from './session/runtimeActivityProjection';
+import { lazySchema } from '@happier-dev/protocol';
 
 export {
   ConnectedServiceAuthGroupGenerationConflictError,
@@ -107,24 +110,24 @@ export {
 
 const CONNECTED_SERVICE_PROFILE_LIST_CACHE_TTL_MS = 10_000;
 const ACCOUNT_ENCRYPTION_MODE_CACHE_TTL_MS = 10_000;
-const ProviderAccountUsageResponseSourcesSchema = z.array(ConnectedServiceUsageSourceV1Schema).optional();
-const ExactProviderAccountUsageSourceResolutionSchema = z.object({
+const ProviderAccountUsageResponseSourcesSchema = lazySchema(() => z.array(ConnectedServiceUsageSourceV1Schema).optional());
+const ExactProviderAccountUsageSourceResolutionSchema = lazySchema(() => z.object({
   source: ConnectedServiceUsageSourceV1Schema,
   recordId: ProviderAccountUsageRecordIdSchema,
   providerAccountId: z.string().trim().min(1).max(512),
   fetchedAt: z.number().int().nonnegative().nullable(),
   staleAfterMs: z.number().int().nonnegative().nullable(),
-}).strict();
-const ExactProviderAccountUsageSourceNotFoundSchema = z.object({
+}).strict());
+const ExactProviderAccountUsageSourceNotFoundSchema = lazySchema(() => z.object({
   error: z.literal('provider_account_usage_source_not_found'),
-}).strict();
-const ProviderAccountUsageWriteSourceOutcomeSchema = z.union([
+}).strict());
+const ProviderAccountUsageWriteSourceOutcomeSchema = lazySchema(() => z.union([
   z.object({ status: z.literal('linked') }).strict(),
   z.object({
     status: z.literal('skipped'),
     reason: z.literal('binding_unavailable'),
   }).strict(),
-]).optional();
+]).optional());
 
 function parseProviderAccountUsageResponseSources(raw: Readonly<Record<string, unknown>>): ConnectedServiceUsageSourceV1[] | undefined {
   const parsed = ProviderAccountUsageResponseSourcesSchema.safeParse(raw.sources);
@@ -412,7 +415,6 @@ export class ApiClient {
     metadata: Metadata,
     state: AgentState | null
   }): Promise<Session | null> {
-    const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(this.credential);
     const sessionsUrl = withConnectedServiceReaderSupport(`${resolveServerHttpBaseUrl()}/v1/sessions`);
 
     const serverBaseUrl = resolveServerHttpBaseUrl();
@@ -422,6 +424,11 @@ export class ApiClient {
       featuresTimeoutMs: configuration.sessionControlHttpTimeoutMs,
       accountTimeoutMs: configuration.sessionControlHttpTimeoutMs,
     });
+    const encryptionContext = desiredSessionEncryptionMode === 'e2ee' ? resolveSessionEncryptionContext(this.credential) : null;
+    const encryptSessionPayload = (value: unknown): string => {
+      if (!encryptionContext) throw new Error('Session encryption material is unavailable');
+      return encodeBase64(encrypt(encryptionContext.encryptionKey, encryptionContext.encryptionVariant, value));
+    };
 
     const resolvePositiveIntEnv = (raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number => {
       const value = (raw ?? '').trim();
@@ -455,11 +462,11 @@ export class ApiClient {
         const metadataPayload =
           desiredSessionEncryptionMode === 'plain'
             ? JSON.stringify(projectSessionMetadataForWire(opts.metadata))
-            : encodeBase64(encrypt(encryptionKey, encryptionVariant, projectSessionMetadataForWire(opts.metadata)));
+            : encryptSessionPayload(projectSessionMetadataForWire(opts.metadata));
         const agentStatePayload =
           desiredSessionEncryptionMode === 'plain'
             ? (opts.state ? JSON.stringify(opts.state) : null)
-            : (opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null);
+            : (opts.state ? encryptSessionPayload(opts.state) : null);
 
         const response = await axios.post<CreateSessionResponse>(
           sessionsUrl,
@@ -470,8 +477,8 @@ export class ApiClient {
             dataEncryptionKey:
               desiredSessionEncryptionMode === 'plain'
                 ? null
-                : dataEncryptionKey
-                  ? encodeBase64(dataEncryptionKey)
+                : encryptionContext?.dataEncryptionKey
+                  ? encodeBase64(encryptionContext.dataEncryptionKey)
                   : null,
             ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
           },
@@ -493,8 +500,10 @@ export class ApiClient {
 
       // Prefer the session's published data key, but keep backward compatibility with
       // older sessions that have no dataEncryptionKey (machineKey-as-session-key fallback).
-      let sessionEncryptionKey = encryptionKey;
-      if (sessionEncryptionMode === 'e2ee' && this.credential.encryption.type === 'dataKey') {
+      const readEncryptionContext = sessionEncryptionMode === 'e2ee' ? encryptionContext ?? resolveSessionEncryptionContext(this.credential) : null;
+      let sessionEncryptionKey = readEncryptionContext?.encryptionKey;
+      const encryptionVariant = readEncryptionContext?.encryptionVariant;
+      if (sessionEncryptionMode === 'e2ee' && this.credential.encryption?.type === 'dataKey') {
         const serverEncryptedDataKeyRaw = (raw as any).dataEncryptionKey;
         const opened = openSessionDataEncryptionKey({
           credential: this.credential,
@@ -508,17 +517,21 @@ export class ApiClient {
         }
         sessionEncryptionKey = opened ?? this.credential.encryption.machineKey;
       }
+      const decryptSessionPayload = (value: string): unknown => {
+        if (!sessionEncryptionKey || !encryptionVariant) throw new Error('Session encryption material is unavailable');
+        return decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(value));
+      };
 
 	      const metadata = normalizeSessionMetadataForRead<Metadata>(
 	        sessionEncryptionMode === 'plain'
 	          ? JSON.parse(String(raw.metadata ?? 'null'))
-	          : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)));
+	          : decryptSessionPayload(raw.metadata));
 	      const agentState =
 	        !raw.agentState
 	          ? null
 	          : sessionEncryptionMode === 'plain'
 	            ? JSON.parse(String(raw.agentState))
-	            : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState));
+	            : decryptSessionPayload(raw.agentState);
 
 	      if (sessionEncryptionMode === 'plain') {
 	        return {
@@ -533,6 +546,7 @@ export class ApiClient {
 	        };
 	      }
 
+	      if (!sessionEncryptionKey || !encryptionVariant) throw new Error('Session encryption material is unavailable');
 	      return {
 	        id: raw.id,
 	        seq: raw.seq,
@@ -588,27 +602,24 @@ export class ApiClient {
     timeoutMs?: number,
     registrationIdentity?: MachineRegistrationIdentity,
   }): Promise<Machine> {
-    const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveMachineEncryptionContext(this.credential);
+    const timeoutMs = typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? Math.floor(opts.timeoutMs) : 60_000;
+    const registrationContent = await resolveMachineRegistrationContent({ credentials: this.credential, machineId: opts.machineId, timeoutMs });
     const registrationIdentity = opts.registrationIdentity
       ? MachineRegistrationIdentitySchema.parse(opts.registrationIdentity)
-      : await this.resolveMachineRegistrationIdentity(opts.machineId);
+      : await this.resolveMachineRegistrationIdentity(opts.machineId, registrationContent.context.encryptionVariant !== 'plain');
     const machinesUrl = `${resolveServerHttpBaseUrl()}/v1/machines`;
 
     // Create machine
     try {
-      const timeoutMs =
-        typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
-          ? Math.floor(opts.timeoutMs)
-          : 60_000;
       const response = await axios.post(
         machinesUrl,
         {
           id: opts.machineId,
-          metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
-          daemonState: opts.daemonState ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.daemonState)) : undefined,
-          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : undefined,
+          metadata: encodeMachineStoredContent(registrationContent.context, opts.metadata),
+          daemonState: opts.daemonState ? encodeMachineStoredContent(registrationContent.context, opts.daemonState) : undefined,
+          dataEncryptionKey: registrationContent.dataEncryptionKey ?? undefined,
           contentPublicKey:
-            this.credential.encryption.type === 'dataKey'
+            registrationContent.context.encryptionVariant !== 'plain' && this.credential.encryption?.type === 'dataKey'
               ? encodeBase64(this.credential.encryption.publicKey)
               : undefined,
           ...(registrationIdentity
@@ -659,13 +670,14 @@ export class ApiClient {
       }
 
       // Return decrypted machine like we do for sessions
+      const content = resolvePublishedMachineContent(this.credential, raw.dataEncryptionKey, registrationContent.accountMode);
       const machine: Machine = {
         id: raw.id,
-        encryptionKey: encryptionKey,
-        encryptionVariant: encryptionVariant,
-        metadata: raw.metadata ? decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.metadata)) : null,
+        publishedDataEncryptionKey: content.dataEncryptionKey,
+        ...content.context,
+        metadata: raw.metadata ? decodeMachineStoredContent(content.context, raw.metadata) : null,
         metadataVersion: raw.metadataVersion || 0,
-        daemonState: raw.daemonState ? decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.daemonState)) : null,
+        daemonState: raw.daemonState ? decodeMachineStoredContent(content.context, raw.daemonState) : null,
         daemonStateVersion: raw.daemonStateVersion || 0,
       };
       return machine;
@@ -713,12 +725,12 @@ export class ApiClient {
     }
   }
 
-  private async resolveMachineRegistrationIdentity(machineId: string): Promise<MachineRegistrationIdentity | undefined> {
+  private async resolveMachineRegistrationIdentity(machineId: string, encrypted = true): Promise<MachineRegistrationIdentity | undefined> {
     if (!configuration.installationIdentityFile) return undefined;
     const identity = await resolveMachineRegistrationIdentity({
       machineId,
       token: this.credential.token,
-      contentPublicKey: this.credential.encryption.type === 'dataKey'
+      contentPublicKey: encrypted && this.credential.encryption?.type === 'dataKey'
         ? this.credential.encryption.publicKey
         : undefined,
     });
@@ -842,6 +854,7 @@ export class ApiClient {
       kind: 'oauth' | 'token';
       providerEmail?: string | null;
       providerAccountId?: string | null;
+      providerOrganizationId?: string | null;
       expiresAt?: number | null;
     };
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
@@ -1280,7 +1293,6 @@ export class ApiClient {
         {
           headers: {
             'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json',
             [CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER]: CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
           },
           params: { expectedGeneration },

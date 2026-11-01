@@ -6,12 +6,16 @@ import type { RawJSONLines } from '../types';
  * When a slash command is submitted in Claude's TUI, Claude writes user rows containing
  * `<command-name>…</command-name>` / `<command-args>…` and a follow-up
  * `<local-command-stdout>…` row. These are control bookkeeping, never conversation text.
- * The shared shape parser lives here so provider echo handling and transcript visibility
- * agree on what a command row is.
+ * Shell input/output use distinct shapes because they remain visible. A preceding meta
+ * caveat identifies commands whose output goes directly to the user without inference.
+ * The shared shape parser keeps acceptance, completion, and visibility on one boundary.
  */
 export type ClaudeControlCommandRowShape =
   | Readonly<{ kind: 'command'; name: string; args: string }>
-  | Readonly<{ kind: 'stdout' }>;
+  | Readonly<{ kind: 'stdout' }>
+  | Readonly<{ kind: 'shell_command'; command: string }>
+  | Readonly<{ kind: 'shell_output' }>
+  | Readonly<{ kind: 'local_caveat' }>;
 
 export type ClaudeControlCommandCompletionOwner = 'local_stdout' | 'external_lifecycle';
 
@@ -65,6 +69,10 @@ export function readClaudeControlCommandRowShape(message: RawJSONLines): ClaudeC
   const text = firstMessageText(message);
   if (text === null) return null;
   const trimmed = text.trim();
+  if (message.isMeta === true && trimmed.startsWith('<local-command-caveat>')) return { kind: 'local_caveat' };
+  const shellInput = message.isMeta === true ? null : /^<bash-input>([\s\S]*)<\/bash-input>$/u.exec(trimmed);
+  if (shellInput) return { kind: 'shell_command', command: `!${shellInput[1]}` };
+  if (message.isMeta !== true && /^<bash-(?:stdout|stderr)>/u.test(trimmed)) return { kind: 'shell_output' };
   if (trimmed.startsWith(CLAUDE_CONTROL_COMMAND_TRANSCRIPT_PREFIXES[1])) return { kind: 'stdout' };
   if (!trimmed.startsWith(CLAUDE_CONTROL_COMMAND_TRANSCRIPT_PREFIXES[0])) return null;
   const nameMatch = COMMAND_NAME_TAG.exec(trimmed);

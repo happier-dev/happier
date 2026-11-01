@@ -11,6 +11,18 @@ function buildJwt(payload: Record<string, unknown>): string {
 }
 
 describe('connected account descriptors', () => {
+  it('uses one provider profile read to attest context and rejects another user identity', async () => {
+    const { fetchClaudeSubscriptionProfileContext } = await import('./connectedAccountDescriptors');
+    const payload = { account: { uuid: 'user', email_address: 'member@example.test' }, organization: { uuid: 'organization' } };
+    const fetcher: typeof fetch = async () => Response.json(payload);
+    expect(await fetchClaudeSubscriptionProfileContext({ accessToken: 'access', expectedProviderAccountId: 'user', fetcher }))
+      .toMatchObject({ status: 'accepted', providerAccountId: 'user', raw: { claudeAiOauth: { organizationUuid: 'organization' } } });
+    expect(await fetchClaudeSubscriptionProfileContext({ accessToken: 'access', expectedProviderAccountId: 'another-user', fetcher }))
+      .toEqual({ status: 'identity_mismatch' });
+    expect(await fetchClaudeSubscriptionProfileContext({ accessToken: 'access', expectedProviderAccountId: 'user',
+      fetcher: async () => Response.json({ organization: { uuid: 'unbound-organization' } }) }))
+      .toEqual({ status: 'unavailable' });
+  });
   const claudeCodeScopeString = CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE;
 
   it('describes existing connected service credential families', async () => {
@@ -137,6 +149,7 @@ describe('connected account descriptors', () => {
         scope: claudeCodeScopeString,
         subscription_type: 'max',
         rate_limit_tier: 'max_20x',
+        organization: { uuid: 'organization-id' },
       },
     });
 
@@ -144,6 +157,7 @@ describe('connected account descriptors', () => {
       claudeAiOauth: {
         subscriptionType: 'max',
         rateLimitTier: 'max_20x',
+        organizationUuid: 'organization-id',
       },
     });
   });

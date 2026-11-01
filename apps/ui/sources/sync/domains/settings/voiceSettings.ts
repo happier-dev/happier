@@ -362,16 +362,53 @@ export function voiceSettingsParse(input: unknown): VoiceSettings {
   base.privacy.shareFilePaths = false;
   base.privacy.shareToolArgs = false;
 
-  // Adapters: parse with zod so per-adapter invalid fields don't blow away everything.
+  // Adapters: an invalid field (for example an enum value written by a newer app) falls back to its own
+  // default while sibling choices such as the STT/TTS providers survive.
   if (raw.adapters && typeof raw.adapters === 'object') {
     const a = raw.adapters as Record<string, unknown>;
-    const rt = VoiceRealtimeElevenLabsSchema.safeParse(a.realtime_elevenlabs);
-    if (rt.success) base.adapters.realtime_elevenlabs = rt.data;
-    const ld = VoiceLocalDirectSchema.safeParse(a.local_direct);
-    if (ld.success) base.adapters.local_direct = ld.data;
-    const lc = VoiceLocalConversationSchema.safeParse(a.local_conversation);
-    if (lc.success) base.adapters.local_conversation = lc.data;
+    const rt = parseDroppingInvalidFields(VoiceRealtimeElevenLabsSchema, a.realtime_elevenlabs);
+    if (rt) base.adapters.realtime_elevenlabs = rt;
+    const ld = parseDroppingInvalidFields(VoiceLocalDirectSchema, a.local_direct);
+    if (ld) base.adapters.local_direct = ld;
+    const lc = parseDroppingInvalidFields(VoiceLocalConversationSchema, a.local_conversation);
+    if (lc) base.adapters.local_conversation = lc;
   }
 
   return base;
+}
+
+const REMOVE = Symbol('remove');
+
+/**
+ * Removes the deepest value that exists on `path`: the rejected value itself, or the nearest existing
+ * ancestor when the path leads through a missing key, an array, or a primitive, so the containing field
+ * takes its default. Returns `REMOVE` when the given value itself must go.
+ */
+function omitAtPath(value: unknown, path: readonly PropertyKey[]): unknown {
+  if (path.length === 0 || !value || typeof value !== 'object' || Array.isArray(value)) return REMOVE;
+  const [key, ...rest] = path;
+  const record = value as Record<PropertyKey, unknown>;
+  if (!(key in record)) return REMOVE;
+  const child = omitAtPath(record[key], rest);
+  const next = { ...record };
+  if (child === REMOVE) delete next[key];
+  else next[key] = child;
+  return next;
+}
+
+/**
+ * Removes each value the schema rejects so it takes its schema default, then parses again. Every pass
+ * removes at least one key or the whole value, so the loop ends; returns null when the whole value is
+ * unusable.
+ */
+function parseDroppingInvalidFields<S extends z.ZodType>(schema: S, raw: unknown): z.output<S> | null {
+  let candidate = raw;
+  while (true) {
+    const parsed = schema.safeParse(candidate);
+    if (parsed.success) return parsed.data;
+    // One issue per pass: removing a value can invalidate the paths of its sibling issues.
+    const next = omitAtPath(candidate, parsed.error.issues[0]?.path ?? []);
+    if (next === REMOVE) return null;
+    candidate = next;
+  }
 }

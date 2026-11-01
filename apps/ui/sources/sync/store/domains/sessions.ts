@@ -7,6 +7,7 @@ import type {
 } from '../../domains/state/storageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import { readSessionArchivePending, type SessionArchiveOperation, type SessionArchiveOperations } from '../../domains/session/listing/sessionArchiveState';
 import { readStoredSessionMessagesFromStateLike } from '../../domains/messages/readStoredSessionMessages';
 import { isTranscriptRenderableAggregate } from '../../domains/messages/transcriptRenderableAggregate';
 import {
@@ -73,9 +74,11 @@ import {
     resolveSessionRuntimePresenceFields,
     SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
 } from '../../domains/session/attention/deriveSessionRuntimePresentationState';
-import { normalizeSessionOrderingNumber, reconcileSessionLifecycleProjection } from '../../domains/session/sessionLifecycleProjection';
-import { setActiveServerSessionListCache } from '../sessionListCache';
+import { reconcileSessionLifecycleProjection, reconcileSessionSnapshot, resolveSessionPresence } from '../../domains/session/sessionLifecycleProjection';
+import { setActiveServerSessionListCache, setServerSessionListCache } from '../sessionListCache';
+import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '../../domains/server/serverProfiles';
 import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/snapshotDiff';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
@@ -90,13 +93,13 @@ import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
 import {
     applySessionListRenderableCommitPlan,
+    refreshSessionListViewDataRowsForRenderables,
     buildNextSessionListRenderableDelta,
     buildSessionListViewDataForRenderableState,
     didSessionListRenderableListViewFieldsChangeForSettings,
     planSessionListRenderableMergeCommit,
     planSessionListRenderablePatchesCommit,
     planSessionListRenderableReplacementCommit,
-    refreshSessionListViewDataRowsForRenderables,
     shouldRebuildOnSessionPlacementFieldsChange,
 } from './sessionListRenderableCommit';
 import { clearAgentInputLocalUiStateForSession } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
@@ -144,8 +147,8 @@ export type SessionsDomain = {
      * (measured live: `sessions \ renderables` = 0, `renderables \ sessions` = 97), so it cannot
      * cover an evicted row either.
      *
-     * `deleteSession` is the one signal that does mean gone. Every caller reaches it through
-     * `handleDeleteSessionSocketUpdate`, on exactly three pieces of server evidence: the socket
+     * `deleteSession` is the one signal that does mean gone. It follows a successful deletion
+     * response, or `handleDeleteSessionSocketUpdate` on three other pieces of server evidence: the socket
      * `delete-session` update, the socket `session-share-revoked` update (the session survives for
      * its owner but not for this viewer), and an exact session fetch answering `not_found`. Those
      * are the same grounds the session route states as "deleted, or you may no longer have
@@ -157,6 +160,9 @@ export type SessionsDomain = {
     sessionsData: (string | Session)[] | null;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
+    sessionArchiveOperations: SessionArchiveOperations;
+    beginSessionArchive: (sessionId: string, serverId: string) => SessionArchiveOperation | null;
+    finishSessionArchive: (operation: SessionArchiveOperation) => void;
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
@@ -175,11 +181,13 @@ export type SessionsDomain = {
         options?: SessionListRenderableReplacementOptions,
     ) => void;
     mergeSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    /** Omit the scope for active-server patches; explicit scopes are canonical server IDs. */
     applySessionListRenderablePatches: (
         patches: ReadonlyArray<Readonly<{
             sessionId: string;
             patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
         }>>,
+        serverId?: string | null,
     ) => void;
     applyLoaded: () => void;
     applyReady: () => void;
@@ -260,7 +268,7 @@ export type SessionsDomain = {
     ) => BeginScmOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
 
-    deleteSession: (sessionId: string) => void;
+    deleteSession: (sessionId: string, serverId?: string | null) => void;
 };
 
 type SessionsDomainDependencies = {
@@ -303,62 +311,6 @@ function createActionDraftId(nowMs: number): string {
     return `action_draft_${nowMs}_${actionDraftIdCounter}`;
 }
 
-type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
-
-function isIncomingOrderingTimestampOlder(incoming: unknown, previous: unknown): boolean {
-    const incomingNumber = normalizeSessionOrderingNumber(incoming);
-    const previousNumber = normalizeSessionOrderingNumber(previous);
-    return incomingNumber !== null && previousNumber !== null && incomingNumber < previousNumber;
-}
-
-function resolveOrderedSessionApply(
-    previousSession: Session | undefined,
-    incomingSession: IncomingSessionApply,
-): IncomingSessionApply {
-    if (!previousSession) return incomingSession;
-
-    let nextSession: IncomingSessionApply = reconcileSessionLifecycleProjection(previousSession, incomingSession);
-    const applyPatch = (patch: Partial<IncomingSessionApply>): void => {
-        nextSession = { ...nextSession, ...patch };
-    };
-
-    const previousMetadataVersion = normalizeSessionOrderingNumber(previousSession.metadataVersion);
-    const incomingMetadataVersion = normalizeSessionOrderingNumber(incomingSession.metadataVersion);
-    if (
-        previousMetadataVersion !== null
-        && incomingMetadataVersion !== null
-        && incomingMetadataVersion < previousMetadataVersion
-    ) {
-        applyPatch({
-            metadata: previousSession.metadata,
-            metadataVersion: previousSession.metadataVersion,
-        });
-    }
-
-    const previousAgentStateVersion = normalizeSessionOrderingNumber(previousSession.agentStateVersion);
-    const incomingAgentStateVersion = normalizeSessionOrderingNumber(incomingSession.agentStateVersion);
-    if (
-        previousAgentStateVersion !== null
-        && incomingAgentStateVersion !== null
-        && incomingAgentStateVersion < previousAgentStateVersion
-    ) {
-        applyPatch({
-            agentState: previousSession.agentState,
-            agentStateVersion: previousSession.agentStateVersion,
-        });
-    }
-
-    if (isIncomingOrderingTimestampOlder(incomingSession.pendingRequestObservedAt, previousSession.pendingRequestObservedAt)) {
-        applyPatch({
-            pendingPermissionRequestCount: previousSession.pendingPermissionRequestCount,
-            pendingUserActionRequestCount: previousSession.pendingUserActionRequestCount,
-            pendingRequestObservedAt: previousSession.pendingRequestObservedAt,
-        });
-    }
-
-    return nextSession;
-}
-
 function measureSessionApplyPhase<T>(
     name: string,
     fields: () => Record<string, number>,
@@ -366,15 +318,6 @@ function measureSessionApplyPhase<T>(
 ): T {
     if (!syncPerformanceTelemetry.isEnabled()) return fn();
     return syncPerformanceTelemetry.measure(name, fields(), fn);
-}
-
-/**
- * Centralized session online state resolver
- * Returns either "online" (string) or a timestamp (number) for last seen
- */
-function resolveSessionOnlineState(session: { active: boolean; activeAt: number }): "online" | number {
-    // Session is online if the active flag is true
-    return session.active ? "online" : session.activeAt;
 }
 
 /**
@@ -582,6 +525,34 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionsData: null,  // Legacy - to be removed
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
+        sessionArchiveOperations: {},
+        beginSessionArchive: (sessionId, serverId) => {
+            const operation = { sessionId, serverId };
+            let admitted = false;
+            set((state) => {
+                if (readSessionArchivePending(state, sessionId, serverId)) return state;
+                admitted = true;
+                return {
+                    ...state,
+                    sessionArchiveOperations: {
+                        ...state.sessionArchiveOperations,
+                        [serverId]: { ...state.sessionArchiveOperations[serverId], [sessionId]: operation },
+                    },
+                };
+            });
+            return admitted ? operation : null;
+        },
+        finishSessionArchive: (operation) => set((state) => {
+            const bucket = state.sessionArchiveOperations[operation.serverId];
+            // An account reset may have admitted a different operation while this one was awaiting I/O.
+            if (bucket?.[operation.sessionId] !== operation) return state;
+            const remaining = { ...bucket };
+            delete remaining[operation.sessionId];
+            const operations = { ...state.sessionArchiveOperations };
+            if (Object.keys(remaining).length === 0) delete operations[operation.serverId];
+            else operations[operation.serverId] = remaining;
+            return { ...state, sessionArchiveOperations: operations };
+        }),
         sessionScmStatus: {},
         sessionLastViewed,
         sessionRepositoryTreeExpandedPathsBySessionId,
@@ -697,11 +668,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const session = stripLegacySessionDraftField(
                     reconcileSessionLifecycleProjection(
                         state.sessionListRenderables[incomingSession.id],
-                        resolveOrderedSessionApply(previousSession, incomingSession),
+                        reconcileSessionSnapshot(previousSession, incomingSession),
                     ),
                 );
-                // Use centralized resolver for consistent state management
-                const presence = resolveSessionOnlineState(session);
+                const presence = resolveSessionPresence(session);
 
                 // Preserve existing local mode selections, or load them from persisted local state.
                 const existingPermissionMode = previousSession?.permissionMode;
@@ -1341,9 +1311,33 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             }
             return next;
         }),
-        applySessionListRenderablePatches: (patches) => set((state) => {
+        applySessionListRenderablePatches: (patches, serverId) => set((state) => {
             if (patches.length === 0) {
                 return state;
+            }
+
+            const targetServerId = serverId;
+            if (targetServerId && targetServerId !== getActiveServerSnapshot().serverId) {
+                const cacheServerId = resolveSessionListCacheServerId(state.sessionListViewDataByServerId, targetServerId);
+                const cached = cacheServerId ? state.sessionListViewDataByServerId[cacheServerId] : null;
+                if (!cached) return state;
+                const renderables: Record<string, SessionListRenderableSession> = {};
+                for (const item of cached) {
+                    if (item.type === 'session') renderables[item.session.id] = item.session;
+                }
+                const plan = planSessionListRenderablePatchesCommit({
+                    state: { ...state, sessionListRenderables: renderables, sessionListViewData: cached }, patches,
+                });
+                if (plan.noop) return state;
+                const projected = refreshSessionListViewDataRowsForRenderables({
+                    sessionListViewData: cached,
+                    renderables: plan.nextRenderables,
+                    sessionIds: plan.changedSessionIds,
+                });
+                return {
+                    ...state,
+                    sessionListViewDataByServerId: setServerSessionListCache(state.sessionListViewDataByServerId, targetServerId, projected),
+                };
             }
 
             const plan = planSessionListRenderablePatchesCommit({
@@ -1994,7 +1988,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             }
             return finished;
         },
-        deleteSession: (sessionId: string) => set((state) => {
+        deleteSession: (sessionId: string, serverId?: string | null) => set((state) => {
+            if (serverId && !areServerProfileIdentifiersEquivalent(serverId, getActiveServerSnapshot().serverId)) {
+                const cacheServerId = resolveSessionListCacheServerId(state.sessionListViewDataByServerId, serverId);
+                const cached = cacheServerId ? state.sessionListViewDataByServerId[cacheServerId] : null;
+                if (!cached) return state;
+                const remaining = cached.filter((item) => item.type !== 'session' || item.session.id !== sessionId);
+                if (remaining.length === cached.length) return state;
+                // Full session state and its local persistence belong to the active Home.
+                return {
+                    ...state,
+                    sessionListViewDataByServerId: setServerSessionListCache(state.sessionListViewDataByServerId, serverId, remaining),
+                };
+            }
             optimisticThinkingTimeouts.cancel(sessionId);
             resumingTimeouts.cancel(sessionId);
             thinkingGraceTimeouts.cancel(sessionId);

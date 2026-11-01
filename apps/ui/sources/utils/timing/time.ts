@@ -2,6 +2,9 @@ export async function delay(ms: number): Promise<void> {
     return new Promise<void>(resolve => setTimeout(resolve, ms));
 }
 
+/** The caller deliberately replaced an attempt; retry without charging a failure or delaying. */
+export class SupersededOperationError extends Error {}
+
 /**
  * Raised by {@link withTimeout} when the wrapped operation misses its deadline.
  * Carries the deadline so callers can report the bound they enforced.
@@ -98,6 +101,7 @@ export function createBackoff(
             try {
                 return await callback();
             } catch (e) {
+                if (e instanceof SupersededOperationError) continue;
                 currentFailureCount++;
                 if (!shouldRetry(e, currentFailureCount)) {
                     throw e;

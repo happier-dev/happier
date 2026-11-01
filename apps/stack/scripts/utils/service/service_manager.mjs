@@ -84,15 +84,17 @@ export async function uninstallService({
   return { backend, taskName: taskName || null };
 }
 
-export async function restartService({ platform = process.platform, mode = 'user', spec, persistent = true, uid = null } = {}) {
+export async function restartService({ platform = process.platform, mode = 'user', homeDir = '', spec, persistent = true, uid = null } = {}) {
   const label = normalizeLabel(spec);
   const backend = resolveServiceBackend({ platform, mode });
+  const definition = buildServiceDefinition({ backend, homeDir, spec });
   const taskName = taskNameFor({ backend, label });
 
   const plan = planServiceAction({
     backend,
     action: 'restart',
     label,
+    definitionPath: definition.path,
     taskName,
     persistent,
     uid,

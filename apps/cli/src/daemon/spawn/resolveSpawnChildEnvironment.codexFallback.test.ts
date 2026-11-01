@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { dirname } from 'node:path';
+
+import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { removeTempDir } from '@/testkit/fs/tempDir';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
@@ -169,16 +173,21 @@ describe('resolveSpawnChildEnvironment (codex ACP fallback)', () => {
       workspaceLocationId: ' loc_local ',
       workspaceCheckoutId: ' checkout_feature_auth ',
     };
+    const codexPath = await createExecutableShim({
+      dirPrefix: 'happier-codex-mode-env-',
+      fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+      contents: process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    });
     const result = await resolveSpawnChildEnvironment({
       options: options as SpawnSessionOptions,
       profileEnvironmentVariables: {},
       daemonSpawnHooks: null,
-      processEnv: {},
+      processEnv: { HAPPIER_CODEX_PATH: codexPath },
       logDebug: () => {},
       logInfo: () => {},
       logWarn: () => {},
       connectedServiceAuth: null,
-    });
+    }).finally(() => removeTempDir(dirname(codexPath)));
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;

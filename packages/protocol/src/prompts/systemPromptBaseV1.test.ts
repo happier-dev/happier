@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './systemPromptBaseV1.js';
+import { HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1, HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './systemPromptBaseV1.js';
 
 describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
   it('documents inline @path workspace file references', () => {
@@ -18,5 +18,9 @@ describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
   it('documents attachment blocks so referenced files are read before answering', () => {
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('[attachments]');
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('attachments block');
+  });
+
+  it('states that relative attachment paths resolve against the session working directory', () => {
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1).toMatch(/relative to the session working directory/i);
   });
 });

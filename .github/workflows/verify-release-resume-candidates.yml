@@ -60,7 +60,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .release-control/.node-version
       - name: Enable trusted control Yarn
         working-directory: .release-control
         run: bash scripts/ci/corepack-prepare-yarn-with-retry.sh

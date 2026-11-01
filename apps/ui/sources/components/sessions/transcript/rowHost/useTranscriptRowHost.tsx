@@ -352,6 +352,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             const interaction = deriveReadOnlyTranscriptInteraction(transcriptInteraction, item.isReadOnlyContext === true);
             return wrapTranscriptItemForAnchor(item, (
                 <ToolCallsGroupUnitFooterRowWithSessionCommon
+                    hasVisibleTools={item.hasVisibleTools}
                     sessionId={sessionId}
                     groupId={item.groupId}
                     metadata={metadata}

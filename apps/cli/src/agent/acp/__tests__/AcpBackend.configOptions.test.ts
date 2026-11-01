@@ -8,6 +8,7 @@ import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core';
 import { withExecutionRunBackendModelOptions } from '@/agent/executionRuns/runtime/applyExecutionRunBackendModelOptions';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createFx014SessionResponse, writeFx014AcpAgentScript } from '../testkit/fx014';
 
 function writeFakeAcpAgentScript(params: {
   dir: string;
@@ -197,6 +198,67 @@ async function readRecordedParams(path: string): Promise<Record<string, unknown>
 }
 
 describe('AcpBackend session configOptions', () => {
+  it('publishes only changed setter facts and retains unchanged config rows', async () => {
+    await withTempDir('happier-fx014-config-count-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'fx', cwd: dir, command: process.execPath, args: [writeFx014AcpAgentScript({ dir })],
+      });
+      const updates: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event' && message.name === 'config_options_update') updates.push(message);
+      });
+      try {
+        const { sessionId } = await backend.startSession();
+        const initial = backend.getSessionConfigOptionsState();
+        for (let i = 0; i < 10; i++) await backend.setSessionConfigOption(sessionId, 'provider', 'codex');
+        expect(updates).toHaveLength(0);
+        expect(backend.getSessionConfigOptionsState()).toBe(initial);
+        await backend.setSessionConfigOption(sessionId, 'fast', 'true');
+        expect(updates).toHaveLength(1);
+        const changed = backend.getSessionConfigOptionsState();
+        expect(changed?.find((option) => option.id === 'fast')?.currentValue).toBe('true');
+        for (const row of initial ?? []) {
+          if (row.id !== 'fast') expect(changed?.find((option) => option.id === row.id)).toBe(row);
+        }
+        for (let i = 0; i < 10; i++) await backend.setSessionConfigOption(sessionId, 'fast', 'true');
+        expect(updates).toHaveLength(1);
+        expect(backend.getSessionConfigOptionsState()).toBe(changed);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it('consumes complete FX setter snapshots without notifications and preserves state on rejection', async () => {
+    await withTempDir('happier-fx014-config-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'fx', cwd: dir, command: process.execPath, args: [writeFx014AcpAgentScript({ dir })],
+      });
+      const updates: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event' && message.name === 'config_options_update') updates.push(message);
+      });
+      try {
+        const { sessionId } = await backend.startSession();
+        expect(backend.getSessionConfigOptionsState()).toEqual(createFx014SessionResponse().configOptions);
+        await backend.setSessionConfigOption(sessionId, 'model', 'gpt-6-luna');
+        expect(backend.getSessionConfigOptionsState()?.find((option) => option.id === 'effort')?.options?.map((choice) => choice.value))
+          .toEqual(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
+        await backend.setSessionConfigOption(sessionId, 'fast', 'true');
+        expect(backend.getSessionConfigOptionsState()?.find((option) => option.id === 'fast')?.currentValue).toBe('true');
+        const previous = backend.getSessionConfigOptionsState();
+        const previousUpdates = [...updates];
+        await expect(backend.setSessionConfigOption(sessionId, 'provider', 'gateway')).rejects.toThrow(/fx needs access/);
+        expect(backend.getSessionConfigOptionsState()).toEqual(previous);
+        expect(updates).toEqual(previousUpdates);
+        await backend.setSessionConfigOption(sessionId, 'provider', 'codex');
+        expect(updates.at(-1)).toMatchObject({ payload: { configOptions: previous } });
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it('does not fabricate an empty config snapshot when a successful setter has never observed options', async () => {
     await withTempDir('happier-acp-config-unknown-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({ dir, omitConfigOptions: true });

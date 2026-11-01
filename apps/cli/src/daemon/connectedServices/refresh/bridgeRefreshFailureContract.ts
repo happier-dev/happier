@@ -2,8 +2,9 @@ import { z } from 'zod';
 
 import type { ConnectedServiceCredentialRefreshDiagnostic } from './refreshTypes';
 import { isReauthRequiredFailure } from './refreshDiagnostics';
+import { lazySchema } from '@happier-dev/protocol';
 
-export const ConnectedServiceBridgeRefreshFailureResponseSchema = z.discriminatedUnion('errorCode', [
+export const ConnectedServiceBridgeRefreshFailureResponseSchema = lazySchema(() => z.discriminatedUnion('errorCode', [
   z.object({
     ok: z.literal(false),
     errorCode: z.literal('connected_service_credential_reconnect_required'),
@@ -14,7 +15,7 @@ export const ConnectedServiceBridgeRefreshFailureResponseSchema = z.discriminate
     errorCode: z.literal('connected_service_credential_refresh_unavailable'),
     credentialHealthStatus: z.literal('refresh_failed_retryable'),
   }),
-]);
+]));
 
 export type ConnectedServiceBridgeRefreshFailureResponse = z.infer<
   typeof ConnectedServiceBridgeRefreshFailureResponseSchema

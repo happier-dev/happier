@@ -32,6 +32,17 @@ function ciphertext(value: unknown): string {
 }
 
 describe('openActionOperationRevisionEphemeral', () => {
+    it('opens plain snapshots without key material only for a plain machine row', () => {
+        const update = { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'plain', v: snapshot } } as const;
+        expect(openActionOperationRevisionEphemeral({ update, machineKey: null, machineMode: 'plain', accountId: 'account-1' })).toEqual(snapshot);
+        expect(openActionOperationRevisionEphemeral({ update, machineKey, machineMode: 'e2ee', accountId: 'account-1' })).toBeNull();
+        expect(openActionOperationRevisionEphemeral({
+            update: { ...update, content: { t: 'encrypted', c: ciphertext(snapshot) } },
+            machineKey,
+            machineMode: 'plain', accountId: 'account-1',
+        })).toBeNull();
+    });
+
     it('opens and validates the full snapshot while preserving only its bounded request reference', () => {
         expect(openActionOperationRevisionEphemeral({
             update: {
@@ -40,7 +51,17 @@ describe('openActionOperationRevisionEphemeral', () => {
                 content: { t: 'encrypted', c: ciphertext(snapshot) },
             },
             machineKey,
+            machineMode: 'e2ee', accountId: 'account-1',
         })).toEqual(snapshot);
+    });
+
+    it('rejects a valid snapshot belonging to another account', () => {
+        expect(openActionOperationRevisionEphemeral({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'encrypted', c: ciphertext(snapshot) } },
+            machineKey,
+            machineMode: 'e2ee',
+            accountId: 'account-other',
+        })).toBeNull();
     });
 
     it('rejects an authenticated snapshot whose scope does not match the outer routed machine', () => {
@@ -51,6 +72,7 @@ describe('openActionOperationRevisionEphemeral', () => {
                 content: { t: 'encrypted', c: ciphertext(snapshot) },
             },
             machineKey,
+            machineMode: 'e2ee', accountId: 'account-1',
         })).toBeNull();
     });
 
@@ -62,6 +84,7 @@ describe('openActionOperationRevisionEphemeral', () => {
                 content: { t: 'encrypted', c: ciphertext({ ...snapshot, input: { prompt: 'secret' } }) },
             },
             machineKey,
+            machineMode: 'e2ee', accountId: 'account-1',
         })).toBeNull();
     });
 });

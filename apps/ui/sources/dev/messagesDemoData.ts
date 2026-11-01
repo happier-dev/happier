@@ -77,6 +77,14 @@ export const debugMessages: Message[] = [
 \`\`\``,
     },
 
+    {
+        id: 'agent-nested-markdown-code',
+        localId: null,
+        createdAt: Date.now() - 188500,
+        kind: 'agent-text',
+        text: "Nested code block wrapping:\n\n7. List example\n\n   ```yaml\n   description: nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description nested long description NESTED_LIST_END\n   ```\n8. Following list item with [a link](https://example.com).\n\n   > Quoted example\n   >\n   > ```python\n   > def example():\n   >     return \"quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line quoted long line NESTED_QUOTE_END\"\n   > ```\n\n- [x] Completed task\n\n  ```text\n  Task code\n  ```",
+    },
+
     // Agent message with markdown table (simple repro for mobile rendering issue)
     {
         id: 'agent-table-demo',

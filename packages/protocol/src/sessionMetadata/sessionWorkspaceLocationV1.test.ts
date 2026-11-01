@@ -61,4 +61,16 @@ describe('sessionWorkspaceLocationV1', () => {
       candidatePath: '/home/coder/other-project',
     })).toEqual({ machinePath: '/home/coder/other-project' });
   });
+
+  it('recovers a missing root only from a valid mapping for the target machine', () => {
+    const metadata = { sessionWorkspaceLocationV1: location };
+    expect(resolveSessionWorkspaceRootForMachine({ metadata, machineId: 'machine-1', candidatePath: '' }))
+      .toEqual({ machinePath: location.machinePath, agentPath: location.agentPath });
+    expect(resolveSessionWorkspaceRootForMachine({ metadata, machineId: 'other-machine', candidatePath: '' }))
+      .toEqual({ machinePath: '' });
+    expect(resolveSessionWorkspaceRootForMachine({
+      metadata: { sessionWorkspaceLocationV1: { ...location, machinePath: '' } },
+      machineId: 'machine-1', candidatePath: '',
+    })).toEqual({ machinePath: '' });
+  });
 });

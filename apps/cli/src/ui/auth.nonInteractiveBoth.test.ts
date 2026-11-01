@@ -5,6 +5,8 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
+import { reloadConfiguration } from '@/configuration';
+import { doAuth } from './auth';
 
 const runTailscaleServeStatusMock = vi.fn<
   (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) => Promise<string>
@@ -111,8 +113,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: undefined,
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
@@ -170,8 +171,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: undefined,
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
@@ -206,8 +206,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: undefined,
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
@@ -242,8 +241,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: undefined,
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
@@ -278,8 +276,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: 'web',
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
@@ -315,13 +312,12 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: 'web',
       });
 
-      vi.resetModules();
+      reloadConfiguration();
       const axiosModule = await import('axios');
       const axiosDefault = axiosModule.default as AxiosLike;
       (axiosDefault.post as unknown as { mockClear: () => void }).mockClear();
       (axiosDefault.get as unknown as { mockClear: () => void }).mockClear();
 
-      const { doAuth } = await import('./auth');
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');
 
@@ -383,8 +379,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: undefined,
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
       const creds = await doAuth();
 
       expect(creds).toBeNull();
@@ -415,8 +410,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_AUTH_METHOD: 'mobile',
       });
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       expect((await doAuth())?.token).toBe('tok');
       expect(displayQRCodeMock).toHaveBeenCalledTimes(1);
@@ -449,8 +443,7 @@ describe.sequential('doAuth (non-interactive)', () => {
         HAPPIER_AUTH_METHOD: 'web',
       });
 
-      vi.resetModules();
-      const { doAuth } = await import('./auth');
+      reloadConfiguration();
 
       const creds = await doAuth();
       expect(creds?.token).toBe('tok');

@@ -12,7 +12,7 @@ vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
 }));
 
-import { authApprove } from './approve';
+import { authApprove, AuthApproveUnsupportedResponseError } from './approve';
 
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
@@ -24,6 +24,23 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe('authApprove', () => {
     beforeEach(() => {
         mocks.serverFetch.mockReset();
+    });
+
+    it('requires an explicit new-reader capability before releasing a token-only response', async () => {
+        const tokenOnly = new Uint8Array([1, 2, 3]);
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ status: 'pending', supportsV2: true }));
+        await expect(authApprove('token', new Uint8Array(32), new Uint8Array(), new Uint8Array(), {
+            answerTokenOnly: tokenOnly,
+        })).rejects.toBeInstanceOf(AuthApproveUnsupportedResponseError);
+        expect(mocks.serverFetch.mock.calls.some(([path]) => path === '/v1/auth/response')).toBe(false);
+
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ status: 'pending', supportsV2: true, supportsTokenOnly: true }));
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+        await expect(authApprove('token', new Uint8Array(32), new Uint8Array(), new Uint8Array(), {
+            answerTokenOnly: tokenOnly,
+        })).resolves.toBe('approved');
+        const posted = mocks.serverFetch.mock.calls.at(-1)?.[1] as RequestInit;
+        expect(JSON.parse(String(posted.body)).response).toBe(encodeBase64(tokenOnly));
     });
 
     it('falls back to v1 response when server supports v2 but caller has no v2 payload', async () => {

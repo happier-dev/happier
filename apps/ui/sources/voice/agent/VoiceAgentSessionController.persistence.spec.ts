@@ -314,8 +314,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
     const controller = createVoiceAgentSessionController();
 
     await expect(controller.sendTurn('s1', 'hello')).rejects.toMatchObject({
-      message: expect.stringContaining('Experimental Features > Voice Agent'),
       code: 'VOICE_AGENT_RUNTIME_UNAVAILABLE',
+      localVoiceErrorCode: 'voice_agent_feature_disabled',
       featureDecision: expect.objectContaining({
         featureId: 'voice.agent',
         blockedBy: 'local_policy',

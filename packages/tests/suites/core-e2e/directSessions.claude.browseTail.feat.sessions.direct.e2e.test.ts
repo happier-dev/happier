@@ -12,7 +12,7 @@ import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { createDataKeyRpcClient, unwrapDataKeyRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
+import { createDataKeyRpcClient, createRpcClient, unwrapDataKeyRpcResult, unwrapRpcResult } from '../../src/testkit/syntheticAgent/rpcClient';
 import { waitFor } from '../../src/testkit/timing';
 import {
   fakeClaudeFixturePath,
@@ -333,7 +333,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000, context: 'socket connected for direct takeover persist e2e' });
 
-      const machineRpc = createDataKeyRpcClient(ui, machineKey);
+      const machineRpc = createRpcClient(ui, { type: 'plain' });
 
       let candidatesResult: any = null;
       await waitFor(
@@ -360,7 +360,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         directoryHint: workspaceDir,
         source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: claudeProjectId },
       });
-      const linkResult = unwrapDataKeyRpcResult(link, 'direct Claude persisted link');
+      const linkResult = unwrapRpcResult(link, 'direct Claude persisted link');
       expect(linkResult).toEqual(expect.objectContaining({
         ok: true,
         created: true,
@@ -371,7 +371,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         machineId: seeded.machineId,
         sessionId,
       }, 60_000);
-      const takeoverPersistResult = unwrapDataKeyRpcResult(takeoverPersist, 'direct Claude takeover persist');
+      const takeoverPersistResult = unwrapRpcResult(takeoverPersist, 'direct Claude takeover persist');
       expect(takeoverPersistResult).toEqual({ ok: true, converted: true });
 
       await waitFor(
@@ -392,7 +392,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
 	            remoteSessionId: 'sess-direct-persist',
 	            source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: claudeProjectId },
 	          });
-	          const statusResult = unwrapDataKeyRpcResult(status, 'direct Claude persisted takeover status');
+	          const statusResult = unwrapRpcResult(status, 'direct Claude persisted takeover status');
 	          return isDirectSessionRunnerActiveStatus(statusResult);
 	        },
 	        { timeoutMs: 60_000, context: 'direct Claude persisted runner becomes active' },

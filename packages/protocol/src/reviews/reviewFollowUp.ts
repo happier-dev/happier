@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ReviewFollowUpInputSchema = z.object({
+export const ReviewFollowUpInputSchema = lazySchema(() => z.object({
   findingIds: z.array(z.string().min(1)).max(100).default([]),
   threadId: z.string().min(1).optional(),
   replyToQuestionId: z.string().min(1).optional(),
   messageMarkdown: z.string().min(1),
-}).passthrough();
+}).passthrough());
 export type ReviewFollowUpInput = z.infer<typeof ReviewFollowUpInputSchema>;

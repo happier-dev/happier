@@ -1,6 +1,6 @@
 import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 
-import type { CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
+import { DEFAULT_CODING_PROMPT_BEHAVIOR_V1, type CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
 
 export function buildHappierToolsPromptAppendix(params: Readonly<{
   sessionId: string;
@@ -87,7 +87,7 @@ If \`memory_search\` returns a hit that you need to verify, use \`${memoryWindow
 Do not use provider-native memory files or ad-hoc workspace search as a substitute for \`memory_search\`. If \`memory_search\` returns no hits, say that plainly.`
     : '';
 
-  const titleMode = params.sessionTitleUpdatesMode ?? 'ongoing';
+  const titleMode = params.sessionTitleUpdatesMode ?? DEFAULT_CODING_PROMPT_BEHAVIOR_V1.sessionTitleUpdates;
   const titleGuidance = titleMode === 'disabled'
     ? ''
     : titleMode === 'initial'

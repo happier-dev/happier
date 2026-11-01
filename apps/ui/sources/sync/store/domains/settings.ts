@@ -9,8 +9,10 @@ import { applySettings, settingsDefaults, settingsParse, type Settings } from '.
 import { reconcileSettingsReferences } from '../../domains/settings/reconcileSettingsReferences';
 import {
     loadAccountSettings,
+    loadActiveAccountSettingsScope,
     prepareAccountSettingsScopeForActivation,
     saveAccountSettings,
+    saveActiveAccountSettingsScope,
 } from '../../domains/state/accountSettingsPersistence';
 import {
     areAccountSettingsScopesEqual,
@@ -73,6 +75,7 @@ function shouldRebuildSessionListViewData(previous: Settings, next: Settings): b
         next.sessionListSectionModeV1 !== previous.sessionListSectionModeV1 ||
         next.sessionListAttentionPromotionModeV1 !== previous.sessionListAttentionPromotionModeV1 ||
         next.sessionListWorkingPlacementModeV1 !== previous.sessionListWorkingPlacementModeV1 ||
+        next.sessionListBackgroundWorkAttentionModeV1 !== previous.sessionListBackgroundWorkAttentionModeV1 ||
         next.sessionListSeparateBackgroundWork !== previous.sessionListSeparateBackgroundWork ||
         next.sessionListAttentionStandingDefaultV1 !== previous.sessionListAttentionStandingDefaultV1 ||
         next.workspacePathDisplayModeV1 !== previous.workspacePathDisplayModeV1;
@@ -137,7 +140,8 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     set: StoreSet<S>;
     get: StoreGet<S>;
 }): SettingsDomain {
-    const { settings: rawSettings, version } = loadSettings();
+    const settingsScope = loadActiveAccountSettingsScope();
+    const { settings: rawSettings, version } = settingsScope ? loadAccountSettings(settingsScope) : loadSettings();
     const settings = settingsParse(rawSettings);
     safeSetPreferredLanguageFromSettings(settings.preferredLanguage);
     const localSettings = loadLocalSettings();
@@ -146,7 +150,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     return {
         settings,
         settingsVersion: version,
-        settingsScope: null,
+        settingsScope,
         localSettings,
         purchases,
         applySettingsLocal: (delta) =>
@@ -189,16 +193,24 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 prepareAccountSettingsScopeForActivation(scope, legacyScopes);
                 prepareAccountProfileScopeForActivation(scope, legacyScopes);
                 const loaded = loadParsedAccountSettings(scope);
+                const localSettings = legacyScopes.some((legacyScope) => areAccountSettingsScopesEqual(
+                    state.localSettings.themeProfileLegacyAccountScope, legacyScope,
+                )) ? applyLocalSettings(state.localSettings, { themeProfileLegacyAccountScope: scope }) : state.localSettings;
+                if (localSettings !== state.localSettings) saveLocalSettings(localSettings);
+                saveActiveAccountSettingsScope(scope);
                 return {
                     ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),
+                    localSettings,
                     purchases: loadAccountPurchases(scope),
                 };
             }),
-        clearSettingsScope: () =>
+        clearSettingsScope: () => {
+            saveActiveAccountSettingsScope(null);
             set((state) => ({
                 ...buildSettingsProjectionState(state, { ...settingsDefaults }, null, null),
                 purchases: { ...purchasesDefaults },
-            })),
+            }));
+        },
         applySettingsForScope: (scope, nextSettings, nextVersion) =>
             set((state) => {
                 if (!shouldAcceptScopedSettings(scope, nextVersion)) {

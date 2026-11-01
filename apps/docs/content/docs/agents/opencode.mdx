@@ -282,6 +282,26 @@ never written to Happier's OpenCode server logs, and is never sent to a remote O
 talk to the managed server yourself, read the password from that state file, or start the server with
 your own `OPENCODE_PASSWORD`.
 
+### Managed server cleanup in development builds
+
+Current development builds keep Happier-managed OpenCode servers alive while a session or another
+Happier operation uses them. After the last client releases a server, Happier verifies its process
+identity and stops it. The running daemon also retries cleanup on its regular heartbeat, including
+after a client process crashes. Missing ownership evidence leaves the server running and produces
+a warning.
+
+An independent terminal opened with `happier attach` also keeps its managed server alive until the
+native client finishes, even if the original Happier session runner exits.
+
+This cleanup is automatic and does not require an opt-in setting. An open, idle session still counts
+as a user of the server. Servers supplied through `HAPPIER_OPENCODE_SERVER_URL` remain under your
+control unless the URL identifies a server already managed by Happier.
+
+New automatic servers use the `clients-tracked` subdirectory of the managed-server state directory.
+Servers left by older CLI versions remain accessible for explicit attachment, but development builds
+do not automatically reclaim them because those older clients do not report all their uses. These
+changes are not included in CLI 0.2.17.
+
 ## Notes
 
 - Resume availability is session-specific in Happier: the session must have valid OpenCode resume metadata, and your current backend/settings must allow resume.
@@ -316,6 +336,18 @@ Do this on the same machine and against the same Happier account/server profile 
 
 If Happier detached its managed TUI, the session can still accept messages from the
 app. Reattach with `happier attach <session-id>` from a terminal on the same machine.
+
+### Happier cannot release the previous managed server
+
+Current development builds report **Cannot release the previous managed OpenCode server**
+when a replacement is needed but Happier cannot verify the recorded process or confirm
+that it stopped. Happier keeps the existing server record instead of starting another
+server and losing track of the previous one.
+
+On the machine running the session, inspect the recorded managed server and confirm
+which process it belongs to. Resolve that server's shutdown or the permissions preventing
+verification, then retry. Do not terminate a process merely because its name mentions
+OpenCode; it may belong to another session or application.
 
 ## Related
 

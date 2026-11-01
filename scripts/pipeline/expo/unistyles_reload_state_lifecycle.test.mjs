@@ -30,153 +30,107 @@ function functionBody(source, signature) {
   assert.fail(`Unterminated body for native function: ${signature}`);
 }
 
-test('Unistyles reload lifecycle isolates native state by JSI runtime', async () => {
+// These source contracts protect the reload/lifetime fixes when upgrading the native
+// dependency. They do not replace compiling and exercising the iOS/Android runtime.
+test('Unistyles retains outgoing runtime state until its own generation is invalidated', async () => {
   const registryHeader = await readUnistylesSource('cxx/core/UnistylesRegistry.h');
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, UnistylesState>\s+_states/,
-    'JSI-owned state must be keyed by the runtime that created it',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, std::unordered_map<int, std::shared_ptr<core::StyleSheet>>>\s+_styleSheetRegistry/,
-    'stylesheets must not be shared across JSI runtimes',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, std::unordered_map<const ShadowNodeFamily\*, std::vector<std::shared_ptr<UnistyleData>>>>\s+_shadowRegistry/,
-    'shadow-node registrations must not be shared across JSI runtimes',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, std::unordered_set<const ShadowNodeFamily\*>>\s+_suspendedFamilies/,
-    'suspended shadow-node families must not be shared across JSI runtimes',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, std::unique_ptr<shadow::ShadowTrafficController>>\s+_trafficControllers/,
-    'pending shadow-tree updates must not be shared across JSI runtimes',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, std::optional<std::string>>\s+_scopedThemes/,
-    'scoped themes must not be shared across JSI runtimes',
-  );
-  assert.match(
-    registryHeader,
-    /std::unordered_map<jsi::Runtime\*, bool>\s+_shouldUsePointsForBreakpoints/,
-    'breakpoint unit settings must not be shared across JSI runtimes',
-  );
-
   const registrySource = await readUnistylesSource('cxx/core/UnistylesRegistry.cpp');
-  const createStateBody = functionBody(registrySource, 'void core::UnistylesRegistry::createState(jsi::Runtime& rt)');
-  assert.match(createStateBody, /this->_states\.try_emplace\(&rt\)/, 'createState must add state keyed by the current runtime');
-  assert.doesNotMatch(
-    createStateBody,
-    /_states\.clear\(\)|destroy\(\)/,
-    'configuring a new runtime must not destroy JSI values owned by an older runtime',
+  const isCurrentBody = functionBody(registryHeader, 'inline bool isCurrent(');
+  assert.match(isCurrentBody, /generation\s*!=\s*0\s*&&\s*generation\s*==\s*this->_generation\.load\(\)/);
+
+  const takeOwnershipBody = functionBody(registrySource, 'UnistylesRegistry::takeOwnership()');
+  assert.match(takeOwnershipBody, /_replacedStates\[previousGeneration\]\s*=\s*this->takeOwnedState\(\)/);
+  assert.ok(
+    takeOwnershipBody.indexOf('takeOwnedState()') < takeOwnershipBody.indexOf('_generation.store('),
+    'outgoing JSI values must be retained before publishing the replacement generation',
   );
 
-  const destroyStateBody = functionBody(registrySource, 'void core::UnistylesRegistry::destroyState(jsi::Runtime* rt)');
-  for (const runtimeOwnedRegistry of [
-    '_states',
-    '_styleSheetRegistry',
-    '_shadowRegistry',
-    '_suspendedFamilies',
-    '_trafficControllers',
-    '_scopedThemes',
-    '_shouldUsePointsForBreakpoints',
-  ]) {
-    assert.match(
-      destroyStateBody,
-      new RegExp(`this->${runtimeOwnedRegistry}\\.erase\\(rt\\)`),
-      `destroyState must clear only the invalidated runtime's ${runtimeOwnedRegistry}`,
-    );
-  }
+  const takeStateBody = functionBody(registrySource, 'UnistylesRegistry::takeOwnedState()');
+  assert.match(takeStateBody, /ownedState\.state\s*=\s*std::move\(this->_state\)/);
+  assert.match(takeStateBody, /ownedState\.styleSheets\s*=\s*std::exchange\(this->_styleSheetRegistry,\s*\{\}\)/);
+  assert.match(takeStateBody, /ownedState\.shadowRegistry\s*=\s*std::exchange\(this->_shadowRegistry,\s*\{\}\)/);
+  assert.match(takeStateBody, /ownedState\.updates\s*=\s*this->trafficController\.takeUpdates\(\)/);
+  assert.match(takeStateBody, /return ownedState/);
+  assert.doesNotMatch(takeStateBody, /this->_state\.reset\(|this->_styleSheetRegistry\.clear\(|this->_shadowRegistry\.clear\(/);
+
+  const releaseBody = functionBody(registrySource, 'UnistylesRegistry::releaseOwnership(');
+  const currentReleaseBody = functionBody(releaseBody, 'if (this->isCurrent(generation))');
+  assert.match(currentReleaseBody, /releasedState\s*=\s*this->takeOwnedState\(\)/);
+  assert.match(currentReleaseBody, /this->_generation\.store\(0\)/);
+  const outgoingReleaseBody = functionBody(releaseBody, 'else if (auto it = this->_replacedStates.find(generation)');
+  assert.match(outgoingReleaseBody, /releasedState\s*=\s*std::move\(it->second\)/);
+  assert.match(outgoingReleaseBody, /this->_replacedStates\.erase\(it\)/);
   assert.doesNotMatch(
-    destroyStateBody,
-    /\.clear\(\)/,
-    'delayed invalidation must never clear registries owned by a newer runtime',
+    outgoingReleaseBody,
+    /takeOwnedState\(|_generation\.(?:store|exchange)\(|\.clear\(/,
+    'delayed invalidation must release only the outgoing generation, never the current state',
   );
 
   const iosSource = await readUnistylesSource('ios/UnistylesModuleOnLoad.mm');
-  assert.match(iosSource, /@implementation UnistylesModule\s*\{\s*jsi::Runtime\* _runtime;/);
   const iosInstallBody = functionBody(iosSource, '- (void)installJSIBindingsWithRuntime');
-  assert.match(iosInstallBody, /_runtime = &rt;/, 'iOS must remember which runtime this module instance owns');
-  assert.doesNotMatch(
-    iosInstallBody,
-    /UnistylesRegistry::get\(\)\.(?:destroy|destroyState)\(/,
-    'installing iOS bindings must not destroy JSI values from a runtime that may still be alive',
-  );
-
+  assert.match(iosInstallBody, /_generation\s*=\s*core::UnistylesRegistry::get\(\)\.takeOwnership\(\)/);
   const iosInvalidateBody = functionBody(iosSource, '- (void)invalidate');
-  assert.match(iosInvalidateBody, /UnistylesRegistry::get\(\)\.destroyState\(_runtime\)/);
-  assert.match(iosInvalidateBody, /_runtime = nullptr;/);
+  assert.match(iosInvalidateBody, /UnistylesRegistry::get\(\)\.releaseOwnership\(_generation\)/);
 
   const androidSource = await readUnistylesSource('android/src/main/cxx/NativeUnistylesModule.h');
-  assert.match(androidSource, /jsi::Runtime\* _runtime = nullptr;/);
   const androidInvalidateBody = functionBody(androidSource, 'static void invalidateNative');
-  assert.match(androidInvalidateBody, /UnistylesRegistry::get\(\)\.destroyState\(self->_runtime\)/);
-  assert.match(androidInvalidateBody, /self->_runtime = nullptr;/);
+  assert.match(androidInvalidateBody, /UnistylesRegistry::get\(\)\.releaseOwnership\(self->_generation\)/);
 
   const androidModuleSource = await readUnistylesSource('android/src/main/cxx/NativeUnistylesModule.cpp');
   const androidBindingsBody = functionBody(androidModuleSource, 'UnistylesModule::getBindingsInstaller');
-  assert.match(androidBindingsBody, /self->_runtime = &rt;/, 'Android must remember which runtime this module instance owns');
-  assert.doesNotMatch(
-    androidBindingsBody,
-    /UnistylesRegistry::get\(\)\.(?:destroy|destroyState)\(/,
-    'installing Android bindings must not destroy JSI values from a runtime that may still be alive',
-  );
+  assert.match(androidBindingsBody, /self->_generation\s*=\s*core::UnistylesRegistry::get\(\)\.takeOwnership\(\)/);
 });
 
-test('Unistyles consumes shadow-tree updates once and ignores inactive families', async () => {
-  const trafficControllerHeader = await readUnistylesSource('cxx/shadowTree/ShadowTrafficController.h');
-  const takeUpdatesBody = functionBody(trafficControllerHeader, 'inline shadow::ShadowLeafUpdates takeUpdates()');
-  assert.match(takeUpdatesBody, /auto updates = std::move\(_unistylesUpdates\)/);
-  assert.match(takeUpdatesBody, /_unistylesUpdates = \{\}/);
-  assert.match(takeUpdatesBody, /_canCommit = false/);
-  assert.doesNotMatch(
-    trafficControllerHeader,
-    /ShadowLeafUpdates& getUpdates\(\)/,
-    'committed updates must not remain available for a later dependency change to replay',
-  );
+test('Unistyles rejects outgoing runtime work before accessing the replacement state', async () => {
+  const runtimeSource = await readUnistylesSource('cxx/hybridObjects/HybridUnistylesRuntime.cpp');
+  assert.match(functionBody(runtimeSource, 'HybridUnistylesRuntime::ownsRegistry()'), /isCurrent\(this->generation\)/);
+  assert.match(functionBody(runtimeSource, 'HybridUnistylesRuntime::getState()'), /if \(!this->ownsRegistry\(\)\)[\s\S]*?throw/);
 
-  const registryHeader = await readUnistylesSource('cxx/core/UnistylesRegistry.h');
-  assert.match(
-    registryHeader,
-    /bool isActiveUnistylesFamily\(jsi::Runtime& rt, const ShadowNodeFamily\* family\) const noexcept/,
-  );
+  const styleSheetSource = await readUnistylesSource('cxx/hybridObjects/HybridStyleSheet.cpp');
+  for (const callback of ['onPlatformDependenciesChange', 'onPlatformNativeDependenciesChange', 'onImeChange']) {
+    const callbackBody = functionBody(styleSheetSource, `void HybridStyleSheet::${callback}(`);
+    assert.match(callbackBody, /if \(!self \|\| !self->_unistylesRuntime->ownsRegistry\(\)\)\s*\{\s*return;/);
+    assert.ok(callbackBody.indexOf('ownsRegistry()') < callbackBody.indexOf('applyDependencyChanges('));
+  }
+
+  const shadowRegistrySource = await readUnistylesSource('cxx/hybridObjects/HybridShadowRegistry.cpp');
+  const scheduledUpdateBody = functionBody(shadowRegistrySource, 'void HybridShadowRegistry::scheduleShadowTreeUpdate(');
+  assert.match(scheduledUpdateBody, /if \(!unistylesRuntime->ownsRegistry\(\)\)\s*\{\s*return jsi::Value::undefined\(\);/);
+  assert.ok(scheduledUpdateBody.indexOf('ownsRegistry()') < scheduledUpdateBody.indexOf('ShadowTreeManager::updateShadowTree('));
+
+  const wrapperSource = await readUnistylesSource('cxx/core/UnistyleWrapper.h');
+  assert.match(wrapperSource, /unistylesRuntime->ownsRegistry\(\)\s*\?\s*registry\.getUnistyleById\(unistyleID\)\s*:\s*nullptr/);
+  assert.match(wrapperSource, /if \(unistyle == nullptr\)\s*\{\s*throw jsi::JSError/);
+});
+
+test('Unistyles consumes shadow-tree updates once while pinning their native families', async () => {
+  const trafficControllerHeader = await readUnistylesSource('cxx/shadowTree/ShadowTrafficController.h');
+  const takeUpdatesBody = functionBody(trafficControllerHeader, 'takeUpdates()');
+  assert.match(takeUpdatesBody, /return std::exchange\(_unistylesUpdates,\s*\{\}\)/);
+  const setUpdateBody = functionBody(trafficControllerHeader, 'inline void setUpdate(');
+  assert.match(setUpdateBody, /PinnedShadowLeafUpdate\{std::move\(family\),\s*std::move\(props\)\}/);
+  const updateTypes = await readUnistylesSource('cxx/shadowTree/ShadowLeafUpdate.h');
+  assert.match(functionBody(updateTypes, 'struct PinnedShadowLeafUpdate'), /std::shared_ptr<const ShadowNodeFamily>\s+family/);
 
   const registrySource = await readUnistylesSource('cxx/core/UnistylesRegistry.cpp');
-  const suspendBody = functionBody(
-    registrySource,
-    'void core::UnistylesRegistry::suspendShadowNode(jsi::Runtime& rt, const ShadowNodeFamily* shadowNodeFamily)',
-  );
-  assert.match(
-    suspendBody,
-    /trafficController\.removeShadowNode\(shadowNodeFamily\)/,
-    'suspending a family must discard any pending update that holds its raw pointer',
-  );
-
-  const dependencyMapBody = functionBody(
-    registrySource,
-    'core::DependencyMap core::UnistylesRegistry::buildDependencyMap(jsi::Runtime& rt, std::vector<UnistyleDependency>& deps)',
-  );
-  assert.match(
-    dependencyMapBody,
-    /_suspendedFamilies\[&rt\]\.count\(family\) > 0[\s\S]*?continue/,
-    'suspended families must not be queued by later dependency changes',
-  );
+  const unlinkBody = functionBody(registrySource, 'void core::UnistylesRegistry::unlinkShadowNodeWithUnistyles(');
+  assert.match(unlinkBody, /forgetFamilyUnsafe\(shadowNodeFamily,\s*releasedFamilies\)/);
+  const forgetBody = functionBody(registrySource, 'void core::UnistylesRegistry::forgetFamilyUnsafe(');
+  assert.match(forgetBody, /this->_shadowRegistry\.erase\(it\)/);
+  assert.match(forgetBody, /trafficController\.removeShadowNode\(shadowNodeFamily\)/);
+  const queueBody = functionBody(registrySource, 'void core::UnistylesRegistry::queueShadowLeafUpdatesUnsafe(');
+  assert.match(queueBody, /if \(it == this->_shadowRegistry\.end\(\)\)\s*\{\s*continue;/);
+  assert.match(queueBody, /trafficController\.setUpdate\(it->second\.family,\s*std::move\(props\)\)/);
 
   const shadowTreeSource = await readUnistylesSource('cxx/shadowTree/ShadowTreeManager.cpp');
   const updateShadowTreeBody = functionBody(
     shadowTreeSource,
-    'void shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt)',
+    'shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt)',
   );
   assert.match(updateShadowTreeBody, /trafficController\.takeUpdates\(\)/);
   assert.match(
     updateShadowTreeBody,
-    /registry\.isActiveUnistylesFamily\(rt, it->first\)/,
-    'the commit path must reject families that were unlinked or suspended before dereferencing them',
+    /PinnedShadowLeafUpdates updates;[\s\S]*?trafficController\.withLock\(/,
+    'family pins must survive the commit lock and native pointer dereferences',
   );
 });

@@ -273,9 +273,9 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
     { path: ['glass', 'innerShadow'], status: 'internal', reason: 'Floating glass surface inner shadow recipe string (GlassPanel), not a standalone editable color token.' },
     { path: ['glass', 'composerInnerShadow'], status: 'internal', reason: 'Reduced-opacity inner shadow recipe for the opt-in glass composer surface only; internal chrome recipe rather than a standalone editable color token.' },
     { path: ['glass', 'castShadow'], status: 'internal', reason: 'Floating glass surface cast shadow recipe string (GlassPanel), not a standalone editable color token.' },
-    { path: ['glass', 'composerSurface'], status: 'internal', reason: 'Solid fill for the opt-in glass composer surface; internal chrome recipe rather than a standalone editable color token.' },
+    { path: ['glass', 'composerSurface'], status: 'derived', reason: 'Glass composer fill follows surface.base in light profiles and surface.elevated in dark profiles, preserving the canonical fill when its source is unchanged.' },
     { path: ['glass', 'panelSurface'], status: 'internal', reason: 'Solid grey-ish fill for opt-in glass panels (e.g. the session-list selection action bar); internal chrome recipe rather than a standalone editable color token.' },
-    { path: ['glass', 'webBlurTint'], status: 'internal', reason: 'Translucent tint behind the web backdrop-filter blur (GlassSurface webBlur tier); internal chrome recipe rather than a standalone editable color token.' },
+    { path: ['glass', 'webBlurTint'], status: 'internal', reason: 'Translucent glass tint: behind the web backdrop-filter blur (GlassSurface webBlur tier) and, unblurred, the Android tint tier; internal chrome recipe rather than a standalone editable color token.' },
 
     { path: ['status', 'actionRequired'], status: 'derived', reason: 'Connection status color derived from state warning semantics.' },
     { path: ['status', 'connected'], status: 'derived', reason: 'Connection status color derived from state success semantics.' },

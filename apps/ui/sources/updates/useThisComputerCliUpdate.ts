@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getReleaseRingPublicLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { useCliUpdateTask } from '@/components/settings/machines/localControl/useCliUpdateTask';
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/settings/machines/localControl/buildLocalDaemonServiceSystemTaskSpec';
@@ -59,6 +60,7 @@ export function useThisComputerCliUpdate(): ThisComputerCliUpdate {
                 latestVersion: cliUpdate?.latestVersion ?? null,
                 managed: provenance === 'managed' && cliUpdate?.managed !== false,
                 updateCommand: keptCliUpdateCommand,
+                channel: facts.acquisition.channel ? getReleaseRingPublicLabel(facts.acquisition.channel) : null,
             },
             task: { running: task.running, step: task.running ? 'installing' : null, errorMessage: task.errorMessage },
         });

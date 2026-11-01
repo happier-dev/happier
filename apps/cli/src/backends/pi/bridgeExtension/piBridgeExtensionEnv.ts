@@ -1,19 +1,11 @@
 /**
- * CLI flag contract shared between the Happier Pi launcher and the generated
- * Pi tools-bridge extension.
- *
- * The launcher (createPiBackend) passes these flags to the Pi child ONLY together with
- * the `--extension <path>` argument for the generated bridge asset — both or neither —
- * and the extension stays fully inert when `happy-session-id` is absent.
- *
- * All bridge configuration rides these flags (no env side channels, no config baked
- * into the generated asset): the daemon resolves the merged coding-prompt settings once
- * per spawn and translates them into flags; the extension derives both its tool
- * registration and the Happier system-prompt addition it appends from the same flags,
- * so the two can never drift.
+ * Contract shared by the Happier Pi launcher, generated bridge, and RPC decoder.
+ * The launcher passes the protected configuration path only alongside the explicit
+ * bridge extension. The configuration binds tools, prompt guidance, and observed
+ * extension input to that Happier session; unbound extensions remain inert.
  */
 
-/** Pi CLI flag carrying the Happier session id the Pi process is bound to. */
+/** Pi CLI flag selecting the protected Happier session configuration. */
 export const PI_BRIDGE_CONFIG_PATH_FLAG = 'happy-tools-config';
 
 /**
@@ -25,3 +17,6 @@ export const PI_BRIDGE_CONFIG_PATH_FLAG = 'happy-tools-config';
  * markers already ride it) and does not pollute the LLM context.
  */
 export const PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE = 'happy-pi-token-count';
+
+/** Structured payload carried by Pi's public RPC UI notification channel. */
+export const PI_BRIDGE_USER_INPUT_MARKER_TYPE = 'happy-pi-user-input';

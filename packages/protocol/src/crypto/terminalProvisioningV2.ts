@@ -5,6 +5,10 @@ import { openBoxBundle, sealBoxBundle } from './boxBundle.js';
 import { encodeCanonicalLengthDelimited } from './canonicalDigest.js';
 
 export const TERMINAL_PROVISIONING_V2_VERSION_BYTE = 0;
+export const TERMINAL_PROVISIONING_V2_TOKEN_ONLY_TAG = 1;
+export type TerminalProvisioningV2Response =
+  | Readonly<{ type: 'dataKey'; key: Uint8Array }>
+  | Readonly<{ type: 'tokenOnly' }>;
 export const TERMINAL_PROVISIONING_V2_CONTENT_PRIVATE_KEY_BYTES = 32;
 export const TERMINAL_PROVISIONING_V2_PLAINTEXT_BYTES =
   1 + TERMINAL_PROVISIONING_V2_CONTENT_PRIVATE_KEY_BYTES;
@@ -16,6 +20,7 @@ const TERMINAL_PROVISIONING_V3_PAYLOAD_BYTES =
   TERMINAL_PROVISIONING_V3_MAGIC.length
   + TERMINAL_PROVISIONING_V3_SEALED_V2_BYTES
   + TERMINAL_PROVISIONING_V3_MAC_BYTES;
+const TERMINAL_PROVISIONING_V3_TOKEN_ONLY_PAYLOAD_BYTES = TERMINAL_PROVISIONING_V3_PAYLOAD_BYTES - 32;
 const TERMINAL_PROVISIONING_V3_MAC_DOMAIN = 'happier-terminal-provisioning-v3';
 
 export function sealTerminalProvisioningV2Payload(params: {
@@ -38,19 +43,43 @@ export function sealTerminalProvisioningV2Payload(params: {
   });
 }
 
-export function openTerminalProvisioningV2Payload(params: {
+export function sealTerminalProvisioningV2TokenOnlyPayload(params: {
+  recipientPublicKey: Uint8Array;
+  randomBytes: (length: number) => Uint8Array;
+}): Uint8Array {
+  return sealBoxBundle({
+    ...params,
+    plaintext: new Uint8Array([TERMINAL_PROVISIONING_V2_TOKEN_ONLY_TAG]),
+  });
+}
+
+export function parseTerminalProvisioningV2Plaintext(plaintext: Uint8Array): TerminalProvisioningV2Response | null {
+  if (plaintext.length === TERMINAL_PROVISIONING_V2_PLAINTEXT_BYTES && plaintext[0] === TERMINAL_PROVISIONING_V2_VERSION_BYTE) {
+    return { type: 'dataKey', key: plaintext.slice(1) };
+  }
+  if (plaintext.length === 1 && plaintext[0] === TERMINAL_PROVISIONING_V2_TOKEN_ONLY_TAG) {
+    return { type: 'tokenOnly' };
+  }
+  return null;
+}
+
+export function openTerminalProvisioningV2Response(params: {
   payload: Uint8Array;
   recipientSecretKeyOrSeed: Uint8Array;
-}): Uint8Array | null {
+}): TerminalProvisioningV2Response | null {
   const opened = openBoxBundle({
     bundle: params.payload,
     recipientSecretKeyOrSeed: params.recipientSecretKeyOrSeed,
   });
-  if (!opened) return null;
-  if (opened.length !== TERMINAL_PROVISIONING_V2_PLAINTEXT_BYTES) return null;
-  if (opened[0] !== TERMINAL_PROVISIONING_V2_VERSION_BYTE) return null;
+  return opened ? parseTerminalProvisioningV2Plaintext(opened) : null;
+}
 
-  return opened.slice(1);
+export function openTerminalProvisioningV2Payload(params: {
+  payload: Uint8Array;
+  recipientSecretKeyOrSeed: Uint8Array;
+}): Uint8Array | null {
+  const opened = openTerminalProvisioningV2Response(params);
+  return opened?.type === 'dataKey' ? opened.key : null;
 }
 
 function assertTerminalProvisioningV3Context(params: {
@@ -105,8 +134,25 @@ function equalBytesConstantTime(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 export function isTerminalProvisioningV3Payload(payload: Uint8Array): boolean {
-  if (payload.length !== TERMINAL_PROVISIONING_V3_PAYLOAD_BYTES) return false;
+  if (payload.length !== TERMINAL_PROVISIONING_V3_PAYLOAD_BYTES && payload.length !== TERMINAL_PROVISIONING_V3_TOKEN_ONLY_PAYLOAD_BYTES) return false;
   return TERMINAL_PROVISIONING_V3_MAGIC.every((byte, index) => payload[index] === byte);
+}
+
+function sealTerminalProvisioningV3Response(params: {
+  sealedV2Payload: Uint8Array;
+  terminalEphemeralPublicKey: Uint8Array;
+  pairingSecret: Uint8Array;
+  createdAtMs: number;
+  expiresAtMs: number;
+}): Uint8Array {
+  assertTerminalProvisioningV3Context(params);
+  const { sealedV2Payload } = params;
+  const mac = computeTerminalProvisioningV3Mac({ ...params, sealedV2Payload });
+  const payload = new Uint8Array(TERMINAL_PROVISIONING_V3_MAGIC.length + sealedV2Payload.length + TERMINAL_PROVISIONING_V3_MAC_BYTES);
+  payload.set(TERMINAL_PROVISIONING_V3_MAGIC, 0);
+  payload.set(sealedV2Payload, TERMINAL_PROVISIONING_V3_MAGIC.length);
+  payload.set(mac, TERMINAL_PROVISIONING_V3_MAGIC.length + sealedV2Payload.length);
+  return payload;
 }
 
 export function sealTerminalProvisioningV3Payload(params: {
@@ -117,21 +163,33 @@ export function sealTerminalProvisioningV3Payload(params: {
   expiresAtMs: number;
   randomBytes: (length: number) => Uint8Array;
 }): Uint8Array {
-  assertTerminalProvisioningV3Context(params);
-  const sealedV2Payload = sealTerminalProvisioningV2Payload({
-    contentPrivateKey: params.contentPrivateKey,
-    recipientPublicKey: params.terminalEphemeralPublicKey,
-    randomBytes: params.randomBytes,
+  return sealTerminalProvisioningV3Response({
+    ...params,
+    sealedV2Payload: sealTerminalProvisioningV2Payload({
+      contentPrivateKey: params.contentPrivateKey,
+      recipientPublicKey: params.terminalEphemeralPublicKey,
+      randomBytes: params.randomBytes,
+    }),
   });
-  const mac = computeTerminalProvisioningV3Mac({ ...params, sealedV2Payload });
-  const payload = new Uint8Array(TERMINAL_PROVISIONING_V3_PAYLOAD_BYTES);
-  payload.set(TERMINAL_PROVISIONING_V3_MAGIC, 0);
-  payload.set(sealedV2Payload, TERMINAL_PROVISIONING_V3_MAGIC.length);
-  payload.set(mac, TERMINAL_PROVISIONING_V3_MAGIC.length + sealedV2Payload.length);
-  return payload;
 }
 
-export function openTerminalProvisioningV3Payload(params: {
+export function sealTerminalProvisioningV3TokenOnlyPayload(params: {
+  terminalEphemeralPublicKey: Uint8Array;
+  pairingSecret: Uint8Array;
+  createdAtMs: number;
+  expiresAtMs: number;
+  randomBytes: (length: number) => Uint8Array;
+}): Uint8Array {
+  return sealTerminalProvisioningV3Response({
+    ...params,
+    sealedV2Payload: sealTerminalProvisioningV2TokenOnlyPayload({
+      recipientPublicKey: params.terminalEphemeralPublicKey,
+      randomBytes: params.randomBytes,
+    }),
+  });
+}
+
+export function openTerminalProvisioningV3Response(params: {
   payload: Uint8Array;
   recipientSecretKeyOrSeed: Uint8Array;
   terminalEphemeralPublicKey: Uint8Array;
@@ -139,7 +197,7 @@ export function openTerminalProvisioningV3Payload(params: {
   createdAtMs: number;
   expiresAtMs: number;
   nowMs: number;
-}): Uint8Array | null {
+}): TerminalProvisioningV2Response | null {
   try {
     assertTerminalProvisioningV3Context(params);
   } catch {
@@ -151,14 +209,19 @@ export function openTerminalProvisioningV3Payload(params: {
   if (!isTerminalProvisioningV3Payload(params.payload)) return null;
 
   const sealedPayloadStart = TERMINAL_PROVISIONING_V3_MAGIC.length;
-  const macStart = sealedPayloadStart + TERMINAL_PROVISIONING_V3_SEALED_V2_BYTES;
+  const macStart = params.payload.length - TERMINAL_PROVISIONING_V3_MAC_BYTES;
   const sealedV2Payload = params.payload.slice(sealedPayloadStart, macStart);
   const receivedMac = params.payload.slice(macStart);
   const expectedMac = computeTerminalProvisioningV3Mac({ ...params, sealedV2Payload });
   if (!equalBytesConstantTime(receivedMac, expectedMac)) return null;
 
-  return openTerminalProvisioningV2Payload({
+  return openTerminalProvisioningV2Response({
     payload: sealedV2Payload,
     recipientSecretKeyOrSeed: params.recipientSecretKeyOrSeed,
   });
+}
+
+export function openTerminalProvisioningV3Payload(params: Parameters<typeof openTerminalProvisioningV3Response>[0]): Uint8Array | null {
+  const opened = openTerminalProvisioningV3Response(params);
+  return opened?.type === 'dataKey' ? opened.key : null;
 }

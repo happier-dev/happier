@@ -61,6 +61,8 @@ const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 const TOOL_VIEW_STATUS_GLYPH_PX = 20;
 
 interface ToolViewProps {
+    /** Result content mounted only while this tool's existing disclosure is expanded. */
+    children?: React.ReactNode;
     metadata: Metadata | null;
     tool: ToolCall;
     messages?: Message[];
@@ -487,6 +489,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                         detailLevel={renderBodyDetailLevel}
                         setHeaderActions={setHeaderActions}
                     />
+                    {isExpanded ? props.children : null}
                 </View>
             </TranscriptCollapsible>
 

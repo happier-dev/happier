@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
@@ -75,10 +76,21 @@ installSessionSettingsEntryModuleMocks({
     storageModule: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         const mutableSetting = createMutableSettingHook(shared.settingsState);
+        const { resolveAccountThemeProfileView } = await import('@/sync/domains/settings/themeProfiles');
+        const resolveView = (state: ThemeProfilesLocalStateV1) => resolveAccountThemeProfileView({
+            profiles: [], legacy: state, selection: null, legacyScope: null, scope: null,
+        });
         return createStorageModuleMock({
             importOriginal,
             overrides: {
                 useSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
+                useThemeProfilesMutable: () => {
+                    const before = resolveView(shared.settingsState.themeProfiles as ThemeProfilesLocalStateV1);
+                    return [before.state, next => {
+                        shared.settingsState.themeProfiles = next;
+                        return resolveView(next);
+                    }, before];
+                },
                 useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             },
         });

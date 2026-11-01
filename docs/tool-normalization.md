@@ -96,6 +96,33 @@ Diffs and edits:
 - Codex per-turn diffs (`turn_diff.unified_diff`) are emitted as a single `CodexDiff` per turn and normalized to canonical `Diff`.
   Multi-file unified diffs are rendered per-file in the app.
 
+### Claude tool-result images (development source)
+
+All Claude transcript write modes, including exact live writes and historical replay,
+pass through `ApiSessionClient.prepareClaudeSessionMessage`. Its Claude-owned media
+adapter reuses the existing content-block extractor and `createAgentSessionMediaPersister`
+before serialization. Image bytes become workspace media files; the tool result keeps
+its identity, text, permissions and sidechain, with the existing `session_media.v1`
+metadata. Recognized inline image payloads, including rejected encodings and duplicate
+native Read bytes, are redacted from the transcript copy only.
+Persistence failures use the shared unavailable-media result. The protocol envelope
+owns the per-row entry budget; overflow is reported in the normal file log.
+
+The default destination is `.happier/uploads/artifacts/...` under the session working
+directory on the Agent machine. The server retains transcript references, not an
+uploaded image blob. Previews read the file through the existing daemon transfer
+path, which can traverse the relay; they require the Agent machine to be reachable.
+
+The reducer splits media metadata when one transcript row contains several tool
+results, using the actual tool origins (and hashed failure origins) before updating
+each tool or buffering an orphan result. Single-result metadata stays on its owning
+row, including ACP sidechains with namespaced display ids. The shared tool row
+passes the selected metadata into the existing tool disclosure. Image previews and
+unavailable items mount only while that tool is expanded, inside the same body as
+its other details; collapsed summary text does not activate media loading. User
+message attachments retain their inline presentation. This requires both
+the corrected CLI writer and UI renderer; it introduces no new server wire format.
+
 ### 3) App rendering normalization (fallback)
 
 The app prefers V2 (`_happier.canonicalToolName`) when present. For sessions without `_happier` metadata (legacy + Claude local-control),

@@ -10,6 +10,7 @@ import {
     ConnectedServiceCredentialMutationSuccessV1Schema,
     ConnectedServiceCredentialMutationSupersededV1Schema,
     ConnectedServiceCredentialRecordV1Schema,
+    buildConnectedServiceCredentialMetadata,
     ConnectedServiceIdSchema,
     StoredJsonContentEnvelopeSchema,
     assertConnectedServiceCredentialRecordBinding,
@@ -52,21 +53,8 @@ function buildAtRestKeyPath(params: { accountId: string; serviceId: string; prof
 }
 
 function toMetadata(record: z.infer<typeof ConnectedServiceCredentialRecordV1Schema>, storage: ConnectedServiceCredentialMetadataV3["storage"]): ConnectedServiceCredentialMetadataV3 {
-    const providerEmail =
-        record.kind === "oauth"
-            ? record.oauth?.providerEmail ?? null
-            : record.token?.providerEmail ?? null;
-    const providerAccountId =
-        record.kind === "oauth"
-            ? record.oauth?.providerAccountId ?? null
-            : record.token?.providerAccountId ?? null;
-    return {
-        v: 3,
-        storage,
-        kind: record.kind,
-        providerEmail,
-        providerAccountId,
-    };
+    const { expiresAt: _expiresAt, ...metadata } = buildConnectedServiceCredentialMetadata(record);
+    return { v: 3, storage, ...metadata };
 }
 
 export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {

@@ -4,6 +4,18 @@ import { readServerEnabledBit } from '../serverEnabledBit.js';
 import { FeaturesResponseSchema } from './featuresResponseSchema.js';
 
 describe('FeatureGatesSchema', () => {
+  it('negotiates plain Machine support independently of released plain Session support', () => {
+    const oldServer = FeaturesResponseSchema.parse({
+      features: { encryption: { plaintextStorage: { enabled: true } } },
+      capabilities: {},
+    });
+    expect(readServerEnabledBit(oldServer, 'encryption.plaintextMachine')).toBe(false);
+    const currentServer = FeaturesResponseSchema.parse({
+      features: { encryption: { plaintextStorage: { enabled: true }, plaintextMachine: { enabled: true } } },
+      capabilities: {},
+    });
+    expect(readServerEnabledBit(currentServer, 'encryption.plaintextMachine')).toBe(true);
+  });
   it('preserves pets companion and sync gates', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {

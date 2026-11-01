@@ -49,6 +49,27 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         await harness.close();
     });
 
+    it("refuses keyless finalization when build policy denies keyless accounts", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_BUILD_FEATURES_DENY: "e2ee.keylessAccounts",
+        });
+        const app = createTestApp();
+        connectRoutes(app);
+        await app.ready();
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth/external/github/finalize-keyless",
+            payload: { pending: "pending-denied-by-build", proof: "proof" },
+        });
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "keyless-disabled" });
+        expect(await db.account.count()).toBe(0);
+    });
+
     it("POST /v1/auth/external/:provider/finalize-keyless provisions a keyless account and returns a token when enabled", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",

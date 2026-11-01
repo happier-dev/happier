@@ -358,24 +358,22 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
     const transcript = page.getByTestId('transcript-chat-list');
     await transcript.hover();
 
-    // Seed a bounded number of messages to make the list scrollable. Each message is sent through
-    // the real CLI boundary, so keeping this to the minimum useful set avoids spending the whole
-    // test budget on repeated process startup while preserving the unpinned/JTB contract below.
-    for (let i = 0; i < 12; i += 1) {
-      const message = `seed scroll ${i} ${run.runId}`;
-      const sendEnvelope = await runCliJson({
-        testDir,
-        cliHomeDir,
-        serverUrl: server.baseUrl,
-        webappUrl: uiBaseUrl,
-        env: { ...process.env, HOME: cliHomeDir },
-        label: `session-send-seed-scroll-${i}`,
-        args: ['session', 'send', sessionId, message, '--json'],
-        timeoutMs: 120_000,
-      });
-      expect(sendEnvelope.ok).toBe(true);
-      expect(sendEnvelope.kind).toBe('session_send');
-    }
+    // This seed only supplies scrollable content; the separate prompts above and below prove
+    // catch-up. Preserve the seed text in one multiline CLI prompt so process startup does not
+    // consume the viewport journey's budget once per filler paragraph.
+    const scrollSeed = Array.from({ length: 12 }, (_, i) => `seed scroll ${i} ${run.runId}`).join('\n\n');
+    const seedEnvelope = await runCliJson({
+      testDir,
+      cliHomeDir,
+      serverUrl: server.baseUrl,
+      webappUrl: uiBaseUrl,
+      env: { ...process.env, HOME: cliHomeDir },
+      label: 'session-send-seed-scroll',
+      args: ['session', 'send', sessionId, scrollSeed, '--json'],
+      timeoutMs: 120_000,
+    });
+    expect(seedEnvelope.ok).toBe(true);
+    expect(seedEnvelope.kind).toBe('session_send');
 
     // Scroll upward to become unpinned.
     for (let i = 0; i < 12; i += 1) {

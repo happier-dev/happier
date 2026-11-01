@@ -7,23 +7,25 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import spawn from 'cross-spawn';
-import {
-  RequestError,
-  type SessionNotification,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type InitializeRequest,
-  type InitializeResponse,
-  type NewSessionRequest,
-  type ForkSessionRequest,
-  type ListSessionsRequest,
-  type LoadSessionRequest,
-  type PromptRequest,
-  type PromptResponse,
-  type SetSessionModeRequest,
-  type SetSessionConfigOptionRequest,
-  type ContentBlock,
+import type {
+  SessionNotification,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  ReadTextFileRequest,
+  WriteTextFileRequest,
+  InitializeRequest,
+  InitializeResponse,
+  NewSessionRequest,
+  ForkSessionRequest,
+  ListSessionsRequest,
+  LoadSessionRequest,
+  PromptRequest,
+  PromptResponse,
+  SetSessionModeRequest,
+  SetSessionConfigOptionRequest,
+  ContentBlock,
 } from '@agentclientprotocol/sdk';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
@@ -47,6 +49,7 @@ import {
   type AcpAuthentication,
 } from './AcpAuthentication';
 import { isAcpModeConfigOptionLike, normalizeAcpConfigOptionChoices } from './configOptionChoiceNormalization';
+import { reconcileAcpCatalogRows } from './reconcileAcpCatalogRows';
 import {
   readNonBlankSessionControlIdentifier,
   readSessionControlValueId,
@@ -60,6 +63,7 @@ import {
   DefaultTransport,
 } from '../transport';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
+import { buildSafeProviderRejectionPreview } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import {
   type SessionUpdate,
   type HandlerContext,
@@ -118,6 +122,7 @@ import {
   createAcpClientConnection,
   type AcpClientConnection,
 } from './connection/createAcpClientConnection';
+import { isAcpRequestError, loadAcpSdk } from './connection/acpSdk';
 import type {
   AcpClientConnectionHandlers,
   AcpExtensionHandlerContext,
@@ -138,7 +143,6 @@ function makeAbortError(message: string): Error {
 }
 
 function isAcpJsonRpcRejection(error: unknown): boolean {
-  if (error instanceof RequestError) return true;
   if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
   const record = error as Record<string, unknown>;
   return typeof record.code === 'number' && Number.isFinite(record.code) && typeof record.message === 'string';
@@ -459,6 +463,42 @@ function readNonNegativeFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function readAcpUsageTokens(record: Record<string, unknown>): Record<string, number> | undefined {
+  const camelInput = readNonNegativeFiniteNumber(record.inputTokens);
+  const camelOutput = readNonNegativeFiniteNumber(record.outputTokens);
+  const input = readNonNegativeFiniteNumber(record.input_tokens) ?? camelInput
+    ?? readNonNegativeFiniteNumber(record.prompt_tokens) ?? readNonNegativeFiniteNumber(record.promptTokens);
+  const output = readNonNegativeFiniteNumber(record.output_tokens) ?? camelOutput
+    ?? readNonNegativeFiniteNumber(record.completion_tokens) ?? readNonNegativeFiniteNumber(record.completionTokens);
+  const thought = readNonNegativeFiniteNumber(record.thought_tokens)
+    ?? readNonNegativeFiniteNumber(record.thoughtTokens) ?? readNonNegativeFiniteNumber(record.reasoningTokens);
+  const cacheRead = readNonNegativeFiniteNumber(record.cached_read_tokens)
+    ?? readNonNegativeFiniteNumber(record.cachedReadTokens)
+    ?? readNonNegativeFiniteNumber(record.cache_read_input_tokens)
+    ?? readNonNegativeFiniteNumber(record.cache_read_tokens) ?? readNonNegativeFiniteNumber(record.cacheReadTokens);
+  const cacheWrite = readNonNegativeFiniteNumber(record.cached_write_tokens)
+    ?? readNonNegativeFiniteNumber(record.cachedWriteTokens)
+    ?? readNonNegativeFiniteNumber(record.cache_creation_input_tokens)
+    ?? readNonNegativeFiniteNumber(record.cache_creation_tokens)
+    ?? readNonNegativeFiniteNumber(record.cacheCreationTokens) ?? readNonNegativeFiniteNumber(record.cacheWriteTokens);
+  const reportedTotal = readNonNegativeFiniteNumber(record.total_tokens) ?? readNonNegativeFiniteNumber(record.totalTokens);
+  if (reportedTotal === null && input === null && output === null
+    && thought === null && cacheRead === null && cacheWrite === null) return undefined;
+
+  // CamelCase input/output counters include cache/reasoning details (fx 0.0.14,
+  // responses_protocol.zig); preserve the legacy snake_case additive fallback.
+  const details = camelInput !== null || camelOutput !== null
+    ? 0
+    : (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
+  const tokens: Record<string, number> = { total: reportedTotal ?? (input ?? 0) + (output ?? 0) + details };
+  if (input !== null) tokens.input = input;
+  if (output !== null) tokens.output = output;
+  if (cacheRead !== null) tokens.cache_read = cacheRead;
+  if (cacheWrite !== null) tokens.cache_creation = cacheWrite;
+  if (thought !== null) tokens.thought = thought;
+  return tokens;
+}
+
 function readAcpUsageCost(record: Record<string, unknown>): Record<string, number> | undefined {
   const nested = record.cost && typeof record.cost === 'object' && !Array.isArray(record.cost)
     ? record.cost as Record<string, unknown>
@@ -573,7 +613,7 @@ export function buildInitializeRequest(params: {
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
-}): Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'> {
+}): Required<Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
 
@@ -865,6 +905,7 @@ function readAcpListedSessionUpdatedAtMs(value: unknown): number | null {
  */
 export class AcpBackend implements AgentBackend {
   private listeners: AgentMessageHandler[] = [];
+  private readonly providerTurnEventListeners = new Set<() => void>();
   private process: ChildProcess | null = null;
   private processLaunchCleanup: (() => void | Promise<void>) | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
@@ -1004,6 +1045,26 @@ export class AcpBackend implements AgentBackend {
     this.listeners.push(handler);
   } 
 
+  onProviderTurnEvent(handler: () => void): () => void {
+    this.providerTurnEventListeners.add(handler);
+    return () => { this.providerTurnEventListeners.delete(handler); };
+  }
+
+  private observeProviderTurnEvent(sessionId: unknown): void {
+    if (
+      this.disposed || this.replayCapture || this.acpSessionId === null || sessionId !== this.acpSessionId
+      || this.dispatchedPromptTurnGeneration !== this.turnGeneration
+      || this.isCurrentTurnGenerationClosed()
+    ) return;
+    for (const listener of this.providerTurnEventListeners) {
+      try {
+        listener();
+      } catch (error) {
+        logger.warnFile('[AcpBackend] Provider activity handler failed', error);
+      }
+    }
+  }
+
   offMessage(handler: AgentMessageHandler): void {
     const index = this.listeners.indexOf(handler);
     if (index !== -1) {
@@ -1052,17 +1113,50 @@ export class AcpBackend implements AgentBackend {
   }
 
   private buildAcpMcpServersForSessionRequest(): NewSessionRequest['mcpServers'] {
-    if (!this.options.mcpServers) return [] as unknown as NewSessionRequest['mcpServers'];
-    const mcpServers = Object.entries(this.options.mcpServers).map(([name, config]) => ({
-      type: 'stdio',
+    return Object.entries(this.options.mcpServers ?? {}).map(([name, config]) => ({
       name,
       command: config.command,
       args: config.args || [],
       env: config.env
         ? Object.entries(config.env).map(([envName, envValue]) => ({ name: envName, value: envValue }))
         : [],
-    }));
-    return mcpServers as unknown as NewSessionRequest['mcpServers'];
+    } satisfies NewSessionRequest['mcpServers'][number]));
+  }
+
+  private readMcpStartupFailure(request: NewSessionRequest, error: unknown): Readonly<{
+    server: NewSessionRequest['mcpServers'][number];
+    preview: string;
+  }> | null {
+    const preview = buildSafeProviderRejectionPreview(error);
+    const errorRecord = asRecord(error);
+    const message = error instanceof Error ? error.message : (errorRecord ? getString(errorRecord, 'message') : undefined) ?? '';
+    if (!preview || !/\bmcp\b/iu.test(message)) return null;
+    const namedServers = request.mcpServers.filter((server) => {
+      const escapedName = server.name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+      return new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escapedName}(?=$|[^\\p{L}\\p{N}_.-])`, 'u').test(message);
+    });
+    return namedServers.length === 1 ? { server: namedServers[0], preview } : null;
+  }
+
+  private async requestSessionWithMcpRecovery<T extends NewSessionRequest | LoadSessionRequest, R>(
+    request: T,
+    operation: (request: T, maxAttempts: number) => Promise<R>,
+  ): Promise<R> {
+    try {
+      return await operation(request, RETRY_CONFIG.maxAttempts);
+    } catch (error) {
+      const failure = this.readMcpStartupFailure(request, error);
+      if (!failure) throw error;
+      const { server: failedServer, preview } = failure;
+      const result = await operation({
+        ...request,
+        mcpServers: request.mcpServers.filter((server) => server !== failedServer),
+      }, 1);
+      const notice = `Continued without MCP server "${redactBugReportSensitiveText(failedServer.name)}": ${preview}`;
+      logger.infoFile('[AcpBackend] ' + notice);
+      this.emit({ type: 'event', name: 'message', payload: { message: notice } });
+      return result;
+    }
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
@@ -1139,7 +1233,11 @@ export class AcpBackend implements AgentBackend {
   private createExtensionHandlerContext(
     method: string,
     sdkSignal: AbortSignal,
+    sessionId?: string | null,
   ): AcpExtensionHandlerContext {
+    // Sessionless native extensions use this dedicated backend connection's
+    // single bound session. Explicit foreign/malformed identities never fall back.
+    this.observeProviderTurnEvent(sessionId === undefined ? this.acpSessionId : sessionId);
     return {
       method,
       sessionId: this.acpSessionId,
@@ -1192,8 +1290,17 @@ export class AcpBackend implements AgentBackend {
     this.lastProcessExitDetail = null;
 
     try {
+      // Load before spawning so the child's startup is not raced against SDK module I/O.
+      await loadAcpSdk();
+      if (this.disposed) {
+        throw new Error('Backend has been disposed');
+      }
       const preparedLaunch = await this.options.prepareProcessLaunch?.();
       this.processLaunchCleanup = preparedLaunch?.cleanup ?? null;
+      // dispose() may have finished during the awaits above; it found no child to stop.
+      if (this.disposed) {
+        throw new Error('Backend has been disposed');
+      }
 
       // Spawn the ACP agent process.
       // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
@@ -1205,6 +1312,7 @@ export class AcpBackend implements AgentBackend {
       });
 
 	    this.process = spawn(spec.command, spec.args, spec.options);
+	    const spawnedProcess = this.process;
 
 	    if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
 	      throw new Error('Failed to create stdio pipes');
@@ -1271,14 +1379,17 @@ export class AcpBackend implements AgentBackend {
     });
 
     this.process.on('error', (err) => {
+      if (this.process !== spawnedProcess) return;
       // Log to file only, not console
       logger.debug(`[AcpBackend] Process error:`, err);
       this.abortPendingExtensionHandlers('ACP process error');
       this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
-      this.emit({ type: 'status', status: 'error', detail: err.message });
+      this.emit({ type: 'status', status: 'error', detail: err.message, error: err });
     });
 
 	    this.process.on('exit', (code, signal) => {
+	      // Cleanup detaches this process before killing it; that exit is not another provider failure.
+	      if (this.process !== spawnedProcess) return;
 	      this.abortPendingExtensionHandlers('ACP process exited');
 	      const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
 	      const hasNonZeroCode = typeof code === 'number' && Number.isFinite(code) && code !== 0;
@@ -1464,6 +1575,7 @@ export class AcpBackend implements AgentBackend {
           return { outcome: { outcome: 'cancelled' } };
         };
         if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
+        if (tracksForeground) this.observeProviderTurnEvent(requestSessionId);
         const toolCall = extendedParams.toolCall;
         const options = extendedParams.options || [];
         // ACP spec: toolCall.toolCallId is the correlation ID. Fall back to legacy fields when needed.
@@ -1672,22 +1784,29 @@ export class AcpBackend implements AgentBackend {
     };
 
     if (isAcpFsEnabled()) {
-      Object.assign(
-        clientHandlers,
-        createAcpClientFsMethods({
-          cwd: this.options.cwd,
-          permissionHandler: this.options.permissionHandler,
-        })
-      );
+      const clientFs = createAcpClientFsMethods({
+        cwd: this.options.cwd,
+        permissionHandler: this.options.permissionHandler,
+      });
+      Object.assign(clientHandlers, {
+        readTextFile: (request: ReadTextFileRequest) => {
+          this.observeProviderTurnEvent(request.sessionId);
+          return clientFs.readTextFile(request);
+        },
+        writeTextFile: (request: WriteTextFileRequest) => {
+          this.observeProviderTurnEvent(request.sessionId);
+          return clientFs.writeTextFile(request);
+        },
+      } satisfies Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>);
     }
-    this.connection = createAcpClientConnection({
+    this.connection = await createAcpClientConnection({
       name: 'happier-cli',
       transport: stream,
       isAuthenticationSetupFailure: this.options.isAuthenticationSetupFailure,
       handlers: clientHandlers,
       extensions: this.options.extensionHandlers,
-      createExtensionContext: (method, sdkSignal) => (
-        this.createExtensionHandlerContext(method, sdkSignal)
+      createExtensionContext: (method, sdkSignal, sessionId) => (
+        this.createExtensionHandlerContext(method, sdkSignal, sessionId)
       ),
     });
 
@@ -1845,12 +1964,12 @@ export class AcpBackend implements AgentBackend {
 
       logger.debug(`[AcpBackend] Creating new session...`);
 
-      const sessionResponse = await withRetry(
+      const sessionResponse = await this.requestSessionWithMcpRecovery(newSessionRequest, (request, maxAttempts) => withRetry(
         async () => {
           let timeoutHandle: NodeJS.Timeout | null = null;
           try {
             const result = await Promise.race([
-              this.connection!.peer.newSession(newSessionRequest).then((res) => {
+              this.connection!.peer.newSession(request).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -1872,11 +1991,12 @@ export class AcpBackend implements AgentBackend {
         },
         {
           operationName: 'NewSession',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          maxAttempts,
+          shouldRetry: (error) => this.readMcpStartupFailure(request, error) === null,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
         }
-      );
+      ));
       const sessionId = readNonBlankOpaqueIdentifier(sessionResponse.sessionId);
       if (!sessionId) {
         throw new Error('New session response did not include a session id');
@@ -1895,7 +2015,7 @@ export class AcpBackend implements AgentBackend {
         this.sendPrompt(sessionId, initialPrompt).catch((error) => {
           // Log to file only, not console
           logger.debug('[AcpBackend] Error sending initial prompt:', error);
-          this.emit({ type: 'status', status: 'error', detail: String(error) });
+          this.emit({ type: 'status', status: 'error', detail: String(error), error });
         });
       }
 
@@ -1910,7 +2030,8 @@ export class AcpBackend implements AgentBackend {
       this.emit({ 
         type: 'status', 
         status: 'error', 
-        detail: error instanceof Error ? error.message : String(error) 
+        detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
@@ -1947,17 +2068,17 @@ export class AcpBackend implements AgentBackend {
       const loadSessionRequest: LoadSessionRequest = {
         sessionId: normalized,
         cwd: this.options.cwd,
-        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as LoadSessionRequest['mcpServers'],
+        mcpServers: this.buildAcpMcpServersForSessionRequest(),
       };
 
       logger.debug(`[AcpBackend] Loading session: ${normalized}`);
 
-      const sessionResponse = await withRetry(
+      const sessionResponse = await this.requestSessionWithMcpRecovery(loadSessionRequest, (request, maxAttempts) => withRetry(
         async () => {
           let timeoutHandle: NodeJS.Timeout | null = null;
           try {
             const result = await Promise.race([
-              this.connection!.peer.loadSession(loadSessionRequest).then((res) => {
+              this.connection!.peer.loadSession(request).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -1979,11 +2100,12 @@ export class AcpBackend implements AgentBackend {
         },
         {
           operationName: 'LoadSession',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          maxAttempts,
+          shouldRetry: (error) => this.readMcpStartupFailure(request, error) === null,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
         }
-      );
+      ));
 
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
@@ -2002,7 +2124,8 @@ export class AcpBackend implements AgentBackend {
       this.emit({
         type: 'status',
         status: 'error',
-        detail: error instanceof Error ? error.message : String(error)
+        detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
@@ -2050,11 +2173,11 @@ export class AcpBackend implements AgentBackend {
       const request: ForkSessionRequest = {
         sessionId: normalized,
         cwd: typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : this.options.cwd,
-        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
+        mcpServers: this.buildAcpMcpServersForSessionRequest(),
       };
 
       const response = await connection.peer.forkSession(request).catch((error) => {
-        if (error instanceof RequestError && error.code === -32601) {
+        if (isAcpRequestError(error) && error.code === -32601) {
           throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
         }
         throw error;
@@ -2080,6 +2203,7 @@ export class AcpBackend implements AgentBackend {
         type: 'status',
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
+        error,
       });
       throw error;
     }
@@ -2238,6 +2362,12 @@ export class AcpBackend implements AgentBackend {
     if (updateCandidates.length === 0) {
       logger.debug('[AcpBackend] Received session update without update field:', params);
       return;
+    }
+
+    if (
+      updateCandidates.some((candidate) => typeof asRecord(candidate)?.sessionUpdate === 'string')
+    ) {
+      this.observeProviderTurnEvent(raw.sessionId);
     }
 
     if (this.replayCapture) {
@@ -2441,14 +2571,7 @@ export class AcpBackend implements AgentBackend {
       if (sessionUpdateType === 'config_option_update') {
         const configOptionsCandidate = (update as any).configOptions;
         const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-        if (configOptionsRaw) {
-          const next = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-          this.sessionConfigOptionsState = next;
-          const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
-            configOptions: next,
-          });
-          if (modelState) this.sessionModelState = modelState;
-        }
+        if (!configOptionsRaw || !this.reconcileSessionConfigOptions(configOptionsRaw)) return;
         this.emit({
           type: 'event',
           name: 'config_options_update',
@@ -2469,11 +2592,9 @@ export class AcpBackend implements AgentBackend {
       if (sessionUpdateType === 'usage_update') {
         const usedRaw = (update as any).used;
         const sizeRaw = (update as any).size;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
         const usageCost = readAcpUsageCost(update as Record<string, unknown>);
-        const used = asNum(usedRaw);
-        const size = asNum(sizeRaw);
+        const used = readNonNegativeFiniteNumber(usedRaw);
+        const size = readNonNegativeFiniteNumber(sizeRaw);
         if (used != null || size != null) {
           const tokens: Record<string, number> = { total: used ?? 0 };
           if (used != null) tokens.used = used;
@@ -2489,21 +2610,8 @@ export class AcpBackend implements AgentBackend {
         // Some ACP providers report per-turn usage via usage_update with OpenAI-like fields.
         // Accept these best-effort and convert them into token-count telemetry.
         if (used == null && size == null) {
-          const input = asNum((update as any).input_tokens) ?? asNum((update as any).prompt_tokens);
-          const output = asNum((update as any).output_tokens) ?? asNum((update as any).completion_tokens);
-          const cacheRead =
-            asNum((update as any).cache_read_input_tokens) ?? asNum((update as any).cache_read_tokens);
-          const cacheCreation =
-            asNum((update as any).cache_creation_input_tokens) ?? asNum((update as any).cache_creation_tokens);
-
-          const anyPresent = input != null || output != null || cacheRead != null || cacheCreation != null;
-          if (anyPresent) {
-            const total = (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
-            const tokens: Record<string, number> = { total };
-            if (input != null) tokens.input = input;
-            if (output != null) tokens.output = output;
-            if (cacheRead != null) tokens.cache_read = cacheRead;
-            if (cacheCreation != null) tokens.cache_creation = cacheCreation;
+          const tokens = readAcpUsageTokens(update as Record<string, unknown>);
+          if (tokens) {
             this.emit({
               type: 'token-count',
               key: 'acp-usage-update',
@@ -2520,53 +2628,9 @@ export class AcpBackend implements AgentBackend {
       const usageCandidate = (update as any).usage;
       if (usageCandidate && typeof usageCandidate === 'object' && !Array.isArray(usageCandidate)) {
         const record = usageCandidate as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
         const usageCost = readAcpUsageCost(record);
-
-        const input =
-          asNum(record.input_tokens) ??
-          asNum(record.inputTokens) ??
-          asNum(record.prompt_tokens) ??
-          asNum(record.promptTokens);
-        const output =
-          asNum(record.output_tokens) ??
-          asNum(record.outputTokens) ??
-          asNum(record.completion_tokens) ??
-          asNum(record.completionTokens);
-        const thought = asNum(record.thought_tokens) ?? asNum(record.thoughtTokens);
-        const cacheRead =
-          asNum(record.cached_read_tokens) ??
-          asNum(record.cachedReadTokens) ??
-          asNum(record.cache_read_tokens) ??
-          asNum(record.cacheReadTokens);
-        const cacheWrite =
-          asNum(record.cached_write_tokens) ??
-          asNum(record.cachedWriteTokens) ??
-          asNum(record.cache_creation_tokens) ??
-          asNum(record.cacheCreationTokens);
-        const totalFromResponse =
-          asNum(record.total_tokens) ??
-          asNum(record.totalTokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
-
-        const anyPresent =
-          totalFromResponse != null ||
-          input != null ||
-          output != null ||
-          cacheRead != null ||
-          cacheWrite != null ||
-          thought != null;
-
-        if (anyPresent) {
-          const tokens: Record<string, number> = { total };
-          if (input != null) tokens.input = input;
-          if (output != null) tokens.output = output;
-          if (cacheRead != null) tokens.cache_read = cacheRead;
-          if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-          if (thought != null) tokens.thought = thought;
+        const tokens = readAcpUsageTokens(record);
+        if (tokens) {
           this.emit({
             type: 'token-count',
             key: 'acp-session-update-usage',
@@ -2711,6 +2775,22 @@ export class AcpBackend implements AgentBackend {
       : options;
   }
 
+  private reconcileSessionConfigOptions(raw: ReadonlyArray<unknown>): boolean {
+    const normalized = this.normalizeSupportedSessionConfigOptions(raw);
+    if (isDeepStrictEqual(this.sessionConfigOptionsState, normalized)) return false;
+    this.sessionConfigOptionsState = reconcileAcpCatalogRows(this.sessionConfigOptionsState, normalized);
+    const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
+      configOptions: this.sessionConfigOptionsState,
+    });
+    if (modelState && !isDeepStrictEqual(this.sessionModelState, modelState)) {
+      this.sessionModelState = {
+        ...modelState,
+        availableModels: reconcileAcpCatalogRows(this.sessionModelState?.availableModels, modelState.availableModels),
+      };
+    }
+    return true;
+  }
+
   private seedSessionConfigOptionsFromSessionResponse(sessionResponse: unknown): void {
     const response = asRecord(sessionResponse);
     if (!response) return;
@@ -2719,14 +2799,12 @@ export class AcpBackend implements AgentBackend {
     const configOptionsRaw: unknown[] | null = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
     if (!configOptionsRaw) return;
 
-    const configOptions = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-    this.sessionConfigOptionsState = configOptions;
-    const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({ configOptions });
-    if (modelState) {
-      this.sessionModelState = modelState;
-      this.emit({ type: 'event', name: 'session_models_state', payload: modelState });
+    const previousModelState = this.sessionModelState;
+    if (!this.reconcileSessionConfigOptions(configOptionsRaw)) return;
+    if (this.sessionModelState && this.sessionModelState !== previousModelState) {
+      this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
     }
-    this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions } });
+    this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions: this.sessionConfigOptionsState } });
   }
 
   async setSessionConfigOption(
@@ -2776,19 +2854,21 @@ export class AcpBackend implements AgentBackend {
     if (modelUpdate) {
       await this.setSessionModel(normalizedSessionId, modelUpdate.modelId, modelUpdate.requestMeta);
       if (this.sessionModelState) {
-        this.sessionModelState = {
+        const next = {
           ...this.sessionModelState,
-          availableModels: this.sessionModelState.availableModels.map((model) =>
+          availableModels: reconcileAcpCatalogRows(this.sessionModelState.availableModels, this.sessionModelState.availableModels.map((model) =>
             model.id === this.sessionModelState?.currentModelId && model.modelOptions
               ? {
                   ...model,
-                  modelOptions: model.modelOptions.map((option) =>
+                  modelOptions: reconcileAcpCatalogRows(model.modelOptions, model.modelOptions.map((option) =>
                     option.id === normalizedConfigId
                       ? { ...option, currentValue: normalizedValueId }
-                      : option),
+                      : option)),
                 }
-              : model),
+              : model)),
         };
+        if (isDeepStrictEqual(this.sessionModelState, next)) return;
+        this.sessionModelState = next;
         this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
       }
       return;
@@ -2811,22 +2891,12 @@ export class AcpBackend implements AgentBackend {
 
     const configOptionsCandidate = response?.configOptions;
     const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-    if (configOptionsRaw) {
-      this.sessionConfigOptionsState = this.normalizeSupportedSessionConfigOptions(configOptionsRaw);
-    } else if (this.sessionConfigOptionsState) {
-      this.sessionConfigOptionsState = this.sessionConfigOptionsState.map((option) =>
-        option.id === normalizedConfigId
-          ? { ...option, currentValue: normalizedValueId }
-          : option
-      );
-    }
-    if (this.sessionConfigOptionsState) {
-      const modelState = this.options.sessionModelAdapter?.deriveModelStateFromConfigOptions?.({
-        configOptions: this.sessionConfigOptionsState,
-      });
-      if (modelState) this.sessionModelState = modelState;
-    }
-    if (!this.sessionConfigOptionsState) return;
+    const next = configOptionsRaw ?? this.sessionConfigOptionsState?.map((option) =>
+      option.id === normalizedConfigId
+        ? { ...option, currentValue: normalizedValueId }
+        : option
+    );
+    if (!next || !this.reconcileSessionConfigOptions(next)) return;
     this.emit({
       type: 'event',
       name: 'config_options_update',
@@ -2950,7 +3020,7 @@ export class AcpBackend implements AgentBackend {
     this.waitingForResponse = false;
 
     if (outcome.kind !== 'timed_out') {
-      this.emit({ type: 'status', status: 'idle' });
+      this.emit({ type: 'status', status: 'idle', turnFinished: true });
     }
 
     if (this.idleResolver) {
@@ -3229,6 +3299,7 @@ export class AcpBackend implements AgentBackend {
         type: 'status',
         status: 'error',
         detail: errorDetail,
+        error,
       });
 
       return 'failed';
@@ -3284,30 +3355,7 @@ export class AcpBackend implements AgentBackend {
           return;
         }
 
-        const record = usage as Record<string, unknown>;
-        const asNum = (value: unknown): number | null =>
-          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-
-        const input = asNum(record.input_tokens);
-        const output = asNum(record.output_tokens);
-        const thought = asNum(record.thought_tokens);
-        const cacheRead = asNum(record.cached_read_tokens);
-        const cacheWrite = asNum(record.cached_write_tokens);
-        const totalFromResponse = asNum(record.total_tokens);
-        const total =
-          totalFromResponse ??
-          (input ?? 0) +
-            (output ?? 0) +
-            (cacheRead ?? 0) +
-            (cacheWrite ?? 0) +
-            (thought ?? 0);
-
-        const tokens: Record<string, number> = { total };
-        if (input != null) tokens.input = input;
-        if (output != null) tokens.output = output;
-        if (cacheRead != null) tokens.cache_read = cacheRead;
-        if (cacheWrite != null) tokens.cache_creation = cacheWrite;
-        if (thought != null) tokens.thought = thought;
+        const tokens = readAcpUsageTokens(usage as Record<string, unknown>) ?? { total: 0 };
 
         const modelId =
           typeof promptResponseRecord.modelId === 'string'
@@ -3611,7 +3659,7 @@ export class AcpBackend implements AgentBackend {
         if (!this.disposed && this.waitingForResponse) {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
           this.failPendingResponseWait(normalizedError);
-          this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
+          this.emit({ type: 'status', status: 'error', detail: normalizedError.message, error: normalizedError });
         }
         throw toAcpPromptSubmissionPhaseError('effect_may_have_occurred', error);
       });
@@ -3718,6 +3766,7 @@ export class AcpBackend implements AgentBackend {
       modelState: this.sessionModelState,
     })
       ?? normalizedModelId;
+    if (this.sessionModelState?.currentModelId === projectedModelId) return;
     if (this.sessionModelState) {
       this.sessionModelState = { ...this.sessionModelState, currentModelId: projectedModelId };
     }
@@ -3820,7 +3869,7 @@ export class AcpBackend implements AgentBackend {
       this.postIdleWithoutAssistantMessageTimeout = null;
     }
     this.clearResponseCompletionTimeout();
-    this.emit({ type: 'status', status: 'idle' });
+    this.emit({ type: 'status', status: 'idle', turnFinished: this.waitingForResponse ? true : undefined });
     this.clearActiveToolCallStateForTerminalTurn('idle finalization');
     this.closeCurrentTurnGeneration();
     // Avoid races where the idle signal arrives before `waitForResponseComplete()` starts waiting.
@@ -4097,6 +4146,7 @@ export class AcpBackend implements AgentBackend {
     }
     // Clear state
     this.listeners = [];
+    this.providerTurnEventListeners.clear();
     this.connection = null;
     this.acpSessionId = null;
     this.negotiatedSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;

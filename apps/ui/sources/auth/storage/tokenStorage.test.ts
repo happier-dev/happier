@@ -34,7 +34,7 @@ describe('TokenStorage (web)', () => {
         await expect(TokenStorage.getCredentials()).resolves.toBeNull();
     });
 
-    it('returns null when stored credentials are missing secret/encryption (token-only record)', async () => {
+    it('restores an explicit token-only credential without fabricating content keys', async () => {
         const storage = installStorage();
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
             getActiveServerId: () => 'localhost-3009',
@@ -45,7 +45,7 @@ describe('TokenStorage (web)', () => {
         storage.setItemMock('auth_credentials__srv_localhost-3009', JSON.stringify({ token: 't' }));
 
         const { TokenStorage } = await import('./tokenStorage');
-        await expect(TokenStorage.getCredentials()).resolves.toBeNull();
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 't' });
     });
 
     it('returns false when localStorage.setItem throws', async () => {

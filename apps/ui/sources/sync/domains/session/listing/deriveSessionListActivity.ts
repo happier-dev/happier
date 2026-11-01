@@ -1,7 +1,8 @@
 import type { SessionState } from '@/utils/sessions/sessionUtils';
 import { deriveSessionAttentionState } from '../attention/deriveSessionAttentionState';
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
-import { isSessionListReadyForReview } from './sessionListReadyForReview';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1, SessionRuntimeActivityState } from '@happier-dev/protocol';
+import { hasUnseenSessionTurnCompletion, isSessionListReadyForReview } from './sessionListReadyForReview';
+import { resolveSessionListBackgroundWorkAttention, type SessionListBackgroundWorkAttentionMode } from './sessionListBackgroundWorkAttention';
 
 export type SessionListSecondaryLineMode = 'status' | 'path';
 export type SessionListAttentionState =
@@ -65,6 +66,9 @@ export function deriveSessionListAttentionState(input: Readonly<{
     latestReadyEventSeq?: number | null;
     latestReadyEventAt?: number | null;
     lastViewedSessionSeq?: number | null;
+    backgroundWorkAttentionMode?: SessionListBackgroundWorkAttentionMode;
+    runtimeActivityState?: SessionRuntimeActivityState | null;
+    runtimeActivityActiveCount?: number | null;
 }>): SessionListAttentionState {
     const sessionAttention = deriveSessionAttentionState({
         latestTurnStatus: input.latestTurnStatus,
@@ -77,9 +81,16 @@ export function deriveSessionListAttentionState(input: Readonly<{
     // Legacy list/session internals call active turn work "thinking"; row presentation maps this to product "working".
     if (sessionAttention === 'running') return 'thinking';
     if (sessionAttention === 'failed') return 'failed';
+    const unseenCompletion = hasUnseenSessionTurnCompletion(input);
+    const backgroundAttention = resolveSessionListBackgroundWorkAttention({
+        backgroundActive: input.sessionState === 'background_active',
+        hasUnreadMessages: input.hasUnreadMessages || unseenCompletion,
+        mode: input.backgroundWorkAttentionMode,
+    });
+    if (backgroundAttention !== null) return backgroundAttention.attentionState;
     if (isSessionListReadyForReview(input)) return 'ready';
     if (input.pendingCount > 0) return 'pending';
-    if (input.hasUnreadMessages) return 'unread';
+    if (input.hasUnreadMessages || unseenCompletion) return 'unread';
     return 'quiet';
 }
 

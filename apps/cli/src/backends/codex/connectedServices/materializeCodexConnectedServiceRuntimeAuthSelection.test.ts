@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify from 'fastify';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,51 +7,64 @@ import { AccountSettingsSchema, buildConnectedServiceCredentialRecord } from '@h
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { Credentials } from '@/persistence';
-import { fetchSessionById, fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
-import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import { removeTempDir } from '@/testkit/fs/tempDir';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createSessionRecordFixture, createSessionListResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
-import { withCodexAppServerControlClient } from '../appServer/control/withCodexAppServerControlClient';
+import * as appServerControl from '../appServer/control/withCodexAppServerControlClient';
 import { materializeCodexConnectedServiceRuntimeAuthSelection } from './materializeCodexConnectedServiceRuntimeAuthSelection';
 import { resolveConnectedServiceHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 
-// Mock the remote session HTTP boundary, not session resolution or encryption.
-vi.mock('@/session/transport/http/sessionsHttp', () => ({
-  fetchSessionById: vi.fn(),
-  fetchSessionsPage: vi.fn(),
-}));
-
-vi.mock('@/session/transport/rpc/sessionRpc', () => ({
-  callSessionRpc: vi.fn(),
-}));
-
-vi.mock('../appServer/control/withCodexAppServerControlClient', () => ({
-  withCodexAppServerControlClient: vi.fn(),
+const { io } = vi.hoisted(() => ({ io: vi.fn() }));
+vi.mock('socket.io-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('socket.io-client')>(),
+  io,
 }));
 
 describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
-  beforeEach(() => {
-    vi.mocked(fetchSessionById).mockReset();
-    vi.mocked(fetchSessionsPage).mockReset();
-    vi.mocked(callSessionRpc).mockReset();
-    vi.mocked(withCodexAppServerControlClient).mockReset();
+  const cleanup: Array<() => void | Promise<void>> = [];
+  beforeEach(() => { io.mockReset(); });
+  afterEach(async () => {
+    for (const close of cleanup.splice(0).reverse()) await close();
+    vi.restoreAllMocks();
   });
 
   it('materializes direct live runtime apply through session RPC without probing a control app-server', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-switch-target-'));
+    cleanup.push(() => removeTempDir(root));
     const activeServerDir = join(root, 'server');
     const oldHome = join(resolveConnectedServiceHomeDir({ activeServerDir, serviceId: 'openai-codex', profileId: 'old', agentId: 'codex' }), 'codex-home');
     await mkdir(join(oldHome, 'sessions'), { recursive: true });
     await writeFile(join(oldHome, 'sessions', 'private.jsonl'), 'private-history\n');
     const remoteSession = createSessionRecordFixture({ id: 'sess_1', encryptionMode: 'plain' });
-    vi.mocked(fetchSessionById).mockResolvedValue(remoteSession);
-    vi.mocked(fetchSessionsPage).mockResolvedValue({ ...createSessionListResponseFixture([remoteSession]), nextCursor: null, hasNext: false });
-    vi.mocked(callSessionRpc).mockResolvedValue({
-      ok: true,
-      appliedVia: 'direct_live_hot_auth',
-      verification: { activeAccountId: 'acct_target' },
+    const relay = Fastify();
+    relay.get('/v2/sessions/sess_1', async (request) => {
+      expect(request.headers.authorization).toBe('Bearer machine-token');
+      return { session: remoteSession };
     });
+    relay.get('/v2/sessions', async () => createSessionListResponseFixture([remoteSession]));
+    relay.get('/v2/sessions/archived', async () => createSessionListResponseFixture([]));
+    await relay.ready();
+    cleanup.push(() => relay.close());
+    cleanup.push(installAxiosFastifyAdapter({ app: relay, origin: new URL(resolveServerHttpBaseUrl()).origin }));
+    const wireRequests: unknown[] = [];
+    io.mockImplementation(() => createApiSessionSocketStub({
+      emit: (event, args) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        const [payload, acknowledge] = args as [unknown, (response: unknown) => void];
+        wireRequests.push(payload);
+        acknowledge({ ok: true, result: {
+          ok: true,
+          appliedVia: 'direct_live_hot_auth',
+          verification: { activeAccountId: 'acct_target' },
+        } });
+      },
+    }));
+    const controlProbe = vi.spyOn(appServerControl, 'withCodexAppServerControlClient');
 
     const credential = buildConnectedServiceCredentialRecord({
       now: 1_000,
@@ -113,7 +127,7 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
       baseSelection,
     });
 
-    expect(withCodexAppServerControlClient).not.toHaveBeenCalled();
+    expect(controlProbe).not.toHaveBeenCalled();
     expect(materialized).toMatchObject({
       serviceId: 'openai-codex',
       applyReason: 'same_provider_account_exhausted',
@@ -134,14 +148,10 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
         appliedVia: 'direct_live_hot_auth',
         verification: { activeAccountId: 'acct_target' },
       });
-    expect(callSessionRpc).toHaveBeenCalledWith({
-      token: 'machine-token',
-      sessionId: 'sess_1',
-      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
-      mode: 'plain',
+    expect(wireRequests).toEqual([expect.objectContaining({
       timeoutMs: 60_000,
       method: `sess_1:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION}`,
-      request: { serviceId: 'openai-codex', reason: 'same_provider_account_exhausted' },
-    });
+      params: { serviceId: 'openai-codex', reason: 'same_provider_account_exhausted' },
+    })]);
   });
 });

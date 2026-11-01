@@ -43,7 +43,7 @@ export class HappierPipeline {
   ): Promise<string> {
     return dag
       .container()
-      .from("node:22-bookworm-slim")
+      .from("node:24-bookworm-slim")
       .withMountedDirectory("/repo", repo)
       .withWorkdir("/repo")
       .withSecretVariable("NODE_AUTH_TOKEN", npmToken)

@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { getProjectPath } from './path'
+import { CLAUDE_HANDBACK_REPORT, claudeHandbackUserRow } from '../attachments/claudePeerMessage.testkit'
 
 async function waitFor(predicate: () => boolean, timeoutMs: number = 2000, intervalMs: number = 25): Promise<void> {
   const start = Date.now()
@@ -1065,6 +1066,63 @@ describe('sessionScanner', () => {
       expect(message).toMatchObject({ type: 'user', origin: { kind: 'peer', name: 'Sender' },
         message: { content: 'From Sender:\n\nDelivered' } })
     }
+  })
+
+  it.each([
+    ['notification', 'completed'], ['task-status', 'completed'], ['task-status', 'failed'], ['task-status', 'stopped'],
+    ['send-stop', 'stopped'],
+  ] as const)('publishes a buffered report on terminal %s %s', async (delivery, status) => {
+    const sessionId = '59595959-5959-4595-8595-595959595959'
+    const delivered = createDeferred<void>()
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const ack = { type: 'user', uuid: 'ack-a1', sessionId, toolUseResult: { status: 'async_launched', agentId: 'a1' },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a1', content: 'Async agent launched successfully.' }] } }
+    await writeFile(sessionFile, JSON.stringify(ack) + '\n')
+    scanner = await createSessionScanner({ sessionId, workingDirectory: testDir, onMessage: message => {
+      collectedMessages.push(message)
+      if (message.uuid === 'handback-sentinel') delivered.resolve()
+    } })
+    const stoppedResponse = { success: false, message: "Agent a1 was stopped by the user and won't be resumed." }
+    await appendFile(sessionFile, [
+      { ...claudeHandbackUserRow({ withReportText: true }), sessionId },
+      delivery === 'send-stop'
+        ? { type: 'user', uuid: 'pointer-notification', sessionId, toolUseResult: stoppedResponse,
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'send-tool', content: JSON.stringify(stoppedResponse) }] } }
+        : delivery === 'task-status'
+        ? { type: 'attachment', uuid: 'pointer-notification', sessionId, attachment: { type: 'task_status', taskId: 'a1', status, taskType: 'local_agent' } }
+        : { type: 'attachment', uuid: 'pointer-notification', sessionId, attachment: { type: 'queued_command', commandMode: 'task-notification',
+        origin: { kind: 'task-notification', producer: 'session-task' },
+        prompt: '<task-notification><task-id>a1</task-id><tool-use-id>toolu_a1</tool-use-id><status>completed</status><result>This agent\'s report was delivered to you as a message from "a1".</result></task-notification>' } },
+      { type: 'user', uuid: 'handback-sentinel', sessionId, message: { content: 'sentinel' } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n')
+    await delivered.promise
+    expect(collectedMessages.map(message => message.uuid)).toEqual(['pointer-notification', 'handback-sentinel'])
+    expect(collectedMessages[0]).toMatchObject({ type: 'user', origin: { kind: 'task-notification', status },
+      message: { content: expect.arrayContaining([expect.objectContaining({ type: 'tool_result', tool_use_id: 'toolu_a1', is_error: status !== 'completed',
+        content: delivery === 'send-stop' ? { status: 'cancelled', result: CLAUDE_HANDBACK_REPORT } : [{ type: 'text', text: CLAUDE_HANDBACK_REPORT }] })]) } })
+    if (delivery === 'send-stop') {
+      expect(collectedMessages[0]).toMatchObject({ message: { content: expect.arrayContaining([
+        expect.objectContaining({ type: 'tool_result', tool_use_id: 'send-tool',
+          content: { content: JSON.stringify(stoppedResponse), tool_use_result: stoppedResponse } }),
+      ]) } })
+      expect(collectedMessages[0].toolUseResult).toBeUndefined()
+    }
+  })
+
+  it('replays a buffered report settled by a native task-status snapshot', async () => {
+    const sessionId = '59595959-5959-4595-8595-595959595959'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    await writeFile(sessionFile, [
+      { type: 'user', uuid: 'ack-a1', sessionId, toolUseResult: { status: 'async_launched', agentId: 'a1' },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a1', content: 'Async agent launched successfully.' }] } },
+      { ...claudeHandbackUserRow({ withReportText: true }), sessionId },
+      { type: 'attachment', uuid: 'historical-status', sessionId, attachment: { type: 'task_status', taskId: 'a1', status: 'completed' } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n')
+    scanner = await createSessionScanner({ sessionId, replayInitialMessages: true, workingDirectory: testDir,
+      onMessage: message => { collectedMessages.push(message) } })
+    expect(collectedMessages.map(message => message.uuid)).toEqual(['ack-a1', 'historical-status'])
+    expect(collectedMessages[1]).toMatchObject({ message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_a1',
+      content: [{ type: 'text', text: CLAUDE_HANDBACK_REPORT }], is_error: false }] } })
   })
 
   it('retains an authenticated task-only completion until the launch ACK binds its tool', async () => {

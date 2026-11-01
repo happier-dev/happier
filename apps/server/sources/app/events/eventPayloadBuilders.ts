@@ -492,8 +492,10 @@ export function buildUpdateMachineUpdate(
     updateSeq: number,
     updateId: string,
     metadata?: { value: string; version: number },
-    daemonState?: { value: string; version: number },
+    daemonState?: { value: string | null; version: number },
     extra?: {
+        dataEncryptionKey?: string | null;
+        contentPublicKeyFingerprint?: string | null;
         active?: boolean;
         activeAt?: number;
         revokedAt?: number | null;

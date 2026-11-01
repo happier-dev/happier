@@ -29,6 +29,7 @@ describe("oidcOAuthProvider", () => {
             allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
             fetchUserInfo: false,
             storeRefreshToken: false,
+            tokenExchange: null,
             ui: { buttonColor: null, iconHint: null },
         });
 
@@ -50,6 +51,7 @@ describe("oidcOAuthProvider", () => {
             allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
             fetchUserInfo: false,
             storeRefreshToken: false,
+            tokenExchange: null,
             ui: { buttonColor: null, iconHint: null },
         });
 
@@ -74,6 +76,7 @@ describe("oidcOAuthProvider", () => {
             allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
             fetchUserInfo: true,
             storeRefreshToken: false,
+            tokenExchange: null,
             ui: { buttonColor: null, iconHint: null },
         });
 
@@ -108,6 +111,7 @@ describe("oidcOAuthProvider", () => {
             allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
             fetchUserInfo: false,
             storeRefreshToken: false,
+            tokenExchange: null,
             ui: { buttonColor: null, iconHint: null },
         });
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../../lazySchema.js';
 
 export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'Bash',
@@ -43,14 +44,14 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'AgentTeamSendMessage',
 ] as const;
 
-export const KnownCanonicalToolNameV2Schema = z.enum(KNOWN_CANONICAL_TOOL_NAMES_V2);
+export const KnownCanonicalToolNameV2Schema = lazySchema(() => z.enum(KNOWN_CANONICAL_TOOL_NAMES_V2));
 export type KnownCanonicalToolNameV2 = z.infer<typeof KnownCanonicalToolNameV2Schema>;
 
 export type CanonicalToolNameV2 =
   | KnownCanonicalToolNameV2
   | `mcp__${string}`;
 
-export const CanonicalToolNameV2Schema = z.union([
+export const CanonicalToolNameV2Schema = lazySchema(() => z.union([
   KnownCanonicalToolNameV2Schema,
   z.string().regex(/^mcp__/),
-]);
+]));

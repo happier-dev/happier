@@ -6,7 +6,6 @@ import {
     type SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
-import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { sessionTagKey } from '../sessionTagUtils';
 
 export function resolveSessionListFolderMoveTargets(params: Readonly<{
@@ -18,7 +17,6 @@ export function resolveSessionListFolderMoveTargets(params: Readonly<{
 }>) {
     const selected = params.items.filter((item): item is Extract<SessionListViewItem, { type: 'session' }> => (
         item.type === 'session' && Boolean(item.serverId)
-        && getSessionStorageKind(item.session) !== 'direct'
         && params.sessionKeys.has(sessionTagKey(item.serverId!, item.session.id))
     ));
     if (selected.length === 0) return [];

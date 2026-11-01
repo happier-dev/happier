@@ -236,7 +236,7 @@ describe('editable theme color token definitions', () => {
             status: 'internal',
         }));
         expect(classificationsByPath.get('glass.composerSurface')).toEqual(expect.objectContaining({
-            status: 'internal',
+            status: 'derived',
         }));
     });
 

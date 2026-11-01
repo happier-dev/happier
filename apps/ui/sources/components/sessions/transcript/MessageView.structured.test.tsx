@@ -1136,7 +1136,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
     });
 
-    it('suppresses the duplicate ToolTimelineRow for structured review tool-calls in activity feed mode', async () => {
+    it('keeps the ToolTimelineRow for structured review tool-calls in activity feed mode', async () => {
         toolViewTimelineChromeMode = 'activity_feed';
         const { MessageView } = await import('./MessageView');
         const { ReviewFindingsMessageCard } = await import('../reviews/messages/ReviewFindingsMessageCard');
@@ -1177,7 +1177,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
         expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
-        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(1);
     });
 
     it('renders a structured plan-output card for tool-call messages when meta.happier.kind is plan_output.v1', async () => {

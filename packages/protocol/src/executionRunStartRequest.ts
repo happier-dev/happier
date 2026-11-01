@@ -10,23 +10,24 @@ import {
   HappierReplayRecentMessagesCountSchema,
   HappierReplayWireMaxSeedCharsSchema,
 } from './replaySeedBudget.js';
+import { lazySchema } from './lazySchema.js';
 
-export const ExecutionRunIntentSchema = z.enum([
+export const ExecutionRunIntentSchema = lazySchema(() => z.enum([
   'review',
   'plan',
   'delegate',
   'voice_agent',
   'memory_hints',
-]);
+]));
 export type ExecutionRunIntent = z.infer<typeof ExecutionRunIntentSchema>;
 
-export const ExecutionRunRetentionPolicySchema = z.enum(['ephemeral', 'resumable']);
+export const ExecutionRunRetentionPolicySchema = lazySchema(() => z.enum(['ephemeral', 'resumable']));
 export type ExecutionRunRetentionPolicy = z.infer<typeof ExecutionRunRetentionPolicySchema>;
 
-export const ExecutionRunClassSchema = z.enum(['bounded', 'long_lived']);
+export const ExecutionRunClassSchema = lazySchema(() => z.enum(['bounded', 'long_lived']));
 export type ExecutionRunClass = z.infer<typeof ExecutionRunClassSchema>;
 
-export const ExecutionRunIoModeSchema = z.enum(['request_response', 'streaming']);
+export const ExecutionRunIoModeSchema = lazySchema(() => z.enum(['request_response', 'streaming']));
 export type ExecutionRunIoMode = z.infer<typeof ExecutionRunIoModeSchema>;
 
 export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): unknown {
@@ -50,40 +51,40 @@ export function normalizeLegacyExecutionRunBackendTargetInput(value: unknown): u
   };
 }
 
-const ExecutionRunResumeHandleVendorSessionV1SchemaCore = z.object({
+const ExecutionRunResumeHandleVendorSessionV1SchemaCore = lazySchema(() => z.object({
   kind: z.literal('vendor_session.v1'),
   backendTarget: BackendTargetRefSchema,
   vendorSessionId: z.string().min(1),
-}).passthrough();
-export const ExecutionRunResumeHandleVendorSessionV1Schema = z.preprocess(
+}).passthrough());
+export const ExecutionRunResumeHandleVendorSessionV1Schema = lazySchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleVendorSessionV1SchemaCore,
-);
+));
 export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRunResumeHandleVendorSessionV1Schema>;
 
-const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = z.object({
+const ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore = lazySchema(() => z.object({
   kind: z.literal('voice_agent_sessions.v1'),
   backendTarget: BackendTargetRefSchema,
   chatVendorSessionId: z.string().min(1),
   commitVendorSessionId: z.string().min(1),
-}).passthrough();
-export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.preprocess(
+}).passthrough());
+export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = lazySchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
-);
+));
 export type ExecutionRunResumeHandleVoiceAgentSessionsV1 = z.infer<typeof ExecutionRunResumeHandleVoiceAgentSessionsV1Schema>;
 
-const ExecutionRunResumeHandleSchemaCore = z.discriminatedUnion('kind', [
+const ExecutionRunResumeHandleSchemaCore = lazySchema(() => z.discriminatedUnion('kind', [
   ExecutionRunResumeHandleVendorSessionV1SchemaCore,
   ExecutionRunResumeHandleVoiceAgentSessionsV1SchemaCore,
-]);
-export const ExecutionRunResumeHandleSchema = z.preprocess(
+]));
+export const ExecutionRunResumeHandleSchema = lazySchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleSchemaCore,
-);
+));
 export type ExecutionRunResumeHandle = z.infer<typeof ExecutionRunResumeHandleSchema>;
 
-export const ExecutionRunDisplaySchema = z.object({
+export const ExecutionRunDisplaySchema = lazySchema(() => z.object({
   /**
    * Optional user-facing label/title for the run (used for future group chat + participant labeling).
    */
@@ -96,10 +97,10 @@ export const ExecutionRunDisplaySchema = z.object({
    * Optional group ID used to render multiple runs as a logical "group chat" in UI.
    */
   groupId: z.string().min(1).max(120).optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunDisplay = z.infer<typeof ExecutionRunDisplaySchema>;
 
-export const ExecutionRunLaunchOriginSchema = z.discriminatedUnion('kind', [
+export const ExecutionRunLaunchOriginSchema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session'),
     sessionId: z.string().min(1),
@@ -108,10 +109,10 @@ export const ExecutionRunLaunchOriginSchema = z.discriminatedUnion('kind', [
     kind: z.literal('external'),
     source: z.enum(['cli', 'mcp', 'action']).optional(),
   }).strict(),
-]);
+]));
 export type ExecutionRunLaunchOrigin = z.infer<typeof ExecutionRunLaunchOriginSchema>;
 
-export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', [
+export const ExecutionRunReplaySeedRequestSchema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('voice_session.v1'),
     previousSessionId: z.string().min(1),
@@ -123,10 +124,10 @@ export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', 
     // CL-2: passthrough like every sibling wire schema in this file — a newer peer adding a replay
     // field must not make an older daemon reject the ENTIRE run-start request.
   }).passthrough(),
-]);
+]));
 export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySeedRequestSchema>;
 
-export const ExecutionRunStartRequestSchema = z.object({
+export const ExecutionRunStartRequestSchema = lazySchema(() => z.object({
   /**
    * Stable caller-owned identity for one retryable start attempt. Hosts use it only for exact
    * reconciliation/idempotency; it is not launch provenance and is never shown as user-facing state.
@@ -172,13 +173,13 @@ export const ExecutionRunStartRequestSchema = z.object({
   connectedServicesDefaultServiceIds: z.array(z.string()).optional(),
   /** Explicit per-run override for the account completion-notification default. */
   notifyParentOnCompletion: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunStartRequest = z.infer<typeof ExecutionRunStartRequestSchema>;
 
-export const ExecutionRunStartResponseSchema = z.object({
+export const ExecutionRunStartResponseSchema = lazySchema(() => z.object({
   runId: z.string().min(1),
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   requestedConfiguration: ExecutionRunRequestedConfigurationSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;

@@ -25,6 +25,7 @@ export async function discardQueuedAndPendingForLocalSwitch(opts: {
   formatError: (error: unknown) => string;
   onCancelled?: () => void;
   discardController?: DiscardController;
+  signal?: AbortSignal;
 }): Promise<Awaited<ReturnType<typeof discardPendingBeforeSwitchToLocal>>> {
   const queuedCount = opts.queue.size();
   const queuedPreview = opts.queue.queue.map((item) => item.message);
@@ -54,6 +55,7 @@ export async function discardQueuedAndPendingForLocalSwitch(opts: {
         queuedPreview,
         serverCount: serverPendingCount,
         serverPreview: [],
+        signal: opts.signal,
       }),
     discardServerPending: opts.discardServerPending,
     markQueuedAsDiscarded: opts.markQueuedAsDiscarded,
@@ -63,5 +65,6 @@ export async function discardQueuedAndPendingForLocalSwitch(opts: {
     sendStatusMessage: opts.sendStatusMessage,
     formatError: opts.formatError,
     onCancelled: opts.onCancelled,
+    signal: opts.signal,
   });
 }

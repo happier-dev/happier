@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 describe('settings registry completeness', () => {
+    it('preserves the account background-work attention preference and defaults missing or invalid values to keep working', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS, settingsParse } = await import('./settings');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorking');
+        expect(settingsParse({})).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorking');
+        expect(settingsParse({ sessionListBackgroundWorkAttentionModeV1: 'showUnread' })).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'showUnread');
+        expect(settingsParse({ sessionListBackgroundWorkAttentionModeV1: 'keepWorkingUnread' })).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorkingUnread');
+        expect(settingsParse({ sessionListBackgroundWorkAttentionModeV1: 'keepWorking' })).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorking');
+        expect(settingsParse({ sessionListBackgroundWorkAttentionModeV1: 'invalid' })).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorking');
+    });
+
     it('builds the account settings schema entirely from schema metadata, canonical account artifacts, and provider settings', async () => {
         const { PROVIDER_SETTINGS_SHAPE } = await import('@/agents/providers/registry/providerSettingArtifacts');
         const { ACCOUNT_SETTING_ARTIFACTS, SettingsSchema } = await import('./settings');

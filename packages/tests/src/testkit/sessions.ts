@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  parseSessionRuntimeActivityProjectionFields,
   SessionRuntimeIssueV1Schema,
   type PrimaryTurnStatusV1,
+  type SessionRuntimeActivityState,
   type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
 
@@ -356,6 +358,13 @@ export type SessionV2 = {
   pendingCount?: number;
   pendingBlockedCount?: number;
   pendingVersion?: number;
+  pendingPermissionRequestCount?: number;
+  pendingUserActionRequestCount?: number;
+  pendingRequestObservedAt?: number | null;
+  runtimeActivityState?: SessionRuntimeActivityState;
+  runtimeActivityActiveCount?: number;
+  runtimeActivityObservedAt?: number | null;
+  runtimeActivityRevision?: number;
   latestTurnStatus: PrimaryTurnStatusV1 | null;
   lastRuntimeIssue: SessionRuntimeIssueV1 | null;
 };
@@ -381,8 +390,15 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
   const pendingCount = value.pendingCount;
   const pendingBlockedCount = value.pendingBlockedCount;
   const pendingVersion = value.pendingVersion;
+  const pendingPermissionRequestCount = value.pendingPermissionRequestCount;
+  const pendingUserActionRequestCount = value.pendingUserActionRequestCount;
+  const pendingRequestObservedAt = value.pendingRequestObservedAt;
   const latestTurnStatus = parseLatestTurnStatus(value.latestTurnStatus, context);
   const lastRuntimeIssue = parseLastRuntimeIssue(value.lastRuntimeIssue, context);
+  const runtimeActivity = parseSessionRuntimeActivityProjectionFields(value);
+  if (runtimeActivity.kind === 'invalid') {
+    throw new Error(`Invalid v2 session runtime activity projection (${context})`);
+  }
 
   if (typeof id !== 'string' || id.length === 0) throw new Error(`Invalid v2 session id (${context})`);
   if (typeof seq !== 'number' || !Number.isFinite(seq)) throw new Error(`Invalid v2 session seq (${context})`);
@@ -420,6 +436,16 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
     throw new Error(`Invalid v2 session pendingVersion (${context})`);
   }
 
+  for (const count of [pendingPermissionRequestCount, pendingUserActionRequestCount]) {
+    if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 0)) {
+      throw new Error(`Invalid v2 session pending request count (${context})`);
+    }
+  }
+  if (pendingRequestObservedAt !== undefined && pendingRequestObservedAt !== null
+    && (typeof pendingRequestObservedAt !== 'number' || !Number.isFinite(pendingRequestObservedAt) || pendingRequestObservedAt < 0)) {
+    throw new Error(`Invalid v2 session pendingRequestObservedAt (${context})`);
+  }
+
   return {
     id,
     seq,
@@ -435,6 +461,15 @@ function parseSessionV2Common(value: unknown, context: string): SessionV2 {
     ...(typeof pendingCount === 'number' ? { pendingCount } : {}),
     ...(typeof pendingBlockedCount === 'number' ? { pendingBlockedCount } : {}),
     ...(typeof pendingVersion === 'number' ? { pendingVersion } : {}),
+    ...(typeof pendingPermissionRequestCount === 'number' ? { pendingPermissionRequestCount } : {}),
+    ...(typeof pendingUserActionRequestCount === 'number' ? { pendingUserActionRequestCount } : {}),
+    ...(typeof pendingRequestObservedAt === 'number' || pendingRequestObservedAt === null ? { pendingRequestObservedAt } : {}),
+    ...(runtimeActivity.kind === 'valid' ? {
+      runtimeActivityState: runtimeActivity.projection.state,
+      runtimeActivityActiveCount: runtimeActivity.projection.activeCount,
+      runtimeActivityObservedAt: runtimeActivity.projection.observedAt,
+      runtimeActivityRevision: runtimeActivity.projection.revision,
+    } : {}),
     latestTurnStatus,
     lastRuntimeIssue,
   };

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../../../lazySchema.js';
 
 export const SERVER_IDENTITY_ID_PATTERN = /^srv_[A-Za-z0-9._-]{1,60}$/;
 
@@ -10,14 +11,14 @@ export function normalizeServerIdentityIdCapability(value: unknown): string | nu
   return SERVER_IDENTITY_ID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-const ServerIdentityIdSchema = z.preprocess(
+const ServerIdentityIdSchema = lazySchema(() => z.preprocess(
   normalizeServerIdentityIdCapability,
   z.string().nullable().optional().default(null),
-);
+));
 
-export const ServerIdentityCapabilitiesSchema = z.object({
+export const ServerIdentityCapabilitiesSchema = lazySchema(() => z.object({
   serverIdentityId: ServerIdentityIdSchema,
-});
+}));
 
 export type ServerIdentityCapabilities = z.infer<typeof ServerIdentityCapabilitiesSchema>;
 

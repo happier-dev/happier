@@ -151,7 +151,7 @@ describe('useConnectedServiceQuotaSnapshots', () => {
     vi.clearAllMocks();
     useFeatureEnabledSpy.mockReturnValue(true);
     fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
-    const { __resetConnectedServiceQuotaSnapshotStore } = await import('./connectedServiceQuotaSnapshotStore');
+    const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore');
     __resetConnectedServiceQuotaSnapshotStore();
     const { __resetProviderAccountUsageSnapshotCache } = await import('@/sync/domains/connectedServices/accountUsage/cache');
     __resetProviderAccountUsageSnapshotCache();

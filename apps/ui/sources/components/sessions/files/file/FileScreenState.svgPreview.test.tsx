@@ -2,12 +2,19 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { AttachmentImagePreviewModal } from '@/components/sessions/attachments/preview/AttachmentImagePreviewModal';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
 import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+vi.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 
 installSessionFileViewCommonModuleMocks({
     reactNative: installReactNativeWebMock({
@@ -65,9 +72,19 @@ describe('FileBinaryState (svg previews)', () => {
         } as any;
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<FileBinaryState theme={theme} filePath="icon.svg" imagePreviewUri={uri} />)).tree;
+        const screen = await renderScreen(<FileBinaryState theme={theme} sessionId="s1" filePath="icon.svg" imagePreviewUri={uri} />);
+        tree = screen.tree;
 
         expect(tree.findAllByType('SvgAst' as any).length).toBe(1);
         expect(tree.findAllByType('SvgXml' as any).length).toBe(0);
+
+        await screen.pressByTestIdAsync('file-image-preview');
+        const { Modal } = await import('@/modal');
+        expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+            component: AttachmentImagePreviewModal,
+            props: {
+                images: [{ kind: 'session-image', sessionId: 's1', filePath: 'icon.svg', title: 'icon.svg' }],
+            },
+        }));
     });
 });

@@ -1,4 +1,4 @@
-import { decodeBase64, decrypt } from '@/api/encryption';
+import { decryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { SessionMessageContentSchema } from '@/api/types';
 
 export type CompactHistoryRow = Readonly<{
@@ -86,13 +86,13 @@ export function isHistoryArtifactDecryptedRow(value: unknown): boolean {
 
 export function tryResolveDecryptedTranscriptPayload(params: Readonly<{
   content: unknown;
-  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+  ctx: SessionEncryptionContext;
 }>): unknown | null {
   const parsed = SessionMessageContentSchema.safeParse(params.content);
   if (!parsed.success) return null;
   if (parsed.data.t === 'plain') return parsed.data.v;
   try {
-    return decrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, decodeBase64(parsed.data.c, 'base64'));
+    return decryptSessionPayload({ ctx: params.ctx, ciphertextBase64: parsed.data.c });
   } catch {
     return null;
   }

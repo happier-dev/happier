@@ -326,6 +326,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
 async function invokeProviderCliInstall(
     agentId: AgentCatalogEntry['id'],
     params?: Record<string, unknown>,
+    signal?: AbortSignal,
 ): Promise<CapabilitiesInvokeResponse> {
     const dryRun = params?.dryRun === true;
     const allowVendorRecipeExecution = params?.allowVendorRecipeExecution === true;
@@ -341,6 +342,7 @@ async function invokeProviderCliInstall(
             params: { ...sharedParams, dryRun: true },
             env: process.env,
             nodePlatform: process.platform,
+            signal,
         });
 
         if (!preview.ok) {
@@ -370,6 +372,7 @@ async function invokeProviderCliInstall(
         },
         env: process.env,
         nodePlatform: process.platform,
+        signal,
     });
 
     if (!result.ok) {
@@ -595,7 +598,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
         invoke: async ({ method, params, signal }) => {
             if (method === 'connectedServiceAuthSupport') return getConnectedServiceAuthSupport(agentId);
             if (method === 'install') {
-                return invokeProviderCliInstall(agentId, params);
+                return invokeProviderCliInstall(agentId, params, signal);
             }
             if (method === 'probeModels') {
                 return invokeCliProbeMethod(agentId, method, params, signal);
@@ -630,7 +633,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     const invoke: Capability['invoke'] = async ({ method, params, signal }) => {
         if (method === 'connectedServiceAuthSupport') return getConnectedServiceAuthSupport(agentId);
         if (method === 'install') {
-            return invokeProviderCliInstall(agentId, params);
+            return invokeProviderCliInstall(agentId, params, signal);
         }
         if (method === 'probeModels') {
             return invokeCliProbeMethod(agentId, method, params, signal);

@@ -486,11 +486,12 @@ describe('local voice engine TTS behavior', () => {
 
         submitMessage.mockRejectedValueOnce(new Error('send failed'));
 
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
-        await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('send failed');
+        await toggleLocalVoiceTurn('s1');
 
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(getLocalVoiceState()).toMatchObject({ status: 'idle', error: 'send_failed', errorMessage: 'send failed' });
     });
 
     it('auto-speaks the next assistant message even when server timestamps are behind local time', async () => {
@@ -636,6 +637,7 @@ describe('local voice engine TTS behavior', () => {
             });
 
             (globalThis.fetch as any)
+                .mockResolvedValueOnce(new Response(new Blob(['recording'], { type: 'audio/webm' })))
                 .mockResolvedValueOnce({
                     ok: true,
                     json: async () => ({ text: 'hello world' }),

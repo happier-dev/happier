@@ -1,5 +1,6 @@
 import type { FeatureDecision } from '@happier-dev/protocol';
 import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
+import type { SessionArchiveRequestOptions } from '@/sync/ops/sessionArchiveLifecycle';
 
 export const SESSION_BULK_ACTION_IDS = {
     stop: 'ui.session.stop',
@@ -48,7 +49,6 @@ export type SessionBulkActionTarget = Readonly<{
     hasAdminAccess?: boolean;
     canStop?: boolean;
     canArchive?: boolean;
-    canMoveToFolder?: boolean;
     pinned?: boolean;
     tags?: readonly string[];
     readState?: SessionBulkReadState;
@@ -107,11 +107,11 @@ export type SessionBulkStopAndArchiveOperation = (
         isPinned: boolean;
         archiveAfterStop: 'always';
         stopSession: () => Promise<SessionBulkMutationResult>;
-        archiveSession: () => Promise<SessionBulkMutationResult>;
+        archiveSession: (options?: SessionArchiveRequestOptions) => Promise<SessionBulkMutationResult>;
         stopErrorMessage: string;
         archiveErrorMessage: string;
     }>,
-) => Promise<void>;
+) => Promise<void | false>;
 
 export type SessionBulkActionCancelSignal = Readonly<{
     isCancelled: () => boolean;
@@ -142,7 +142,7 @@ export type SessionBulkActionExecutionContext = Readonly<{
 
     hideInactiveSessions?: boolean;
     stopSession?: SessionBulkOperation;
-    archiveSession?: SessionBulkOperation;
+    archiveSession?: (target: SessionBulkActionTarget, options?: SessionArchiveRequestOptions) => Promise<SessionBulkMutationResult>;
     unarchiveSession?: SessionBulkOperation;
     setManualReadState?: SessionBulkReadStateOperation;
     stopSessionAndMaybeArchive?: SessionBulkStopAndArchiveOperation;

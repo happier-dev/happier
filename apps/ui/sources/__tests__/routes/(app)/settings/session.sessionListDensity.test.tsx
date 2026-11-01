@@ -13,6 +13,7 @@ const setWorkspaceMachineSubtitlesEnabled = vi.fn();
 const setSessionListIdentityDisplay = vi.fn();
 const setSessionListActiveColorMode = vi.fn();
 const setSessionListAttentionPromotionMode = vi.fn();
+const setSessionListBackgroundWorkAttentionMode = vi.fn();
 const setSessionListWorkingPlacementMode = vi.fn();
 const setSessionListSeparateBackgroundWork = vi.fn();
 const setSessionListFolderSortMode = vi.fn();
@@ -31,6 +32,7 @@ installSessionSettingsEntryModuleMocks({
                     if (key === 'sessionListIdentityDisplay') return ['agentLogo', setSessionListIdentityDisplay];
                     if (key === 'sessionListActiveColorModeV1') return ['activityAndAttention', setSessionListActiveColorMode];
                     if (key === 'sessionListAttentionPromotionModeV1') return ['off', setSessionListAttentionPromotionMode];
+                    if (key === 'sessionListBackgroundWorkAttentionModeV1') return ['keepWorking', setSessionListBackgroundWorkAttentionMode];
                     if (key === 'sessionListWorkingPlacementModeV1') return ['off', setSessionListWorkingPlacementMode];
                     if (key === 'sessionListSeparateBackgroundWork') return [false, setSessionListSeparateBackgroundWork];
                     if (key === 'sessionListOrderingModeV1') return ['custom', setSessionListOrderingMode];
@@ -81,6 +83,7 @@ afterEach(() => {
     setSessionListIdentityDisplay.mockClear();
     setSessionListActiveColorMode.mockClear();
     setSessionListAttentionPromotionMode.mockClear();
+    setSessionListBackgroundWorkAttentionMode.mockClear();
     setSessionListWorkingPlacementMode.mockClear();
     setSessionListSeparateBackgroundWork.mockClear();
     setSessionListFolderSortMode.mockClear();
@@ -90,6 +93,23 @@ afterEach(() => {
 });
 
 describe('Session settings session list density', () => {
+    it('lets unread replies during background work use each attention policy', async () => {
+        const mod = await import('../../../../app/(app)/settings/session');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+        const dropdown = screen.findAllByType('DropdownMenu' as any).find((node) =>
+            node.props?.itemTrigger?.itemProps?.testID === 'settings-session-backgroundWorkAttentionMode-trigger');
+
+        expect(dropdown).toBeTruthy();
+        expect(dropdown!.props.selectedId).toBe('keepWorking');
+        expect(dropdown!.props.items.map((item: { id: string }) => item.id)).toEqual(['keepWorking', 'keepWorkingUnread', 'showUnread']);
+        await act(async () => dropdown!.props.onSelect('keepWorkingUnread'));
+        expect(setSessionListBackgroundWorkAttentionMode).toHaveBeenLastCalledWith('keepWorkingUnread');
+        await act(async () => dropdown!.props.onSelect('showUnread'));
+        expect(setSessionListBackgroundWorkAttentionMode).toHaveBeenLastCalledWith('showUnread');
+        await act(async () => dropdown!.props.onSelect('keepWorking'));
+        expect(setSessionListBackgroundWorkAttentionMode).toHaveBeenLastCalledWith('keepWorking');
+    });
+
     it('defaults to the narrow density option and updates only the canonical density setting', async () => {
         setSessionListDensity.mockClear();
         const mod = await import('../../../../app/(app)/settings/session');

@@ -6,11 +6,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { delay } from '@/utils/timing/time';
+import { openAccountLinkResponse } from './buildAccountLinkResponse';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-export interface AuthCredentials {
-    secret: Uint8Array;
-    token: string;
-}
+export type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean): Promise<AuthCredentials | null> {
     let dots = 0;
@@ -78,14 +77,7 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
 
                 const encryptedResponse = decodeBase64(data.response);
                 
-                const decrypted = decryptBox(encryptedResponse, keypair.secretKey);
-                if (decrypted) {
-                    return {
-                        secret: decrypted,
-                        token: token
-                    };
-                }
-                return null;
+                return openAccountLinkResponse(encryptedResponse, keypair.secretKey, token);
             }
         } catch (error) {
             return null;

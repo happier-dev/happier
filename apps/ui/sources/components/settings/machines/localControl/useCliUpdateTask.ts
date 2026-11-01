@@ -35,7 +35,7 @@ export type CliUpdateTask = Readonly<{
 
 type CliUpdateActionState = Readonly<{
     taskId: string | null;
-    starting: boolean;
+    running: boolean;
     startError: string | null;
 }>;
 
@@ -56,14 +56,14 @@ type CliUpdateAction = Readonly<{
 const actionsByRunner = new WeakMap<SystemTaskRunner, CliUpdateAction>();
 
 function isRunInFlight(runner: SystemTaskRunner, state: CliUpdateActionState): boolean {
-    if (state.starting) return true;
+    if (state.running) return true;
     if (!state.taskId) return false;
     const snapshot = runner.getSnapshot(state.taskId);
     return snapshot != null && snapshot.result == null;
 }
 
 function createCliUpdateAction(runner: SystemTaskRunner): CliUpdateAction {
-    let state: CliUpdateActionState = { taskId: null, starting: false, startError: null };
+    let state: CliUpdateActionState = { taskId: null, running: false, startError: null };
     const listeners = new Set<() => void>();
     const set = (next: CliUpdateActionState) => {
         state = next;
@@ -86,29 +86,31 @@ function createCliUpdateAction(runner: SystemTaskRunner): CliUpdateAction {
             const scope = context?.scope ?? getActiveServerAccountScope();
             const inspection = desktopSetupCoordinator.readInspectionSnapshot();
             const machineId = context ? context.machineId : resolveThisComputerServiceForActiveRelay(inspection)?.facts.auth.machineId ?? null;
-            set({ ...state, starting: true, startError: null });
+            set({ ...state, running: true, startError: null });
             try {
                 const taskId = await runner.start(context?.spec ?? buildLocalDaemonServiceSystemTaskSpec('cli.update.v1'));
-                set({ taskId, starting: false, startError: null });
+                set({ taskId, running: true, startError: null });
                 // The shared result waiter survives every presentation subscription. Update-all
                 // awaits this promise, so admission cannot retire the batch while the CLI runs.
                 const result = await awaitSystemTaskResult(runner, taskId);
-                if (result.ok && scope) {
-                    recordUpdateCompleted(scope, buildUpdateItemId(machineId ?? 'this-computer', { kind: 'happier-cli' }));
-                }
                 // A finished update, or another one already running on this computer (K5
                 // `cli_update_in_progress`): either way the answer is what the CLI now reports.
                 if (result.ok || isUpdateInProgressElsewhere(result.error)) {
-                    void desktopSetupCoordinator.inspect({ fresh: true });
+                    await desktopSetupCoordinator.inspect({ fresh: true });
+                }
+                if (result.ok && scope) {
+                    recordUpdateCompleted(scope, buildUpdateItemId(machineId ?? 'this-computer', { kind: 'happier-cli' }));
                 }
             } catch (error) {
                 set({
                     ...state,
-                    starting: false,
+                    running: false,
                     startError: isSystemTaskBridgeUnavailableError(error)
                         ? t('settings.systemTaskBridgeUnavailable')
                         : (readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed')),
                 });
+            } finally {
+                set({ ...state, running: false });
             }
         },
     };
@@ -129,7 +131,7 @@ function resolveCliUpdateAction(runner: SystemTaskRunner): CliUpdateAction {
  */
 export function useCliUpdateTask(options: Readonly<{
     runner?: SystemTaskRunner;
-    /** After the re-inspection has started — e.g. the setup gate retrying the run the update unblocked. */
+    /** After the re-inspection has settled — e.g. the setup gate retrying the run the update unblocked. */
     onSucceeded?: () => void;
 }> = {}): CliUpdateTask {
     const runner = options.runner ?? getSystemTasksRunner();
@@ -145,7 +147,7 @@ export function useCliUpdateTask(options: Readonly<{
         () => desktopSetupCoordinator.readInspectionRefreshing(),
         () => desktopSetupCoordinator.readInspectionRefreshing(),
     );
-    const running = state.starting
+    const running = state.running
         || (snapshot != null && snapshot.result == null)
         || (inProgressElsewhere && refreshing);
 
@@ -154,12 +156,12 @@ export function useCliUpdateTask(options: Readonly<{
     // A run that had already finished before this caller mounted is not "just succeeded" for it.
     const handledTaskIdRef = React.useRef<string | null>(snapshot?.result ? snapshot.taskId : null);
     React.useEffect(() => {
-        if (!snapshot?.result?.ok || handledTaskIdRef.current === snapshot.taskId) {
+        if (running || !snapshot?.result?.ok || handledTaskIdRef.current === snapshot.taskId) {
             return;
         }
         handledTaskIdRef.current = snapshot.taskId;
         onSucceededRef.current?.();
-    }, [snapshot]);
+    }, [running, snapshot]);
 
     return {
         start: action.start,

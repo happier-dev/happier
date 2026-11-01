@@ -3,11 +3,19 @@ import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } 
 
 import {
     canonicalizeServerUrl,
+    createDiagnosticServerUrlKey,
     createServerUrlComparableKey,
 } from './serverUrlCanonical';
 import { toServerUrlDisplay } from './serverUrlDisplay';
 
 describe('serverUrlCanonical', () => {
+    it('keeps missing diagnostic URLs unknown and malformed endpoints distinct', () => {
+        expect(createDiagnosticServerUrlKey('')).toBe('');
+        expect(createDiagnosticServerUrlKey('https://[invalid')).not.toBe('');
+        expect(createDiagnosticServerUrlKey('https://[invalid')).not.toBe(createDiagnosticServerUrlKey('https://[other'));
+        expect(createDiagnosticServerUrlKey('https://[invalid')).not.toBe(createDiagnosticServerUrlKey('https://relay.example.com'));
+    });
+
     it('strips query and hash while preserving userinfo for request usage', () => {
         expect(
             canonicalizeServerUrl('https://admin:secret@example.com:8443/api?token=abc#frag'),

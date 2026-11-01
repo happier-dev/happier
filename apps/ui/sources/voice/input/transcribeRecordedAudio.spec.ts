@@ -46,6 +46,9 @@ describe('transcribeRecordedAudioWithProvider', () => {
 
     expect(fileBase64Spy).toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith(expect.stringContaining('generativelanguage.googleapis.com'), expect.anything());
+    // expo-audio HIGH_QUALITY records AAC in an .m4a container; Gemini documents it as audio/m4a.
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body ?? '{}'));
+    expect(body.contents[0].parts[1].inline_data.mime_type).toBe('audio/m4a');
     expect(text).toBe('hello gemini');
   });
 

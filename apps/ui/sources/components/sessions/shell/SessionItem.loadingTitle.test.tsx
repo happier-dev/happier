@@ -159,6 +159,7 @@ function createWaitingStatus(): SessionStatus {
 function createMetadataPendingRowModel(id: string): SessionListRowModel {
     const session = createMetadataPendingSession(id);
     return {
+        appearanceColor: null,
         rowKey: `server_a:${id}`,
         sessionId: id,
         serverId: 'server_a',

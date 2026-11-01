@@ -13,6 +13,7 @@ import {
   ExecutionRunStatusSchema,
 } from './executionRuns.js';
 import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import { lazySchema } from './lazySchema.js';
 
 /**
  * Daemon-scoped execution run listing.
@@ -22,7 +23,7 @@ import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
  * if session processes crash or the machine reboots.
  */
 
-const DaemonExecutionRunMarkerSchemaCore = z.object({
+const DaemonExecutionRunMarkerSchemaCore = lazySchema(() => z.object({
   // Safety/filtering: only accept markers for the current happyHomeDir.
   happyHomeDir: z.string().min(1),
 
@@ -54,35 +55,35 @@ const DaemonExecutionRunMarkerSchemaCore = z.object({
   summary: z.string().max(20_000).optional(),
   errorCode: z.string().max(200).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
-}).passthrough();
-export const DaemonExecutionRunMarkerSchema = z.preprocess(
+}).passthrough());
+export const DaemonExecutionRunMarkerSchema = lazySchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunMarkerSchemaCore,
-);
+));
 export type DaemonExecutionRunMarker = z.infer<typeof DaemonExecutionRunMarkerSchema>;
 
-export const DaemonExecutionRunProcessInfoSchema = z.object({
+export const DaemonExecutionRunProcessInfoSchema = lazySchema(() => z.object({
   pid: z.number().int().positive(),
   name: z.string().optional(),
   cmd: z.string().optional(),
   cpu: z.number().optional(),
   memory: z.number().optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonExecutionRunProcessInfo = z.infer<typeof DaemonExecutionRunProcessInfoSchema>;
 
-const DaemonExecutionRunEntrySchemaCore = DaemonExecutionRunMarkerSchemaCore.extend({
+const DaemonExecutionRunEntrySchemaCore = lazySchema(() => DaemonExecutionRunMarkerSchemaCore.extend({
   process: DaemonExecutionRunProcessInfoSchema.optional(),
-}).passthrough();
-export const DaemonExecutionRunEntrySchema = z.preprocess(
+}).passthrough());
+export const DaemonExecutionRunEntrySchema = lazySchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunEntrySchemaCore,
-);
+));
 export type DaemonExecutionRunEntry = z.infer<typeof DaemonExecutionRunEntrySchema>;
 
-export const DaemonExecutionRunListRequestSchema = z.object({}).passthrough();
+export const DaemonExecutionRunListRequestSchema = lazySchema(() => z.object({}).passthrough());
 export type DaemonExecutionRunListRequest = z.infer<typeof DaemonExecutionRunListRequestSchema>;
 
-export const DaemonExecutionRunListResponseSchema = z.object({
+export const DaemonExecutionRunListResponseSchema = lazySchema(() => z.object({
   runs: z.array(DaemonExecutionRunEntrySchema),
-}).passthrough();
+}).passthrough());
 export type DaemonExecutionRunListResponse = z.infer<typeof DaemonExecutionRunListResponseSchema>;

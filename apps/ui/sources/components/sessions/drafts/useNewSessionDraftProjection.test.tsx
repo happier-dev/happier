@@ -1,9 +1,10 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import {
+    deleteSessionDraft,
     getSessionDraftSnapshot,
     writeNewSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -20,6 +21,43 @@ afterEach(() => {
 });
 
 describe('useNewSessionDraftProjection', () => {
+    it('clears the mounted prompt when its canonical draft is removed', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000403';
+        writeNewSessionDraft({ scope, draftId, patch: { text: 'remove on every device' }, materializationIntent: 'userEdit' });
+        const promptStore = createNewSessionPromptStore('remove on every device');
+        const hasLocalEdit = () => true;
+        const promptsAtRemoval: string[] = [];
+        const onDraftRemoved = () => { promptsAtRemoval.push(promptStore.getPrompt()); };
+        await renderHook(() => {
+            useNewSessionDraftPromptProjection({ scope, draftId, promptStore, hasLocalEdit, onDraftRemoved });
+        });
+
+        await act(async () => {
+            await deleteSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        });
+
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })).toBeNull();
+        expect(promptStore.getPrompt()).toBe('');
+        expect(promptsAtRemoval).toEqual(['remove on every device']);
+    });
+
+    it('keeps an initially absent ephemeral composer available for its first edit', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000404';
+        const promptStore = createNewSessionPromptStore('');
+        const onDraftRemoved = vi.fn();
+        const hasLocalEdit = () => false;
+        await renderHook(() => {
+            useNewSessionDraftPromptProjection({ scope, draftId, promptStore, hasLocalEdit, onDraftRemoved });
+        });
+        expect(onDraftRemoved).not.toHaveBeenCalled();
+
+        await act(async () => {
+            writeNewSessionDraft({ scope, draftId, patch: { text: 'first edit' }, materializationIntent: 'userEdit' });
+        });
+        expect(promptStore.getPrompt()).toBe('first edit');
+        expect(onDraftRemoved).not.toHaveBeenCalled();
+    });
+
     it('keeps composer-only revisions out of the screen render graph', async () => {
         const draftId = '00000000-0000-4000-8000-000000000401';
         let renderCount = 0;

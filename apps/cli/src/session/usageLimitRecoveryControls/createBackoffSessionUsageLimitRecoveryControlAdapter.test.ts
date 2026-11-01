@@ -88,13 +88,55 @@ function createAdapter() {
 }
 
 describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
+  it('preserves the continuation budget across repeated checks before the reset', async () => {
+    let nowMs = 1_700_000_000_000;
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex',
+      fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
+      maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
+      nowMs: () => nowMs,
+      processEnv: {},
+    });
+    let metadata: Record<string, unknown> = { sessionUsageLimitRecoveryV1: createWaitingIntent() };
+    for (let check = 0; check < 4; check += 1) {
+      const result = await adapter.checkNow?.({ ...createParams(), metadata });
+      expect(result).toMatchObject({ ok: true, status: 'waiting', metadata: {
+        sessionUsageLimitRecoveryV1: { status: 'waiting', attemptCount: 0 },
+      } });
+      if (result && typeof result === 'object' && 'metadata' in result
+        && result.metadata && typeof result.metadata === 'object' && !Array.isArray(result.metadata)) {
+        metadata = { ...result.metadata };
+      }
+    }
+    nowMs = 1_700_000_060_000;
+    expect(await adapter.checkNow?.({ ...createParams(), metadata })).toMatchObject({
+      ok: true, status: 'ready', metadata: {
+        sessionUsageLimitRecoveryV1: { status: 'paused', attemptCount: 0 },
+      },
+    });
+  });
+
+  it('checks the current failure instead of reusing an earlier issue reset', async () => {
+    const params = createParams();
+    const issue = params.rawSession.lastRuntimeIssue!;
+    const result = await createAdapter().checkNow?.({
+      ...params,
+      rawSession: { ...params.rawSession, lastRuntimeIssue: { ...issue, occurredAt: 1_700_000_100_000,
+        usageLimit: { ...issue.usageLimit!, resetAtMs: 1_700_000_160_000 },
+      } },
+      metadata: { sessionUsageLimitRecoveryV1: createWaitingIntent() },
+    });
+    expect(result).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000100000:1700000160000',
+      armedAtMs: 1_700_000_100_000, resetAtMs: 1_700_000_160_000,
+    } } });
+  });
+
   it('uses the shared fallback policy when a provider supplies no overrides', async () => {
     const params = createParams();
     params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
     const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
       providerId: 'codex',
-      fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
-      maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
       nowMs: () => 1_700_000_000_000,
       processEnv: {},
     });

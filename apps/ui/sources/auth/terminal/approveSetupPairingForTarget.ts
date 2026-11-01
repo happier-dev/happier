@@ -12,6 +12,7 @@ import { parseToken } from '@/utils/auth/parseToken';
 
 import {
     buildTerminalResponseV2,
+    buildTerminalResponseV2TokenOnly,
     resolveTerminalProvisioningContentPrivateKey,
 } from './terminalProvisioning';
 
@@ -210,13 +211,16 @@ export async function approveSetupPairingForTarget(params: Readonly<{
     }
 
     let responseV2: Uint8Array;
+    let answerTokenOnly: Uint8Array | undefined;
     let terminalPublicKey: Uint8Array;
     try {
         terminalPublicKey = decodeBase64(prompt.publicKeyB64Url, 'base64url');
-        responseV2 = buildTerminalResponseV2({
-            contentPrivateKey: resolveTerminalProvisioningContentPrivateKey(credentials),
+        const contentPrivateKey = await resolveTerminalProvisioningContentPrivateKey(credentials, { endpointUrl: target.expectedRelayUrl });
+        responseV2 = contentPrivateKey ? buildTerminalResponseV2({
+            contentPrivateKey,
             terminalEphemeralPublicKey: terminalPublicKey,
-        });
+        }) : new Uint8Array();
+        answerTokenOnly = contentPrivateKey ? undefined : buildTerminalResponseV2TokenOnly({ terminalEphemeralPublicKey: terminalPublicKey });
     } catch {
         return await refuse('credentials_unusable');
     }
@@ -226,6 +230,7 @@ export async function approveSetupPairingForTarget(params: Readonly<{
         // V1 (legacy secret export) is never offered to an automatic approval.
         result = await authApprove(credentials.token, terminalPublicKey, new Uint8Array(), responseV2, {
             endpointUrl: target.expectedRelayUrl,
+            answerTokenOnly,
         });
     } catch (error) {
         return await refuse(error instanceof AuthApproveUnsupportedResponseError ? 'v2_unavailable' : 'approve_failed');

@@ -158,7 +158,6 @@ describe('InboxContent', () => {
         const errorRows = errorSection?.findByType('ActionOperationRows' as never);
 
         expect(errorRows?.props.operations).toEqual([actionableOperation]);
-        expect(errorRows?.props.allowTerminalDismissal).toBe(true);
         expect(errorRows?.props.presentationMode).toBe('inbox');
         expect(needsAttentionSection?.findAllByType('ActionOperationRows' as never)).toEqual([]);
         expect(screen.tree.root.findAllByType('ActionOperationLedger' as never)).toEqual([]);

@@ -4,6 +4,7 @@ import {
   OPEN_CODE_BROKER_PROVIDERS,
   type OpenCodeBrokerProvider,
 } from './openCodeBrokerPluginEnv';
+import { lazySchema } from '@happier-dev/protocol';
 
 /**
  * Daemon-side registry of broker load handshakes (F4).
@@ -22,14 +23,14 @@ import {
  * every subprocess replacement rotates the nonce and handshakes again.
  */
 
-const OpenCodeBrokerProviderSchema: z.ZodType<OpenCodeBrokerProvider> = z.enum(
+const OpenCodeBrokerProviderSchema: z.ZodType<OpenCodeBrokerProvider> = lazySchema(() => z.enum(
   [...OPEN_CODE_BROKER_PROVIDERS] as [OpenCodeBrokerProvider, ...OpenCodeBrokerProvider[]],
-);
+));
 
-export const OpenCodeBrokerLoadHandshakeRuntimeKindSchema = z.enum([
+export const OpenCodeBrokerLoadHandshakeRuntimeKindSchema = lazySchema(() => z.enum([
   'opencode_managed_server',
   'pi_rpc_process',
-]);
+]));
 export type OpenCodeBrokerLoadHandshakeRuntimeKind =
   z.infer<typeof OpenCodeBrokerLoadHandshakeRuntimeKindSchema>;
 
@@ -50,7 +51,7 @@ function isExactRuntimeSelectionIdentity(
   return selectionIdentity.startsWith(prefix) && selectionIdentity.length > prefix.length;
 }
 
-const OpenCodeBrokerLoadHandshakeBaseRequestSchema = z.object({
+const OpenCodeBrokerLoadHandshakeBaseRequestSchema = lazySchema(() => z.object({
   runtimeKind: OpenCodeBrokerLoadHandshakeRuntimeKindSchema,
   selectionIdentity: z.string().trim().min(1).max(4_096),
   loadNonce: z.string().trim().min(1).max(256),
@@ -58,7 +59,7 @@ const OpenCodeBrokerLoadHandshakeBaseRequestSchema = z.object({
     .min(1)
     .max(OPEN_CODE_BROKER_PROVIDERS.length),
   pluginVersion: z.string().trim().min(1).max(64),
-}).strict();
+}).strict());
 
 function addRuntimeKindSelectionIdentityIssue(
   value: Readonly<{
@@ -79,11 +80,11 @@ function addRuntimeKindSelectionIdentityIssue(
 }
 
 export const OpenCodeBrokerLoadHandshakeRequestSchema =
-  OpenCodeBrokerLoadHandshakeBaseRequestSchema.extend({
+  lazySchema(() => OpenCodeBrokerLoadHandshakeBaseRequestSchema.extend({
   processPid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-}).strict().superRefine(addRuntimeKindSelectionIdentityIssue);
+}).strict().superRefine(addRuntimeKindSelectionIdentityIssue));
 export const OpenCodeBrokerLoadHandshakeStatusRequestSchema =
-  OpenCodeBrokerLoadHandshakeBaseRequestSchema.superRefine(addRuntimeKindSelectionIdentityIssue);
+  lazySchema(() => OpenCodeBrokerLoadHandshakeBaseRequestSchema.superRefine(addRuntimeKindSelectionIdentityIssue));
 
 export type OpenCodeBrokerLoadHandshakeRequest = z.infer<typeof OpenCodeBrokerLoadHandshakeRequestSchema>;
 export type OpenCodeBrokerLoadHandshakeKey = Readonly<{

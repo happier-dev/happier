@@ -4,6 +4,9 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
+import { Platform } from 'react-native';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol';
+import * as profiles from '@/sync/domains/server/serverProfiles';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -21,29 +24,21 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://stack.example.test',
-}));
-
-vi.mock('@/sync/domains/session/activeViewingSession', () => ({
-    getActiveViewingSessionId: () => null,
-}));
-
-vi.mock('@/utils/platform/tauri', () => ({
-    isTauriDesktop: () => false,
-}));
-
-vi.mock('../channels/sendExpoLocalNotification', () => ({
-    sendExpoLocalNotification: vi.fn(async () => 'notif-1'),
-}));
-
-vi.mock('../channels/sendTauriLocalNotification', () => ({
-    sendTauriLocalNotification: vi.fn(async () => true),
+const native = vi.hoisted(() => ({ schedule: vi.fn<(request: import('expo-notifications').NotificationRequestInput) => Promise<string>>(async () => 'notif-1') }));
+// The Expo scheduling API is the OS boundary; builder, adapter and store stay real.
+vi.mock('expo-notifications', () => ({
+    scheduleNotificationAsync: native.schedule,
+    getPresentedNotificationsAsync: async () => [],
+    addNotificationReceivedListener: () => ({ remove() {} }),
 }));
 
 describe('ActivityLocalNotificationRuntime local settings subscriptions', () => {
     beforeEach(() => {
         getStorage().setState(initialStorageState, true);
+        Platform.OS = 'ios';
+        const profile = profiles.upsertServerProfile({ serverUrl: 'https://stack.example.test', name: 'Test' });
+        profiles.setActiveServerId(profile.id, { scope: 'device' });
+        getStorage().setState({ profileScope: { serverId: profile.id, accountId: 'account-1' } });
         getStorage().getState().applyLocalSettings({
             localNotificationsEnabled: true,
             localNotificationsShowReady: true,
@@ -64,20 +59,40 @@ describe('ActivityLocalNotificationRuntime local settings subscriptions', () => 
     it('updates request privacy without hiding the request notification', async () => {
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityAgentRequest } = await import('./activityLocalNotificationBus');
-        const { sendExpoLocalNotification } = await import('../channels/sendExpoLocalNotification');
         const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         const request = { sessionId: 'private-session', requestId: 'request-1', requestKind: 'permission' as const,
             toolName: 'Bash', toolArgs: { command: 'cat private.txt' } };
         await act(async () => { notifyActivityAgentRequest(request); });
-        expect(vi.mocked(sendExpoLocalNotification).mock.calls.at(-1)?.[0].body).toContain('cat private.txt');
+        expect(native.schedule.mock.calls.at(-1)?.[0].content.body).toContain('cat private.txt');
         await act(async () => {
             getStorage().getState().applyLocalSettings({ localNotificationsShowRequestMessageText: false });
         });
         await act(async () => { notifyActivityAgentRequest({ ...request, requestId: 'request-2' }); });
-        const privateNotification = vi.mocked(sendExpoLocalNotification).mock.calls.at(-1)?.[0];
+        const privateNotification = native.schedule.mock.calls.at(-1)?.[0].content;
         expect(privateNotification?.body).not.toContain('private.txt');
         expect(privateNotification?.data?.requestId).toBe('request-2');
         await act(async () => { screen.tree.unmount(); });
+    });
+
+    it.each(['android', 'ios'] as const)('delivers request channels and captured Account identity to the OS on %s', async (platform) => {
+        Platform.OS = platform;
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityAgentRequest } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        for (const requestKind of ['permission', 'user_action'] as const) {
+            await act(async () => { notifyActivityAgentRequest({
+                sessionId: 'channel-session', requestId: requestKind, occurrenceId: `${requestKind}-occurrence`, requestKind,
+                toolName: requestKind === 'permission' ? 'Bash' : 'AskUserQuestion', toolArgs: {},
+            }); });
+            const channelId = requestKind === 'permission'
+                ? PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1
+                : PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1;
+            expect(native.schedule.mock.calls.at(-1)?.[0]).toMatchObject({
+                content: { data: { accountId: 'account-1', kind: requestKind, occurrenceId: `${requestKind}-occurrence` } },
+                trigger: platform === 'android' ? { channelId } : null,
+            });
+        }
+        await screen.unmount();
     });
 
     it('does not rerender for local setting writes unrelated to local notifications', async () => {

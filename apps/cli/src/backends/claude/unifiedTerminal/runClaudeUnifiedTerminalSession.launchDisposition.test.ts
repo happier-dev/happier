@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as childProcess from 'child_process';
@@ -29,6 +30,8 @@ import type { SessionHookData } from '../utils/startHookServer';
 import { createDeferred } from '@/testkit/async/deferred';
 import { resolveClaudeRemoteLaunchErrorDisposition } from '../claudeRemoteLauncher';
 import { createSessionRuntimeActivity } from '@/session/runtimeActivity/createSessionRuntimeActivity';
+import { createFakeControlPort } from './tuiControls/fakeControlPort';
+import { resolveTerminalPromptWriteBudget } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
@@ -103,6 +106,58 @@ function baseOptions(
 }
 
 describe('runClaudeUnifiedTerminalSession launch disposition', () => {
+  it.each([
+    { menuVisible: true, closes: true, applications: 2 },
+    { menuVisible: false, closes: true, applications: 2 },
+    { menuVisible: true, closes: false, applications: 2 },
+    { menuVisible: true, closes: true, applications: 0 },
+  ])('releases the usage menu once at injection after concurrent exact applications (visible: $menuVisible, closes: $closes, applications: $applications)', async ({ menuVisible, closes, applications }) => {
+    const menu = readFileSync(new URL('./tuiControls/__fixtures__/incident-89861-ratelimit-resume.ansi', import.meta.url), 'utf8');
+    const idle = readFileSync(new URL('./tuiControls/__fixtures__/healthy-92862-idle.ansi', import.meta.url), 'utf8');
+    let visible = menuVisible;
+    const port = createFakeControlPort({ captures: [idle], onSendSpecialKey: (key) => {
+      if (key === 'Escape' && closes) visible = false;
+    } });
+    // The terminal is the system boundary: captures reflect the effect of an actual key send.
+    vi.spyOn(port, 'captureScreen').mockImplementation(async () => ({
+      status: 'captured', capture: { text: visible ? menu : idle, capturedAtMs: 1, hostKind: 'tmux' },
+    }));
+    const wake = vi.fn();
+    let exactApplication: (() => Promise<void>) | undefined;
+    const adapter = createAdapter({
+      createControlPort: () => port,
+      injectUserPrompt: vi.fn(async () => {
+        expect(visible).toBe(false);
+        return { status: 'injected', at: 1, bytesWritten: 8 } as const;
+      }),
+    });
+    const abort = new AbortController();
+    await runClaudeUnifiedTerminalSession({
+      ...baseOptions(adapter, abort),
+      registerConnectedServiceExactApplicationHandler: (handler) => { exactApplication = handler; },
+      onConnectedServiceExactApplicationReleased: wake,
+      createController: async ({ inputInjection }) => ({
+        run: async () => {
+          if (!exactApplication) throw new Error('Expected exact-application registration');
+          const apply = exactApplication;
+          await Promise.all(Array.from({ length: applications }, () => apply()));
+          expect(wake).toHaveBeenCalledTimes(applications);
+          expect(port.sentKeys).toEqual([]);
+          await expect(inputInjection.injectUserPrompt({
+            text: 'Continue', multiline: false,
+            origin: { kind: 'ui_pending', clientId: 'test-client', nonce: 'continuation' },
+            scheduling: { timeoutMs: resolveTerminalPromptWriteBudget('Continue').timeoutMs },
+          })).resolves.toMatchObject({ status: menuVisible && !closes ? 'deferred' : 'injected' });
+          expect(port.sentKeys).toEqual(menuVisible ? ['Escape'] : []);
+          expect(visible).toBe(menuVisible && !closes);
+          abort.abort();
+        },
+        dispose: async () => undefined,
+      }),
+    });
+    expect(adapter.injectUserPrompt).toHaveBeenCalledTimes(menuVisible && !closes ? 0 : 1);
+  });
+
   it.runIf(process.platform !== 'win32').each(['wrapper-died', 'termination-unproven'] as const)('retains provider tasks when the same-pane launcher dies with its native provider alive (%s)', async (outcome) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-claude-unified-wrapper-death-'));
     const nativePidPath = join(directory, 'native-pid');

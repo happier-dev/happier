@@ -65,6 +65,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 keylessAccounts: { enabled: false },
             },
             encryption: {
+                plaintextMachine: { enabled: false },
                 plaintextStorage: { enabled: false },
                 accountOptOut: { enabled: false },
             },

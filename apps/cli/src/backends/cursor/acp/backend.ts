@@ -25,7 +25,6 @@ export interface CursorBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
   permissionMode?: PermissionMode;
-  parameterizedModelPicker?: boolean;
 }
 
 export class CursorAcpBackend extends AcpBackend {
@@ -150,9 +149,8 @@ export function buildCursorAcpBackendOptions(
       ...options.env,
     },
     authentication: { kind: 'static', methodId: 'cursor_login' },
-    ...(options.parameterizedModelPicker === true
-      ? { initializeClientCapabilitiesMeta: { parameterizedModelPicker: true } }
-      : {}),
+    // Cursor otherwise exposes only its default variant, which can force Fast on.
+    initializeClientCapabilitiesMeta: { parameterizedModelPicker: true },
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: cursorTransport,

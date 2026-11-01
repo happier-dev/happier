@@ -59,11 +59,11 @@ export function invalidateAccountEncryptionModeCache(): void {
 
 export async function fetchAccountEncryptionMode(
     credentials: AuthCredentials,
-    opts: Readonly<{ retry?: 'default' | 'none' }> = {},
+    opts: Readonly<{ retry?: 'default' | 'none'; endpointUrl?: string }> = {},
 ): Promise<AccountEncryptionModeResult> {
     const run = async (): Promise<AccountEncryptionModeResponse> => {
         const response = await serverFetch(
-            '/v1/account/encryption',
+            `${opts.endpointUrl?.replace(/\/+$/, '') ?? ''}/v1/account/encryption`,
             {
                 method: 'GET',
                 headers: {
@@ -101,7 +101,7 @@ export async function fetchAccountEncryptionMode(
         return await run();
     }
 
-    const cacheKey = buildAccountEncryptionModeCacheKey(credentials);
+    const cacheKey = `${buildAccountEncryptionModeCacheKey(credentials)}\u0000${opts.endpointUrl ?? ''}`;
     const now = Date.now();
     pruneAccountEncryptionModeCache(now);
 

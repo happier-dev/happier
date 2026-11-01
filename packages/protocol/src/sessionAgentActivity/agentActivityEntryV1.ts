@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { AgentActivityKindV1Schema } from './agentActivityKindV1.js';
 import { AgentActivityStatusV1Schema, type AgentActivityStatusV1 } from './agentActivityStatusV1.js';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Longest title a headline entry may carry.
@@ -34,7 +35,7 @@ export const SESSION_AGENT_ACTIVITY_ENTRY_TITLE_MAX = 200;
  *   terminal-history ordering here and the quiet/stale presentation downstream, both of which lie
  *   if it stands still while the work does not.
  */
-export const SessionAgentActivityEntryV1Schema = z
+export const SessionAgentActivityEntryV1Schema = lazySchema(() => z
   .object({
     /**
      * Stable across publishes for the same unit of work, and derived identically by every producer:
@@ -77,7 +78,7 @@ export const SessionAgentActivityEntryV1Schema = z
   })
   // Strip unknown keys (Zod default, stated): a producer that attaches detail has it dropped on
   // parse as well as at the projection below. Forward-compatible fields are added explicitly.
-  .strip();
+  .strip());
 export type SessionAgentActivityEntryV1 = z.infer<typeof SessionAgentActivityEntryV1Schema>;
 
 /**

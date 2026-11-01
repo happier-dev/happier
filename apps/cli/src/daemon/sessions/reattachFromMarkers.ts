@@ -145,7 +145,7 @@ function buildRecoveredRespawnDescriptor(params: Readonly<{
   const { spawnOptions, parsedRespawnDescriptor, credentials } = params;
   const rebuiltRespawn = spawnOptions
     ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions, {
-      encryptionMaterial: credentials?.encryption,
+      encryptionMaterial: credentials?.encryption ?? undefined,
     })
     : null;
   if (!parsedRespawnDescriptor) {
@@ -175,7 +175,7 @@ function restoreSpawnOptionsFromRespawnDescriptor(params: Readonly<{
   }
   try {
     return buildSpawnSessionOptionsFromRespawnDescriptorV1(parsedRespawnDescriptor, {
-      encryptionMaterial: credentials?.encryption,
+      encryptionMaterial: credentials?.encryption ?? undefined,
     });
   } catch {
     return undefined;

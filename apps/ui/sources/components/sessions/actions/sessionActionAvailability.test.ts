@@ -13,6 +13,7 @@ import {
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
 } from './sessionActionIds';
@@ -42,13 +43,24 @@ function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('session action availability', () => {
-    it('does not offer folder assignment for direct sessions', () => {
+    it('offers the existing Delete action for an owned running session across single-session surfaces', () => {
+        const session = createOwnedRawSession({ active: true });
+        const target = createSessionActionTarget({ session, currentUserId: 'current_user', isConnected: true });
+        expect(target.canDelete).toBe(false);
+        expect(target.canStopAndDelete).toBe(true);
+        for (const surface of ['sessionInfo', 'sessionHeader', 'rowMenu', 'nativeContextMenu'] as const) {
+            expect(listVisibleSessionActionIds({ target, surface })).toContain(SESSION_ACTION_DELETE_ID);
+            expect(listVisibleSessionActionIds({ target: { ...target, canStopAndDelete: false }, surface })).not.toContain(SESSION_ACTION_DELETE_ID);
+        }
+        expect(listVisibleSessionActionIds({ target, surface: 'selectionActionBar' })).not.toContain(SESSION_ACTION_DELETE_ID);
+    });
+    it.each(['rowMenu', 'nativeContextMenu'] as const)('offers folder assignment for direct sessions on %s', (surface) => {
         const session: SessionListRenderableSession = {
             ...createOwnedRawSession(),
             metadata: { path: '/repo', directSessionV1: { v: 1 } },
         };
         const target = createSessionActionTarget({ session, serverId: 'server-a' });
-        expect(listVisibleSessionActionIds({ target, surface: 'rowMenu' })).not.toContain(SESSION_ACTION_MOVE_TO_FOLDER_ID);
+        expect(listVisibleSessionActionIds({ target, surface })).toContain(SESSION_ACTION_MOVE_TO_FOLDER_ID);
     });
 
     it('offers standalone Resume only for an inactive resumable session', () => {
@@ -122,6 +134,7 @@ describe('session action availability', () => {
             SESSION_ACTION_SET_ATTENTION_STANDING_ID,
             SESSION_ACTION_RENAME_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
         expect(listVisibleSessionActionIds({ target: clearStandingTarget, surface: 'sessionInfo' }))
             .toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
@@ -202,11 +215,12 @@ describe('session action availability', () => {
             SESSION_ACTION_RENAME_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
         expect(infoActionIds).toEqual(expect.arrayContaining(rowLifecycleActionIds));
     });
 
-    it('shows session-info delete only for inactive sessions owned by the current user', () => {
+    it('offers deletion only to the owner, including sessions that need stopping', () => {
         const sharedSession: SessionListRenderableSession = {
             id: 'shared_session',
             active: false,
@@ -267,8 +281,8 @@ describe('session action availability', () => {
         expect(listVisibleSessionActionIds({ target: sharedTarget, surface: 'sessionInfo' })).not.toContain(SESSION_ACTION_DELETE_ID);
         expect(listVisibleSessionActionIds({ target: ownedTarget, surface: 'sessionInfo' })).toContain(SESSION_ACTION_DELETE_ID);
         expect(listVisibleSessionActionIds({ target: adminTarget, surface: 'sessionInfo' })).not.toContain(SESSION_ACTION_DELETE_ID);
-        expect(listVisibleSessionActionIds({ target: activeTarget, surface: 'sessionInfo' })).not.toContain(SESSION_ACTION_DELETE_ID);
-        expect(listVisibleSessionActionIds({ target: connectedTarget, surface: 'sessionInfo' })).not.toContain(SESSION_ACTION_DELETE_ID);
+        expect(listVisibleSessionActionIds({ target: activeTarget, surface: 'sessionInfo' })).toContain(SESSION_ACTION_DELETE_ID);
+        expect(listVisibleSessionActionIds({ target: connectedTarget, surface: 'sessionInfo' })).toContain(SESSION_ACTION_DELETE_ID);
     });
 
     it('keeps missing Activity quiet while offering Stop for an exact control-serviceable host', () => {
@@ -415,5 +429,21 @@ describe('session action availability', () => {
         });
         expect(listVisibleSessionActionIds({ target: retiredTarget, surface: 'sessionInfo' })).toContain(SESSION_ACTION_DELETE_ID);
         expect(retiredTarget.canDelete).toBe(true);
+    });
+
+    it('offers a session colour on the row and header menus only where the session\'s server stores it', () => {
+        const target = createSessionActionTarget({
+            session: createOwnedRawSession(), serverId: 'server_1', currentUserId: 'current_user', isConnected: false, isPinned: false,
+        });
+        for (const surface of ['rowMenu', 'nativeContextMenu', 'sessionHeader'] as const) {
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: true })).toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: false })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        }
+        expect(listVisibleSessionActionIds({ target, surface: 'sessionInfo', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        const unscoped = createSessionActionTarget({ session: createOwnedRawSession(), serverId: null, currentUserId: 'current_user' });
+        expect(listVisibleSessionActionIds({ target: unscoped, surface: 'rowMenu', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
     });
 });

@@ -294,12 +294,18 @@ model SessionOrganizationLabel {
     scopeHash      String
     displayDbValue String?
 }
+
+model SessionAppearance {
+    id             String @id
+    displayDbValue String
+}
 `;
 
         const mysql = generateMySqlSchemaFromPostgres(master);
         expect(mysql).toContain("folderKey      String @db.LongText");
         expect(mysql).toContain("parentKey      String? @db.LongText");
         expect(mysql).toContain("displayDbValue String? @db.LongText");
+        expect(mysql).toContain("displayDbValue String @db.LongText");
         expect(mysql).toContain("scopeKey  String @db.LongText");
         expect(mysql).toContain("itemKey   String @db.LongText");
         expect(mysql).toContain("folderHash     String @db.VarChar(71)");

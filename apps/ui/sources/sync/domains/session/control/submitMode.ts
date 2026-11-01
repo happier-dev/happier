@@ -248,8 +248,8 @@ export function canSteerUserMessageNow(opts: {
     session: Session | null;
     nowMs?: number;
 }): boolean {
-    const action = selectSessionPendingRequestedAction({ ...opts, preferSteer: true });
-    return action.kind === 'steer_if_active' || action.kind === 'steer_now';
+    return supportsInFlightSteerUserMessage(opts)
+        && deriveSubmitRuntimeState(opts.session, opts.nowMs ?? Date.now()).inputReadinessDisposition === 'steer_available';
 }
 
 export function canDirectSubmitUserMessageNow(opts: {
@@ -350,7 +350,9 @@ export function decideSessionMessageDelivery(opts: {
     const pendingSupportState = getPendingQueueSubmitSupportState(opts.session);
 
     const session = opts.session;
-    const requestedAction = selectSessionPendingRequestedAction({
+    const requestedAction = opts.explicitMode === 'agent_queue'
+        ? { v: 1, kind: 'steer_now' } as const
+        : selectSessionPendingRequestedAction({
         session,
         nowMs: opts.nowMs,
         preferSteer: opts.explicitMode !== 'server_pending'
@@ -483,8 +485,8 @@ export function decideSessionMessageDelivery(opts: {
         : null;
 
     if (
-        requestedAction.kind === 'steer_if_active'
-        && busySteerSendPolicy === 'steer_immediately'
+        requestedAction.kind === 'steer_now'
+        || (requestedAction.kind === 'steer_if_active' && busySteerSendPolicy === 'steer_immediately')
     ) {
         if (nonSteerablePayloadReason !== null) {
             if (
@@ -530,7 +532,7 @@ export function decideSessionMessageDelivery(opts: {
         return {
             mode: 'server_pending',
             intent,
-            reason: 'busy_steer_immediate',
+            reason: opts.explicitMode === 'agent_queue' ? 'explicit_steer' : 'busy_steer_immediate',
             pendingSupportState,
             requestedAction,
         };
@@ -617,4 +619,27 @@ export function chooseForceImmediateSubmitMode(opts: {
     nowMs?: number;
 }): MessageSendMode {
     return decideSessionMessageDelivery({ ...opts, forceImmediate: true }).mode;
+}
+
+const COMPOSER_SEND_MODES = ['agent_queue', 'server_pending', 'interrupt'] as const;
+const COMPOSER_SEND_MODES_WITHOUT_STEER = ['server_pending', 'interrupt'] as const;
+const COMPOSER_STEER_ONLY = ['agent_queue'] as const;
+const NO_COMPOSER_SEND_MODES = [] as const;
+
+/** Labels and keyboard alternatives consume the same default delivery decision as submission. */
+export function resolveSessionComposerSendActions(opts: {
+    configuredMode: MessageSendMode;
+    busySteerSendPolicy?: BusySteerSendPolicy;
+    session: Session | null;
+    nowMs?: number;
+}): Readonly<{ alternateMode: MessageSendMode; modes: readonly MessageSendMode[] }> {
+    const decision = decideSessionMessageDelivery(opts);
+    const queueAvailable = getPendingQueueSubmitSupportState(opts.session) === 'supported';
+    const steerAvailable = canSteerUserMessageNow(opts);
+    return {
+        alternateMode: queueAvailable && (decision.requestedAction.kind === 'steer_if_active' || decision.requestedAction.kind === 'steer_now')
+            ? 'server_pending' : 'agent_queue',
+        modes: queueAvailable ? (steerAvailable ? COMPOSER_SEND_MODES : COMPOSER_SEND_MODES_WITHOUT_STEER)
+            : steerAvailable ? COMPOSER_STEER_ONLY : NO_COMPOSER_SEND_MODES,
+    };
 }

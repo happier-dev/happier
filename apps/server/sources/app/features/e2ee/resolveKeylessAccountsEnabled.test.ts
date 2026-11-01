@@ -31,5 +31,28 @@ describe("resolveKeylessAccountsEnabled", () => {
         expect(resolveKeylessAccountsAvailability(env)).toEqual({ ok: true });
         expect(resolveKeylessAccountsEnabled(env)).toBe(true);
     });
+
+    it.each([
+        { policy: { HAPPIER_BUILD_FEATURES_DENY: "e2ee.keylessAccounts" }, reason: "keyless-disabled" },
+        { policy: { HAPPIER_BUILD_FEATURES_DENY: "encryption.plaintextStorage" }, reason: "e2ee-required" },
+        { policy: { HAPPIER_BUILD_FEATURES_ALLOW: "e2ee.keylessAccounts" }, reason: "e2ee-required" },
+    ])("refuses keyless accounts when build policy removes a required feature: $policy", ({ policy, reason }) => {
+        const env: NodeJS.ProcessEnv = {
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            ...policy,
+        };
+        expect(resolveKeylessAccountsAvailability(env)).toEqual({ ok: false, reason });
+        expect(resolveKeylessAccountsEnabled(env)).toBe(false);
+    });
+
+    it("allows keyless accounts when build policy permits both required features", () => {
+        const env: NodeJS.ProcessEnv = {
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_BUILD_FEATURES_ALLOW: "e2ee.keylessAccounts,encryption.plaintextStorage",
+        };
+        expect(resolveKeylessAccountsAvailability(env)).toEqual({ ok: true });
+    });
 });
 

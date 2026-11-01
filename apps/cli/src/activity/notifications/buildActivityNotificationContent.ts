@@ -236,8 +236,10 @@ export function buildActivityNotificationContent(
       sessionTitle: event.sessionTitle,
       agentDisplayName: event.agentDisplayName,
       requestId: event.requestId,
+      occurrenceId: event.occurrenceId,
       toolName: event.toolName,
       toolDetails,
+      toolInput: options.requestIncludeMessageText === false ? undefined : event.toolInput,
     });
     return {
       title: built.title,

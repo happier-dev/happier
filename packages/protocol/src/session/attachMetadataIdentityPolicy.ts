@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const SESSION_ATTACH_METADATA_IDENTITY_POLICIES = [
     'preserve_current_identity',
@@ -8,6 +9,6 @@ export const SESSION_ATTACH_METADATA_IDENTITY_POLICIES = [
 export type SessionAttachMetadataIdentityPolicy =
     (typeof SESSION_ATTACH_METADATA_IDENTITY_POLICIES)[number];
 
-export const SessionAttachMetadataIdentityPolicySchema = z.enum(
+export const SessionAttachMetadataIdentityPolicySchema = lazySchema(() => z.enum(
     SESSION_ATTACH_METADATA_IDENTITY_POLICIES,
-);
+));

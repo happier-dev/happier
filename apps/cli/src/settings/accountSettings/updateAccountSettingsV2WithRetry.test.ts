@@ -62,7 +62,7 @@ describe('updateAccountSettingsV2WithRetry', () => {
     const calls: Array<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }> = [];
 
     const result = await updateAccountSettingsV2WithRetry({
-      credentials: createLegacyCredentialsStub(),
+      credentials: { token: 'plain-token', encryption: null },
       mutate: (settings: Readonly<Record<string, unknown>>) => ({
         ...settings,
         mcpServersSettingsV1: { v: 1, strictMode: false, servers: [], bindings: [] },
@@ -84,6 +84,19 @@ describe('updateAccountSettingsV2WithRetry', () => {
     expect(calls[0]?.expectedVersion).toBe(5);
     expect(calls[0]?.content?.t).toBe('plain');
     expect((calls[0]?.content as any)?.v?.mcpServersSettingsV1).toEqual({ v: 1, strictMode: false, servers: [], bindings: [] });
+  });
+
+  it('rejects encrypted settings without account key material before mutation', async () => {
+    const mutate = vi.fn((settings: Readonly<Record<string, unknown>>) => ({ ...settings, hello: 'world' }));
+    await expect(updateAccountSettingsV2WithRetry({
+      credentials: { token: 'plain-token', encryption: null },
+      mutate,
+      deps: {
+        fetchSettings: async () => ({ content: { t: 'encrypted', c: 'ciphertext' }, version: 5 }),
+        updateSettings: vi.fn(),
+      },
+    })).rejects.toMatchObject({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' });
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it('refuses to read or rewrite plaintext settings when the environment requires E2EE', async () => {

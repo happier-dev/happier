@@ -140,6 +140,12 @@ installSessionShellCommonModuleMocks({
     }),
 });
 
+// The virtualizer measures native layout; render its items with the canonical boundary harness.
+vi.mock('@/components/ui/lists/flashListCompat/SessionListVirtualizedList', async () => {
+    const { createCapturingFlashListMock } = await import('@/dev/testkit/mocks/flashList');
+    return { SessionListVirtualizedList: createCapturingFlashListMock({ renderItems: true }).module.FlashList };
+});
+
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
@@ -276,6 +282,9 @@ function buildOrganizationProjectionFromFolders(folders: typeof sessionFoldersV1
         folderAssignmentsBySessionId: foldersById.folder_a ? { sess_a: 'folder_a' } : {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
@@ -455,6 +464,23 @@ describe('SessionsList session folders shell', () => {
         expect(screen.getTextContent()).not.toContain('47');
     });
 
+    it('retains header menu projections across equivalent session-list refreshes', async () => {
+        const screen = await renderSessionsList();
+        const menuItemsFor = (actionId: string) => screen.findAllByType('DropdownMenu' as React.ElementType)
+            .find((node) => node.props.items.some((item: { id: string }) => item.id === actionId))?.props.items;
+        const workspaceItems = menuItemsFor('add-folder');
+        const folderItems = menuItemsFor('add-subfolder');
+        expect(workspaceItems).toBeTruthy();
+        expect(folderItems).toBeTruthy();
+
+        mockVisibleSessionListViewData = mockVisibleSessionListViewData.map((item) => ({ ...item }));
+        const { SessionsList } = await import('./SessionsList');
+        await act(async () => { await screen.update(<SessionsList />); });
+
+        expect(menuItemsFor('add-folder')).toBe(workspaceItems);
+        expect(menuItemsFor('add-subfolder')).toBe(folderItems);
+    });
+
     it('starts a folder-scoped session with a fresh explicit draft identity', async () => {
         const screen = await renderSessionsList();
         const folderMenu = screen.findAllByType('DropdownMenu' as React.ElementType)
@@ -476,28 +502,89 @@ describe('SessionsList session folders shell', () => {
         });
     });
 
-    it('shows a workspace reorder handle with the project header hover actions', async () => {
+    it('keeps drag grips and accessible reorder menus available without hover', async () => {
         const screen = await renderSessionsList();
+        for (const [handleId, triggerId] of [
+            [`session-workspace-reorder-handle:${projectGroupKey}`, `session-workspace-menu-trigger:${projectGroupKey}`],
+            ['session-folder-reorder-handle-folder_a', 'session-folder-menu-trigger-folder_a'],
+        ]) {
+            const handle = screen.findByTestId(handleId);
+            expect(handle).toBeTruthy();
+            expect(handle?.props.onPress).toBeUndefined();
+            expect(handle?.props.accessible).toBe(false);
+            const trigger = screen.findByTestId(triggerId);
+            expect(trigger?.props.accessibilityRole).toBe('button');
+            expect(trigger?.props.accessibilityLabel).toBe('common.moreActions');
+        }
+        for (const menu of screen.findAllByType('DropdownMenu' as React.ElementType)
+            .filter((node) => node.props.items.some((item: { id: string }) => item.id === 'rename'))) {
+            expect(menu.props.items).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'move-up' }),
+                expect.objectContaining({ id: 'move-down' }),
+            ]));
+        }
+    });
 
-        const header = screen.findByTestId(`session-list-project-header:${projectGroupKey}`);
-        expect(header).toBeTruthy();
-        expect(screen.findByTestId(`session-workspace-reorder-handle:${projectGroupKey}`)).toBeNull();
-
-        await act(async () => {
-            invokeTestInstanceHandler(header, 'onHoverIn', undefined, 'expected project header');
+    it('persists workspace order from the accessible menu while folders are disabled', async () => {
+        foldersFeatureEnabled = false;
+        resetProjectDataWithoutFolders();
+        mockVisibleSessionListViewData.push({
+            ...mockVisibleSessionListViewData[1],
+            title: '~/other',
+            groupKey: 'server:server_a:active:project:project_b',
+            workspaceKey: 'project_b',
+            workspaceScopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/other' },
         });
-
-        const handle = screen.findByTestId(`session-workspace-reorder-handle:${projectGroupKey}`);
-        expect(handle).toBeTruthy();
-        expect(typeof handle?.props.onHoverIn).toBe('function');
-        expect(typeof handle?.props.onHoverOut).toBe('function');
-
-        await act(async () => {
-            invokeTestInstanceHandler(handle, 'onHoverIn', undefined, 'expected workspace reorder handle');
-            invokeTestInstanceHandler(header, 'onHoverOut', undefined, 'expected project header');
+        const screen = await renderSessionsList();
+        const menu = screen.findAllByType('DropdownMenu' as React.ElementType)
+            .find((node) => node.props.items.some((item: { id: string }) => item.id === 'add-folder'));
+        expect(menu?.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'move-down' })]));
+        await act(async () => { await menu?.props.onSelect('move-down'); });
+        await vi.waitFor(() => {
+            expect(reorderSessionOrganizationSpy).toHaveBeenCalledWith(expect.objectContaining({
+                request: {
+                    scopeKind: 'workspace', scopeKey: 'server_a',
+                    entries: [
+                        { itemKind: 'workspace', itemKey: 'project_b', sortKey: '00000001' },
+                        { itemKind: 'workspace', itemKey: 'project_a', sortKey: '00000002' },
+                    ],
+                },
+            }));
         });
+    });
 
-        expect(screen.findByTestId(`session-workspace-reorder-handle:${projectGroupKey}`)).toBeTruthy();
+    it('keeps session keyboard reordering disabled when folder operations are disabled', async () => {
+        foldersFeatureEnabled = false;
+        resetProjectDataWithoutFolders();
+        const screen = await renderSessionsList();
+        const row = screen.findByTestId('session-list-session:sess_a');
+        expect(row).toBeTruthy();
+        expect(row?.props.onMoveDown).toBeUndefined();
+        expect(reorderSessionOrganizationSpy).not.toHaveBeenCalled();
+    });
+
+    it('reorders folders from the accessible menu through the canonical organization commit', async () => {
+        sessionFoldersV1.folders.push({ ...sessionFoldersV1.folders[0], id: 'folder_b', name: 'Research' });
+        mockVisibleSessionListViewData.splice(4, 0, {
+            ...mockVisibleSessionListViewData[2], folderId: 'folder_b', title: 'Research',
+            groupKey: `${projectGroupKey}:folder:folder_b`,
+        });
+        const screen = await renderSessionsList();
+        const menu = screen.findAllByType('DropdownMenu' as React.ElementType)
+            .find((node) => node.props.items.some((item: { id: string }) => item.id === 'add-subfolder'));
+        await act(async () => { await menu?.props.onSelect('move-down'); });
+        await vi.waitFor(() => {
+            expect(reorderSessionOrganizationSpy).toHaveBeenCalledWith(expect.objectContaining({
+                request: expect.objectContaining({
+                    scopeKind: 'group', scopeKey: projectGroupKey,
+                    entries: [
+                        { itemKind: 'folder', itemKey: 'folder_b', sortKey: '00000001' },
+                        { itemKind: 'folder', itemKey: 'folder_a', sortKey: '00000002' },
+                        { itemKind: 'session', itemKey: 'sess_b', sortKey: '00000003' },
+                    ],
+                }),
+            }));
+        });
     });
 
     it('attaches the folder drag gesture on web', async () => {

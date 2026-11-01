@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { render } from 'ink';
-import React from 'react';
+import type { render } from 'ink';
+import type { ComponentType } from 'react';
 import { resolveAgentIdFromFlavor } from '@happier-dev/agents';
 import { readPendingLocalId, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
@@ -28,7 +28,7 @@ import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/
 import { createSessionMetadata, type CreateSessionMetadataOptions } from '@/agent/runtime/createSessionMetadata';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
+import { initializeBackendRunSession, type InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
@@ -56,6 +56,7 @@ import {
   prepareAgentNativeReturnStrictResume,
 } from '@/session/agentTransition/agentNativeReturn';
 import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
+import type { ProviderTurnCompletionResult } from './providerPromptSubmission';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -77,7 +78,7 @@ type RuntimeForLoop = {
       onProviderPromptAccepted?: () => void;
     }>,
   ) => Promise<void>;
-  flushTurn: () => void | Promise<void>;
+  flushTurn: () => void | ProviderTurnCompletionResult | Promise<void | ProviderTurnCompletionResult>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   cancel: () => Promise<void>;
@@ -128,7 +129,9 @@ export type StandardAcpProviderConfig = {
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   supportsMcpServers?: boolean;
   machineMetadata: MachineMetadata;
-  terminalDisplay: React.ComponentType<TerminalDisplayProps>;
+  terminalHostOwner?: InitializeBackendRunSessionOptions['terminalHostOwner'];
+  /** Loaded only when a TTY is attached, so daemon-started runners never load ink or React. */
+  loadTerminalDisplay: () => Promise<ComponentType<TerminalDisplayProps>>;
   formatPromptErrorMessage: (error: unknown) => string;
   /**
    * Optional: provide a stable key used to batch messages and detect "effective" permission-mode changes.
@@ -211,6 +214,17 @@ type StandardAcpProviderDeps = {
   createLocalAgentNativeResumeRecordStoreFn?: typeof createLocalAgentNativeResumeRecordStore;
 };
 
+type TerminalUi = Awaited<ReturnType<typeof loadTerminalUi>>;
+
+async function loadTerminalUi(config: StandardAcpProviderConfig, deps: StandardAcpProviderDeps) {
+  const [ink, { default: React }, TerminalDisplay] = await Promise.all([
+    import('ink'),
+    import('react'),
+    config.loadTerminalDisplay(),
+  ]);
+  return { render: deps.renderFn ?? ink.render, React, TerminalDisplay };
+}
+
 export async function runStandardAcpProvider(
   opts: StandardAcpProviderRunOptions,
   config: StandardAcpProviderConfig,
@@ -227,7 +241,6 @@ export async function runStandardAcpProvider(
   const sendReadyWithPushNotificationFn = deps.sendReadyWithPushNotificationFn ?? sendReadyWithPushNotification;
   const registerKillSessionHandlerFn = deps.registerKillSessionHandlerFn ?? registerKillSessionHandler;
   const cleanupBackendRunResourcesFn = deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
-  const renderFn = deps.renderFn ?? render;
   const createLocalAgentNativeResumeRecordStoreFn =
     deps.createLocalAgentNativeResumeRecordStoreFn ?? createLocalAgentNativeResumeRecordStore;
 
@@ -297,6 +310,7 @@ export async function runStandardAcpProvider(
     existingSessionId: opts.existingSessionId,
     uiLogPrefix: config.uiLogPrefix,
     terminalAgentLabel: policyAgentId,
+    terminalHostOwner: config.terminalHostOwner,
     startupMetadataOverrides: createStartupMetadataOverrides(opts),
     onSessionSwap: async (newSession) => {
       session = newSession;
@@ -424,11 +438,29 @@ export async function runStandardAcpProvider(
   const messageBuffer = new MessageBuffer();
   const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
   const shouldRenderTerminalDisplay = config.shouldRenderTerminalDisplay?.({ opts, session, metadata: runtimeMetadata }) ?? true;
+  // Ink, React, and the display load on the first mount, so runners whose terminal UI
+  // stays off (no TTY, or a provider-owned local terminal) never load them.
+  let terminalUi: TerminalUi | null = null;
+  let terminalUiLoad: Promise<TerminalUi> | null = null;
+  let terminalDisplayRequested = false;
   let inkInstance: ReturnType<typeof render> | null = null;
-  const mountTerminalDisplay = (): void => {
-    if (!hasTTY || inkInstance) return;
+  const ensureTerminalUi = (): Promise<TerminalUi> => {
+    terminalUiLoad ??= loadTerminalUi(config, deps).then(
+      (ui) => {
+        terminalUi = ui;
+        return ui;
+      },
+      (error: unknown) => {
+        terminalUiLoad = null;
+        throw error;
+      },
+    );
+    return terminalUiLoad;
+  };
+  const renderTerminalDisplay = (ui: TerminalUi): void => {
+    if (inkInstance) return;
     console.clear();
-    inkInstance = renderFn(React.createElement(config.terminalDisplay, {
+    inkInstance = ui.render(ui.React.createElement(ui.TerminalDisplay, {
       messageBuffer,
       logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
       onExit: async () => {
@@ -437,7 +469,30 @@ export async function runStandardAcpProvider(
       },
     }), { exitOnCtrlC: false, patchConsole: false });
   };
+  // The terminal display is a local convenience view: a failure to load or render it is
+  // logged and leaves the session running for remote clients.
+  const reportTerminalDisplayFailure = (error: unknown): void => {
+    logger.warnFile(`${config.uiLogPrefix} Failed to show the terminal display`, error);
+  };
+  const mountTerminalDisplay = (): void => {
+    if (!hasTTY) return;
+    terminalDisplayRequested = true;
+    if (terminalUi) {
+      try {
+        renderTerminalDisplay(terminalUi);
+      } catch (error) {
+        reportTerminalDisplayFailure(error);
+      }
+      return;
+    }
+    void ensureTerminalUi()
+      .then((ui) => {
+        if (terminalDisplayRequested) renderTerminalDisplay(ui);
+      })
+      .catch(reportTerminalDisplayFailure);
+  };
   const unmountTerminalDisplay = async (): Promise<void> => {
+    terminalDisplayRequested = false;
     if (!inkInstance) return;
     inkInstance.unmount();
     inkInstance = null;
@@ -447,7 +502,7 @@ export async function runStandardAcpProvider(
     unmount: unmountTerminalDisplay,
     isMounted: () => inkInstance !== null,
   });
-  if (hasTTY && shouldRenderTerminalDisplay) {
+  if (shouldRenderTerminalDisplay) {
     mountTerminalDisplay();
   }
 
@@ -656,6 +711,7 @@ export async function runStandardAcpProvider(
         assistantPreviewText: resolveReadyNotificationAssistantText({
           includeMessageText: includeAssistantPreviewText,
           explicitAssistantText: turnAssistantPreviewTracker.getPreview(),
+          turnResult: context?.turnResult,
           session,
           turnToken: context?.turnToken ?? null,
           startSeqExclusive: context?.startSeqExclusive ?? null,
@@ -713,6 +769,7 @@ export async function runStandardAcpProvider(
       messageBuffer,
       shouldExit: () => shouldExit,
       getAbortSignal: () => abortController.signal,
+      waitForPendingAbort: () => explicitAbortPromise,
       keepAlive: sendKeepAlive,
       setThinking: setThinkingState,
       sendReady,
@@ -734,6 +791,7 @@ export async function runStandardAcpProvider(
             credentials: opts.credentials,
             settings: opts.accountSettingsContext?.settings ?? null,
             profileId: session.getMetadataSnapshot()?.profileId ?? null,
+            sessionMetadata: session.getMetadataSnapshot(),
             baseOverride,
             executionRunsFeatureEnabled: resolveCliFeatureDecision({
               featureId: 'execution.runs',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from './lazySchema.js';
 
 export const SCM_OPERATION_ERROR_CODES = {
   NOT_REPOSITORY: 'NOT_REPOSITORY',
@@ -24,7 +25,7 @@ export const SCM_OPERATION_ERROR_CODES = {
 export type ScmOperationErrorCode =
   (typeof SCM_OPERATION_ERROR_CODES)[keyof typeof SCM_OPERATION_ERROR_CODES];
 
-export const ScmOperationErrorCodeSchema = z.enum([
+export const ScmOperationErrorCodeSchema = lazySchema(() => z.enum([
   SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
   SCM_OPERATION_ERROR_CODES.INVALID_PATH,
   SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
@@ -43,4 +44,4 @@ export const ScmOperationErrorCodeSchema = z.enum([
   SCM_OPERATION_ERROR_CODES.BRANCH_OPERATION_NOT_IN_PROGRESS,
   SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
   SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-]);
+]));

@@ -1,3 +1,4 @@
+vi.mock('@/sync/http/client', () => ({ serverFetch: async () => new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 }) }));
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -87,12 +88,16 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentials: vi.fn(async () => storedCredentialsOverride === undefined ? authCredentials : storedCredentialsOverride),
-    },
-    isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentials: vi.fn(async () => storedCredentialsOverride === undefined ? authCredentials : storedCredentialsOverride),
+        },
+    };
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,

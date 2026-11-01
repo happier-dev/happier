@@ -30,6 +30,9 @@ import {
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
 
 describe('AGENTS', () => {
+  it('rejects an inherited object key as an unavailable catalog target', () => {
+    expect(() => requireCatalogEntry('toString')).toThrow('Missing catalog agent entry');
+  });
   it('distinguishes providers without attachment-bound control descriptors from missing descriptors', async () => {
     const originalClaude = AGENTS.claude;
     const originalCodex = AGENTS.codex;
@@ -310,6 +313,7 @@ describe('AGENTS', () => {
       serviceIds: expect.arrayContaining(['claude-subscription']),
       generationApplicationScope: 'shared_group_auth_surface',
       sharedGenerationApplicationServiceIds: ['claude-subscription'],
+      runtimeAuthApply: { directLiveHotAuth: { supportsInTurnApply: true, requiresExactRuntimeIdentity: false } },
       spawnPreflightOauthRefresh: { mode: 'expiry_window' },
       refreshedCredentialApplication: {
         mode: 'restart_required',

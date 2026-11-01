@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -10,11 +10,11 @@ import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
 import { validateProviderCliSpawn } from './validateProviderCliSpawn';
 
 const TEMP_DIRS = new Set<string>();
-let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH']);
+let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH', 'HAPPIER_CLAUDE_PATH']);
 
 afterEach(() => {
   envScope.restore();
-  envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH']);
+  envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH', 'HAPPIER_CLAUDE_PATH']);
   for (const dir of TEMP_DIRS) {
     removeTempDirSync(dir);
   }
@@ -67,6 +67,18 @@ describe('validateProviderCliSpawn', () => {
     expect(result.errorMessage.toLowerCase()).toContain('system install');
     expect(result.errorMessage.toLowerCase()).not.toContain('daemon path');
     expect(result.errorMessage.match(/restart the daemon/gi)).toHaveLength(1);
+  });
+
+  it('accepts an explicit override that points to a JavaScript entrypoint', async () => {
+    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
+    TEMP_DIRS.add(root);
+    const entryPath = join(root, 'claude.js');
+    writeFileSync(entryPath, 'import "./entry.cjs";\n', 'utf8');
+    if (process.platform !== 'win32') chmodSync(entryPath, 0o644);
+    process.env.PATH = '';
+    process.env.HAPPIER_CLAUDE_PATH = entryPath;
+
+    await expect(validateProviderCliSpawn({ agentId: 'claude' })).resolves.toEqual({ ok: true });
   });
 
   it('fails closed when an explicit override is set but invalid', async () => {

@@ -12,8 +12,20 @@ import { buildRuntimeAuthRecoveryKey } from './recoveryKey/runtimeAuthRecoveryKe
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import type { DurableRecoveryStore } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import { createRuntimeAuthRecoverySchedulerForDaemon } from './createRuntimeAuthRecoverySchedulerForDaemon';
 import { decideConnectedServiceRecovery } from './ConnectedServiceRecoveryPolicy';
 import { createConnectedServiceContinuationMessageDispatcher } from '../continuation/createConnectedServiceContinuationMessageDispatcher';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
+  type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, type ConnectedServiceAuthGroupMemberRuntimeState } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
+import type { TrackedSession } from '@/daemon/types';
+import { ConnectedServiceAuthGroupGenerationConsumer } from '../accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
+import { resolveConnectedServiceContinuationOriginId, settleSupersedingRuntimeAuthGenerationForSource } from '@/daemon/startDaemon';
+import { createRuntimeAuthFailureReportIntake } from '@/daemon/controlServer';
+import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
+import { listProviderActivityRecoveryIdentitiesFromRuntimeBindings } from '../continuation/continuationRecoveryIdentity';
 
 function classification(): ConnectedServiceRuntimeFailureClassification {
   return {
@@ -51,7 +63,545 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
+async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0]['settleSupersedingRuntimeGroupGeneration']>>[0]) {
+  const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+    resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'test-runtime' }),
+    verifySharedGenerationApplication: async () => null,
+    // Provider application and runner notification are external boundaries.
+    applyCommittedGeneration: async ({ committedGeneration }) => ({
+      reconciliationDisposition: 'converged', errorCode: null,
+      providerAdoptedTarget: { ...committedGeneration.decisionCommittedTarget,
+        proof: { status: 'verified', source: 'codex_app_server', providerAccountId: 'test-account',
+          credentialRevision: committedGeneration.decisionCommittedTarget.credentialRevision } },
+    }),
+    notifyCurrentGroupTruth: async () => ({ ok: true }),
+  });
+  return await settleSupersedingRuntimeAuthGenerationForSource({ ...input,
+    recovery: { status: 'switch_attempted', result: input.result },
+    consumeCommittedAuthGroupGeneration: (value) => consumer.consume(value),
+  });
+}
+
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it.each([
+    { remainingPercent: 60, incomplete: false },
+    { remainingPercent: 0, incomplete: false },
+    { remainingPercent: 60, incomplete: true },
+  ])('rechecks unknown current-member quota before the failed member reset, then consumes fresh evidence ($remainingPercent percent, incomplete=$incomplete)', async ({ remainingPercent, incomplete }) => {
+    let nowMs = 1_000;
+    let publishFreshEvidence = false;
+    const probes: ReadonlyArray<string>[] = [];
+    const failure = classificationFor({ profileId: 'primary', groupGeneration: 1, resetsAtMs: 604_800_000,
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', recoveryAction: { kind: 'quota_recovery_required' } });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'backup', generation: 2,
+      runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>(),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs,
+      quotaFreshnessMs: 60_000, loadState: async () => current,
+      // Quota probing reads provider/server state at a genuine external boundary.
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        probes.push(profileIds);
+        if (!publishFreshEvidence && incomplete) return {
+          status: 'incomplete', requestedProfileCount: 1, completedProfileCount: 0,
+          completedProfileIds: [], reason: 'probe_unavailable',
+        };
+        if (publishFreshEvidence) current = { ...current, memberStatesByProfileId: new Map([['backup', {
+          quotaSnapshot: { capturedAtMs: nowMs, effectiveRemainingPercent: remainingPercent, exhausted: remainingPercent === 0,
+            meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: remainingPercent, resetAtMs: 180_000, providerLimitId: null }] },
+          ...(remainingPercent === 0 ? { quotaExhaustedUntilMs: 180_000 } : {}),
+        }]]) };
+        return undefined;
+      },
+      commitSwitch: async () => { throw new Error('Observation must not select another member'); },
+      applyGeneration: async () => { throw new Error('Observation must not reapply the switch'); },
+    });
+    let continuations = 0;
+    let recovered: unknown;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      recover: async (input) => {
+        recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
+          recoveryInvocationSource: input.source,
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'quota-recheck', pid: 123 }],
+          switchCoordinator: coordinator,
+          resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'team', profileId: 'backup', generation: 2,
+            credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+          continueAfterRuntimeAuthSwitch: async () => { continuations += 1; },
+        });
+        return recovered;
+      },
+    });
+    const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'quota-recheck', ...failure });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'quota-recheck', classification: failure, switchesThisTurn: 0,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }) });
+      nowMs = 3_000;
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(continuations).toBe(0);
+      expect(recovered).toMatchObject({ status: 'switch_attempted' });
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting', nextRetryAtMs: 33_000 });
+      expect(recovered).toMatchObject({ result: { status: 'quota_proof_unavailable', activeProfileId: 'backup' } });
+      nowMs = 33_000;
+      publishFreshEvidence = true;
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(probes).toEqual([['backup'], ['backup']]);
+      if (remainingPercent > 0) {
+        expect(continuations).toBe(1);
+        expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'resumed_awaiting_proof', pendingTargetProfileId: 'backup' });
+      } else {
+        expect(continuations).toBe(0);
+        expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting', nextRetryAtMs: 180_000 });
+      }
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each([
+    { ordinarySwitch: false, settle: true },
+    { ordinarySwitch: true, settle: true },
+    { ordinarySwitch: true, settle: false },
+  ])('tracks redirected settlement proof without accepting genuine supersession (ordinarySwitch=$ordinarySwitch, settle=$settle)', async ({ ordinarySwitch, settle }) => {
+    const effects: string[] = [];
+    const targetD = { serviceId: 'openai-codex' as const, groupId: 'team', profileId: 'D', generation: 4,
+      credentialRevision: 'csr_dddddddddddddddddddddd' };
+    let state: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: ordinarySwitch ? 'A' : 'C', generation: ordinarySwitch ? 1 : 3,
+      runtimeStateRevision: 0, credentialRevision: ordinarySwitch ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : 'csr_cccccccccccccccccccccc',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['A', 'B', 'C', 'D'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map(['B', 'C'].map((profileId) => [profileId,
+        { quotaSnapshot: { capturedAtMs: 1_000, effectiveRemainingPercent: 60 } }])),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000, loadState: async () => state,
+      // Server state and provider application boundaries advance truth during A→B application.
+      commitSwitch: async ({ toProfileId }) => {
+        effects.push(`select-${toProfileId}`);
+        state = { ...state, activeProfileId: toProfileId, generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbb' };
+        return state;
+      },
+      applyGeneration: async ({ activeProfileId }) => {
+        effects.push(`apply-${activeProfileId}`);
+        state = { ...state, activeProfileId: 'C', generation: 3, credentialRevision: 'csr_cccccccccccccccccccccc' };
+        return { mode: 'hot_apply' };
+      },
+    });
+    const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+      resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'runner-B' }),
+      verifySharedGenerationApplication: async () => null,
+      applyCommittedGeneration: async ({ committedGeneration }) => {
+        effects.push(`apply-${committedGeneration.decisionCommittedTarget.profileId}`);
+        return committedGeneration.decisionCommittedTarget.profileId === 'C'
+          ? { reconciliationDisposition: 'superseded_after_apply', errorCode: null,
+              authoritativeGeneration: buildConnectedServiceAuthGroupCommittedGenerationFact({
+                decisionId: 'current-D', provenance: 'reconciliation', decisionCommittedTarget: targetD }) }
+          : { reconciliationDisposition: 'converged', errorCode: null, providerAdoptedTarget: { ...targetD,
+              proof: { status: 'verified', source: 'codex_app_server', providerAccountId: 'account-D',
+                credentialRevision: targetD.credentialRevision } } };
+      },
+      notifyCurrentGroupTruth: async ({ currentTruth }) => { effects.push(`notify-${'generation' in currentTruth ? currentTruth.generation : 'unavailable'}`); return { ok: true }; },
+    });
+    const failure = classificationFor({ profileId: 'A', groupGeneration: 1, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' });
+    let continuedTarget: unknown;
+    let recovered: unknown;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000,
+      recover: async (input) => {
+        recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'redirected-recovery', pid: 123 }],
+          switchCoordinator: coordinator, recoveryInvocationSource: 'scheduler_retry',
+          resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'team',
+            generation: ordinarySwitch ? 1 : 2, profileId: ordinarySwitch ? 'A' : 'B',
+            credentialRevision: ordinarySwitch ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : 'csr_bbbbbbbbbbbbbbbbbb' }),
+          settleSupersedingRuntimeGroupGeneration: !settle ? undefined : async ({ result, ...source }) => await settleSupersedingRuntimeAuthGenerationForSource({
+            ...source, recovery: { status: 'switch_attempted', result }, consumeCommittedAuthGroupGeneration: (value) => consumer.consume(value) }),
+          continueAfterRuntimeAuthSwitch: async ({ target }) => { continuedTarget = target; effects.push(`continue-${target?.profileId}`); },
+        });
+        return recovered;
+      },
+    });
+    const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'redirected-recovery', ...failure });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'redirected-recovery', classification: failure, switchesThisTurn: 0,
+        error: Object.assign(new Error('endpoint unavailable'), { code: 'ECONNRESET' }) });
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      const intent = scheduler.readByKeyPassive(recoveryKey)!;
+      if (!settle) {
+        expect(effects).toEqual(['select-B', 'apply-B']);
+        expect(continuedTarget).toBeUndefined();
+        expect(recovered).toMatchObject({ status: 'switch_attempted', result: { status: 'superseded_after_apply' } });
+        expect(intent).toMatchObject({ status: 'cancelled', terminalReason: 'superseded_after_apply' });
+        expect(intent.pendingTargetProfileId ?? null).toBeNull();
+        expect(intent.pendingTargetGeneration ?? null).toBeNull();
+        expect(listProviderActivityRecoveryIdentitiesFromRuntimeBindings([targetD], [intent])).toEqual([]);
+        return;
+      }
+      expect(effects).toEqual([...(ordinarySwitch ? ['select-B', 'apply-B'] : []), 'apply-C', 'apply-D', 'notify-4', 'continue-D']);
+      expect(continuedTarget).toMatchObject({ profileId: 'D', generation: 4 });
+      expect.soft(recovered).toMatchObject({ status: 'switch_attempted', result: { status: 'observed_generation', activeProfileId: 'D', generation: 4,
+        credentialRevision: targetD.credentialRevision } });
+      expect(intent).toMatchObject({ status: 'resumed_awaiting_proof', pendingTargetProfileId: 'D', pendingTargetGeneration: 4 });
+      const activityIdentities = listProviderActivityRecoveryIdentitiesFromRuntimeBindings([targetD], [intent]);
+      expect(activityIdentities).toEqual([
+        { serviceId: 'openai-codex', selectionKind: 'group', groupId: 'team', profileId: 'D', targetGeneration: 4,
+          failureFingerprint: intent.attemptId },
+      ]);
+      expect(listProviderActivityRecoveryIdentitiesFromRuntimeBindings([{ ...targetD, profileId: 'C', generation: 3 }], [intent])).toEqual([]);
+      for (const identity of activityIdentities) {
+        await scheduler.markProviderOutcomeProofByKey({ recoveryKey, proofKind: 'provider_activity',
+          expectedAttemptId: identity.failureFingerprint, observedAtMs: 1_001 });
+      }
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'recovered' });
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each([true, false])('settles current C before continuing a failed-A recovery whose runner is settled on B (proof=%s)', async (proof) => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const effects: string[] = [];
+    const state: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'C', generation: 3,
+      runtimeStateRevision: 0, credentialRevision: 'csr_cccccccccccccccccccccc',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['A', 'B', 'C'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([['C', { quotaSnapshot: { capturedAtMs: 1_000, effectiveRemainingPercent: 60 } }]]),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000, loadState: async () => state,
+      commitSwitch: async () => { effects.push('unexpected-selection'); return state; },
+      applyGeneration: async () => { effects.push('unexpected-switch-apply'); return { mode: 'hot_apply' }; },
+    });
+    // Provider application / runner truth notification are the actual external boundaries.
+    const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+      resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'runner-B' }),
+      verifySharedGenerationApplication: async () => null,
+      applyCommittedGeneration: async ({ committedGeneration }) => {
+        effects.push('apply-C'); entered.resolve(); await release.promise;
+        return proof ? {
+          reconciliationDisposition: 'converged' as const, errorCode: null,
+          providerAdoptedTarget: { ...committedGeneration.decisionCommittedTarget,
+            proof: { status: 'verified' as const, source: 'codex_app_server', providerAccountId: 'account-C',
+              credentialRevision: 'csr_cccccccccccccccccccccc' } },
+        } : { reconciliationDisposition: 'failed' as const, errorCode: 'recipient_not_adopted' };
+      },
+      notifyCurrentGroupTruth: async () => { effects.push('notify-C'); return { ok: true }; },
+    });
+    const pending = handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [{ startedBy: 'daemon', happySessionId: 'stopped-ABC', pid: 123 }],
+      switchCoordinator: coordinator, sessionId: 'stopped-ABC', switchesThisTurn: 999,
+      recoveryInvocationSource: 'scheduler_retry',
+      classification: classificationFor({ profileId: 'A', groupGeneration: 1, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' }),
+      resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'team', profileId: 'B',
+        generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbb' }),
+      settleSupersedingRuntimeGroupGeneration: async ({ result, ...source }) => await settleSupersedingRuntimeAuthGenerationForSource({
+        ...source, recovery: { status: 'switch_attempted', result },
+        consumeCommittedAuthGroupGeneration: (input) => consumer.consume(input),
+      }),
+      continueAfterRuntimeAuthSwitch: async () => { effects.push('continue-C'); },
+    });
+    const outcome = pending.then((value) => ({ value }), (error: unknown) => ({ error }));
+    try {
+      await Promise.race([entered.promise, outcome]);
+      expect(effects).toEqual(['apply-C']);
+      release.resolve();
+      const result = await outcome;
+      if (proof) {
+        expect(result).toHaveProperty('value');
+        expect(effects).toEqual(['apply-C', 'notify-C', 'continue-C']);
+      } else {
+        expect(result).toHaveProperty('error');
+        expect(effects).toEqual(['apply-C']);
+      }
+    } finally { release.resolve(); await outcome; }
+  });
+
+  it.each([
+    { initialMode: 'hot_apply', interrupted: true },
+    { initialMode: 'spawn_next_turn', interrupted: true },
+    { initialMode: 'hot_apply', interrupted: false },
+    { initialMode: 'spawn_next_turn', interrupted: false },
+  ] as const)('resumes interrupted initial custody with the consumed Pending identity after daemon replacement ($initialMode, interrupted=$interrupted)', async ({ initialMode, interrupted }) => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-continuation-replacement-'));
+    const initialDelivered = createDeferred<void>();
+    const releaseInitial = createDeferred<void>();
+    const consumedIds = new Set<string>();
+    let deliveries = 0;
+    let sendAttempts = 0;
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    let state: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 1, runtimeStateRevision: 0,
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([['backup', { quotaSnapshot: { capturedAtMs: 1_000, effectiveRemainingPercent: 60 } }]]),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000, loadState: async () => state,
+      commitSwitch: async () => {
+        state = { ...state, activeProfileId: 'backup', generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' };
+        return state;
+      },
+      applyGeneration: async () => ({ mode: initialMode }),
+    });
+    const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: 'stopped-replacement', pid: 123,
+      spawnOptions: { directory: '/tmp/project', environmentVariables: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'group', serviceId: 'openai-codex',
+          groupId: 'team', activeProfileId: 'primary', fallbackProfileId: 'primary', generation: 1 }]),
+      } } };
+    const adoptCommittedRuntime = () => {
+      tracked.spawnOptions = { directory: '/tmp/project', environmentVariables: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'group', serviceId: 'openai-codex',
+          groupId: 'team', activeProfileId: 'backup', fallbackProfileId: 'backup', generation: 2 }]),
+      } };
+    };
+    const handle = async (input: { sessionId: string; classification: ConnectedServiceRuntimeFailureClassification;
+      switchesThisTurn: number; interruptedOriginId?: string; source?: 'scheduler_retry' }) => {
+      // A fresh dispatcher models replacement; the network's consumed-row identity remains durable.
+      const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials,
+        sendMessage: async ({ localId }) => {
+          sendAttempts += 1;
+          if (!localId) throw new Error('Expected Pending identity');
+          if (!consumedIds.has(localId)) { consumedIds.add(localId); deliveries += 1; }
+          if (sendAttempts === 1) {
+            initialDelivered.resolve();
+            if (interrupted) await releaseInitial.promise;
+          }
+          return { ok: true, sessionId: input.sessionId, localId, waited: false };
+        },
+      });
+      return await handleConnectedServiceRuntimeAuthFailureForSession({
+        ...input, getChildren: () => [tracked], switchCoordinator: coordinator,
+        settleSupersedingRuntimeGroupGeneration: settleRecoveryGeneration,
+        recoveryInvocationSource: input.source ?? 'daemon_report',
+        restartSession: async () => { adoptCommittedRuntime(); },
+        continueAfterRuntimeAuthSwitch: async ({ attemptId }) => {
+          adoptCommittedRuntime();
+          const origin = resolveConnectedServiceContinuationOriginId({ source: input.source ?? 'daemon_report',
+            activeTurnId: input.source ? null : 'old-failed-turn', reportId: input.interruptedOriginId });
+          if (!origin) throw new Error('Expected continuation origin');
+          await dispatcher.enqueueInterruptedOriginContinuation({ sessionId: input.sessionId, attemptId,
+            interruptedOriginId: origin, interruption: 'provider_failed_turn', resumePromptMode: 'standard' });
+        },
+      });
+    };
+    const makeScheduler = () => createRuntimeAuthRecoverySchedulerForDaemon({ activeServerDir: dir,
+      nowMs: () => 1_000, recover: handle }).scheduler;
+    const first = makeScheduler();
+    let replacement: RuntimeAuthRecoveryScheduler | undefined;
+    let pendingIntake: Promise<unknown> | undefined;
+    try {
+      const intake = createRuntimeAuthFailureReportIntake({ runtimeAuthRecoveryScheduler: first,
+        handleConnectedServiceRuntimeAuthFailure: handle });
+      pendingIntake = intake({ reportId: 'runtime-auth-report:replacement', sessionId: tracked.happySessionId!,
+        switchesThisTurn: 0, classification: classification() });
+      await initialDelivered.promise;
+      if (!interrupted) await pendingIntake;
+      expect(deliveries).toBe(1);
+      const original = first.read(tracked.happySessionId!);
+      expect(original).toMatchObject(interrupted
+        ? { status: 'waiting', lastSettledTransition: 'working', nextRetryAtMs: null }
+        : { status: 'resumed_awaiting_proof' });
+      // Readiness in the same process must leave the live in-band owner alone.
+      first.hydrate();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sendAttempts).toBe(1);
+      first.dispose();
+      replacement = makeScheduler();
+      expect(sendAttempts).toBe(1);
+      if (interrupted) replacement.hydrate();
+      else await replacement.wakeByKey({ recoveryKey: buildRuntimeAuthRecoveryKey({
+        sessionId: tracked.happySessionId!, ...classification(),
+      }), reason: 'manual' });
+      await vi.waitFor(() => expect(sendAttempts).toBe(2));
+      await vi.waitFor(() => expect(replacement!.readByKeyPassive(buildRuntimeAuthRecoveryKey({
+        sessionId: tracked.happySessionId!, ...classification(),
+      }))).toMatchObject({ attemptId: original?.attemptId, status: 'resumed_awaiting_proof' }));
+      expect(deliveries).toBe(1);
+      expect(consumedIds.size).toBe(1);
+      expect(sendAttempts).toBe(2);
+      expect(replacement.read(tracked.happySessionId!)).toMatchObject({ status: 'resumed_awaiting_proof' });
+    } finally {
+      first.dispose(); replacement?.dispose(); releaseInitial.resolve();
+      await pendingIntake;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it.each([
+    { eligible: true, source: 'selection' },
+    { eligible: false, source: 'selection' },
+    { eligible: true, source: 'registry' },
+    { eligible: false, source: 'registry' },
+    { eligible: true, source: 'predecessor' },
+    { eligible: false, source: 'predecessor' },
+    { eligible: true, source: 'returned_to_failed_member' },
+  ] as const)('retains a stopped pool recovery after another member becomes active ($source, eligible=$eligible)', async ({ eligible, source }) => {
+    const failure = classificationFor(source === 'selection' || source === 'returned_to_failed_member' ? {} : {
+      groupGeneration: 1,
+      credentialRevision: source === 'registry' ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : null,
+      recoveryAction: { kind: 'quota_recovery_required' },
+    });
+    const activeProfileId = source === 'returned_to_failed_member' ? 'primary' : 'backup';
+    const current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId, generation: 2,
+      runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: [
+        { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
+        { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },
+      ],
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
+        ['primary', source === 'returned_to_failed_member'
+          ? { quotaSnapshot: { capturedAtMs: 20_000, effectiveRemainingPercent: 60 } }
+          : { exhaustedUntilMs: 100_000 }],
+        ['backup', eligible ? { quotaSnapshot: { capturedAtMs: 20_000, effectiveRemainingPercent: 60 } } : {}],
+      ]),
+    };
+    const effects: string[] = [];
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 20_000,
+      quotaFreshnessMs: 60_000, loadState: async () => current,
+      commitSwitch: async () => { effects.push('commit'); return current; },
+      applyGeneration: async () => { effects.push('apply'); return { mode: 'hot_apply' }; },
+      recordObservedFailureState: async () => { effects.push('record-failure'); },
+    });
+    const tracked = {
+      startedBy: 'daemon', happySessionId: 'stopped-pool', pid: 123,
+      spawnOptions: { directory: '/tmp/project', environmentVariables: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'group', serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'backup', fallbackProfileId: 'backup', generation: 2,
+        }]),
+      } },
+    } satisfies TrackedSession;
+    let continuedProfile: string | null = null;
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 20_000,
+      recover: async (input) => await handleConnectedServiceRuntimeAuthFailureForSession({
+        ...input, recoveryInvocationSource: input.source, getChildren: () => [tracked],
+        switchCoordinator: coordinator,
+        settleSupersedingRuntimeGroupGeneration: settleRecoveryGeneration,
+        ...(source === 'registry' ? {
+          resolveRegisteredRuntimeAuthFailureSource: () => ({
+            serviceId: 'openai-codex' as const, groupId: 'team', profileId: 'backup',
+            generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+          }),
+        } : {}),
+        ...(source === 'predecessor' ? {
+          runtimeAuthApply: { directLiveHotAuth: {
+            supportsInTurnApply: true, requiresExactRuntimeIdentity: true,
+            refreshSelectionResync: 'required' as const,
+            authMode: { kind: 'external_token_injection' as const, surface: 'test-recovery' },
+          } },
+          resolveCurrentRuntimeAuthFailureSource: async () => ({
+            serviceId: 'openai-codex' as const, groupId: 'team', profileId: 'backup',
+            generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+          }),
+        } : {}),
+        continueAfterRuntimeAuthSwitch: async ({ target }) => { continuedProfile = target?.profileId ?? null; },
+      }),
+    });
+    const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'stopped-pool', ...failure });
+    try {
+      await scheduler.enqueueHandlerFailure({
+        sessionId: 'stopped-pool', classification: failure, switchesThisTurn: 999,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }),
+      });
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({
+        status: eligible ? 'resumed_awaiting_proof' : 'waiting',
+      });
+      expect(continuedProfile).toBe(eligible ? activeProfileId : null);
+      expect(effects).toEqual([]);
+    } finally { scheduler.dispose(); }
+  });
+
+  it('retries real group lease contention without spending provider attempts, then adopts a usable switch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 10 });
+    const owner = leases.acquire({ serviceId: 'openai-codex', groupId: 'team' });
+    if (owner.kind !== 'owner') throw new Error('Expected group owner');
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 1,
+      runtimeStateRevision: 0,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: [
+        { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
+        { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },
+      ], memberStatesByProfileId: new Map(),
+    };
+    // Group state, CAS and application are the remote storage/session boundaries.
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases, nowMs: Date.now, quotaFreshnessMs: 60_000,
+      loadState: async () => current,
+      commitSwitch: async ({ toProfileId }) => (current = { ...current, activeProfileId: toProfileId, generation: 2 }),
+      applyGeneration: async () => ({ mode: 'hot_apply' }),
+    });
+    const switchGroup = () => coordinator.switchAfterClassifiedFailure({
+      sessionId: 'lease-contention', serviceId: 'openai-codex', groupId: 'team',
+      reason: 'usage_limit', observedProfileId: 'primary',
+    });
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: Date.now, maxAttempts: 2, jitterMs: () => 0,
+      recover: async () => ({ status: 'switch_attempted', result: await switchGroup() }),
+    });
+    try {
+      const begun = await scheduler.beginClassifiedFailure({
+        sessionId: 'lease-contention', switchesThisTurn: 0, classification: classification(),
+      });
+      const initial = switchGroup().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10);
+      const error = await initial;
+      expect(error).toBeInstanceOf(Error);
+      await expect(scheduler.enqueueHandlerFailure({
+        sessionId: 'untyped-lease-message', switchesThisTurn: 0, classification: classification(),
+        error: new Error('connected_service_auth_group_switch_lease_expired'),
+      })).resolves.toMatchObject({ status: 'terminal_non_retry', retryable: false });
+      await expect(scheduler.enqueueHandlerFailure({
+        sessionId: 'lease-contention', switchesThisTurn: 0, classification: classification(),
+        expectedAttemptId: begun.attemptId, error,
+      })).resolves.toMatchObject({ status: 'scheduled', retryable: true, attemptId: begun.attemptId });
+      for (const degradedAttemptCount of [1, 2, 3]) {
+        const wake = scheduler.wake({ sessionId: 'lease-contention', reason: 'manual', attemptId: begun.attemptId });
+        await vi.advanceTimersByTimeAsync(10);
+        await expect(wake).resolves.toEqual({ status: 'waiting' });
+        expect(scheduler.read('lease-contention')).toMatchObject({
+          status: 'waiting', attemptId: begun.attemptId, attemptCount: 0, degradedAttemptCount,
+          lastError: 'connected_service_auth_group_switch_lease_expired',
+        });
+        expect(leases.acquire({ serviceId: 'openai-codex', groupId: 'team' }).kind).toBe('loser');
+      }
+      owner.finish();
+      await expect(scheduler.wake({ sessionId: 'lease-contention', reason: 'manual', attemptId: begun.attemptId }))
+        .resolves.toEqual({ status: 'waiting' });
+      expect(scheduler.read('lease-contention')).toMatchObject({
+        status: 'resumed_awaiting_proof', attemptId: begun.attemptId, attemptCount: 1,
+        pendingTargetProfileId: 'backup', pendingTargetGeneration: 2,
+      });
+    } finally {
+      owner.finish(); scheduler.dispose(); vi.useRealTimers();
+    }
+  });
+
+  it('keeps current issue association when an unscoped legacy observer repeats the same failure', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-legacy-observer-'));
+    const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(dir, 'recovery.json'));
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1000, recover: async () => ({}), durableStore: store });
+    try {
+      const first = await scheduler.beginClassifiedFailure({ reportId: 'runtime-auth-report:first', sessionId: 'legacy-observer', switchesThisTurn: 0,
+        classification: classificationFor({ runtimeIssueFingerprint: 'usage-limit:current' }) });
+      const repeated = await scheduler.beginClassifiedFailure({ sessionId: 'legacy-observer', switchesThisTurn: 0, classification: classification() });
+      expect(repeated).toMatchObject({ attemptId: first.attemptId });
+      expect(scheduler.readForSession('legacy-observer')[0]).toMatchObject({
+        attemptId: first.attemptId, classification: { runtimeIssueFingerprint: 'usage-limit:current' },
+      });
+    } finally { scheduler.dispose(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it.each(['checking', 'waiting'] as const)('coalesces manual mode changes after an existing claim (%s)', async (status) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claimed-mode-'));
     const store = createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(dir, 'recovery.json'));
@@ -111,6 +661,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
           sessionId: intent.sessionId, attemptId: intent.attemptId!, interruptedOriginId: 'failed-turn',
           interruption: 'provider_failed_turn', resumePromptMode: intent.resumePromptMode ?? 'standard',
           recoveryKind: intent.classification.kind,
+          afterUsageLimitReset: true,
         });
         return { ok: true, status: 'continuation_enqueued' };
       },
@@ -149,6 +700,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
           sessionId: intent.sessionId, attemptId: intent.attemptId!, interruptedOriginId: 'failed-turn',
           interruption: 'provider_failed_turn', resumePromptMode: intent.resumePromptMode ?? 'standard',
           recoveryKind: intent.classification.kind,
+          afterUsageLimitReset: true,
         });
         return { ok: true, status: 'continuation_enqueued' };
       },
@@ -422,7 +974,11 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     scheduler.dispose();
   });
 
-  it('does not let an older successful effect remove newer failure evidence', async () => {
+  it.each([
+    { identityField: 'sourceKey', previousIdentity: 'old-evidence' },
+    { identityField: 'runtimeIssueFingerprint', previousIdentity: 'old-evidence' },
+    { identityField: 'runtimeIssueFingerprint', previousIdentity: undefined },
+  ] as const)('does not let an older successful effect remove newer $identityField failure evidence after $previousIdentity', async ({ identityField, previousIdentity }) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-success-fence-'));
     const filePath = join(dir, 'runtime-auth.json');
     const recoveryStarted = createDeferred<void>();
@@ -456,7 +1012,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         reportId: 'runtime-auth-report:old',
         sessionId: 'session-fenced',
         switchesThisTurn: 0,
-        classification: classificationFor({ sourceKey: 'old-evidence' }),
+        classification: classificationFor({ [identityField]: previousIdentity }),
       });
       wake = first.wakeByKey({ recoveryKey, reason: 'manual' });
       await recoveryStarted.promise;
@@ -464,7 +1020,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         reportId: 'runtime-auth-report:new',
         sessionId: 'session-fenced',
         switchesThisTurn: 0,
-        classification: classificationFor({ sourceKey: 'new-evidence' }),
+        classification: classificationFor({ [identityField]: 'new-evidence' }),
       });
       expect(newer.attemptId).not.toBe(older.attemptId);
 
@@ -473,7 +1029,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
       expect(createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(filePath).read(recoveryKey)).toMatchObject({
         attemptId: newer.attemptId,
-        classification: expect.objectContaining({ sourceKey: 'new-evidence' }),
+        classification: expect.objectContaining({ [identityField]: 'new-evidence' }),
       });
       expect(diagnostics).not.toContainEqual(expect.objectContaining({
         event: 'runtime_auth_recovery_success',
@@ -1742,11 +2298,12 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('keeps a non-group recovery_action_required terminal when no wait-until is computable', async () => {
+  it.each([null, 500])('rechecks a non-group usage limit with reset %s after the shared fallback', async (resetsAtMs) => {
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
+      maxAttempts: 1,
       jitterMs: () => 0,
       recover: async () => ({
         status: 'recovery_action_required' as const,
@@ -1769,16 +2326,18 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     await scheduler.beginClassifiedFailure({
       sessionId: 'session-1',
       switchesThisTurn: 0,
-      classification: classificationFor({ groupId: null, resetsAtMs: null }),
+      classification: classificationFor({ groupId: null, resetsAtMs }),
     });
     await expect(scheduler.wakeByKey({
       recoveryKey,
       reason: 'manual',
-    })).resolves.toEqual({ status: 'terminal' });
+    })).resolves.toEqual({ status: 'waiting' });
 
     expect(scheduler.readByKey(recoveryKey)).toMatchObject({
-      status: 'cancelled',
-      terminalReason: 'recovery_action_required',
+      status: 'waiting',
+      nextRetryAtMs: 1_000 + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+      lastError: 'awaiting_limit_reset',
+      terminalReason: null,
     });
   });
 
@@ -3023,6 +3582,32 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       classification: expect.objectContaining({ serviceId: 'openai-codex' }),
       source: 'scheduler_retry',
     }));
+  });
+
+  it('uses the existing durable key as continuation origin for an identity-less predecessor wait', async () => {
+    const intents = new Map<string, RuntimeAuthRecoveryIntent>();
+    const recover = vi.fn(async () => ({ status: 'session_not_found' as const }));
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000, recover,
+      durableStore: {
+        read: (key) => intents.get(key) ?? null,
+        readAll: () => [...intents.entries()],
+        write: (key, intent) => { intents.set(key, intent); },
+        remove: (key) => { intents.delete(key); },
+      },
+    });
+    try {
+      await scheduler.enqueueHandlerFailure({
+        sessionId: 'predecessor-wait', switchesThisTurn: 0, classification: classification(),
+        error: Object.assign(new Error('transport unavailable'), { code: 'ECONNRESET' }),
+      });
+      const [entry] = [...intents.entries()];
+      if (!entry) throw new Error('Expected a persisted wait');
+      const [key, { attemptId: _attemptId, ...intent }] = entry;
+      intents.set(key, { ...intent, v: 1 });
+      await scheduler.wakeByKey({ recoveryKey: key, reason: 'manual' });
+      expect(recover).toHaveBeenCalledWith(expect.objectContaining({ interruptedOriginId: key }));
+    } finally { scheduler.dispose(); }
   });
 
   it('does NOT clear recovery on a generic ok:true switch result without proof (keeps it pending)', async () => {

@@ -362,8 +362,8 @@ export function startSocket(app: Fastify) {
                     });
                 }).catch((error) => {
                     log(
-                        { module: 'session-publisher-presence', sessionId: connection.sessionId, error },
-                        'Failed to publish disconnected session publisher Activity',
+                        { module: 'session-publisher-presence', level: 'warn', sessionId: connection.sessionId, error },
+                        'Failed to settle or publish disconnected session publisher lifecycle',
                     );
                 });
             }

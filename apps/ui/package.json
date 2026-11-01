@@ -1,8 +1,8 @@
 {
   "name": "@happier-dev/app",
   "main": "index.ts",
-  "version": "0.2.17",
-  "happierExpoRuntimeVersion": "0.2.8-native",
+  "version": "0.2.19",
+  "happierExpoRuntimeVersion": "0.2.11-native",
   "happier": {
     "installFreshnessInputs": [
       "app.config.js",
@@ -26,7 +26,14 @@
       "searchPaths": [
         "../../node_modules",
         "./node_modules"
-      ]
+      ],
+      "android": {
+        "buildFromSource": [
+          "expo-task-manager",
+          "unimodules-app-loader",
+          "expo-notifications"
+        ]
+      }
     }
   },
   "scripts": {
@@ -39,7 +46,7 @@
     "ios:publicdev-dev-client": "yarn -s ensure:workspace:built && node ./scripts/runPublicdevDevClientIos.mjs",
     "submit": "eas submit --platform ios",
     "web": "yarn -s ensure:workspace:built && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo start --web",
-    "test": "yarn -s test:unit && yarn -s test:built-in-prompts && node --test ./scripts/tauri_deep_link_config.test.mjs ./scripts/installFreshnessInputs.contract.test.mjs ./tools/ensureNohoistPeerLinks.test.mjs ./tools/postinstall/reactNativeUnistylesWebOrientation.test.mjs ./tools/postinstall/verifyNativePatchCompilation.test.mjs ./tools/postinstall/verifyReactNativeEnrichedMarkdownPatch.test.mjs ./tools/postinstall/verifyVendoredLegendPatchMarkers.test.mjs ./tools/postinstall/verifyVendoredReanimatedPatchMarkers.test.mjs ./tools/postinstall/workletsRemoteFunctionLifetime.test.mjs",
+    "test": "yarn -s test:unit && yarn -s test:built-in-prompts && node --test ./scripts/tauri_deep_link_config.test.mjs ./scripts/installFreshnessInputs.contract.test.mjs ./tools/ensureNohoistPeerLinks.test.mjs ./tools/postinstall/reactNativeUnistylesWebOrientation.test.mjs ./tools/postinstall/reactNativeUnistylesWebLifecycle.test.mjs ./tools/postinstall/reactNativeUnistylesWebCss.test.mjs ./tools/postinstall/reactNativeUnistylesWebTheme.test.mjs ./tools/postinstall/reactNativeGlogModuleMap.test.mjs ./tools/postinstall/verifyNativePatchCompilation.test.mjs ./tools/postinstall/expoUpdatesSceneStartup.test.mjs ./tools/postinstall/notificationResponseCompletion.test.mjs ./tools/postinstall/verifyReactNativeEnrichedMarkdownPatch.test.mjs ./tools/postinstall/verifyVendoredLegendPatchMarkers.test.mjs ./tools/postinstall/verifyVendoredReanimatedPatchMarkers.test.mjs ./tools/postinstall/workletsRemoteFunctionLifetime.test.mjs",
     "test:unit": "yarn -s ensure:workspace:built && node ./scripts/runVitestShards.mjs --config vitest.config.ts",
     "test:built-in-prompts": "node --test ../../scripts/generateBuiltInPrompts.test.mjs",
     "test:integration": "yarn -s ensure:workspace:built && vitest run --config vitest.integration.config.ts && yarn -s test:integration:legend-native && yarn -s test:integration:legend-fabric",
@@ -144,6 +151,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-masked-view/masked-view": "0.3.2",
+    "@react-native/normalize-colors": "0.81.5",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/drawer": "^7.3.9",
     "@react-navigation/native": "^7.1.8",
@@ -206,6 +214,7 @@
     "expo-speech-recognition": "^3.1.0",
     "expo-splash-screen": "~31.0.10",
     "expo-status-bar": "~3.0.8",
+    "expo-task-manager": "~14.0.9",
     "expo-store-review": "~9.0.7",
     "expo-system-ui": "~6.0.7",
     "expo-updates": "~29.0.11",
@@ -233,9 +242,9 @@
     "react-native-keyboard-controller": "1.18.5",
     "react-native-localize": "^3.5.1",
     "react-native-mmkv": "^3.3.3",
-    "react-native-nitro-modules": "0.35.6",
-    "react-native-purchases": "^9.4.2",
-    "react-native-purchases-ui": "^9.4.2",
+    "react-native-nitro-modules": "0.37.1",
+    "react-native-purchases": "10.15.1",
+    "react-native-purchases-ui": "10.15.1",
     "react-native-quick-base64": "^2.2.1",
     "react-native-reanimated": "4.3.0",
     "react-native-safe-area-context": "~5.6.0",
@@ -243,7 +252,7 @@
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
     "react-native-typography": "^1.4.1",
-    "react-native-unistyles": "3.2.4",
+    "react-native-unistyles": "3.5.3",
     "react-native-view-shot": "4.0.3",
     "react-native-vision-camera": "^4.7.3",
     "react-native-web": "^0.21.0",
@@ -257,7 +266,7 @@
     "textarea-caret": "^3.1.0",
     "uuid": "^11.1.0",
     "vitest": "^3.2.4",
-    "zod": "4.3.6",
+    "zod": "4.6.7",
     "zustand": "^5.0.6"
   },
   "devDependencies": {

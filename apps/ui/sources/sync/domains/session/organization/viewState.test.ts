@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import type { SessionOrganizationProjection } from './types';
+import { buildSessionOrganizationLabelKey } from './keys';
 import {
     buildSessionOrganizationListViewState,
+    applyWorkspaceDisplayToSessionListViewData,
     buildSessionOrganizationReorderRequestFromGroupOrder,
     buildSessionOrganizationReorderRequestFromWorkspaceOrder,
 } from './viewState';
@@ -19,6 +21,9 @@ function projection(overrides: Partial<SessionOrganizationProjection>): SessionO
         folderAssignmentsBySessionId: {},
         tagsById: {},
         tagAssignmentsBySessionId: {},
+        appearancesBySessionId: {},
+        sessionAppearancesBySessionId: {},
+        sessionAppearancesSupported: false,
         attentionStandingsBySessionId: {},
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
@@ -27,6 +32,40 @@ function projection(overrides: Partial<SessionOrganizationProjection>): SessionO
 }
 
 describe('buildSessionOrganizationListViewState', () => {
+    it('retains the empty session-list projection', () => {
+        const items: [] = [];
+        expect(applyWorkspaceDisplayToSessionListViewData(items, {})).toBe(items);
+    });
+    it('projects each header own-server workspace name and colour without cross-server collisions or identity churn', () => {
+        const items = ['server-a', 'server-b', 'server-c'].map((serverId) => ({
+            type: 'header' as const, headerKind: 'project' as const, serverId, workspaceKey: 'wl_a', title: 'Project',
+        }));
+        const label = { labelKind: 'workspace', scopeKey: 'wl_a', archivedAt: null, createdAt: 1, updatedAt: 1 } as const;
+        const labels = {
+            [buildSessionOrganizationLabelKey({ serverId: 'server-a', labelKind: 'workspace', scopeKey: 'wl_a' })]: { ...label, display: { t: 'plain', v: { label: 'Alpha', color: { kind: 'accent', key: 'blue' } } } },
+            [buildSessionOrganizationLabelKey({ serverId: 'server-b', labelKind: 'workspace', scopeKey: 'wl_a' })]: { ...label, display: { t: 'plain', v: { label: 'Beta', color: { kind: 'custom', hex: '#123456' } } } },
+        } as const;
+        const first = applyWorkspaceDisplayToSessionListViewData(items, labels);
+        expect(first?.[0]).toMatchObject({ workspaceLabel: 'Alpha', appearanceColor: { kind: 'accent', key: 'blue' } });
+        expect(first?.[1]).toMatchObject({ workspaceLabel: 'Beta', appearanceColor: { kind: 'custom', hex: '#123456' } });
+        expect(first?.[2]).toBe(items[2]);
+        expect(applyWorkspaceDisplayToSessionListViewData(items, structuredClone(labels))).toBe(first);
+        expect(applyWorkspaceDisplayToSessionListViewData(items, {})).toBe(items);
+    });
+    it('retains colour-only workspaces and projects names and colours independently', () => {
+        const state = buildSessionOrganizationListViewState({
+            serverId: 'server-a',
+            projection: projection({
+                labelsByLabelKey: {
+                    a: { labelKind: 'workspace', scopeKey: 'wl_a', display: { t: 'plain', v: { color: { kind: 'custom', hex: '#abCDEF' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+                    b: { labelKind: 'workspace', scopeKey: 'wl_b', display: { t: 'plain', v: { label: ' Project ', color: { kind: 'accent', key: 'blue' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+                    c: { labelKind: 'workspace', scopeKey: 'wl_c', display: { t: 'plain', v: { label: 'Bad colour', color: { kind: 'accent', key: 'invalid' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+                },
+            }),
+        });
+        expect(state.workspaceLabelsV1).toEqual({ wl_b: 'Project', wl_c: 'Bad colour' });
+        expect(state).toMatchObject({ workspaceColorsV1: { wl_a: { kind: 'custom', hex: '#ABCDEF' }, wl_b: { kind: 'accent', key: 'blue' } } });
+    });
     it('maps server-backed pins, tags, and scoped order entries to the session-list view contracts', () => {
         const state = buildSessionOrganizationListViewState({
             serverId: 'server-a',
@@ -87,6 +126,9 @@ describe('buildSessionOrganizationListViewState', () => {
         const state = buildSessionOrganizationListViewState({
             serverId: 'server-a',
             projection: projection({
+                appearancesBySessionId: {},
+                sessionAppearancesBySessionId: {},
+                sessionAppearancesSupported: false,
                 attentionStandingsBySessionId: {
                     s1: { sessionId: 's1', standing: true, updatedAt: 20 },
                     s2: { sessionId: 's2', standing: false, updatedAt: 21 },

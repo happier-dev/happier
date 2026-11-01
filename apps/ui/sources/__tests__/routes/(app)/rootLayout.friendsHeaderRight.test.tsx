@@ -79,7 +79,7 @@ afterEach(() => {
 
 describe('RootLayout', () => {
     const scenarios: Array<{
-        expectedOpacity: number;
+        expectedDisabled: boolean;
         linkedProviders: LinkedProvider[];
         name: string;
         username: string | null;
@@ -88,19 +88,19 @@ describe('RootLayout', () => {
             name: 'dims friends add button when identity is not ready',
             linkedProviders: [],
             username: null,
-            expectedOpacity: 0.5,
+            expectedDisabled: true,
         },
         {
             name: 'dims friends add button when GitHub is connected but username is missing',
             linkedProviders: [createGithubLinkedProvider()],
             username: null,
-            expectedOpacity: 0.5,
+            expectedDisabled: true,
         },
         {
             name: 'shows friends add button when GitHub is connected and username is set',
             linkedProviders: [createGithubLinkedProvider()],
             username: 'user',
-            expectedOpacity: 1,
+            expectedDisabled: false,
         },
     ];
 
@@ -119,12 +119,15 @@ describe('RootLayout', () => {
                 const friendsManage = getFriendsManageScreen(tree);
                 expect(friendsManage).toBeTruthy();
 
-                const options = friendsManage?.props?.options?.({ navigation: { navigate: vi.fn() } });
+                const options = friendsManage?.props?.options;
                 expect(typeof options?.headerRight).toBe('function');
 
                 const node = options.headerRight();
                 expect(node).not.toBeNull();
-                expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
+                const header = await renderScreen(node);
+                const button = header.findByProps({ accessibilityRole: 'button', testID: 'friends-add-friend' });
+                expect(button.props.disabled).toBe(scenario.expectedDisabled);
+                expect(button.props.accessibilityState).toMatchObject({ disabled: scenario.expectedDisabled });
             } finally {
                 await tree?.unmount();
             }

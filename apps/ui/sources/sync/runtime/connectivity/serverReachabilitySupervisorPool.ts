@@ -11,14 +11,19 @@ import {
 import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilities/probeAuthenticatedServerAuthPingEndpoint';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { HappyError } from '@/utils/errors/errors';
+import { t } from '@/text';
 
 import { createNotAuthenticatedError } from './authErrors';
+import { classifyEndpointResponse } from './endpointSupervision';
 import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { readServerReachabilityBackgroundRetryMs, readServerReachabilityProbeTimeoutMs } from './serverReachabilityTuning';
 
-export class ServerReachabilityWaitTimeoutError extends Error {
+export class ServerReachabilityWaitTimeoutError extends HappyError {
     constructor() {
-        super('Timed out waiting for server reachability');
+        super(t('errors.connectionTimeout'), true, { kind: 'network' });
+        // HappyError installs its own prototype; retain timeout-specific catches and subclasses.
+        Object.setPrototypeOf(this, new.target.prototype);
         this.name = 'ServerReachabilityWaitTimeoutError';
     }
 }
@@ -505,16 +510,13 @@ export function reportServerRestarting(serverUrl: string, retryAfterMs?: number)
     }, probeReportScope);
 }
 
-export function reportServerAuthFailed(serverUrl: string, statusCode: 401 | 403): void {
+export function createServerReachabilityResponseReporter(serverUrl: string, hadAuth: boolean): (response: Response) => void {
     const entry = entriesByServerUrl.get(canonicalizeServerUrl(serverUrl));
-    if (!entry) return;
-    if (typeof entry.supervisor.reportProbeResult !== 'function') return;
-    const probeReportScope = entry.supervisor.captureProbeReportScope?.();
-    entry.supervisor.reportProbeResult({
-        status: 'auth_failed',
-        statusCode,
-        errorMessage: `HTTP ${statusCode}`,
-    }, probeReportScope);
+    const scope = entry?.supervisor.captureProbeReportScope?.();
+    return (response) => {
+        const probe = classifyEndpointResponse(response, hadAuth);
+        if (probe && scope) entry?.supervisor.reportProbeResult?.(probe, scope);
+    };
 }
 
 export function assertServerReachabilityAuthenticated(serverUrl: string): void {

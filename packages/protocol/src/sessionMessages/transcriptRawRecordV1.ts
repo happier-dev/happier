@@ -12,8 +12,9 @@ import {
 } from '../sessionAgentTransitionDivider.js';
 import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
 import type { SessionMessageMeta } from './sessionMessageMeta.js';
+import { lazySchema } from '../lazySchema.js';
 
-const UsageDataSchema = z
+const UsageDataSchema = lazySchema(() => z
   .object({
     input_tokens: z.number(),
     cache_creation_input_tokens: z.number().optional(),
@@ -23,34 +24,34 @@ const UsageDataSchema = z
     // Treat null as “unknown” so we don't drop the whole message.
     service_tier: z.string().nullish(),
   })
-  .passthrough();
+  .passthrough());
 
-const UsageDataBestEffortSchema = z
+const UsageDataBestEffortSchema = lazySchema(() => z
   .unknown()
   .optional()
   .transform((value) => {
     if (value === undefined) return undefined;
     const parsed = UsageDataSchema.safeParse(value);
     return parsed.success ? parsed.data : undefined;
-  });
+  }));
 
-const RawTextContentSchema = z
+const RawTextContentSchema = lazySchema(() => z
   .object({
     type: z.literal('text'),
     text: z.string(),
   })
-  .passthrough();
+  .passthrough());
 
-const RawToolUseContentSchema = z
+const RawToolUseContentSchema = lazySchema(() => z
   .object({
     type: z.literal('tool_use'),
     id: z.string(),
     name: z.string(),
     input: z.unknown(),
   })
-  .passthrough();
+  .passthrough());
 
-const RawToolResultContentSchema = z
+const RawToolResultContentSchema = lazySchema(() => z
   .object({
     type: z.literal('tool_result'),
     tool_use_id: z.string(),
@@ -59,25 +60,25 @@ const RawToolResultContentSchema = z
     // Provider-specific; keep permissive for forward compatibility.
     permissions: z.unknown().optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const RawThinkingContentSchema = z
+const RawThinkingContentSchema = lazySchema(() => z
   .object({
     type: z.literal('thinking'),
     thinking: z.string(),
   })
-  .passthrough();
+  .passthrough());
 
 // Forward compatibility: keep unknown content blocks instead of dropping the entire message.
 // Callers can render these as a placeholder if needed.
-const RawUnknownContentSchema = z
+const RawUnknownContentSchema = lazySchema(() => z
   .object({
     type: z.string(),
   })
-  .passthrough();
+  .passthrough());
 
 // Hyphenated tool-call formats seen in some providers (Codex/Gemini variants).
-const RawHyphenatedToolCallSchema = z
+const RawHyphenatedToolCallSchema = lazySchema(() => z
   .object({
     type: z.literal('tool-call'),
     callId: z.string(),
@@ -85,9 +86,9 @@ const RawHyphenatedToolCallSchema = z
     name: z.string(),
     input: z.unknown(),
   })
-  .passthrough();
+  .passthrough());
 
-const RawHyphenatedToolResultSchema = z
+const RawHyphenatedToolResultSchema = lazySchema(() => z
   .object({
     type: z.literal('tool-call-result'),
     callId: z.string(),
@@ -96,9 +97,9 @@ const RawHyphenatedToolResultSchema = z
     content: z.unknown().optional(),
     is_error: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const RawAgentContentSchema = z.union([
+const RawAgentContentSchema = lazySchema(() => z.union([
   RawTextContentSchema,
   RawToolUseContentSchema,
   RawToolResultContentSchema,
@@ -106,7 +107,7 @@ const RawAgentContentSchema = z.union([
   RawHyphenatedToolCallSchema,
   RawHyphenatedToolResultSchema,
   RawUnknownContentSchema,
-]);
+]));
 
 function normalizeToToolUse(input: z.infer<typeof RawHyphenatedToolCallSchema>) {
   return {
@@ -185,7 +186,7 @@ const OutputExtrasShape = {
 const withOutputExtras = <T extends z.ZodRawShape>(schema: z.ZodObject<T>) =>
   schema.extend(OutputExtrasShape).passthrough();
 
-const RawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
+const RawAgentOutputDataKnownSchema = lazySchema(() => z.discriminatedUnion('type', [
   withOutputExtras(z.object({ type: z.literal('system') })),
   withOutputExtras(z.object({ type: z.literal('result') })),
   withOutputExtras(z.object({ type: z.literal('summary'), summary: z.string() })),
@@ -218,41 +219,41 @@ const RawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
       toolUseResult: z.unknown().nullable().optional(),
     }),
   ),
-]);
+]));
 
-const RawAgentOutputDataOpaqueSchema = z
+const RawAgentOutputDataOpaqueSchema = lazySchema(() => z
   .object({ type: z.string() })
   .extend(OutputExtrasShape)
   .passthrough()
   // The strict branch is tried first. Malformed known rows and future output types
   // remain available as opaque data while the shared output envelope stays validated.
-  .transform((value) => ({ ...value, type: value.type as OpaqueOutputDataType }));
+  .transform((value) => ({ ...value, type: value.type as OpaqueOutputDataType })));
 
-const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataOpaqueSchema]);
+const RawAgentOutputDataSchema = lazySchema(() => z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataOpaqueSchema]));
 
 const AgentEventLifecycleShape = {
   lifecycleId: z.string().trim().min(1).optional(),
 } as const;
 
-const ContextCompactionPhaseSchema = z.preprocess(
+const ContextCompactionPhaseSchema = lazySchema(() => z.preprocess(
   (value) => value === 'detected' ? 'completed' : value,
   z.enum(['started', 'progress', 'completed', 'failed', 'cancelled']),
-);
-const ContextCompactionSourceSchema = z.enum([
+));
+const ContextCompactionSourceSchema = lazySchema(() => z.enum([
   'provider-event',
   'provider-status',
   'provider-hook',
   'transcript-inference',
   'user-command',
   'runtime',
-]);
-const ContextCompactionContinuationSchema = z.enum(['paused']);
-const ContextCompactionPauseReasonSchema = z.enum(['provider-idle-after-compaction']);
+]));
+const ContextCompactionContinuationSchema = lazySchema(() => z.enum(['paused']));
+const ContextCompactionPauseReasonSchema = lazySchema(() => z.enum(['provider-idle-after-compaction']));
 
 const withAgentEventLifecycle = <T extends z.ZodRawShape>(schema: z.ZodObject<T>) =>
   schema.extend(AgentEventLifecycleShape).passthrough();
 
-const ProviderStateSharingDegradedEventSchema = withAgentEventLifecycle(
+const ProviderStateSharingDegradedEventSchema = lazySchema(() => withAgentEventLifecycle(
   z.object({
     type: z.literal('provider-state-sharing-degraded'),
     serviceId: ConnectedServiceIdSchema,
@@ -264,7 +265,7 @@ const ProviderStateSharingDegradedEventSchema = withAgentEventLifecycle(
 ).transform((value) => {
   const { entryName: _legacyEntryName, ...safeValue } = value as typeof value & { entryName?: unknown };
   return safeValue;
-});
+}));
 
 function readContextCompactionEventDataFromRawRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -309,64 +310,64 @@ function addRawRecordContextCompactionContinuationIssues(value: unknown, ctx: z.
   addContextCompactionEventContinuationIssues(event, ctx, ['content', 'data']);
 }
 
-const ConnectedServiceAccountSwitchReasonSchema = z.enum([
+const ConnectedServiceAccountSwitchReasonSchema = lazySchema(() => z.enum([
   'usage_limit',
   'soft_threshold',
   'auth_expired',
   'account_changed',
   'refresh_failure',
   'manual',
-]);
+]));
 
-const ConnectedServiceAccountSwitchModeSchema = z.enum([
+const ConnectedServiceAccountSwitchModeSchema = lazySchema(() => z.enum([
   'hot_apply',
   'restart_resume',
   'spawn_next_turn',
-]);
+]));
 
-export const ConnectedServiceSwitchAttemptedContinuityModeV1Schema = z.enum([
+export const ConnectedServiceSwitchAttemptedContinuityModeV1Schema = lazySchema(() => z.enum([
   'hot_apply',
   'restart',
   'metadata_only',
   'credential_refresh',
-]);
+]));
 
 export type ConnectedServiceSwitchAttemptedContinuityModeV1 =
   z.infer<typeof ConnectedServiceSwitchAttemptedContinuityModeV1Schema>;
 
-export const ConnectedServiceSwitchAttemptOutcomeV1Schema = z.enum([
+export const ConnectedServiceSwitchAttemptOutcomeV1Schema = lazySchema(() => z.enum([
   'succeeded',
   'failed',
   'observed',
   'scheduled_retry',
   'terminal',
-]);
+]));
 
 export type ConnectedServiceSwitchAttemptOutcomeV1 =
   z.infer<typeof ConnectedServiceSwitchAttemptOutcomeV1Schema>;
 
-export const ConnectedServiceSwitchAttemptOutcomeActionV1Schema = z.enum([
+export const ConnectedServiceSwitchAttemptOutcomeActionV1Schema = lazySchema(() => z.enum([
   'hot_applied',
   'restarted',
   'metadata_updated',
   'credential_refreshed',
   'none',
-]);
+]));
 
 export type ConnectedServiceSwitchAttemptOutcomeActionV1 =
   z.infer<typeof ConnectedServiceSwitchAttemptOutcomeActionV1Schema>;
 
-export const ConnectedServiceSwitchAttemptSessionAdoptionV1Schema = z.enum([
+export const ConnectedServiceSwitchAttemptSessionAdoptionV1Schema = lazySchema(() => z.enum([
   'applied',
   'failed',
   'observed_only',
   'not_applicable',
-]);
+]));
 
 export type ConnectedServiceSwitchAttemptSessionAdoptionV1 =
   z.infer<typeof ConnectedServiceSwitchAttemptSessionAdoptionV1Schema>;
 
-const ConnectedServiceSwitchAttemptVerificationByServiceIdV1Schema = z.partialRecord(
+const ConnectedServiceSwitchAttemptVerificationByServiceIdV1Schema = lazySchema(() => z.partialRecord(
   ConnectedServiceIdSchema,
   z.object({
     status: z.enum(['verified', 'weakly_verified']),
@@ -377,27 +378,27 @@ const ConnectedServiceSwitchAttemptVerificationByServiceIdV1Schema = z.partialRe
     source: z.string().trim().min(1).optional(),
     reason: z.string().trim().min(1).optional(),
   }),
-);
+));
 
-const ConnectedServiceAccountSwitchDeferralPolicySchema = z.enum([
+const ConnectedServiceAccountSwitchDeferralPolicySchema = lazySchema(() => z.enum([
   'defer_until_turn_boundary',
   'defer_until_idle',
-]);
+]));
 
-const ConnectedServiceAccountSwitchDeferralCompletionReasonSchema = z.enum([
+const ConnectedServiceAccountSwitchDeferralCompletionReasonSchema = lazySchema(() => z.enum([
   'completed_at_boundary',
   'aborted_after_timeout',
   'switch_cancelled',
   'session_terminated',
   'daemon_shutdown',
-]);
+]));
 
-export const ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema = z.enum([
+export const ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema = lazySchema(() => z.enum([
   'retry_scheduled',
   'dead_lettered',
   'recovered',
   'cancelled',
-]);
+]));
 
 export type ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1 =
   z.infer<typeof ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema>;
@@ -561,19 +562,19 @@ function addConnectedServiceRuntimeAuthRecoveryEventIssues(
 // The five public runtime-config-outcome statuses are frozen. Queued/scheduled/skipped
 // state is carried by the optional `timing` field below, never by new status enum values,
 // because older clients reject unknown enum values for a known field.
-export const RuntimeConfigOutcomeStatusV1Schema = z.enum([
+export const RuntimeConfigOutcomeStatusV1Schema = lazySchema(() => z.enum([
   'applied',
   'requires_restart',
   'requires_interactive_control',
   'unsupported',
   'failed',
-]);
+]));
 
 export type RuntimeConfigOutcomeStatusV1 = z.infer<typeof RuntimeConfigOutcomeStatusV1Schema>;
 
 // Optional timing detail for a runtime-config outcome. This is NOT a status; it explains
 // when the (already statused) change takes effect relative to the active TUI/turn window.
-export const RuntimeConfigOutcomeTimingV1Schema = z.enum([
+export const RuntimeConfigOutcomeTimingV1Schema = lazySchema(() => z.enum([
   'current_window',
   'queued_until_safe_window',
   'scheduled_for_next_prompt',
@@ -581,11 +582,11 @@ export const RuntimeConfigOutcomeTimingV1Schema = z.enum([
   'before_next_prompt',
   'skipped_already_effective',
   'not_applicable',
-]);
+]));
 
 export type RuntimeConfigOutcomeTimingV1 = z.infer<typeof RuntimeConfigOutcomeTimingV1Schema>;
 
-export const RuntimeConfigOutcomeChangeKeyV1Schema = z.enum([
+export const RuntimeConfigOutcomeChangeKeyV1Schema = lazySchema(() => z.enum([
   'model',
   'fallbackModel',
   'permissionMode',
@@ -593,18 +594,18 @@ export const RuntimeConfigOutcomeChangeKeyV1Schema = z.enum([
   'maxThinkingTokens',
   'launchOption',
   'sessionMode',
-]);
+]));
 
 export type RuntimeConfigOutcomeChangeKeyV1 = z.infer<typeof RuntimeConfigOutcomeChangeKeyV1Schema>;
 
-const RuntimeConfigOutcomeScalarV1Schema = z.union([
+const RuntimeConfigOutcomeScalarV1Schema = lazySchema(() => z.union([
   z.string().trim().min(1).max(512),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const RuntimeConfigOutcomeChangeV1Schema = z
+const RuntimeConfigOutcomeChangeV1Schema = lazySchema(() => z
   .object({
     key: RuntimeConfigOutcomeChangeKeyV1Schema,
     requested: RuntimeConfigOutcomeScalarV1Schema.optional(),
@@ -612,14 +613,14 @@ const RuntimeConfigOutcomeChangeV1Schema = z
     effective: RuntimeConfigOutcomeScalarV1Schema.optional(),
     reason: z.string().trim().min(1).max(512).optional(),
   })
-  .strict();
+  .strict());
 
-const TerminalComposerDraftBlockedReasonV1Schema = z.enum([
+const TerminalComposerDraftBlockedReasonV1Schema = lazySchema(() => z.enum([
   'idle_draft_guard',
   'in_flight_steer',
-]);
+]));
 
-const AgentEventSchema = z.discriminatedUnion('type', [
+const AgentEventSchema = lazySchema(() => z.discriminatedUnion('type', [
   withAgentEventLifecycle(z.object({ type: z.literal('switch'), mode: z.enum(['local', 'remote']) })),
   withAgentEventLifecycle(
     z.object({
@@ -798,9 +799,9 @@ const AgentEventSchema = z.discriminatedUnion('type', [
   const eventRecord = event as Record<string, unknown>;
   addConnectedServiceAccountSwitchAttemptEventIssues(eventRecord, ctx);
   addConnectedServiceRuntimeAuthRecoveryEventIssues(eventRecord, ctx);
-});
+}));
 
-const RawAgentRecordSchema = z
+const RawAgentRecordSchema = lazySchema(() => z
   .discriminatedUnion('type', [
     z.object({
       type: z.literal('output'),
@@ -982,7 +983,7 @@ const RawAgentRecordSchema = z
         }),
       })
       .passthrough(),
-  ])
+  ]))
   ;
 
 export type TranscriptRawRecordV1WithMeta<Meta> =
@@ -1043,7 +1044,7 @@ export function createTranscriptRawRecordV1Schema<MetaSchema extends z.ZodTypeAn
   ).superRefine(addRawRecordContextCompactionContinuationIssues);
 }
 
-export const TranscriptRawRecordV1Schema = createTranscriptRawRecordV1Schema(z);
+export const TranscriptRawRecordV1Schema = lazySchema(() => createTranscriptRawRecordV1Schema(z));
 export type TranscriptRawRecordV1 = z.infer<typeof TranscriptRawRecordV1Schema>;
 
 export const TranscriptRawUsageDataV1Schema = UsageDataSchema;
@@ -1052,10 +1053,10 @@ export type TranscriptRawUsageDataV1 = z.infer<typeof TranscriptRawUsageDataV1Sc
 export const TranscriptRawAgentEventV1Schema = AgentEventSchema;
 export type TranscriptRawAgentEventV1 = z.infer<typeof TranscriptRawAgentEventV1Schema>;
 
-export const SessionMessageAttentionImpactSchema = z.object({
+export const SessionMessageAttentionImpactSchema = lazySchema(() => z.object({
   affectsUnread: z.boolean(),
   affectsMeaningfulActivity: z.boolean(),
-}).strict();
+}).strict());
 export type SessionMessageAttentionImpact = z.infer<typeof SessionMessageAttentionImpactSchema>;
 
 export const SESSION_MESSAGE_USER_ATTENTION_IMPACT: SessionMessageAttentionImpact = Object.freeze({

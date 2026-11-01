@@ -11,7 +11,7 @@ type RawTranscriptRow = Readonly<{
 
 export function decryptTranscriptReplaySlice(params: Readonly<{
   rows: readonly RawTranscriptRow[];
-  encryptionKey?: Uint8Array;
+  encryptionKey?: Uint8Array | null;
   encryptionVariant?: SessionEncryptionContext['encryptionVariant'];
   maxTextChars?: number;
   maxDialogItems?: number;

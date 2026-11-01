@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PersistedSyncReliabilityEvent } from '@/sync/domains/state/persistence';
 import type { SyncPerformanceTelemetrySummary } from '@/sync/runtime/syncPerformanceTelemetry';
-import type { PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
 import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
+import { act } from 'react-test-renderer';
+import { createMachineFixture, renderHook } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 vi.mock('expo-constants', () => ({
   default: {
@@ -16,7 +18,7 @@ installBugReportComponentCommonModuleMocks({
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
       Platform: {
-        OS: 'ios',
+        OS: 'web',
         Version: '17.0',
       },
     });
@@ -127,7 +129,8 @@ vi.mock('@/sync/http/client', () => ({
   serverFetch: (url: unknown, init?: unknown, options?: unknown) => serverFetchMock(url, init, options),
 }));
 
-const machineCollectBugReportDiagnosticsMock = vi.fn(async (_machineId?: string, _options?: { timeoutMs?: number }) => ({
+type MachineDiagnosticsResult = NonNullable<Awaited<ReturnType<typeof import('@/sync/ops/machines')['machineCollectBugReportDiagnostics']>>>;
+const machineCollectBugReportDiagnosticsMock = vi.fn<(machineId?: string, options?: Parameters<typeof import('@/sync/ops/machines')['machineCollectBugReportDiagnostics']>[1]) => Promise<MachineDiagnosticsResult>>(async () => ({
   daemonState: {
     pid: 1,
     httpPort: 9999,
@@ -190,13 +193,6 @@ vi.mock('@/sync/ops/machines', () => ({
   ) => machineGetBugReportLogTailMock(machineId, params, options),
 }));
 
-const { isMachineOnlineMock } = vi.hoisted(() => ({
-  isMachineOnlineMock: vi.fn((..._args: unknown[]) => true),
-}));
-vi.mock('@/utils/sessions/machineUtils', () => ({
-  isMachineOnline: isMachineOnlineMock,
-}));
-
 vi.mock('@/utils/system/bugReportActionTrail', () => ({
   getBugReportUserActionTrail: () => [],
 }));
@@ -205,14 +201,11 @@ vi.mock('@/utils/system/bugReportLogBuffer', () => ({
   getBugReportLogText: () => '',
 }));
 
-const { peekPreRestartBugReportSnapshotMock } = vi.hoisted(() => ({
-  peekPreRestartBugReportSnapshotMock: vi.fn(
-    async (..._args: unknown[]): Promise<PreRestartBugReportSnapshotV1 | null> => null,
-  ),
-}));
-vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
-  peekPreRestartBugReportSnapshot: peekPreRestartBugReportSnapshotMock,
-}));
+vi.mock('expo-file-system', async () => {
+  const { createExpoFileSystemMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemMock().module;
+});
+afterEach(() => vi.unstubAllGlobals());
 
 describe('collectBugReportDiagnosticsArtifacts', () => {
   beforeEach(() => {
@@ -228,8 +221,107 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     syncPerformanceTelemetryFlushSummaryMock.mockReset();
     syncPerformanceTelemetryFlushSummaryMock.mockReturnValue(null);
     syncPerformanceTelemetryResetMock.mockReset();
-    isMachineOnlineMock.mockReset();
-    isMachineOnlineMock.mockReturnValue(true);
+  });
+
+  it('collects only the selected session machine on its captured server', async () => {
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [createMachineFixture({ id: 'unrelated' }), createMachineFixture({ id: 'selected-machine' })],
+      includeDiagnostics: true,
+      acceptedKinds: ['daemon', 'session-log', 'ui-mobile'],
+      maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'chosen-session', serverId: 'cloud', machineId: 'selected-machine' },
+    });
+    expect(machineCollectBugReportDiagnosticsMock.mock.calls.map(([machineId]) => machineId)).toEqual(['selected-machine']);
+    expect(machineCollectBugReportDiagnosticsMock).toHaveBeenCalledWith('selected-machine', expect.objectContaining({
+      serverId: 'cloud', sessionId: 'chosen-session', logSelection: { daemon: true, session: true, provider: false },
+    }));
+    expect(result.collectionStatuses.session.status).toBe('unsupported');
+    expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to another machine when the selected machine is missing', async () => {
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [createMachineFixture({ id: 'unrelated' })],
+      includeDiagnostics: true, acceptedKinds: ['daemon', 'session-log', 'ui-mobile'], maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'chosen-session', serverId: 'other-server' },
+    });
+    expect(machineCollectBugReportDiagnosticsMock).not.toHaveBeenCalled();
+    expect(result.collectionStatuses.session.status).toBe('unavailable');
+  });
+
+  it('does not guess a machine or a recent session for an app-only report', async () => {
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [createMachineFixture({ id: 'unrelated-online-machine' })],
+      includeDiagnostics: true, acceptedKinds: ['daemon', 'server', 'ui-mobile'], maxArtifactBytes: 128_000,
+    });
+    expect(machineCollectBugReportDiagnosticsMock).not.toHaveBeenCalled();
+    expect(result.artifacts.map((artifact) => artifact.filename)).toEqual(['app-context.json']);
+    expect(result.collectionStatuses.daemon.status).toBe('unavailable');
+    expect(serverFetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shares the settled diagnostic preview with submission and refreshes when log choices change', async () => {
+    const { usePreparedBugReportDiagnostics } = await import('./hooks/usePreparedBugReportDiagnostics');
+    const machines: Parameters<CollectBugReportDiagnosticsArtifacts>[0]['machines'] = [];
+    const hook = await renderHook(({ title, daemon }: { title: string; daemon: boolean }) => {
+      void title;
+      return usePreparedBugReportDiagnostics({
+        machines, includeDiagnostics: true, acceptedKinds: ['ui-mobile'], maxArtifactBytes: 128_000,
+        logSelection: { daemon, session: false, provider: false },
+      });
+    }, { initialProps: { title: 'Original title', daemon: true } });
+    let preview: Awaited<ReturnType<CollectBugReportDiagnosticsArtifacts>>;
+    await act(async () => { preview = await hook.getCurrent().collectDiagnosticsArtifacts(); });
+    await hook.rerender({ title: 'Edited report', daemon: true });
+    let submission: Awaited<ReturnType<CollectBugReportDiagnosticsArtifacts>>;
+    await act(async () => { submission = await hook.getCurrent().collectDiagnosticsArtifacts(); });
+    expect(submission!).toBe(preview!);
+    await hook.rerender({ title: 'Edited report', daemon: false });
+    let changed: Awaited<ReturnType<CollectBugReportDiagnosticsArtifacts>>;
+    await act(async () => { changed = await hook.getCurrent().collectDiagnosticsArtifacts(); });
+    expect(changed!).not.toBe(preview!);
+    expect(hook.getCurrent().collectionStatuses).toEqual(changed!.collectionStatuses);
+  });
+
+  it('refuses a pending snapshot after the user changes its log exclusions', async () => {
+    const { usePreparedBugReportDiagnostics } = await import('./hooks/usePreparedBugReportDiagnostics');
+    const rpcStarted = createDeferred<void>();
+    const reply = createDeferred<MachineDiagnosticsResult>();
+    machineCollectBugReportDiagnosticsMock.mockImplementationOnce(async () => { rpcStarted.resolve(); return await reply.promise; });
+    const hook = await renderHook(({ provider }: { provider: boolean }) => usePreparedBugReportDiagnostics({
+      machines: [], includeDiagnostics: true, acceptedKinds: ['ui-mobile', 'provider-transcript'], maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud', machineId: 'selected-machine' },
+      logSelection: { daemon: false, session: false, provider },
+    }), { initialProps: { provider: true } });
+    let pending: Promise<Awaited<ReturnType<CollectBugReportDiagnosticsArtifacts>>>;
+    await act(async () => { pending = hook.getCurrent().collectDiagnosticsArtifacts(); await rpcStarted.promise; });
+    await hook.rerender({ provider: false });
+    reply.resolve({
+      daemonState: null, daemonLogs: [], doctorSnapshot: null, stackContext: null, runtime: { cwd: '', platform: 'linux', nodeVersion: 'v22' },
+      sessionDiagnostics: { context: { sessionId: 'selected', machineId: 'selected-machine', metadataStatus: 'available' }, logs: [
+        { kind: 'provider', status: 'collected', artifact: { filename: 'provider.jsonl', sourceKind: 'provider-transcript', contentType: 'text/plain', content: 'superseded private provider transcript' } },
+      ] },
+    });
+    await act(async () => { await expect(pending!).rejects.toThrow('bug_report_diagnostics_superseded'); });
+    expect(hook.getCurrent().collectionStatuses).toEqual({});
+    await act(async () => {
+      const current = await hook.getCurrent().collectDiagnosticsArtifacts();
+      expect(JSON.stringify(current.artifacts)).not.toContain('superseded private provider transcript');
+      expect(current.collectionStatuses.provider.status).toBe('disabled');
+    });
+  });
+
+  it('keeps technical-only diagnostics to structured facts even with an older daemon', async () => {
+    const result = await collectBugReportDiagnosticsArtifacts({
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud', machineId: 'machine-1' },
+      machines: [createMachineFixture({ id: 'machine-1' })],
+      includeDiagnostics: true, acceptedKinds: ['daemon', 'stack-service', 'ui-mobile', 'server'], maxArtifactBytes: 128_000,
+      logSelection: { daemon: false, session: false, provider: false },
+    });
+    expect(result.artifacts.map((artifact) => artifact.filename)).toEqual(['selected-session-summary.json', 'machine-1-daemon-summary.json', 'app-context.json']);
+    expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+    expect(serverFetchMock).not.toHaveBeenCalled();
+    expect(result.collectionStatuses.daemon.status).toBe('disabled');
   });
 
   it('includes persisted sync reliability events from the diagnostics context window', async () => {
@@ -341,56 +433,66 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(appContextJson.diagnosticsCollection?.syncPerformance?.status).toBe('collected');
   });
 
-  it('includes stack diagnostics artifacts from machine diagnostics', async () => {
+  it('keeps older daemon replies to known structured facts and reports unsupported log scope', async () => {
     const result = await collectBugReportDiagnosticsArtifacts({
-      machines: [{ id: 'machine-1' } as any],
-      includeDiagnostics: true,
-      acceptedKinds: ['stack-service', 'daemon', 'ui-mobile', 'server'],
-      maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud', machineId: 'machine-1' },
+      machines: [createMachineFixture({ id: 'machine-1' })],
+      includeDiagnostics: true, acceptedKinds: ['stack-service', 'daemon', 'ui-mobile', 'server'], maxArtifactBytes: 128_000,
     });
-
-    const filenames = result.artifacts.map((artifact) => artifact.filename);
-    expect(filenames.some((filename) => filename.includes('stack-context'))).toBe(true);
-    expect(filenames.some((filename) => filename.includes('stack-runtime'))).toBe(true);
-    expect(filenames.some((filename) => filename.includes('stack-runner'))).toBe(true);
-
-    const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
     const daemonSummary = result.artifacts.find((artifact) => artifact.filename.includes('daemon-summary'));
-    const stackContext = result.artifacts.find((artifact) => artifact.filename.includes('stack-context'));
-    const cliDoctorSnapshot = result.artifacts.find((artifact) => artifact.filename.includes('cli-doctor-snapshot'));
-    expect(appContext?.content).toContain('https://api.happier.dev/path');
-    expect(appContext?.content).not.toContain('admin:secret');
-    expect(appContext?.content).not.toContain('?token=');
+    expect(daemonSummary?.content).toContain('"platform": "darwin"');
     expect(daemonSummary?.content).not.toContain('/tmp/');
-    expect(stackContext?.content).not.toContain('/tmp/');
-    expect(daemonSummary?.content).toContain('"daemonLogPath": "daemon.log"');
-    expect(daemonSummary?.content).toContain('"cwd": "project"');
-    expect(stackContext?.content).toContain('"stackEnvPath": "env"');
-    expect(stackContext?.content).toContain('"runtimeStatePath": "stack.runtime.json"');
-    expect(stackContext?.content).toContain('"stack-runner.log"');
-    expect(cliDoctorSnapshot?.content).toContain('"acct_cli_1"');
-    const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
-      diagnosticsCollection?: Record<string, { status?: string }>;
-      profile?: { id?: string; username?: string; linkedProviderIds?: string[] };
-      serverProfiles?: Array<{ id?: string; serverUrl?: string }>;
-    };
-    expect(appContextJson.diagnosticsCollection).toBeDefined();
-    expect(appContextJson.diagnosticsCollection?.machineDiagnostics?.status).toBe('collected');
-    expect(appContextJson.profile?.id).toBe('acct_ui_1');
-    expect(appContextJson.profile?.username).toBe('leeroy');
-    expect(appContextJson.profile?.linkedProviderIds).toContain('github');
-    expect((appContextJson.serverProfiles ?? []).map((entry) => entry.id)).toContain('cloud');
-    expect(machineCollectBugReportDiagnosticsMock).toHaveBeenCalledWith('machine-1', { timeoutMs: 4000 });
-    expect(machineGetBugReportLogTailMock).toHaveBeenCalledWith(
-      'machine-1',
-      expect.any(Object),
-      expect.objectContaining({ timeoutMs: 4000 }),
-    );
+    expect(result.artifacts.map((artifact) => artifact.filename)).not.toEqual(expect.arrayContaining([
+      'machine-1-cli-doctor-snapshot.json', 'machine-1-stack-runtime.json',
+    ]));
+    expect(result.collectionStatuses.daemon.status).toBe('unsupported');
+    expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+  });
+
+  it('uses inline categorized artifacts and filters categories the user excluded', async () => {
+    machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
+      daemonState: null, daemonLogs: [], runtime: { cwd: '', platform: 'linux', nodeVersion: 'v22' },
+      sessionDiagnostics: {
+        context: { sessionId: 'chosen-session', machineId: 'selected-machine', metadataStatus: 'available' },
+        logs: [
+          { kind: 'session', status: 'collected', artifact: { filename: 'session.log', sourceKind: 'session-log', contentType: 'text/plain', content: 'session details' } },
+          { kind: 'provider', status: 'collected', artifact: { filename: 'provider.jsonl', sourceKind: 'daemon', contentType: 'text/plain', content: 'private provider transcript' } },
+        ],
+      },
+    });
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [], includeDiagnostics: true, acceptedKinds: ['daemon', 'session-log', 'ui-mobile'], maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'chosen-session', serverId: 'cloud', machineId: 'selected-machine' },
+    });
+    expect(result.artifacts.find((artifact) => artifact.filename === 'session.log')?.content).toBe('session details');
+    expect(JSON.stringify(result.artifacts)).not.toContain('private provider transcript');
+    expect(result.collectionStatuses.session.status).toBe('collected');
+    expect(result.collectionStatuses.provider.status).toBe('disabled');
+    expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { kind: 'session' as const, sourceKind: 'session-log', logSelection: { daemon: false, session: true, provider: false } },
+    { kind: 'provider' as const, sourceKind: 'provider-transcript', logSelection: { daemon: false, session: false, provider: true } },
+  ])('collects an independently accepted $sourceKind without daemon artifacts', async ({ kind, sourceKind, logSelection }) => {
+    machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
+      daemonState: null, daemonLogs: [], runtime: { cwd: '', platform: 'linux', nodeVersion: 'v22' },
+      sessionDiagnostics: {
+        context: { sessionId: 'selected', machineId: 'selected-machine', metadataStatus: 'available' },
+        logs: [{ kind, status: 'collected', artifact: { filename: `${kind}.log`, sourceKind, contentType: 'text/plain', content: 'selected artifact' } }],
+      },
+    });
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [], includeDiagnostics: true, acceptedKinds: ['ui-mobile', sourceKind], maxArtifactBytes: 128_000,
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud', machineId: 'selected-machine' }, logSelection,
+    });
+    expect(result.artifacts.find((artifact) => artifact.sourceKind === sourceKind)?.content).toBe('selected artifact');
+    expect(result.collectionStatuses[kind].status).toBe('collected');
   });
 
   it('includes a pasted CLI doctor snapshot artifact when provided and daemon artifacts are accepted', async () => {
     const result = await collectBugReportDiagnosticsArtifacts({
-      machines: [{ id: 'machine-1' } as any],
+      machines: [createMachineFixture({ id: 'machine-1' })],
       includeDiagnostics: true,
       acceptedKinds: ['daemon', 'ui-mobile'],
       maxArtifactBytes: 128_000,
@@ -409,7 +511,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
           knownAccountIds: ['acct_pasted_1'],
         },
       }),
-    } as any);
+    });
 
     const pasted = result.artifacts.find((artifact) => artifact.filename === 'pasted-cli-doctor-snapshot.json');
     expect(pasted).toBeTruthy();
@@ -418,7 +520,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
 
   it('skips server and machine diagnostics when accepted kinds exclude those sources', async () => {
     const result = await collectBugReportDiagnosticsArtifacts({
-      machines: [{ id: 'machine-1' } as any],
+      machines: [createMachineFixture({ id: 'machine-1' })],
       includeDiagnostics: true,
       acceptedKinds: ['ui-mobile'],
       maxArtifactBytes: 128_000,
@@ -430,11 +532,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
   });
 
-  it('does not mark machine diagnostics as an error when there are no online machines', async () => {
-    isMachineOnlineMock.mockReturnValue(false);
+  it('marks machine diagnostics as skipped for an app-only report', async () => {
 
     const result = await collectBugReportDiagnosticsArtifacts({
-      machines: [{ id: 'machine-1' } as any],
+      machines: [createMachineFixture({ id: 'machine-1' })],
       includeDiagnostics: true,
       acceptedKinds: ['ui-mobile', 'daemon'],
       maxArtifactBytes: 128_000,
@@ -447,17 +548,20 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(appContextJson.diagnosticsCollection?.machineDiagnostics?.status).toBe('skipped');
   });
 
-  it('includes pre-restart crash artifacts when a persisted snapshot is available', async () => {
-    peekPreRestartBugReportSnapshotMock.mockResolvedValueOnce({
+  it('keeps optional crash context without reattaching an unedited copy of the stack', async () => {
+    const snapshot = {
       v: 1,
       createdAtMs: Date.now(),
       reason: 'crash',
       platform: 'ios',
       origin: 'http://localhost',
       isSecureContext: true,
-      errorDetails: 'boom\nstack: ...',
+      errorDetails: 'private original stack',
       appLogs: '[log] before restart',
       userActions: [{ timestamp: new Date().toISOString(), action: 'tap', route: '/foo' }],
+    };
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => key === 'happier_pre_restart_bug_report_snapshot_v1' ? JSON.stringify(snapshot) : null,
     });
 
     const result = await collectBugReportDiagnosticsArtifacts({
@@ -468,12 +572,11 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     });
 
     const filenames = result.artifacts.map((artifact) => artifact.filename);
-    expect(filenames).toContain('pre-restart-crash.txt');
+    expect(filenames).not.toContain('pre-restart-crash.txt');
     expect(filenames).toContain('pre-restart-app-console.log');
     expect(filenames).toContain('pre-restart-user-action-trail.json');
 
-    const crashArtifact = result.artifacts.find((artifact) => artifact.filename === 'pre-restart-crash.txt');
-    expect(String(crashArtifact?.content ?? '')).toContain('boom');
+    expect(JSON.stringify(result.artifacts)).not.toContain('private original stack');
   });
 
   it('does not block forever when a machine diagnostics RPC hangs', async () => {
@@ -481,12 +584,13 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
 
     const outcome = await Promise.race([
       collectBugReportDiagnosticsArtifacts({
-        machines: [{ id: 'machine-1' } as any],
+        sessionTarget: { sessionId: 'selected', serverId: 'cloud', machineId: 'machine-1' },
+      machines: [createMachineFixture({ id: 'machine-1' })],
         includeDiagnostics: true,
         acceptedKinds: ['daemon'],
         maxArtifactBytes: 128_000,
         machineDiagnosticsTimeoutMs: 20,
-      } as any),
+      }),
       new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 120)),
     ]);
 
@@ -503,12 +607,13 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
 
     const outcome = await Promise.race([
       collectBugReportDiagnosticsArtifacts({
-        machines: [],
+        sessionTarget: { sessionId: 'selected', serverId: 'cloud' },
+      machines: [],
         includeDiagnostics: true,
         acceptedKinds: ['server'],
         maxArtifactBytes: 128_000,
         serverDiagnosticsTimeoutMs: 20,
-      } as any),
+      }),
       new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 120)),
     ]);
 
@@ -528,12 +633,13 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     });
 
     await collectBugReportDiagnosticsArtifacts({
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud' },
       machines: [],
       includeDiagnostics: true,
       acceptedKinds: ['server'],
       maxArtifactBytes: 128_000,
       contextWindowMs: 45_000,
-    } as any);
+    });
 
     const requestPath = String(serverFetchMock.mock.calls[0]?.[0] ?? '');
     expect(requestPath).toContain('/v1/diagnostics/bug-report-snapshot?lines=50');
@@ -547,11 +653,12 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     });
 
     const result = await collectBugReportDiagnosticsArtifacts({
+      sessionTarget: { sessionId: 'selected', serverId: 'cloud' },
       machines: [],
       includeDiagnostics: true,
       acceptedKinds: ['server', 'ui-mobile'],
       maxArtifactBytes: 128_000,
-    } as any);
+    });
 
     const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
     const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
@@ -561,65 +668,5 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(String(appContextJson.diagnosticsCollection?.serverDiagnostics?.detail ?? '')).toContain('404');
   });
 
-  it('uses basename-only log filenames for windows-style machine log paths', async () => {
-    machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
-      daemonState: {
-        pid: 1,
-        httpPort: 9999,
-        startedAt: 1,
-        startedWithCliVersion: '1.0.0',
-        hasControlToken: true,
-        daemonLogPath: 'C:\\Users\\alice\\.happier\\logs\\daemon.log',
-      },
-      daemonLogs: [{ file: 'daemon.log', path: 'C:\\Users\\alice\\.happier\\logs\\daemon.log', modifiedAt: new Date().toISOString() }],
-      doctorSnapshot: {
-        capturedAt: '2026-02-23T00:00:00.000Z',
-        server: {
-          activeServerId: 'cloud',
-          serverUrl: 'https://api.happier.dev',
-          publicServerUrl: 'https://api.happier.dev',
-          webappUrl: 'https://app.happier.dev',
-        },
-        accountId: 'acct_cli_1',
-        settings: {
-          activeServerId: 'cloud',
-          servers: [
-            {
-              id: 'cloud',
-              name: 'Happier Cloud',
-              serverUrl: 'https://api.happier.dev',
-              webappUrl: 'https://app.happier.dev',
-              createdAt: 0,
-              updatedAt: 0,
-              lastUsedAt: 0,
-            },
-          ],
-          knownAccountIds: ['acct_cli_1'],
-        },
-      },
-      runtime: { cwd: 'C:\\Users\\alice\\project', platform: 'win32', nodeVersion: 'v20.0.0' },
-      stackContext: {
-        stackName: 'exp1',
-        stackEnvPath: 'C:\\Users\\alice\\stack\\env',
-        runtimeStatePath: 'C:\\Users\\alice\\stack\\stack.runtime.json',
-        runtimeState: JSON.stringify({ stackName: 'exp1' }),
-        logCandidates: ['C:\\Users\\alice\\stack\\logs\\stack-runner.log'],
-      },
-    });
 
-    const result = await collectBugReportDiagnosticsArtifacts({
-      machines: [{ id: 'machine-1' } as any],
-      includeDiagnostics: true,
-      acceptedKinds: ['stack-service', 'daemon'],
-      maxArtifactBytes: 128_000,
-    });
-
-    const logFilenames = result.artifacts
-      .filter((artifact) => artifact.contentType === 'text/plain')
-      .map((artifact) => artifact.filename);
-    expect(logFilenames.some((name) => name.includes('daemon.log'))).toBe(true);
-    expect(logFilenames.some((name) => name.includes('stack-runner.log'))).toBe(true);
-    expect(logFilenames.join('|').toLowerCase()).not.toContain('users');
-    expect(logFilenames.join('|')).not.toContain('\\');
-  });
 });

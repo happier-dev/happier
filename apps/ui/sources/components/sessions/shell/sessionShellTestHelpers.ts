@@ -75,6 +75,8 @@ function resolveSessionItemTestListAttentionState(status: SessionStatus): Sessio
         case 'recoverable_unservable':
         case 'resuming':
             return 'quiet';
+        case 'archiving':
+            return 'thinking';
     }
 }
 
@@ -96,6 +98,7 @@ export function createSessionItemTestRowModel(
     const subtitle = input.subtitleOverride ?? '';
 
     const model: SessionListRowModel = {
+        appearanceColor: null,
         rowKey: `${serverId ?? 'local'}:${sessionId}`,
         sessionId,
         serverId,
@@ -219,6 +222,13 @@ export function installSessionShellCommonModuleMocks(
 
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock();
+    });
+
+    // The global FlashList stub is a host tag; shell tests need rendered rows and auxiliaries.
+    // Reuse each test's RN list boundary while retaining the real engine selector.
+    vi.mock('@shopify/flash-list', async () => {
+        const { FlatList } = await import('react-native');
+        return { FlashList: FlatList };
     });
 
     vi.mock('react-native-unistyles', async () => {

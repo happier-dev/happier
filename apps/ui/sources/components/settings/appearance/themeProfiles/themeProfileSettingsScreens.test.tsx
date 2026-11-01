@@ -122,9 +122,20 @@ vi.mock('react-native-unistyles', async () => {
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     const mutableSetting = createMutableSettingHook(shared.settingsState);
+    const { resolveAccountThemeProfileView } = await import('@/sync/domains/settings/themeProfiles');
+    const resolveView = (state: ThemeProfilesLocalStateV1) => resolveAccountThemeProfileView({
+        profiles: [], legacy: state, selection: null, legacyScope: null, scope: null,
+    });
     return createStorageModuleMock({
         importOriginal,
         overrides: {
+            useThemeProfilesMutable: () => {
+                const before = resolveView(shared.settingsState.themeProfiles as ThemeProfilesLocalStateV1);
+                return [before.state, next => {
+                    shared.settingsState.themeProfiles = next;
+                    return resolveView(next);
+                }, before];
+            },
             useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
             useLocalSetting: ((key: string) => mutableSetting(key)[0]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
         },
@@ -308,7 +319,7 @@ describe('Theme profile settings screen', () => {
         expect(clone?.overrides.dark['background.canvas']).toBeDefined();
         expect(shared.routerPush).toHaveBeenCalledWith({
             pathname: '/settings/appearance/themes/[profileId]',
-            params: { profileId: clone?.id },
+            params: expect.objectContaining({ profileId: clone?.id }),
         });
     });
 
@@ -342,7 +353,7 @@ describe('Theme profile settings screen', () => {
 
         expect(shared.routerPush).toHaveBeenCalledWith({
             pathname: '/settings/appearance/themes/[profileId]',
-            params: { profileId: 'ocean' },
+            params: expect.objectContaining({ profileId: 'ocean' }),
         });
     });
 

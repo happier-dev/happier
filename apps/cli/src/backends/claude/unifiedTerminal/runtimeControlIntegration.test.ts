@@ -469,6 +469,44 @@ describe('createClaudeUnifiedRuntimeControlBridge', () => {
     });
   });
 
+  it.each(['model', 'reasoningEffort'] as const)(
+    'restores the committed %s after a submitted but unverified change',
+    async (key) => {
+      const effortConfirmed = ['Set reasoning effort to high', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
+      const captures = [IDLE, IDLE, IDLE];
+      const port = createFakeControlPort({ captures });
+      const controller = await makeController(port);
+      const events: ClaudeUnifiedRuntimeConfigOutcomeEvent[] = [];
+      const initial = mode({ model: 'sonnet', reasoningEffort: 'high' });
+      const bridge = createClaudeUnifiedRuntimeControlBridge({
+        controller,
+        emitRuntimeConfigOutcome: (event) => events.push(event),
+        startupMode: initial,
+      });
+      bridge.reconcileFromStatusline({ model: 'sonnet', reasoningEffort: 'high' });
+
+      await bridge.applyBeforePrompt(mode(key === 'model'
+        ? { model: 'opus', reasoningEffort: 'high' }
+        : { model: 'sonnet', reasoningEffort: 'medium' }));
+      expect(events[0]?.changes).toContainEqual(expect.objectContaining({ reason: 'delivered_unverified' }));
+
+      // Restoration confirmations become available only after the unverified command settles.
+      captures.length = port.captureCount();
+      captures.fill(IDLE);
+      captures.push(
+        ...(key === 'model' ? [IDLE, IDLE, MODEL_OK] : []),
+        IDLE, IDLE, effortConfirmed, IDLE,
+      );
+      const restored = await bridge.applyBeforePrompt(initial);
+      expect(restored).toMatchObject({ attempted: true, promptMayProceed: true });
+      expect(port.sentLiteral).toContain(key === 'model' ? '/model sonnet' : '/effort high');
+      expect(controller.getLastVerifiedRuntimeConfig().reasoningEffort).toBe('high');
+      expect(controller.getPendingRuntimeConfig().model).toBeUndefined();
+      expect(controller.getPendingRuntimeConfig().reasoningEffort).toBeUndefined();
+      expect(await bridge.applyBeforePrompt(initial)).toMatchObject({ attempted: false });
+    },
+  );
+
   it('reports requires_interactive_control and blocks the prompt when a mode is not cycle-reachable', async () => {
     // default → (acceptEdits) → back to default (already visited) before reaching bypassPermissions → unreachable.
     const port = createFakeControlPort({ captures: [IDLE, ACCEPT, IDLE] });

@@ -7561,6 +7561,23 @@ function createLoopbackMachineTransferChannels() {
       });
 
       await vi.waitFor(() => expect(importSessionBundle).toHaveBeenCalledTimes(1));
+      const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
+      expect(resultGet).toBeDefined();
+      await vi.waitFor(async () => {
+        expect(await resultGet!({ handoffId: 'handoff_binary_provider_bundle' })).toMatchObject({
+          remoteSessionId: 'claude_session_binary',
+          status: { status: 'ready_for_cutover' },
+        });
+      });
+      // The importer invocation precedes completion of durable prepare writes.
+      // Retire the actual writer lease before removing its fixture directory.
+      const job = await createSessionHandoffPrepareTargetJobStore({ activeServerDir: targetActiveServerDir })
+        .findByHandoffId('handoff_binary_provider_bundle');
+      expect(job).not.toBeNull();
+      await vi.waitFor(async () => {
+        await expect(readFile(join(targetActiveServerDir, 'session-handoff', 'prepare-target-jobs-staging',
+          job!.jobId, 'lease', 'lease.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      });
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();

@@ -291,11 +291,14 @@ describe('createCatalogDefinedAcpBackend (CodeBuddy Code)', () => {
     20_000,
   );
 
-  it('re-enforces the mapped CodeBuddy mode after loading a vendor session', async () => {
+  it.each(['ordinary', 'captured'] as const)('re-enforces the mapped CodeBuddy mode once after %s loading', async (load) => {
     await withCodeBuddyAgent('happier-codebuddy-load-', async ({ callsPath }) => {
       const backend = createCatalogDefinedAcpBackend('codebuddy', { cwd: agentCwd, permissionMode: 'read-only' });
       try {
-        await expect(backend.loadSession?.('resumed' as SessionId)).resolves.toEqual({ sessionId: 'resumed' });
+        const result = load === 'captured'
+          ? await backend.loadSessionWithReplayCapture?.('resumed' as SessionId)
+          : await backend.loadSession?.('resumed' as SessionId);
+        expect(result).toEqual({ sessionId: 'resumed', ...(load === 'captured' ? { replay: [] } : {}) });
         const methods = readCalls(callsPath).map((call) => call.method);
         expect(methods).not.toContain('session/new');
         expect(methods.indexOf('session/set_mode')).toBeGreaterThan(methods.indexOf('session/load'));

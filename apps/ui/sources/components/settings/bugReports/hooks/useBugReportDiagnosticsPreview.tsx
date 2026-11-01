@@ -5,6 +5,7 @@ import { t } from '@/text';
 
 import { BugReportDiagnosticsPreviewModal, type BugReportDiagnosticsPreviewArtifact } from '../BugReportDiagnosticsPreviewModal';
 import { exportBugReportDiagnosticsBundle } from '../bugReportExport';
+import { bugReportErrorMessage, isBugReportDiagnosticsSuperseded } from '../bugReportErrorMessage';
 import type { BugReportDiagnosticsArtifact } from '../bugReportDiagnostics';
 import type { BugReportEnvironmentPayload } from '@happier-dev/protocol';
 
@@ -74,9 +75,10 @@ export function useBugReportDiagnosticsPreview(input: {
         closeOnBackdrop: true,
       });
     } catch (error) {
+      if (isBugReportDiagnosticsSuperseded(error)) return;
       await Modal.alert(
         t('bugReports.composer.alerts.previewUnavailableTitle'),
-        error instanceof Error ? error.message : t('bugReports.composer.alerts.previewUnavailableBody'),
+        bugReportErrorMessage(error, t('bugReports.composer.alerts.previewUnavailableBody')),
       );
     } finally {
       setPreviewing(false);

@@ -158,8 +158,7 @@ export const RestoreQrView = React.memo(function RestoreQrView() {
                 );
 
                 if (credentials && !isCancelledRef.current) {
-                    const secretString = encodeBase64(credentials.secret, 'base64url');
-                    await auth.login(credentials.token, secretString);
+                    await auth.loginWithCredentials(credentials);
                     if (!isCancelledRef.current) {
                         router.back();
                     }
@@ -205,7 +204,7 @@ export const RestoreQrView = React.memo(function RestoreQrView() {
                             </View>
                         ) : (
                             <QRCode
-                                data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url') })}
+                                data={buildAccountConnectDeepLink({ publicKeyB64Url: encodeBase64(keypair.publicKey, 'base64url'), supportsCredentialVariants: true })}
                                 size={260}
                                 foregroundColor={theme.colors.text.primary}
                                 backgroundColor={theme.colors.surface.base}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import type { Machine } from './types';
 
 const ioMock = vi.hoisted(() => vi.fn());
 
@@ -75,5 +76,25 @@ describe('ApiMachineClient updates', () => {
     } as any);
 
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires machine RPC before applying content encrypted with a changed key', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(ioMock, machineSocket);
+    const { ApiMachineClient } = await import('./apiMachine');
+    const machine: Machine = {
+      id: 'machine-1', encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy',
+      publishedDataEncryptionKey: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    };
+    const client = new ApiMachineClient('token', machine);
+    const onContentKeyChanged = vi.fn();
+    client.connect({ onContentKeyChanged });
+    machineSocket.getHandler('update')?.({ id: 'key-change', seq: 1, createdAt: 1, body: {
+      t: 'update-machine', machineId: 'machine-1', dataEncryptionKey: 'changed-key',
+      metadata: { value: 'unreadable', version: 1 }, daemonState: null,
+    } });
+    await vi.waitFor(() => expect(onContentKeyChanged).toHaveBeenCalledOnce());
+    expect(machine.metadataVersion).toBe(0);
+    expect(machine.metadata).toBeNull();
   });
 });

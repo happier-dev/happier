@@ -4,8 +4,72 @@ import { AcpBackend } from '@/agent/acp/AcpBackend';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { buildGrokExtensionHandlers } from './extensionHandlers';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 describe('correlated ACP prompt completion', () => {
+  it.each(['completion-retry', 'completion-error-retry', 'request-retry', 'request-reset'] as const)('retains provider limit category and retry timing through the primary turn lifecycle (%s)', async (failurePath) => {
+    await withTempDir('happier-acp-limit-evidence-', async (dir) => {
+      const resetAtMs = Date.now() + 120_000;
+      const scriptPath = writeAcpTestAgentScript({ dir, fileName: 'quota-agent.cjs', source: `
+        let buffer = '';
+        const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+        process.stdin.on('data', chunk => {
+          buffer += chunk.toString();
+          const lines = buffer.split('\\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const message = JSON.parse(line);
+            const respond = result => send({ jsonrpc: '2.0', id: message.id, result });
+            if (message.method === 'initialize') respond({ protocolVersion: 1, authMethods: [] });
+            else if (message.method === 'session/new') respond({ sessionId: 'quota-session' });
+            else if (message.method === 'session/prompt') {
+              const evidence = { status: 429, ${failurePath === 'request-reset' ? `resetAt: ${resetAtMs}` : 'retryAfterMs: 120000'}, token: 'provider-secret-value' };
+              if (${JSON.stringify(failurePath)}.startsWith('completion')) send({ jsonrpc: '2.0', method: 'x.ai/session/prompt_complete',
+                params: { sessionId: 'quota-session', promptId: message.params._meta.promptId, stopReason: ${JSON.stringify(failurePath === 'completion-error-retry' ? 'error' : 'rate_limit')}, agentResult: evidence } });
+              else send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Provider request rejected', data: evidence } });
+            } else if (message.method === 'session/cancel') respond({});
+          }
+        });
+      ` });
+      const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [scriptPath],
+        promptCompletion: { buildRequestMeta: ({ correlationId }) => ({ promptId: correlationId }) },
+        extensionHandlers: buildGrokExtensionHandlers({}),
+      });
+      const mutations: SessionTurnMutationV1[] = [];
+      const sessionTurnLifecycle = createSessionTurnLifecycle({ sessionId: 'quota-host-session',
+        enqueueSessionTurn: async (mutation) => { mutations.push(mutation); } });
+      const runtime = createTestAcpRuntime({ provider: 'grok', directory: dir,
+        session: { ...createBasicSessionClientWithOverrides(), sessionTurnLifecycle },
+        messageBuffer: new MessageBuffer(), mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {}, ensureBackend: async () => backend,
+      });
+      try {
+        await runtime.startOrLoad({});
+        await sessionTurnLifecycle.beginTurn({ provider: 'grok' });
+        runtime.beginTurn();
+        const failure = await runtime.sendPrompt('continue').then(() => null, (error: unknown) => error);
+        expect(failure).not.toBeNull();
+        await runtime.failTurn(failure);
+        await runtime.flushTurn();
+        expect(mutations.filter((mutation) => mutation.action === 'fail')).toEqual([
+          expect.objectContaining({ issue: expect.objectContaining({ source: 'usage_limit',
+            usageLimit: expect.objectContaining({ limitCategory: 'rate_limit',
+              ...(failurePath === 'request-reset' ? { resetAtMs } : { resetAtMs: null, retryAfterMs: 120_000 }),
+            }),
+          }) }),
+        ]);
+        expect(JSON.stringify(mutations)).not.toContain('provider-secret-value');
+        expect(String(failure)).not.toContain('provider-secret-value');
+      } finally { await runtime.reset(); }
+    });
+  }, 15_000);
+
   it('finalizes accepted provider completion through the canonical turn lifecycle', async () => {
     await withTempDir('happier-acp-xai-prompt-complete-', async (dir) => {
       const scriptPath = writeAcpTestAgentScript({

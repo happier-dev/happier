@@ -106,7 +106,9 @@ export async function handleUpdateAccountSocketUpdate(params: {
             }
 
             const parsedSettings = decryptedSettings ? settingsParse(decryptedSettings) : settingsParse({});
-            const secretsKey = await deriveSettingsSecretsKey(encryption.getContentPrivateKey());
+            const secretsKey = encryption.hasEncryptionMaterial()
+                ? await deriveSettingsSecretsKey(encryption.getContentPrivateKey())
+                : null;
             const sealedSettings = sealSecretsDeep(parsedSettings, secretsKey);
 
             const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});

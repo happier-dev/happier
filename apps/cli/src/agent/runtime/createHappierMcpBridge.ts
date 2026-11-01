@@ -2,7 +2,7 @@ import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappySe
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
 import type { Credentials } from '@/persistence'
-import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol'
+import { isSessionHappierToolsEnabled, type AccountSettings, type ActionsSettingsV1 } from '@happier-dev/protocol'
 
 function isTruthyEnvFlag(raw: string | undefined): boolean {
   const normalized = (raw ?? '').trim().toLowerCase()
@@ -59,6 +59,7 @@ export async function createHappierMcpBridge(
     credentials?: Credentials | null
     accountSettings?: AccountSettings | null
     requestedPort?: number
+    sessionMetadata?: unknown
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -74,11 +75,15 @@ export async function createHappierMcpBridgeWithOptions(
     credentials?: Credentials | null
     accountSettings?: AccountSettings | null
     requestedPort?: number
+    sessionMetadata?: unknown
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
   mcpServers: Record<string, McpServerConfig>
 }> {
+  if (!isSessionHappierToolsEnabled(opts.sessionMetadata ?? session.getMetadataSnapshot?.())) {
+    return { happierMcpServer: { url: '', stop: () => {} }, mcpServers: {} }
+  }
   const happierMcpServer = await startHappyServer(session, {
     credentials: opts.credentials ?? null,
     accountSettings: opts.accountSettings ?? null,

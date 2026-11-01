@@ -2,12 +2,13 @@ import type { ApiEphemeralActivityUpdate, ApiMessage, ApiUpdateContainer } from 
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
-import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
+import { isPlainMachineDataKeyMarker, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { buildPendingChangedSessionPatch } from './pendingChangedSessionPatch';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
+import { normalizeSessionOrderingNumber, reconcileSessionSnapshot, resolveSessionPresence, shouldPreserveSessionRequestProjection } from '@/sync/domains/session/sessionLifecycleProjection';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
@@ -209,8 +210,18 @@ const cacheOnlySessionUpdateProjectionPatchCoalescer = createSessionListRenderab
     readRenderable: (sessionId) => storage.getState().sessionListRenderables[sessionId],
     buildPatch: ({ payload, renderable }) => {
         const previousSeq = cacheOnlySessionUpdateSeqBySession.get(renderable.id) ?? 0;
+        const patchUpdatedAt = finiteNumber(payload.patch.updatedAt);
+        const currentUpdatedAt = finiteNumber(renderable.updatedAt) ?? 0;
+        const patchSeq = finiteNumber(payload.patch.seq);
+        const acceptsUnversionedFields = patchUpdatedAt === null
+            || patchUpdatedAt > currentUpdatedAt
+            || (patchUpdatedAt === currentUpdatedAt && (
+                payload.updateSeq > previousSeq
+                || (patchSeq !== null && patchSeq > renderable.seq)
+            ));
         cacheOnlySessionUpdateSeqBySession.set(renderable.id, Math.max(previousSeq, Math.trunc(payload.updateSeq)));
-        return payload.patch;
+        if (acceptsUnversionedFields) return payload.patch;
+        return applySessionListRenderablePatch(renderable, payload.patch, { preserveUnversionedFields: true });
     },
     applyPatches: (patches) => storage.getState().applySessionListRenderablePatches(patches),
 });
@@ -370,8 +381,10 @@ function shouldHydrateTurnsProjectionForSessionUpdate(params: Readonly<{
 }>): boolean {
     if (!params.fullContentConsumerActive) return false;
     if (!params.updateBody || typeof params.updateBody !== 'object') return false;
-    const latestTurnStatus = (params.updateBody as { latestTurnStatus?: unknown }).latestTurnStatus;
-    return isTerminalTurnStatus(latestTurnStatus);
+    const update = params.updateBody as { latestTurnStatus?: unknown; rollbackEligibleTurnStarts?: unknown };
+    // Rollback projection updates carry committed end anchors, including for an older turn
+    // while the latest turn is already running. Full-content consumers need that turn too.
+    return isTerminalTurnStatus(update.latestTurnStatus) || Array.isArray(update.rollbackEligibleTurnStarts);
 }
 
 function buildCacheOnlySessionProjectionPatch(params: Readonly<{
@@ -412,6 +425,9 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
                 : renderable.thinkingAt;
     if (typeof updateBody.active === 'boolean') patch.active = projectedActive;
     if (typeof updateBody.activeAt === 'number' && Number.isFinite(updateBody.activeAt)) patch.activeAt = projectedActiveAt;
+    if (typeof updateBody.active === 'boolean' || patch.activeAt !== undefined) {
+        patch.presence = resolveSessionPresence({ active: projectedActive, activeAt: projectedActiveAt });
+    }
     if (typeof updateBody.thinking === 'boolean' || updateBody.active === false) patch.thinking = projectedThinking;
     if (
         typeof updateBody.thinkingAt === 'number' && Number.isFinite(updateBody.thinkingAt)
@@ -426,6 +442,10 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
     }
     if (typeof updateBody.pendingUserActionRequestCount === 'number') {
         patch.hasPendingUserActionRequests = updateBody.pendingUserActionRequestCount > 0;
+    }
+    if (typeof patch.hasPendingPermissionRequests === 'boolean' || typeof patch.hasPendingUserActionRequests === 'boolean') {
+        const requestVersion = normalizeSessionOrderingNumber(updateBody.agentState?.version);
+        if (requestVersion !== null) patch.agentStateVersion = requestVersion;
     }
     if (typeof updateBody.pendingRequestObservedAt === 'number' || updateBody.pendingRequestObservedAt === null) {
         patch.pendingRequestObservedAt = updateBody.pendingRequestObservedAt;
@@ -761,33 +781,11 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
         pendingPermission: classification.pendingPermission ? 1 : 0,
         pendingUserAction: classification.pendingUserAction ? 1 : 0,
     }));
-    const patchUpdatedAt = finiteNumber(params.patch.updatedAt);
-    const patchSeq = finiteNumber(params.patch.seq);
-    const patchMetadataVersion = finiteNumber(params.patch.metadataVersion);
-    const shouldContinue = () => {
-        if (params.shouldContinue && !params.shouldContinue()) return false;
-        const currentRenderable = storage.getState().sessionListRenderables[params.sessionId];
-        if (
-            patchMetadataVersion !== null
-            && patchMetadataVersion > (finiteNumber(currentRenderable?.metadataVersion) ?? 0)
-        ) {
-            return true;
-        }
-        if (patchUpdatedAt === null) return true;
-        const currentUpdatedAt = finiteNumber(currentRenderable?.updatedAt) ?? 0;
-        if (currentUpdatedAt < patchUpdatedAt) return true;
-        if (currentUpdatedAt > patchUpdatedAt) return false;
-        const currentUpdateSeq = cacheOnlySessionUpdateSeqBySession.get(params.sessionId) ?? 0;
-        if (currentUpdateSeq < params.updateSeq) return true;
-        if (patchSeq === null) return false;
-        const currentSeq = finiteNumber(currentRenderable?.seq) ?? 0;
-        return currentSeq < patchSeq;
-    };
     cacheOnlySessionUpdateProjectionPatchCoalescer.enqueue(
         params.sessionId,
         { patch: params.patch, updateSeq: params.updateSeq },
         {
-            shouldContinue,
+            shouldContinue: params.shouldContinue,
             deferLeadingPatch: !forceImmediate,
             forceImmediate,
         },
@@ -1131,6 +1129,7 @@ function enqueueDeferredTranscriptStreamSegment(entry: DeferredTranscriptStreamS
 }
 
 export async function handleSocketUpdate(params: {
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee'>;
     update: unknown;
     encryption: Encryption;
     settingsScope?: AccountSettingsScope | null;
@@ -1208,6 +1207,7 @@ export async function handleSocketUpdate(params: {
     if (!shouldContinue()) return;
 
     await handleUpdateContainer({
+        getAccountEncryptionMode: params.getAccountEncryptionMode,
         updateData,
         encryption,
         settingsScope,
@@ -1245,7 +1245,38 @@ export async function handleSocketUpdate(params: {
     });
 }
 
+async function initializeMachineFromPublishedDataKey(params: Readonly<{
+    encryption: Encryption;
+    machineId: string;
+    envelope: unknown;
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee'>;
+    shouldContinue: () => boolean;
+}>): Promise<boolean> {
+    const { encryption, machineId, envelope, shouldContinue } = params;
+    const hasPlainMarker = typeof envelope === 'string' && isPlainMachineDataKeyMarker(envelope);
+    let isPlain = false;
+    let key: Uint8Array | null = null;
+    try {
+        if (hasPlainMarker) {
+            isPlain = await params.getAccountEncryptionMode?.() === 'plain';
+        } else if (typeof envelope === 'string' && envelope.length > 0) {
+            key = await encryption.decryptEncryptionKey(envelope);
+        }
+    } catch (error) {
+        console.warn(`[machineSocket] Could not resolve content for machine ${machineId}; machine content is unavailable.`, error);
+    }
+    if (!shouldContinue()) return false;
+    if (!isPlain && envelope !== null && envelope !== undefined && !key) {
+        await encryption.initializeMachines(new Map(), { unavailableMachineIds: new Set([machineId]) });
+        console.warn(`Failed to resolve the content mode or data key for machine ${machineId}; machine content is unavailable.`);
+        return false;
+    }
+    await encryption.initializeMachines(new Map([[machineId, key]]), isPlain ? { plainMachineIds: new Set([machineId]) } : undefined);
+    return shouldContinue() && encryption.getMachineEncryption(machineId) !== null;
+}
+
 export async function handleUpdateContainer(params: {
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee'>;
     updateData: ApiUpdateContainer;
     encryption: Encryption;
     settingsScope?: AccountSettingsScope | null;
@@ -1778,7 +1809,7 @@ export async function handleUpdateContainer(params: {
         }
         const hydrateSessionStateEffective = shouldHydrateSessionState && !missingEncryptionForState;
 
-        const { nextSession, agentState } = hydrateSessionStateEffective
+        const resolvedUpdate = hydrateSessionStateEffective
             ? await buildUpdatedSessionFromSocketUpdate({
                 session,
                 updateBody: updateData.body,
@@ -1797,12 +1828,49 @@ export async function handleUpdateContainer(params: {
                     updateSeq: updateData.seq,
                     updateCreatedAt: updateData.createdAt,
                 }),
-                agentState: session.agentState,
             };
 
         if (!shouldContinue()) return;
+        const currentSession = getSocketSessionApplyBase(updateData.body.id) ?? session;
+        let nextSession = reconcileSessionSnapshot(currentSession, resolvedUpdate.nextSession);
+        let currentRenderable = storage.getState().sessionListRenderables[session.id];
+        if ((!fullContentConsumerActive || missingEncryptionForState) && updateData.body.agentState && currentRenderable
+            && (typeof updateData.body.pendingPermissionRequestCount === 'number'
+                || typeof updateData.body.pendingUserActionRequestCount === 'number')) {
+            applyCacheOnlySessionUpdateProjectionPatch({
+                sessionId: session.id,
+                renderable: currentRenderable,
+                patch: buildCacheOnlySessionProjectionPatch({
+                    renderable: currentRenderable,
+                    updateBody: updateData.body,
+                    updateSeq: updateData.seq,
+                    updateCreatedAt: updateData.createdAt,
+                }),
+                updateSeq: updateData.seq,
+                shouldContinue,
+            });
+        }
+        currentRenderable = storage.getState().sessionListRenderables[session.id];
+        const sourceRequestVersion = normalizeSessionOrderingNumber(updateData.body.agentState?.version)
+            ?? resolvedUpdate.nextSession.agentStateVersion;
+        if (shouldPreserveSessionRequestProjection(currentRenderable, {
+            ...resolvedUpdate.nextSession,
+            agentStateVersion: sourceRequestVersion,
+        })) {
+            // Public counts can advance while hidden or unavailable detail is retained.
+            // Preserve the detail we actually have; the public envelope version must not label it.
+            nextSession = {
+                ...nextSession,
+                agentState: currentSession.agentState,
+                agentStateVersion: currentSession.agentStateVersion,
+                pendingPermissionRequestCount: currentSession.pendingPermissionRequestCount,
+                pendingUserActionRequestCount: currentSession.pendingUserActionRequestCount,
+                pendingRequestObservedAt: currentSession.pendingRequestObservedAt,
+            };
+        }
+        const agentState = nextSession.agentState;
         if (
-            shouldReportReadyProjectionAdvance(session, nextSession.latestReadyEventSeq)
+            shouldReportReadyProjectionAdvance(currentSession, nextSession.latestReadyEventSeq)
             && typeof nextSession.latestReadyEventSeq === 'number'
         ) {
             onReadyProjectionAdvance?.(updateData.body.id, nextSession.latestReadyEventSeq);
@@ -1828,10 +1896,11 @@ export async function handleUpdateContainer(params: {
         // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
         // by explicit invalidations after SCM mutations.
         if (hydrateSessionStateEffective && updateData.body.agentState) {
-            for (const nextRequest of deriveNewAgentRequests(session.agentState?.requests, agentState?.requests)) {
+            for (const nextRequest of deriveNewAgentRequests(currentSession.agentState?.requests, agentState?.requests)) {
                 notifyActivityAgentRequest({
                     sessionId: updateData.body.id,
                     requestId: nextRequest.requestId,
+                    occurrenceId: nextRequest.occurrenceId,
                     requestKind: nextRequest.requestKind,
                     toolName: nextRequest.toolName,
                     toolArgs: nextRequest.toolArgs,
@@ -1840,13 +1909,13 @@ export async function handleUpdateContainer(params: {
 
             // Check for new permission requests and notify voice assistant
             reportNewAgentRequestsFromSessionTransition(
-                { id: updateData.body.id, agentState: session.agentState ?? null } as Session,
+                { id: updateData.body.id, agentState: currentSession.agentState ?? null } as Session,
                 { id: updateData.body.id, agentState: agentState ?? null } as Session,
             );
 
             // Re-fetch messages when control returns to mobile (local -> remote mode switch)
             // This catches up on any messages that were exchanged while desktop had control
-            const wasControlledByUser = session.agentState?.controlledByUser;
+            const wasControlledByUser = currentSession.agentState?.controlledByUser;
             const isNowControlledByUser = agentState?.controlledByUser;
             if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
                 writeSyncDebugLog(log, `🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
@@ -1888,12 +1957,10 @@ export async function handleUpdateContainer(params: {
         //
         // NOTE: When the dataEncryptionKey is null, we still initialize with null so
         // the machine has a fallback encryptor available (legacy path).
-        const decryptedDataKey =
-            typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0
-                ? await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey)
-                : null;
-        if (!shouldContinue()) return;
-        await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+        await initializeMachineFromPublishedDataKey({
+            encryption, machineId, envelope: machineUpdate.dataEncryptionKey,
+            getAccountEncryptionMode: params.getAccountEncryptionMode, shouldContinue,
+        });
         if (!shouldContinue()) return;
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
@@ -1917,7 +1984,33 @@ export async function handleUpdateContainer(params: {
     } else if (updateData.body.t === 'update-machine') {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
-        const machine = storage.getState().machines[machineId];
+        let machine = storage.getState().machines[machineId];
+
+        if (Object.prototype.hasOwnProperty.call(machineUpdate, 'dataEncryptionKey')) {
+            // A whole-row conversion carries both content versions. A replayed older
+            // conversion must not replace the codec after its documents are stale.
+            const isStaleConversion = () => {
+                const current = storage.getState().machines[machineId];
+                return Boolean(current && machineUpdate.metadata && machineUpdate.daemonState
+                    && machineUpdate.metadata.version <= current.metadataVersion
+                    && machineUpdate.daemonState.version <= current.daemonStateVersion);
+            };
+            if (isStaleConversion()) return;
+            const initialized = await initializeMachineFromPublishedDataKey({
+                encryption, machineId, envelope: machineUpdate.dataEncryptionKey,
+                getAccountEncryptionMode: params.getAccountEncryptionMode,
+                shouldContinue: () => shouldContinue() && !isStaleConversion(),
+            });
+            if (!shouldContinue() || isStaleConversion()) return;
+            machine = storage.getState().machines[machineId];
+            if (!initialized) {
+                if (machine) {
+                    storage.getState().applyMachines([{ ...machine, metadata: null, daemonState: null }], false, { sourceServerId });
+                }
+                invalidateMachines();
+                return;
+            }
+        }
 
         // Machine encryption is derived from the machine's dataEncryptionKey, which can
         // arrive slightly later (e.g. after a machines refresh). Fail closed and
@@ -2179,7 +2272,7 @@ export function flushActivityUpdates(params: {
                 activeAt: update.activeAt,
                 thinking: nextThinking,
                 thinkingAt: runtimePresence.thinkingAt,
-                presence: update.active ? 'online' as const : update.activeAt,
+                presence: resolveSessionPresence(update),
                 updatedAt: update.activeAt,
             };
             if (!shouldApplyActivityPatch(session, patch)) continue;
@@ -2207,7 +2300,7 @@ export function flushActivityUpdates(params: {
                 activeAt: update.activeAt,
                 thinking: nextThinking,
                 thinkingAt: runtimePresence.thinkingAt,
-                presence: update.active ? 'online' as const : update.activeAt,
+                presence: resolveSessionPresence(update),
                 updatedAt: Math.max(finiteNumber(renderable.updatedAt) ?? update.activeAt, update.activeAt),
             };
             const isTimestampOnlyPatch = isTimestampOnlyActivityPatch(renderable, patch);

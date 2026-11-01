@@ -29,7 +29,7 @@ describe('actionsSettings', () => {
         const disabledState: any = {
             settings: {
                 experiments: false,
-                featureToggles: {},
+                featureToggles: { 'execution.runs': false },
                 actionsSettingsV1: { v: 1, actions: {} },
             },
         };
@@ -43,5 +43,19 @@ describe('actionsSettings', () => {
 
         expect(isActionEnabledInState(disabledState, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(false);
         expect(isActionEnabledInState(enabledState, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(true);
+    });
+
+    it('enables execution-runs-gated actions by default without the experiments switch', async () => {
+        const { isActionEnabledInState } = await import('./actionsSettings');
+
+        const defaultState: any = {
+            settings: {
+                experiments: false,
+                featureToggles: {},
+                actionsSettingsV1: { v: 1, actions: {} },
+            },
+        };
+
+        expect(isActionEnabledInState(defaultState, 'review.start' as any, { surface: 'ui_button', placement: 'command_palette' } as any)).toBe(true);
     });
 });

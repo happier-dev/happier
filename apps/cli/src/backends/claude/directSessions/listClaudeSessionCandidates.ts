@@ -8,6 +8,7 @@ import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcur
 import { logger } from '@/utils/logger';
 
 import { readClaudeSessionTitle } from './readClaudeSessionTitle';
+import { readClaudeSessionWorkingDirectory } from './getClaudeDirectSessionWorkingDirectory';
 import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
@@ -83,24 +84,50 @@ async function buildClaudeCandidate(params: Readonly<{
   } catch {
     title = null;
   }
+  const cwd = await readClaudeSessionWorkingDirectory(params.session.fullPath);
 
   return {
     remoteSessionId: params.session.remoteSessionId,
     ...(title ? { title } : {}),
     updatedAtMs: params.session.updatedAtMs,
     activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: params.session.updatedAtMs, env: params.env }),
-    details: { projectId: params.session.projectId },
+    details: { projectId: params.session.projectId, ...(cwd ? { cwd } : {}) },
   };
 }
 
-export async function listClaudeSessionCandidates(params: Readonly<{
+type ListClaudeSessionCandidatesParams = Readonly<{
   source: DirectSessionsSource;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null; searchIncomplete?: boolean }>> {
+}>;
+
+type ClaudeSessionCandidatesListing = Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null; searchIncomplete?: boolean }>;
+
+// Clients poll the candidate list, and a listing reads every transcript. Listing is a
+// local filesystem scan that always settles, so an identical call arriving while one
+// is running shares it instead of stacking another full scan on the daemon event loop.
+// Only calls on the process environment are shared: a caller-supplied env is an input
+// the key does not capture.
+const inFlightListings = new Map<string, Promise<ClaudeSessionCandidatesListing>>();
+
+export async function listClaudeSessionCandidates(params: ListClaudeSessionCandidatesParams): Promise<ClaudeSessionCandidatesListing> {
+  if (params.env) return await scanClaudeSessionCandidates(params);
+  const key = JSON.stringify([params.source, params.cursor ?? null, params.limit, params.searchTerm ?? null, params.searchMode ?? null]);
+  const pending = inFlightListings.get(key);
+  if (pending) return await pending;
+  const started = scanClaudeSessionCandidates(params);
+  inFlightListings.set(key, started);
+  try {
+    return await started;
+  } finally {
+    if (inFlightListings.get(key) === started) inFlightListings.delete(key);
+  }
+}
+
+async function scanClaudeSessionCandidates(params: ListClaudeSessionCandidatesParams): Promise<ClaudeSessionCandidatesListing> {
   const env = params.env ?? process.env;
   const startedAtMs = Date.now();
   const startMemory = process.memoryUsage();

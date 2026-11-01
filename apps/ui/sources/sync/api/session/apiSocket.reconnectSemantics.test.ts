@@ -35,7 +35,6 @@ type SocketStub = Readonly<{
 const reachability = vi.hoisted(() => ({
     subscribeSpy: vi.fn(),
     startSpy: vi.fn(async (..._args: unknown[]) => {}),
-    invalidateSpy: vi.fn(async (..._args: unknown[]) => {}),
     restartSpy: vi.fn((..._args: unknown[]) => {}),
     reportSpy: vi.fn((..._args: unknown[]) => {}),
     listenersByServerUrl: new Map<string, (state: ManagedConnectionState) => void>(),
@@ -72,7 +71,6 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (i
             };
         },
         startServerReachabilitySupervisor: (...args: unknown[]) => reachability.startSpy(...args),
-        invalidateServerReachabilitySupervisor: (...args: unknown[]) => reachability.invalidateSpy(...args),
         reportServerRestarting: (...args: unknown[]) => reachability.restartSpy(...args),
         reportServerUnreachable: (...args: unknown[]) => reachability.reportSpy(...args),
     };
@@ -200,7 +198,6 @@ describe('apiSocket reconnect semantics', () => {
     afterEach(() => {
         reachability.subscribeSpy.mockReset();
         reachability.startSpy.mockReset();
-        reachability.invalidateSpy.mockReset();
         reachability.restartSpy.mockReset();
         reachability.reportSpy.mockReset();
         reachability.listenersByServerUrl.clear();
@@ -267,38 +264,6 @@ describe('apiSocket reconnect semantics', () => {
         await settleAsyncWork();
 
         expect(onReconnected).toHaveBeenCalledTimes(1);
-    });
-
-    it('invalidates reachability instead of reporting generic unreachable when the socket transport drops', async () => {
-        const controller = createTransportController();
-        transportFactory.lastController = controller;
-        transportFactory.createSyncSocketTransportSpy.mockImplementation((params: any) => ({
-            socket: { onAny: vi.fn() },
-            transport: controller.transport,
-            ...params,
-        }));
-
-        const { apiSocket } = await import('./apiSocket');
-
-        const endpoint = 'https://server.example.test';
-        apiSocket.initialize({ endpoint, token: 'token-1' }, { getSessionEncryption: vi.fn(), getMachineEncryption: vi.fn() } as never);
-
-        emitReachability(endpoint, {
-            phase: 'online',
-            reason: null,
-            attempt: 1,
-            nextRetryAt: null,
-            lastConnectedAt: Date.now(),
-            lastDisconnectedAt: null,
-            lastErrorMessage: null,
-        });
-        await settleAsyncWork();
-
-        controller.triggerDisconnected({ intentional: false, reason: 'transport close', error: new Error('transport close') });
-        await settleAsyncWork();
-
-        expect(reachability.invalidateSpy).toHaveBeenCalledWith({ serverUrl: endpoint, token: 'token-1' });
-        expect(reachability.reportSpy).not.toHaveBeenCalled();
     });
 
     it('reports planned server restart socket events with a fast reachability probe delay', async () => {

@@ -1,26 +1,28 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
+import { hasSessionTitleInMetadata } from '../sessionMetadata/sessionTitle.js';
 
-export const CodingPromptBehaviorModeV1Schema = z.enum(['agent', 'disabled']);
+export const CodingPromptBehaviorModeV1Schema = lazySchema(() => z.enum(['agent', 'disabled']));
 export type CodingPromptBehaviorModeV1 = z.infer<typeof CodingPromptBehaviorModeV1Schema>;
 
-export const CodingPromptSessionTitleUpdatesModeV1Schema = z.enum(['disabled', 'initial', 'ongoing']);
+export const CodingPromptSessionTitleUpdatesModeV1Schema = lazySchema(() => z.enum(['disabled', 'initial', 'ongoing']));
 export type CodingPromptSessionTitleUpdatesModeV1 = z.infer<typeof CodingPromptSessionTitleUpdatesModeV1Schema>;
 
-const CodingPromptSessionTitleUpdatesInputV1Schema = z
+const CodingPromptSessionTitleUpdatesInputV1Schema = lazySchema(() => z
   .enum(['agent', 'disabled', 'initial', 'ongoing'])
-  .transform((mode): CodingPromptSessionTitleUpdatesModeV1 => (mode === 'agent' ? 'ongoing' : mode));
+  .transform((mode): CodingPromptSessionTitleUpdatesModeV1 => (mode === 'agent' ? 'ongoing' : mode)));
 
-export const CodingPromptBehaviorV1Schema = z
+export const CodingPromptBehaviorV1Schema = lazySchema(() => z
   .object({
     v: z.literal(1).default(1),
-    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.default('ongoing'),
+    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.default('initial'),
     responseOptions: CodingPromptBehaviorModeV1Schema.default('agent'),
   })
   .catch({
     v: 1,
-    sessionTitleUpdates: 'ongoing',
+    sessionTitleUpdates: 'initial',
     responseOptions: 'agent',
-  });
+  }));
 
 export type CodingPromptBehaviorV1 = z.infer<typeof CodingPromptBehaviorV1Schema>;
 
@@ -39,6 +41,17 @@ export function resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike: unkno
   return resolveCodingPromptBehaviorV1(settingsLike).sessionTitleUpdates;
 }
 
+/** Prompt guidance follows the Happier Session, not each new provider conversation. */
+export function resolveCodingPromptSessionTitleInstructionModeV1(
+  settingsLike: unknown,
+  sessionMetadata?: unknown,
+): CodingPromptSessionTitleUpdatesModeV1 {
+  const mode = resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike);
+  return mode === 'initial' && hasSessionTitleInMetadata(sessionMetadata)
+    ? 'disabled'
+    : mode;
+}
+
 export function isCodingPromptSessionTitleUpdatesEnabled(settingsLike: unknown): boolean {
   return resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike) !== 'disabled';
 }
@@ -48,11 +61,11 @@ export function isCodingPromptResponseOptionsEnabled(settingsLike: unknown): boo
 }
 
 // Override schema for per-profile overrides (partial, no field defaults)
-export const CodingPromptBehaviorOverrideV1Schema = z.object({
+export const CodingPromptBehaviorOverrideV1Schema = lazySchema(() => z.object({
   v: z.literal(1).default(1),
   sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.optional(),
   responseOptions: CodingPromptBehaviorModeV1Schema.optional(),
-}).catch({ v: 1 });
+}).catch({ v: 1 }));
 
 export type CodingPromptBehaviorOverrideV1 = z.infer<typeof CodingPromptBehaviorOverrideV1Schema>;
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   getStorage,
   registerLocalVoiceEngineHarnessHooks,
-  sessionRpcWithServerScope,
+  sessionRpc,
 } from './localVoiceEngine.testHarness';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
@@ -72,7 +72,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       },
     });
 
-    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+    sessionRpc.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
       assistantText: 'The coding session needs permission. Should I approve or deny it?',
       actions: [],
@@ -89,7 +89,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
-    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(sessionRpc).not.toHaveBeenCalled();
     expect(result.totalActions).toBe(0);
     expect(result.assistantTurns).toEqual(['The coding session needs permission. Should I approve or deny it?']);
   });
@@ -156,7 +156,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       },
     });
 
-    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+    sessionRpc.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
       assistantText: 'model fallback should not run',
       actions: [],
@@ -179,15 +179,13 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       'Approve the pending write permission request.',
       'permission-shortcut-test-2',
     );
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: 'permission',
-        payload: { id: 'perm_voice_1', approved: true },
-      }),
+    expect(sessionRpc).toHaveBeenCalledWith(
+      's1', 'permission',
+      { id: 'perm_voice_1', approved: true },
+      expect.any(Object),
     );
     expect(commitUserTranscript.mock.invocationCallOrder[0]).toBeLessThan(
-      sessionRpcWithServerScope.mock.invocationCallOrder[0]!,
+      sessionRpc.mock.invocationCallOrder[0]!,
     );
     expect(result.totalActions).toBe(1);
     expect(result.assistantTurns).toEqual(['Approved the pending permission request.']);
@@ -254,7 +252,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       },
     });
 
-    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+    sessionRpc.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
       assistantText: 'model fallback should not run',
       actions: [],
@@ -271,15 +269,13 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     expect(sendTurn).not.toHaveBeenCalled();
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: 'session.structuredQuestion.respond.v1',
-        payload: {
-          id: 'req_question',
-          structuredAnswersV1: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
-        },
-      }),
+    expect(sessionRpc).toHaveBeenCalledWith(
+      's1', 'session.structuredQuestion.respond.v1',
+      {
+        id: 'req_question',
+        structuredAnswersV1: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
+      },
+      expect.any(Object),
     );
     expect(result.totalActions).toBe(1);
     expect(result.assistantTurns).toEqual(['Denied the pending request.']);
@@ -401,7 +397,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       lastFocusedSessionId: null,
     } as any);
 
-    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+    sessionRpc.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
       assistantText: 'model fallback should not run',
       actions: [],
@@ -418,12 +414,10 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     expect(sendTurn).not.toHaveBeenCalled();
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: 'permission',
-        payload: { id: 'perm_voice_target', approved: true },
-      }),
+    expect(sessionRpc).toHaveBeenCalledWith(
+      's1', 'permission',
+      { id: 'perm_voice_target', approved: true },
+      expect.any(Object),
     );
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({
       t: 'processPermissionRequest',
@@ -511,7 +505,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     expect(sendTurn).not.toHaveBeenCalled();
-    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(sessionRpc).not.toHaveBeenCalled();
     expect(result.totalActions).toBe(0);
     expect(result.assistantTurns[0]).toContain('current session');
   });
@@ -582,7 +576,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
     );
-    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(sessionRpc).not.toHaveBeenCalled();
     expect(result.assistantTurns).toEqual(['There is no pending request in this session.']);
   });
 
@@ -664,7 +658,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
-    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+    expect(sessionRpc).not.toHaveBeenCalled();
     expect(result.totalActions).toBe(0);
     expect(result.assistantTurns).toEqual(['I approved it and summarized the request.']);
   });

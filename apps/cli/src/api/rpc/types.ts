@@ -65,8 +65,8 @@ export type RpcResponseCallback = (response: unknown) => void;
  */
 export interface RpcHandlerConfig {
     scopePrefix: string;
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
+    encryptionKey: Uint8Array | null;
+    encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     encryptionMode?: 'e2ee' | 'plain';
     logger?: (message: string, data?: any) => void;
     onRegistrationError?: (error: unknown) => void;

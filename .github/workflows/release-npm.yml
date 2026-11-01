@@ -165,8 +165,52 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  release:
+  build_windows_service_launcher:
+    name: Build Windows service launcher for npm packages
     needs: [release_actor_guard]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout exact npm source
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || (inputs.source_ref != 'auto' && inputs.source_ref || (inputs.channel == 'preview' && 'preview' || 'main')) }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Record launcher source
+        if: inputs.publish_cli || inputs.publish_stack
+        id: source
+        shell: pwsh
+        run: "Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value ('sha=' + (git rev-parse HEAD))"
+      - name: Setup Node
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Compile x64 GUI launcher with the installed MSVC toolchain
+        if: inputs.publish_cli || inputs.publish_stack
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Test launcher lifecycle in an isolated fixture
+        if: inputs.publish_cli || inputs.publish_stack
+        shell: pwsh
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packages/cli-common/native/windows/service-launcher.test.ps1
+      - name: Upload launcher for npm packaging
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-service-launcher-npm
+          path: packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    needs: [release_actor_guard, build_windows_service_launcher]
     permissions:
       contents: read
     runs-on: ubuntu-22.04
@@ -284,12 +328,26 @@ jobs:
             exit 1
           fi
 
+      - name: Verify launcher source matches npm source
+        if: inputs.publish_cli || inputs.publish_stack
+        env:
+          LAUNCHER_SOURCE_SHA: ${{ needs.build_windows_service_launcher.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$LAUNCHER_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$LAUNCHER_SOURCE_SHA"
+
+      - name: Download validated Windows service launcher
+        if: inputs.publish_cli || inputs.publish_stack
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-service-launcher-npm
+          path: packages/cli-common/native/windows/bin/windows-x64
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          node-version-file: .node-version
 
       - name: Setup Corepack (Yarn 1.22.22)
         uses: ./.github/actions/enable-corepack-yarn
@@ -297,7 +355,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         env:
@@ -570,7 +628,7 @@ jobs:
       - name: Setup Node (npm publish)
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
           registry-url: https://registry.npmjs.org
 
       - name: npm publish (cli tarball) (pipeline)
@@ -611,7 +669,7 @@ jobs:
       - name: Setup Node (npm publish)
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
           registry-url: https://registry.npmjs.org
 
       - name: npm publish (stack tarball) (pipeline)
@@ -652,7 +710,7 @@ jobs:
       - name: Setup Node (npm publish)
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
           registry-url: https://registry.npmjs.org
 
       - name: npm publish (server runner tarball) (pipeline)

@@ -34,7 +34,8 @@ export async function fetchChanges(params: {
                     'Content-Type': 'application/json',
                 },
             },
-            { includeAuth: false },
+            // /v2/changes enforces limit <= 500; native fetch may use a pre-resolution window.
+            { includeAuth: false, recoveryRead: 'paged' },
         );
     } catch {
         return { status: 'error' };
@@ -82,7 +83,8 @@ export async function fetchCurrentChangesCursor(params: {
                     'Content-Type': 'application/json',
                 },
             },
-            { includeAuth: false },
+            // /v2/cursor returns only the current cursor and prune floor.
+            { includeAuth: false, recoveryRead: 'paged' },
         );
     } catch {
         return { status: 'error' };

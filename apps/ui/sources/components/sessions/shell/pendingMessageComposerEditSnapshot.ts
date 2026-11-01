@@ -1,14 +1,8 @@
-import {
-    SessionDraftRecipientValueV1Schema,
-    type SessionDraftDocumentV1,
-} from '@happier-dev/protocol';
-
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
-import {
-    SessionDraftValueFieldSchemas,
-    type SessionDraftValueByFieldId,
-} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import type { SessionDraftValueByFieldId } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import type { ExistingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type PendingMessageComposerSemanticDraftSnapshot = Readonly<{
     recipient: SessionDraftValueByFieldId['routing.recipient'] | undefined;
@@ -25,27 +19,27 @@ export type PendingMessageComposerEditState = Readonly<{
     loadedText: string;
 }>;
 
+/**
+ * Reads the composer's semantic draft fields at call time through their canonical owner — the
+ * same owner that restores them — so a captured edit snapshot is always the repository's current
+ * value rather than whatever document the last render happened to subscribe to.
+ */
 export function readPendingMessageComposerSemanticDraftSnapshot(
-    document: SessionDraftDocumentV1 | null,
+    values: Pick<ExistingSessionDraftSemanticValues, 'read'>,
+    scope: ServerAccountScope | null,
+    sessionId: string,
 ): PendingMessageComposerSemanticDraftSnapshot {
-    if (!document || document.target.kind !== 'session') {
+    if (!scope) {
         return {
             recipient: undefined,
             executionRunDelivery: undefined,
             structuredInputMentions: undefined,
         };
     }
-    const recipient = SessionDraftRecipientValueV1Schema.safeParse(document.target.routing.recipient.value);
-    const executionRunDelivery = SessionDraftValueFieldSchemas['routing.executionRunDelivery']
-        .safeParse(document.target.routing.executionRunDelivery.value);
-    const mentions = SessionDraftValueFieldSchemas['structuredInput.mentions']
-        .safeParse(document.composer.mentions.value);
     return {
-        recipient: recipient.success && recipient.data !== null
-            ? recipient.data.recipient
-            : undefined,
-        executionRunDelivery: executionRunDelivery.success ? executionRunDelivery.data : undefined,
-        structuredInputMentions: mentions.success ? mentions.data : undefined,
+        recipient: values.read(scope, sessionId, 'routing.recipient'),
+        executionRunDelivery: values.read(scope, sessionId, 'routing.executionRunDelivery'),
+        structuredInputMentions: values.read(scope, sessionId, 'structuredInput.mentions'),
     };
 }
 

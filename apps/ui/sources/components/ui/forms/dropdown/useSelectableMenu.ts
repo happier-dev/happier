@@ -120,13 +120,13 @@ export function useSelectableMenu(params: {
         setSelectedIndex(allowEmptySelection ? -1 : firstEnabledIndex());
     }, [allItems, allowEmptySelection, firstEnabledIndex, isEnabledIndex, params.initialSelectedId, searchQuery]);
 
-    const moveSelection = useCallback((dir: -1 | 1) => {
+    const moveSelection = useCallback((dir: -1 | 1, from: number = selectedIndex) => {
         if (allItems.length === 0) return;
-        if (allowEmptySelection && selectedIndex === -1) {
+        if (allowEmptySelection && from === -1) {
             setSelectedIndex(dir === 1 ? firstEnabledIndex() : lastEnabledIndex());
             return;
         }
-        let next = selectedIndex;
+        let next = from;
         for (let step = 0; step < allItems.length; step += 1) {
             next = Math.min(allItems.length - 1, Math.max(0, next + dir));
             if (isEnabledIndex(next)) {
@@ -136,24 +136,78 @@ export function useSelectableMenu(params: {
         }
     }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex, lastEnabledIndex, selectedIndex]);
 
-    const handleKeyPress = useCallback((key: string, onActivate: (item: SelectableMenuItem) => void) => {
+    /** A run of consecutive swatches in one group renders as one row; returns its index bounds. */
+    const swatchRunAt = useCallback((idx: number): Readonly<{ start: number; end: number }> | null => {
+        const group = allItems[idx]?.swatch?.group ?? null;
+        if (!allItems[idx]?.swatch) return null;
+        const sameRow = (i: number) => Boolean(allItems[i]?.swatch) && (allItems[i]!.swatch!.group ?? null) === group;
+        let start = idx;
+        let end = idx;
+        while (sameRow(start - 1)) start -= 1;
+        while (sameRow(end + 1)) end += 1;
+        return { start, end };
+    }, [allItems]);
+
+    /** Up/Down step between rows: a swatch row counts as one row and is entered at its start. */
+    const moveRow = useCallback((dir: -1 | 1) => {
+        const run = selectedIndex >= 0 ? swatchRunAt(selectedIndex) : null;
+        const from = run ? (dir === 1 ? run.end : run.start) : selectedIndex;
+        const before = from + dir;
+        const targetRun = swatchRunAt(before);
+        if (dir === -1 && targetRun && isEnabledIndex(targetRun.start)) {
+            setSelectedIndex(targetRun.start);
+            return;
+        }
+        moveSelection(dir, from);
+    }, [isEnabledIndex, moveSelection, selectedIndex, swatchRunAt]);
+
+    const handleKeyPress = useCallback((
+        key: string,
+        onActivate: (item: SelectableMenuItem) => void,
+        nav?: Readonly<{
+            /** Opens the highlighted item's submenu (ArrowRight / Enter). */
+            onOpenSubmenu?: (item: SelectableMenuItem) => void;
+            /** Returns from a submenu to its parent (ArrowLeft outside a swatch row). */
+            onBack?: () => void;
+        }>,
+    ) => {
+        const current = selectedIndex >= 0 && isEnabledIndex(selectedIndex) ? allItems[selectedIndex] ?? null : null;
+        const run = selectedIndex >= 0 ? swatchRunAt(selectedIndex) : null;
         switch (key) {
             case 'Escape':
                 params.onRequestClose();
                 break;
             case 'ArrowDown':
-                moveSelection(1);
+                moveRow(1);
                 break;
             case 'ArrowUp':
-                moveSelection(-1);
+                moveRow(-1);
                 break;
-            case 'Enter':
-                if (selectedIndex >= 0 && isEnabledIndex(selectedIndex) && allItems[selectedIndex]) {
-                    onActivate(allItems[selectedIndex]!);
+            case 'ArrowRight':
+                if (run) {
+                    if (selectedIndex < run.end && isEnabledIndex(selectedIndex + 1)) setSelectedIndex(selectedIndex + 1);
+                } else if (current?.hasSubmenu) {
+                    nav?.onOpenSubmenu?.(current);
                 }
                 break;
+            case 'ArrowLeft':
+                // Inside a swatch row Left steps back; from a row's start (or any text row) it leaves the submenu.
+                if (run && selectedIndex > run.start) {
+                    if (isEnabledIndex(selectedIndex - 1)) setSelectedIndex(selectedIndex - 1);
+                } else {
+                    nav?.onBack?.();
+                }
+                break;
+            case 'Enter':
+                if (!current) break;
+                if (current.hasSubmenu) {
+                    nav?.onOpenSubmenu?.(current);
+                    break;
+                }
+                onActivate(current);
+                break;
         }
-    }, [allItems, isEnabledIndex, moveSelection, params, selectedIndex]);
+    }, [allItems, isEnabledIndex, moveRow, params, selectedIndex, swatchRunAt]);
 
     const handleSearchChange = useCallback((text: string) => setSearchQuery(text), []);
 

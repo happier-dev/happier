@@ -1,129 +1,99 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@/dev/testkit';
 import { installBugReportHooksCommonModuleMocks } from './bugReportHooksTestHelpers';
+import type { BugReportsFeature } from '../bugReportFeatureDefaults';
+import type { BugReportComposerSubmissionInput } from '../bugReportSubmissionFlow';
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const modalAlertMock = vi.fn(async () => {});
-const routerBackMock = vi.fn();
+const modalAlert = vi.fn(async () => {});
+const routerBack = vi.fn();
+const openUrl = vi.fn(async () => {});
 installBugReportHooksCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alert: modalAlertMock,
-                confirm: vi.fn(async () => false),
-            },
-        }).module;
+        return createModalModuleMock({ spies: { alert: modalAlert, confirm: vi.fn(async () => false) } }).module;
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({
-            router: {
-                back: routerBackMock,
-                push: vi.fn(),
-            },
-        }).module;
+        return createExpoRouterMock({ router: { back: routerBack, push: vi.fn() } }).module;
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({ Linking: { openURL: openUrl } });
     },
 });
+vi.mock('expo-file-system', async () => {
+    const { createExpoFileSystemMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+    return createExpoFileSystemMock().module;
+});
+// Native SDK boundaries stay inert; the real consent, submission and persistence owners run.
+vi.mock('@sentry/react-native', () => ({}));
+vi.mock('expo-application', () => ({}));
 
-vi.mock('@/utils/system/bugReportActionTrail', () => ({
-  recordBugReportUserAction: vi.fn(),
-  clearBugReportUserActionTrail: vi.fn(),
-}));
+const snapshotKey = 'happier_pre_restart_bug_report_snapshot_v1';
+const saved = new Map<string, string>();
+const feature: BugReportsFeature = {
+    enabled: true, providerUrl: 'https://report-service.example.test', defaultIncludeDiagnostics: true,
+    maxArtifactBytes: 128_000, acceptedArtifactKinds: ['ui-mobile'], uploadTimeoutMs: 10_000, contextWindowMs: 30_000,
+};
+const draft: BugReportComposerSubmissionInput = {
+    title: 'Crash report', summary: 'App crashed.', currentBehavior: 'User-edited exception',
+    reproductionStepsText: '', whatChangedRecently: '',
+    environment: { appVersion: '1.2.3', platform: 'web', deploymentType: 'cloud' },
+    includeDiagnostics: false, acceptedPrivacyNotice: false,
+};
 
-vi.mock('@/utils/system/bugReportLogBuffer', () => ({
-  clearBugReportLogBuffer: vi.fn(),
-}));
+beforeEach(() => {
+    vi.clearAllMocks();
+    saved.clear();
+    saved.set(snapshotKey, 'saved original exception');
+    vi.stubGlobal('__HAPPIER_CRASH_REPORTS_OPTOUT__', true);
+    vi.stubGlobal('localStorage', {
+        getItem: (key: string) => saved.get(key) ?? null,
+        setItem: (key: string, value: string) => saved.set(key, value),
+        removeItem: (key: string) => saved.delete(key),
+    });
+});
+afterEach(() => vi.unstubAllGlobals());
 
-const clearPreRestartBugReportSnapshotMock = vi.fn(async () => {});
-vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
-  clearPreRestartBugReportSnapshot: clearPreRestartBugReportSnapshotMock,
-}));
-
-vi.mock('../openBugReportFallback', () => ({
-  openBugReportFallbackIssueUrl: vi.fn(async () => {}),
-  openBugReportIssueUrlSilently: vi.fn(),
-}));
-
-const validateBugReportDraftMock = vi.fn(() => ({ code: 'ok' as const }));
-const submitBugReportFromDraftMock = vi.fn(async () => ({
-  mode: 'submitted' as const,
-  reportId: 'report_1',
-  issueNumber: 123,
-  issueUrl: 'https://example.com/issues/123',
-  artifactCount: 0,
-}));
-vi.mock('../bugReportSubmissionFlow', () => ({
-  validateBugReportDraft: validateBugReportDraftMock,
-  submitBugReportFromDraft: submitBugReportFromDraftMock,
-}));
-
-vi.mock('../bugReportServiceClient', () => ({
-  submitBugReportToService: vi.fn(async () => ({ reportId: 'report_1', issueNumber: 123, issueUrl: 'https://example.com/issues/123' })),
-}));
+async function renderSubmission(options: { feature?: BugReportsFeature; draft?: BugReportComposerSubmissionInput } = {}) {
+    const { useBugReportComposerSubmit } = await import('./useBugReportComposerSubmit');
+    return await renderHook(() => useBugReportComposerSubmit({
+        feature: options.feature ?? feature, machines: [], route: '/settings/report-issue',
+        includeDiagnostics: false, diagnosticsKinds: [], issueOwner: 'happier-dev', issueRepo: 'happier',
+        existingIssueNumber: null, openFallbackIssue: async () => {}, buildDraftInput: () => options.draft ?? draft,
+    }));
+}
 
 describe('useBugReportComposerSubmit', () => {
-  beforeEach(() => {
-    modalAlertMock.mockClear();
-    routerBackMock.mockClear();
-    clearPreRestartBugReportSnapshotMock.mockClear();
-    validateBugReportDraftMock.mockClear();
-    submitBugReportFromDraftMock.mockClear();
-  });
-
-  it('clears the pre-restart bug report snapshot after a successful submission', async () => {
-    const { useBugReportComposerSubmit } = await import('./useBugReportComposerSubmit');
-
-    function TestComponent() {
-      const { handleSubmit } = useBugReportComposerSubmit({
-        feature: {
-          enabled: true,
-          providerUrl: 'https://example.com/provider',
-          defaultIncludeDiagnostics: true,
-          maxArtifactBytes: 128_000,
-          acceptedArtifactKinds: ['ui-mobile'],
-          uploadTimeoutMs: 10_000,
-          contextWindowMs: 30_000,
-        } as any,
-        machines: [],
-        route: '/settings/report-issue',
-        includeDiagnostics: false,
-        diagnosticsKinds: [],
-        issueOwner: 'happier-dev',
-        issueRepo: 'happier',
-        existingIssueNumber: null,
-        openFallbackIssue: async () => {},
-        buildDraftInput: () => ({
-          title: 'Crash report',
-          summary: 'App crashed.',
-          reproductionStepsText: '',
-          whatChangedRecently: '',
-          environment: { appVersion: '1.2.3', platform: 'ios', deploymentType: 'cloud' },
-          includeDiagnostics: false,
-          acceptedPrivacyNotice: true,
-        }),
-      });
-
-      return React.createElement('Text', { onPress: handleSubmit });
-    }
-
-    let tree: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<TestComponent />)).tree;
-
-    const button = tree!.findByType('Text' as any);
-    await act(async () => {
-      await pressTestInstanceAsync(button);
+    it.each([false, true])('keeps the saved crash until the report service confirms success (failure=%s)', async (failSubmission) => {
+        const requests: Array<{ url: string; body: unknown }> = [];
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+            requests.push({ url: String(url), body: typeof init?.body === 'string' ? JSON.parse(init.body) : null });
+            const sessionRequest = String(url).endsWith('/v1/reports/session');
+            return new Response(JSON.stringify(sessionRequest
+                ? { reportId: 'report_1', uploadTargets: [] }
+                : { reportId: 'report_1', issueNumber: 123, issueUrl: 'https://example.test/issues/123' }),
+            { status: !sessionRequest && failSubmission ? 503 : 200, headers: { 'content-type': 'application/json' } });
+        }));
+        const hook = await renderSubmission();
+        await act(async () => hook.getCurrent().handleSubmit());
+        expect(requests[0]?.body).toMatchObject({ form: { currentBehavior: 'User-edited exception' }, artifacts: [] });
+        expect(JSON.stringify(requests)).not.toContain('saved original exception');
+        expect(saved.has(snapshotKey)).toBe(failSubmission);
+        expect(routerBack).toHaveBeenCalledTimes(failSubmission ? 0 : 1);
+        expect(hook.getCurrent().submitting).toBe(false);
     });
 
-    expect(clearPreRestartBugReportSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(routerBackMock).toHaveBeenCalledTimes(1);
-  });
+    it('retains the saved crash when opening the public-issue fallback', async () => {
+        const fetch = vi.fn<typeof globalThis.fetch>();
+        vi.stubGlobal('fetch', fetch);
+        const hook = await renderSubmission({ feature: { ...feature, enabled: false } });
+        await act(async () => hook.getCurrent().handleSubmit());
+        expect(fetch).not.toHaveBeenCalled();
+        expect(saved.has(snapshotKey)).toBe(true);
+        expect(routerBack).not.toHaveBeenCalled();
+    });
 });

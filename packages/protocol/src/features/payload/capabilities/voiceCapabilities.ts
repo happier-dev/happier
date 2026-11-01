@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { lazySchema } from '../../../lazySchema.js';
 
-export const VoiceCapabilitiesSchema = z.object({
+export const VoiceCapabilitiesSchema = lazySchema(() => z.object({
   configured: z.boolean(),
   provider: z.enum(['elevenlabs']).nullable(),
   /**
@@ -13,7 +14,7 @@ export const VoiceCapabilitiesSchema = z.object({
    * This allows server routes to select the correct error semantics without re-evaluating build policy ad hoc.
    */
   disabledByBuildPolicy: z.boolean().optional().default(false),
-});
+}));
 
 export type VoiceCapabilities = z.infer<typeof VoiceCapabilitiesSchema>;
 

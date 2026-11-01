@@ -8,7 +8,7 @@ import { AgentTransitionDividerRow } from '@/components/sessions/transcript/agen
 import { Text } from '@/components/ui/text/Text';
 import type { AgentEvent } from '@/sync/typesRaw';
 import { t } from '@/text';
-import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
+import { resolveConnectedServiceUxDiagnosticPresentation, resolveSessionConnectedServiceAuthSwitchErrorMessageKey } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { useSettings } from '@/sync/store/hooks';
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
 import {
@@ -66,7 +66,7 @@ function formatConnectedServiceSwitchAttemptFailureText(event: Extract<AgentEven
     const diagnosticPresentation = resolveConnectedServiceUxDiagnosticPresentation(event.diagnostic);
     const text = diagnosticPresentation
         ? t(diagnosticPresentation.statusKey)
-        : t('connectedServices.authSwitch.switchFailed');
+        : t(resolveSessionConnectedServiceAuthSwitchErrorMessageKey(event.errorCode));
     if (diagnosticPresentation) return text;
     return typeof event.errorCode === 'string' && event.errorCode.trim().length > 0
         ? `${text} (${event.errorCode.trim()})`

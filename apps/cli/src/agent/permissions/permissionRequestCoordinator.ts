@@ -1,6 +1,7 @@
 import { deepEqual } from '@/utils/deterministicJson';
-import type { AgentStateOutstandingRequest } from './agentStateRequestStore';
+import { isSameAgentStateRequestOccurrence, type AgentStateOutstandingRequest } from './agentStateRequestStore';
 import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
+import { logger } from '@/ui/logger';
 
 export type PermissionRequestCoordinatorRequest = Readonly<{
     requestId: string;
@@ -15,6 +16,7 @@ export type PermissionRequestCoordinatorRequest = Readonly<{
 
 export type PermissionRequestCoordinatorContext = Readonly<{
     requestId: string;
+    occurrenceId?: string;
     toolName: string;
     toolInput: unknown;
     createdAt: number;
@@ -43,6 +45,7 @@ export type PermissionRequestCoordinatorCompletion<TResult> = Readonly<{
 export type PermissionRequestCoordinatorStore = Readonly<{
     publishRequest(params: Readonly<{
         requestId: string;
+        onOccurrenceAssigned?: (occurrenceId: string) => void;
         toolName: string;
         toolInput: unknown;
         createdAt: number;
@@ -60,10 +63,11 @@ export type PermissionRequestCoordinatorStore = Readonly<{
         allowedTools?: readonly string[] | undefined;
         updatedPermissions?: unknown;
         extraCompletedFields?: Readonly<Record<string, unknown>> | null;
-        fallback?: Readonly<{ toolName: string; toolInput: unknown; createdAt: number; kind?: string; source?: string }> | null;
+        fallback?: Readonly<{ occurrenceId?: string; toolName: string; toolInput: unknown; createdAt: number; kind?: string; source?: string }> | null;
         requireAck?: boolean;
-    }>): Promise<void> | void;
-    cancelAllRequests?(params: Readonly<{ reason: string; decision?: string }>): void;
+        expectedOccurrenceId?: string;
+        observedCompletion?: true;
+    }>): Promise<void>;
     hasOutstandingRequest(requestId: string): boolean;
     isOutstandingRequestClaimed(requestId: string): boolean;
     readOutstandingRequest(requestId: string): AgentStateOutstandingRequest | null;
@@ -84,6 +88,7 @@ type PendingPermissionWaiter<TResult> = {
 
 type PendingPermissionRequest<TResult> = {
     requestId: string;
+    occurrenceId?: string;
     toolName: string;
     toolInput: unknown;
     createdAt: number;
@@ -170,8 +175,12 @@ export class PermissionRequestCoordinator<TResult> {
 
         this.pendingRequests.set(request.requestId, entry);
         try {
+            const publishedEntry = entry;
             this.store.publishRequest({
                 requestId: entry.requestId,
+                // Retain the producer-assigned identity with this exact live entry, even
+                // when an asynchronous publication outlives its persisted projection.
+                onOccurrenceAssigned: (occurrenceId) => { publishedEntry.occurrenceId = occurrenceId; },
                 toolName: entry.toolName,
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
@@ -192,14 +201,16 @@ export class PermissionRequestCoordinator<TResult> {
         return this.attachWaiter(entry, options?.signal);
     }
 
-    getResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
+    getResponseContext(requestId: string, expectedOccurrenceId?: string): PermissionRequestCoordinatorContext | null {
         if (this.isRequestClaimed(requestId)) return null;
+        if (expectedOccurrenceId !== undefined && this.store.readOutstandingRequest(requestId)?.occurrenceId !== expectedOccurrenceId) return null;
         this.pruneDetachedRecords();
 
         const entry = this.pendingRequests.get(requestId);
         if (entry) {
             return {
                 requestId,
+                occurrenceId: this.store.readOutstandingRequest(requestId)?.occurrenceId ?? entry.occurrenceId,
                 toolName: entry.toolName,
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
@@ -216,6 +227,7 @@ export class PermissionRequestCoordinator<TResult> {
 
         return {
             requestId,
+            occurrenceId: outstanding.occurrenceId,
             toolName: outstanding.toolName,
             toolInput: outstanding.toolInput,
             createdAt: outstanding.createdAt,
@@ -231,29 +243,24 @@ export class PermissionRequestCoordinator<TResult> {
      * Returns response context only when this runtime still owns an active provider waiter.
      * Persisted agent state and detached records are deliberately insufficient for structured answers.
      */
-    getLocallyOwnedLiveResponseContext(requestId: string): PermissionRequestCoordinatorContext | null {
-        if (this.isRequestClaimed(requestId)) return null;
-        this.pruneDetachedRecords();
+    getLocallyOwnedLiveResponseContext(requestId: string, expectedOccurrenceId?: string): PermissionRequestCoordinatorContext | null {
+        const context = this.getResponseContext(requestId, expectedOccurrenceId);
         const entry = this.pendingRequests.get(requestId);
-        if (!entry || entry.status !== 'live') return null;
+        if (!context || !entry || entry.status !== 'live') return null;
         const hasLiveWaiter = [...entry.waiters.values()].some((waiter) => !waiter.aborted);
         if (!hasLiveWaiter) return null;
-        return {
-            requestId,
-            toolName: entry.toolName,
-            toolInput: entry.toolInput,
-            createdAt: entry.createdAt,
-            ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
-            ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
-            sourceLocalId: entry.sourceLocalId,
-            correlation: 'record',
-            status: 'live',
-        };
+        return context;
+    }
+
+    private isInvalidatedDecision(requestId: string, status: string): boolean {
+        return status !== 'canceled' && this.invalidatedDecisionRequestIds.has(requestId);
     }
 
     handleResponse(params: Readonly<{
         requestId: string;
         buildCompletion: (context: PermissionRequestCoordinatorContext) => PermissionRequestCoordinatorCompletion<TResult>;
+        onAdmitted?: () => void;
+        observedCompletion?: true;
     }>): boolean {
         if (this.isRequestClaimed(params.requestId)) return false;
         const context = this.getResponseContext(params.requestId);
@@ -262,30 +269,24 @@ export class PermissionRequestCoordinator<TResult> {
         return this.completeResponse({
             context,
             completion: params.buildCompletion(context),
+            onAdmitted: params.onAdmitted,
+            observedCompletion: params.observedCompletion,
         });
     }
 
     completeResponse(params: Readonly<{
         context: PermissionRequestCoordinatorContext;
         completion: PermissionRequestCoordinatorCompletion<TResult>;
+        onAdmitted?: () => void;
+        observedCompletion?: true;
     }>): boolean {
-        const { context, completion } = params;
-        if (this.isRequestClaimed(context.requestId)) return false;
-        const entry = this.pendingRequests.get(context.requestId);
-        if (entry) {
-            if (entry.completionInProgress) return false;
-            this.store.completeRequest({
-                ...this.buildEntryCompletion(entry, completion),
-            });
-            this.finishPendingResponse(entry, completion.result);
-            return true;
-        }
-
-        if (!this.store.hasOutstandingRequest(context.requestId)) return false;
-
-        this.store.completeRequest({
-            requestId: context.requestId,
-            ...completion.completedRequest,
+        if (this.isRequestClaimed(params.context.requestId)) return false;
+        const entry = this.pendingRequests.get(params.context.requestId);
+        if (entry && this.isInvalidatedDecision(params.context.requestId, params.completion.completedRequest.status)) return false;
+        if (entry?.completionInProgress && params.observedCompletion !== true) return false;
+        if (!entry && !this.store.hasOutstandingRequest(params.context.requestId)) return false;
+        void this.completeResponseWithAdmission(params).catch(() => {
+            logger.infoFile('[Permissions] Request settlement admission failed; response can be retried');
         });
         return true;
     }
@@ -293,6 +294,8 @@ export class PermissionRequestCoordinator<TResult> {
     async completeRpcResponse(params: Readonly<{
         context: PermissionRequestCoordinatorContext;
         completion: PermissionRequestCoordinatorCompletion<TResult>;
+        onAdmitted?: () => void;
+        expectedOccurrenceId?: string;
     }>): Promise<boolean> {
         return await this.completeResponseWithAck(params);
     }
@@ -300,42 +303,91 @@ export class PermissionRequestCoordinator<TResult> {
     async completeResponseWithAck(params: Readonly<{
         context: PermissionRequestCoordinatorContext;
         completion: PermissionRequestCoordinatorCompletion<TResult>;
+        onAdmitted?: () => void;
+        expectedOccurrenceId?: string;
+    }>): Promise<boolean> {
+        return await this.completeResponseWithAdmission({ ...params, requireAck: true });
+    }
+
+    async completeCancellationResponse(params: Readonly<{
+        context: PermissionRequestCoordinatorContext;
+        result: TResult;
+        reason: string;
+    }>): Promise<boolean> {
+        const entry = this.pendingRequests.get(params.context.requestId);
+        try {
+            return await this.completeResponseWithAdmission({
+                context: params.context,
+                completion: { result: params.result, completedRequest: { status: 'canceled', reason: params.reason } },
+            });
+        } catch (error) {
+            if (entry && this.pendingRequests.get(params.context.requestId) === entry) {
+                this.detachCanceledWaiters(entry, params.reason);
+            }
+            throw error;
+        }
+    }
+
+    private async completeResponseWithAdmission(params: Readonly<{
+        context: PermissionRequestCoordinatorContext;
+        completion: PermissionRequestCoordinatorCompletion<TResult>;
+        onAdmitted?: () => void;
+        observedCompletion?: true;
+        requireAck?: boolean;
+        expectedOccurrenceId?: string;
     }>): Promise<boolean> {
         const { context, completion } = params;
+        if (params.expectedOccurrenceId !== undefined
+            && this.store.readOutstandingRequest(context.requestId)?.occurrenceId !== params.expectedOccurrenceId) return false;
         if (this.isRequestClaimed(context.requestId)) return false;
         const entry = this.pendingRequests.get(context.requestId);
-        if (!entry) {
-            if (!this.store.hasOutstandingRequest(context.requestId)) return false;
-            await this.store.completeRequest({
-                requestId: context.requestId,
-                ...completion.completedRequest,
-                requireAck: true,
-            });
-            return true;
-        }
-        if (entry.completionInProgress) return false;
-        entry.completionInProgress = true;
+        const isLifecycleCancellation = completion.completedRequest.status === 'canceled' && params.requireAck !== true;
+        if (entry && isLifecycleCancellation) this.invalidatedDecisionRequestIds.add(context.requestId);
+        if (entry && this.isInvalidatedDecision(context.requestId, params.completion.completedRequest.status)) return false;
+        if (entry?.completionInProgress && params.observedCompletion !== true && !isLifecycleCancellation) return false;
+        if (!entry && !this.store.hasOutstandingRequest(context.requestId)) return false;
+        if (entry) entry.completionInProgress = true;
         try {
-            await this.store.completeRequest({
-                ...this.buildEntryCompletion(entry, completion),
-                requireAck: true,
-            });
-            if (this.pendingRequests.get(context.requestId) !== entry) return false;
-            this.finishPendingResponse(entry, completion.result);
+            await this.store.completeRequest(entry
+                ? { ...this.buildEntryCompletion(entry, completion), requireAck: params.requireAck,
+                    expectedOccurrenceId: params.expectedOccurrenceId,
+                    observedCompletion: params.observedCompletion }
+                : { requestId: context.requestId, ...completion.completedRequest, requireAck: params.requireAck,
+                    expectedOccurrenceId: params.expectedOccurrenceId,
+                    observedCompletion: params.observedCompletion,
+                    fallback: { occurrenceId: context.occurrenceId, toolName: context.toolName, toolInput: context.toolInput,
+                        createdAt: context.createdAt, kind: context.kind, source: context.source },
+                });
+            if (entry && this.pendingRequests.get(context.requestId) !== entry) return false;
+            if (entry && this.isInvalidatedDecision(context.requestId, completion.completedRequest.status)) return false;
+            if (this.isRequestClaimed(context.requestId)) return false;
+            const current = this.store.readOutstandingRequest(context.requestId);
+            if (current && params.expectedOccurrenceId !== undefined
+                && current.occurrenceId !== params.expectedOccurrenceId) return false;
+            if (current && !isSameAgentStateRequestOccurrence({
+                tool: current.toolName, arguments: current.toolInput, createdAt: current.createdAt, source: current.source,
+            }, {
+                tool: context.toolName, arguments: context.toolInput, createdAt: context.createdAt, source: context.source,
+            })) return false;
+            params.onAdmitted?.();
+            if (entry && this.pendingRequests.get(context.requestId) === entry) {
+                this.finishPendingResponse(entry, completion.result);
+            }
             return true;
         } finally {
-            entry.completionInProgress = false;
+            if (entry) entry.completionInProgress = false;
         }
     }
 
     private buildEntryCompletion(
         entry: PendingPermissionRequest<TResult>,
-        completion: PermissionRequestCoordinatorCompletion<TResult>,
+        completion: Pick<PermissionRequestCoordinatorCompletion<TResult>, 'completedRequest'>,
     ) {
         return {
             requestId: entry.requestId,
             ...completion.completedRequest,
             fallback: {
+                occurrenceId: entry.occurrenceId,
                 toolName: entry.toolName,
                 toolInput: entry.toolInput,
                 createdAt: entry.createdAt,
@@ -385,23 +437,57 @@ export class PermissionRequestCoordinator<TResult> {
         entry.waiters.clear();
     }
 
-    cancelAll(reason: string): void {
+    async cancelAll(reason: string): Promise<void> {
+        const entries = [...this.pendingRequests.entries()];
+        const requestIds = entries.filter(([requestId]) => !this.isRequestClaimed(requestId)).map(([requestId]) => requestId);
+        for (const requestId of requestIds) this.invalidatedDecisionRequestIds.add(requestId);
         for (const requestId of this.cachedDecisions.keys()) {
             this.invalidatedDecisionRequestIds.add(requestId);
         }
-        for (const requestId of [...this.pendingRequests.keys()]) {
-            this.cancelRequest(requestId, reason);
-        }
         this.cachedDecisions.clear();
-        this.store.cancelAllRequests?.({ reason, decision: 'abort' });
+        const results = await Promise.allSettled(entries.map(async ([requestId, entry]) => {
+            if (entry && !this.isRequestClaimed(requestId)) {
+                entry.completionInProgress = true;
+                try {
+                    await this.store.completeRequest(this.buildEntryCompletion(entry, {
+                        completedRequest: { status: 'canceled', decision: 'abort', reason },
+                    }));
+                } catch (error) {
+                    if (this.pendingRequests.get(requestId) === entry) {
+                        this.detachCanceledWaiters(entry, reason);
+                    }
+                    throw error;
+                } finally {
+                    entry.completionInProgress = false;
+                }
+            }
+            if (this.pendingRequests.get(requestId) === entry) {
+                this.cancelRequest(requestId, reason);
+            }
+        }));
+        const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failed) throw failed.reason;
+    }
+
+    private detachCanceledWaiters(entry: PendingPermissionRequest<TResult>, reason: string): void {
+        entry.status = 'detached';
+        this.invalidatedDecisionRequestIds.add(entry.requestId);
+        for (const waiter of entry.waiters.values()) {
+            rejectWaiter(waiter, createPermissionRequestAbortError(reason));
+        }
+        entry.waiters.clear();
     }
 
     reset(): void {
-        this.cancelAll('Permission coordinator reset');
+        void this.cancelAll('Permission coordinator reset').catch(() => {
+            logger.infoFile('[Permissions] Reset request settlement admission failed');
+        });
     }
 
     dispose(): void {
-        this.cancelAll('Permission coordinator disposed');
+        void this.cancelAll('Permission coordinator disposed').catch(() => {
+            logger.infoFile('[Permissions] Disposal request settlement admission failed');
+        });
     }
 
     private attachWaiter(entry: PendingPermissionRequest<TResult>, signal: AbortSignal | undefined): Promise<TResult> {
@@ -451,6 +537,8 @@ export class PermissionRequestCoordinator<TResult> {
     private pruneDetachedRecords(): void {
         for (const [requestId, entry] of this.pendingRequests) {
             if (entry.status !== 'detached') continue;
+            if (entry.completionInProgress) continue;
+            if (this.invalidatedDecisionRequestIds.has(requestId)) continue;
             if (this.store.hasOutstandingRequest(requestId)) continue;
             this.pendingRequests.delete(requestId);
         }

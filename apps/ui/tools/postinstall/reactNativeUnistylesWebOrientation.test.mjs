@@ -27,8 +27,9 @@ test('vendored Unistyles web runtime tolerates hosts without the Screen Orientat
     globalThis.window = dom.window;
     globalThis.document = dom.window.document;
     globalThis.screen = dom.window.screen;
-    dom.window.matchMedia = () => ({
-        matches: false,
+    let portraitViewport = true;
+    dom.window.matchMedia = (query) => ({
+        matches: query === '(orientation: portrait)' && portraitViewport,
         addEventListener() {},
         removeEventListener() {},
     });
@@ -55,6 +56,8 @@ test('vendored Unistyles web runtime tolerates hosts without the Screen Orientat
 
     assert.equal(dom.window.screen.orientation, undefined);
     assert.equal(UnistylesRuntime.orientation, 'portrait');
+    portraitViewport = false;
+    assert.equal(UnistylesRuntime.orientation, 'landscape');
 
     Object.defineProperty(dom.window.screen, 'orientation', {
         configurable: true,

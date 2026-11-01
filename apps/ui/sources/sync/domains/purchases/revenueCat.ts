@@ -1,5 +1,6 @@
 import Purchases, { 
     CustomerInfo as NativeCustomerInfo,
+    PurchasesOffering,
     PurchasesOfferings,
     PurchasesStoreProduct,
     LOG_LEVEL
@@ -10,6 +11,7 @@ import {
     CustomerInfo, 
     Product, 
     Offerings, 
+    Offering,
     PurchaseResult,
     RevenueCatConfig,
     LogLevel,
@@ -183,26 +185,18 @@ class RevenueCatNative implements RevenueCatInterface {
     }
 
     private transformOfferings(native: PurchasesOfferings): Offerings {
-        const transformPackages = (packages: any[]) => {
-            return packages.map(pkg => ({
+        const transformOffering = (offering: PurchasesOffering): Offering => ({
+            identifier: offering.identifier,
+            availablePackages: offering.availablePackages.map(pkg => ({
                 identifier: pkg.identifier,
                 packageType: pkg.packageType,
-                product: this.transformProduct(pkg.storeProduct)
-            }));
-        };
+                product: this.transformProduct(pkg.product)
+            }))
+        });
 
         return {
-            current: native.current ? {
-                identifier: native.current.identifier,
-                availablePackages: transformPackages(Object.values(native.current.availablePackages))
-            } : null,
-            all: Object.entries(native.all || {}).reduce((acc, [key, offering]) => {
-                acc[key] = {
-                    identifier: offering.identifier,
-                    availablePackages: transformPackages(Object.values(offering.availablePackages))
-                };
-                return acc;
-            }, {} as Record<string, any>)
+            current: native.current ? transformOffering(native.current) : null,
+            all: Object.fromEntries(Object.entries(native.all).map(([key, offering]) => [key, transformOffering(offering)]))
         };
     }
 }

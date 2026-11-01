@@ -65,7 +65,8 @@ pub fn follow_login_start_setting(app: &AppHandle, mode: Option<AutostartMode>) 
 
     let autolaunch = app.autolaunch();
     // `enable` rewrites the login item, which is also what migrates one written without
-    // `--menu-bar`.
+    // `--menu-bar` or with an older executable name. Keep the channel's product name (the
+    // plugin's login-item key) stable so this replaces the old path in place.
     let result = if start_at_login {
         autolaunch.enable()
     } else {

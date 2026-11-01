@@ -25,6 +25,7 @@ import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import { assertSessionHandoffPrepareTargetJobId } from './sessionHandoffPrepareTargetJobId';
+import { lazySchema } from '@happier-dev/protocol';
 
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1 = 1 as const;
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2 = 2 as const;
@@ -49,15 +50,15 @@ const sessionHandoffPrepareTargetJobCommonShape = {
     prepareTargetResult: SessionHandoffPrepareTargetResultGetResponseSchema.optional(),
 } as const;
 
-const SessionHandoffPrepareTargetJobRecordV1Schema = z
+const SessionHandoffPrepareTargetJobRecordV1Schema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1),
     ...sessionHandoffPrepareTargetJobCommonShape,
   })
   .strip()
-  .superRefine(refineSessionHandoffPrepareTargetJobRecordCoherence);
+  .superRefine(refineSessionHandoffPrepareTargetJobRecordCoherence));
 
-const SessionHandoffPreparedTargetResumeStateV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffPreparedTargetResumeStateV2Schema = lazySchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('not_attempted') }).strict(),
   z.object({ status: z.literal('preexisting_unowned') }).strict(),
   z
@@ -75,9 +76,9 @@ const SessionHandoffPreparedTargetResumeStateV2Schema = z.discriminatedUnion('st
       confirmedAtMs: z.number().int().min(0),
     })
     .strict(),
-]);
+]));
 
-const SessionHandoffTerminalStateV2Schema = z.discriminatedUnion('status', [
+const SessionHandoffTerminalStateV2Schema = lazySchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('open') }).strict(),
   z
     .object({
@@ -100,9 +101,9 @@ const SessionHandoffTerminalStateV2Schema = z.discriminatedUnion('status', [
       completedRevision: z.number().int().min(0),
     })
     .strict(),
-]);
+]));
 
-const SessionHandoffPreparedTargetJobRecordV2Schema = z
+const SessionHandoffPreparedTargetJobRecordV2Schema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
     recordKind: z.literal('prepared_target'),
@@ -113,9 +114,9 @@ const SessionHandoffPreparedTargetJobRecordV2Schema = z
     terminal: SessionHandoffTerminalStateV2Schema,
     targetCleanup: SessionHandoffTargetCleanupSchema,
   })
-  .strip();
+  .strip());
 
-const SessionHandoffLegacyTargetJobRecordV2Schema = z
+const SessionHandoffLegacyTargetJobRecordV2Schema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
     recordKind: z.literal('legacy_target'),
@@ -125,9 +126,9 @@ const SessionHandoffLegacyTargetJobRecordV2Schema = z
     terminal: SessionHandoffTerminalStateV2Schema,
     targetCleanup: z.object({ status: z.literal('legacy_cleanup_unavailable') }).strict(),
   })
-  .strip();
+  .strip());
 
-const SessionHandoffSourceOnlyJobRecordV2Schema = z
+const SessionHandoffSourceOnlyJobRecordV2Schema = lazySchema(() => z
   .object({
     schemaVersion: z.literal(SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2),
     recordKind: z.literal('source_only'),
@@ -138,9 +139,9 @@ const SessionHandoffSourceOnlyJobRecordV2Schema = z
     terminal: SessionHandoffTerminalStateV2Schema,
     targetCleanup: z.object({ status: z.literal('not_applicable'), reason: z.literal('source_only') }).strict(),
   })
-  .strip();
+  .strip());
 
-const SessionHandoffPrepareTargetJobRecordV2Schema = z.discriminatedUnion('recordKind', [
+const SessionHandoffPrepareTargetJobRecordV2Schema = lazySchema(() => z.discriminatedUnion('recordKind', [
   SessionHandoffPreparedTargetJobRecordV2Schema,
   SessionHandoffLegacyTargetJobRecordV2Schema,
   SessionHandoffSourceOnlyJobRecordV2Schema,
@@ -191,12 +192,12 @@ const SessionHandoffPrepareTargetJobRecordV2Schema = z.discriminatedUnion('recor
       message: 'Terminal transition revision must match the record transitionRevision',
     });
   }
-});
+}));
 
-const SessionHandoffPrepareTargetJobRecordSchema = z.union([
+const SessionHandoffPrepareTargetJobRecordSchema = lazySchema(() => z.union([
   SessionHandoffPrepareTargetJobRecordV1Schema,
   SessionHandoffPrepareTargetJobRecordV2Schema,
-]);
+]));
 
 function refineSessionHandoffPrepareTargetJobRecordCoherence(
   record: Readonly<{

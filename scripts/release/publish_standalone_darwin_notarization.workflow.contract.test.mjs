@@ -20,6 +20,28 @@ test('CLI candidate build installs the complete cross-target optional native pac
   assert.match(String(install?.with?.args ?? ''), /(?:^|\s)--ignore-platform(?:\s|$)/);
 });
 
+test('CLI and hstack publishers keep launcher artifacts distinct within one release run', async () => {
+  const artifactNames = new Set();
+  const launcherDirectory = 'packages/cli-common/native/windows/bin/windows-x64';
+  for (const workflowName of ['publish-cli-binaries.yml', 'publish-hstack-binaries.yml']) {
+    const { workflow } = await loadWorkflow(workflowName);
+    const upload = workflow.jobs.build_windows_service_launcher.steps.find(
+      (step) => step.uses?.startsWith('actions/upload-artifact@')
+        && step.with?.path === `${launcherDirectory}/happier-service-launcher.exe`,
+    );
+    const download = workflow.jobs.build_candidate.steps.find(
+      (step) => step.uses?.startsWith('actions/download-artifact@')
+        && step.with?.path === launcherDirectory,
+    );
+    assert.ok(upload, `${workflowName} must upload its built launcher`);
+    assert.ok(download, `${workflowName} must consume its launcher artifact`);
+    assert.equal(download.with.name, upload.with.name);
+    assert.ok(upload.with.name.includes('${{ needs.prepare.outputs.source_sha }}'));
+    assert.equal(artifactNames.has(upload.with.name), false, 'co-running publishers must not upload the same artifact name');
+    artifactNames.add(upload.with.name);
+  }
+});
+
 test('fresh Darwin finalizers explicitly build the trusted archive runtime before extraction', async () => {
   for (const workflowName of [
     'publish-cli-binaries.yml',

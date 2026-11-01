@@ -21,6 +21,7 @@ import {
     normalizeSessionListWorkingPlacementMode,
 } from '@/sync/domains/session/listing/attentionPromotion/sessionListAttentionPromotionTypes';
 import { normalizeSessionListFolderSortMode } from '@/sync/domains/session/listing/sessionListFolderSortMode';
+import { normalizeSessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     SESSION_LIST_ORDERING_MODES_V1,
@@ -53,6 +54,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionListIdentityDisplay, setSessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
+    const [sessionListBackgroundWorkAttentionMode, setSessionListBackgroundWorkAttentionMode] = useSettingMutable('sessionListBackgroundWorkAttentionModeV1');
     const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
     const [sessionReminderAutoClearOnOpen, setSessionReminderAutoClearOnOpen] = useSettingMutable('sessionReminderAutoClearOnOpen');
     const [sessionListWorkingPlacementMode, setSessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
@@ -76,6 +78,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [openSessionHeaderIdentityDisplayMenu, setOpenSessionHeaderIdentityDisplayMenu] = React.useState(false);
     const [openSessionListActiveColorModeMenu, setOpenSessionListActiveColorModeMenu] = React.useState(false);
     const [openSessionListAttentionPromotionModeMenu, setOpenSessionListAttentionPromotionModeMenu] = React.useState(false);
+    const [openSessionListBackgroundWorkAttentionModeMenu, setOpenSessionListBackgroundWorkAttentionModeMenu] = React.useState(false);
     const [openSessionListWorkingPlacementModeMenu, setOpenSessionListWorkingPlacementModeMenu] = React.useState(false);
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
     const [openSessionListFolderSortModeMenu, setOpenSessionListFolderSortModeMenu] = React.useState(false);
@@ -272,6 +275,28 @@ export default React.memo(function SessionSettingsScreen() {
         const mode = normalizeSessionListAttentionPromotionMode(itemId);
         setSessionListAttentionPromotionMode(mode);
     }, [setSessionListAttentionPromotionMode]);
+
+    const normalizedSessionListBackgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(sessionListBackgroundWorkAttentionMode);
+    const sessionListBackgroundWorkAttentionModeItems = React.useMemo(() => [
+        {
+            id: 'keepWorking',
+            title: t('settingsSession.sessionList.backgroundWorkAttentionKeepWorkingTitle'),
+            subtitle: t('settingsSession.sessionList.backgroundWorkAttentionKeepWorkingSubtitle'),
+        },
+        {
+            id: 'keepWorkingUnread',
+            title: t('settingsSession.sessionList.backgroundWorkAttentionKeepWorkingUnreadTitle'),
+            subtitle: t('settingsSession.sessionList.backgroundWorkAttentionKeepWorkingUnreadSubtitle'),
+        },
+        {
+            id: 'showUnread',
+            title: t('settingsSession.sessionList.backgroundWorkAttentionShowUnreadTitle'),
+            subtitle: t('settingsSession.sessionList.backgroundWorkAttentionShowUnreadSubtitle'),
+        },
+    ], []);
+    const handleSessionListBackgroundWorkAttentionModeSelect = React.useCallback((itemId: string) => {
+        setSessionListBackgroundWorkAttentionMode(normalizeSessionListBackgroundWorkAttentionMode(itemId));
+    }, [setSessionListBackgroundWorkAttentionMode]);
 
     const normalizedSessionListWorkingPlacementMode = normalizeSessionListWorkingPlacementMode(sessionListWorkingPlacementMode);
     const sessionListWorkingPlacementModeItems = React.useMemo(() => [
@@ -856,6 +881,27 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListAttentionPromotionModeItems}
                     onSelect={handleSessionListAttentionPromotionModeSelect}
+                />
+                <DropdownMenu
+                    open={openSessionListBackgroundWorkAttentionModeMenu}
+                    onOpenChange={setOpenSessionListBackgroundWorkAttentionModeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedSessionListBackgroundWorkAttentionMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.sessionList.backgroundWorkAttentionModeTitle'),
+                        subtitle: t('settingsSession.sessionList.backgroundWorkAttentionModeSubtitle'),
+                        icon: <Icon name="chat-circle-dots" size={29} color={theme.colors.accent.indigo} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-backgroundWorkAttentionMode-trigger' },
+                    }}
+                    items={sessionListBackgroundWorkAttentionModeItems}
+                    onSelect={handleSessionListBackgroundWorkAttentionModeSelect}
                 />
                 <Item
                     testID="settings-session-reminderAutoClearOnOpen-item"

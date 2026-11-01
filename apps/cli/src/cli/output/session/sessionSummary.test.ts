@@ -72,6 +72,17 @@ describe('summarizeSessionRow', () => {
     expect(session).not.toHaveProperty('permissionMode');
   });
 
+  it('rejects encrypted rows without account key material even when metadata is empty', () => {
+    expect(() => summarizeSessionRow({
+      credentials: { token: 'token', encryption: null },
+      row: createSessionRecordFixture({
+        id: 'session-encrypted-keyless',
+        encryptionMode: 'e2ee',
+        metadata: '',
+      }),
+    })).toThrow(expect.objectContaining({ code: 'ACCOUNT_ENCRYPTION_KEY_REQUIRED' }));
+  });
+
   it.each([
     ['read-only', 'read-only'],
     ['safe-yolo', 'safe-yolo'],
@@ -111,9 +122,9 @@ describe('summarizeSessionRow', () => {
     expect(session).not.toHaveProperty('permissionMode');
   });
 
-  it('projects independent authority fields from plaintext metadata', () => {
+  it.each([credentials, { token: 'token', encryption: null }])('projects plaintext metadata and encryption from the row mode', (accountCredentials) => {
     const session = summarizeSessionRow({
-      credentials,
+      credentials: accountCredentials,
       row: createSessionRecordFixture({
         id: 'session-plain-binding',
         encryptionMode: 'plain',
@@ -122,6 +133,7 @@ describe('summarizeSessionRow', () => {
     });
 
     expect(session.machineId).toBe('machine-target');
+    expect(session.encryption.type).toBe('plain');
     expect(session).not.toHaveProperty('permissionMode');
   });
 });

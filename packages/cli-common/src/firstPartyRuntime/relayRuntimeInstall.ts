@@ -9,6 +9,7 @@ import {
     applyServicePlan,
     buildServiceDefinition,
     planServiceAction,
+    preflightServiceInstallAssets,
     resolveServiceBackend,
     type ServiceBackend,
     type ServiceSpec,
@@ -749,6 +750,8 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     if (!existsSync(params.serverBinaryPath)) {
         throw new Error('[relay-runtime] server binary not found');
     }
+    // Install and rollback both need these assets; reject before stopping the current service.
+    await preflightServiceInstallAssets({ backend });
 
     const preparedPayload = await prepareRelayRuntimePayloadForInstall({
         serverBinaryPath: params.serverBinaryPath,

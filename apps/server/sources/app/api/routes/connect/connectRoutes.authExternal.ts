@@ -11,6 +11,7 @@ import { oauthExternalRateLimitAuthParamsPerIp } from "./oauthExternal/oauthExte
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternal/oauthExternalErrors";
 import { registerExternalAuthFinalizeRoute } from "./oauthExternal/registerExternalAuthFinalizeRoute";
 import { registerExternalAuthFinalizeKeylessRoute } from "./oauthExternal/registerExternalAuthFinalizeKeylessRoute";
+import { registerExternalAuthTokenExchangeRoute } from "./oauthExternal/registerExternalAuthTokenExchangeRoute";
 import { authPendingSchema } from "./oauthExternal/oauthExternalSchemas";
 import { deleteOAuthPendingBestEffort, loadValidOAuthPending } from "./connectRoutes.oauthPending";
 import { ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } from "@happier-dev/protocol";
@@ -134,6 +135,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
 
     registerExternalAuthFinalizeRoute(app);
     registerExternalAuthFinalizeKeylessRoute(app);
+    registerExternalAuthTokenExchangeRoute(app);
 
     app.delete("/v1/auth/external/:provider/pending/:pending", {
         schema: {

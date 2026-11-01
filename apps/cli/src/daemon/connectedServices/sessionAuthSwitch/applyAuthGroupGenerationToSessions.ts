@@ -1,4 +1,5 @@
 import type { ConnectedServiceSessionAuthSwitchReason } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { hasConnectedServiceAccountApplicationProof, readConnectedServiceAccountApplicationCredentialError } from './connectedServiceAuthSwitchOutcome';
 import type {
   ConnectedServiceAuthGenerationReconciliationDisposition,
   ConnectedServiceAuthGroupCommittedGenerationFact,
@@ -124,16 +125,10 @@ function isExactSharedApplicationProof(input: Readonly<{
   committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
   providerAdoptedTarget: ConnectedServiceProviderAdoptedGenerationTarget;
 }>): boolean {
-  const desired = input.committedGeneration.decisionCommittedTarget;
-  const adopted = input.providerAdoptedTarget;
-  return desired.credentialRevision !== null
-    && adopted.serviceId === desired.serviceId
-    && adopted.groupId === desired.groupId
-    && adopted.profileId === desired.profileId
-    && adopted.generation === desired.generation
-    && adopted.credentialRevision === desired.credentialRevision
-    && adopted.proof.status === 'verified'
-    && adopted.proof.credentialRevision === desired.credentialRevision;
+  return hasConnectedServiceAccountApplicationProof({
+    target: input.committedGeneration.decisionCommittedTarget,
+    adopted: input.providerAdoptedTarget,
+  });
 }
 
 async function runSharedApplicationEffect(input: Readonly<{
@@ -145,10 +140,6 @@ async function runSharedApplicationEffect(input: Readonly<{
 }>): Promise<GenerationApplyResult> {
   if (!isCurrentGenerationTarget(input.representative)) {
     return { reconciliationDisposition: 'failed', errorCode: 'runtime_target_registration_superseded' };
-  }
-  const desired = input.committedGeneration.decisionCommittedTarget;
-  if (desired.credentialRevision === null) {
-    return { reconciliationDisposition: 'failed', errorCode: 'shared_application_epoch_revision_missing' };
   }
   const verify = input.orchestration.verifySharedGenerationApplication;
   if (!verify) {
@@ -189,7 +180,8 @@ async function runSharedApplicationEffect(input: Readonly<{
       committedGeneration: input.committedGeneration,
       providerAdoptedTarget: verified,
     })) {
-      return { reconciliationDisposition: 'failed', errorCode: 'shared_application_verification_invalid' };
+      return { reconciliationDisposition: 'failed',
+        errorCode: readConnectedServiceAccountApplicationCredentialError(verified) ?? 'shared_application_verification_invalid' };
     }
 
     const result = verified
@@ -443,16 +435,12 @@ async function applyImmutableGenerationToSessions(
             failures.push({ sessionId: target.sessionId, errorCode });
             continue;
           }
-          const desiredCredentialRevision = committedGeneration.decisionCommittedTarget.credentialRevision;
-          const proofCredentialRevision = providerAdoptedTarget.proof.credentialRevision ?? null;
-          if (
-            desiredCredentialRevision === null
-            || providerAdoptedTarget.credentialRevision !== desiredCredentialRevision
-            || proofCredentialRevision !== desiredCredentialRevision
-          ) {
-            const errorCode = desiredCredentialRevision === null || proofCredentialRevision === null
-              ? 'credential_revision_unproven'
-              : 'credential_revision_mismatch';
+          if (!hasConnectedServiceAccountApplicationProof({
+            target: committedGeneration.decisionCommittedTarget,
+            adopted: providerAdoptedTarget,
+          })) {
+            const errorCode = readConnectedServiceAccountApplicationCredentialError(providerAdoptedTarget)
+              ?? 'provider_adoption_unproven';
             resultsBySessionId[target.sessionId] = { reconciliationDisposition: 'failed', errorCode };
             failures.push({ sessionId: target.sessionId, errorCode });
             continue;

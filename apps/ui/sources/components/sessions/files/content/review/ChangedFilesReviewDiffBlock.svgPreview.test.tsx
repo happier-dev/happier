@@ -2,13 +2,14 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChangedFilesReviewDiffBlock } from './ChangedFilesReviewDiffBlock';
 import { renderScreen } from '@/dev/testkit';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installFilesContentCommonModuleMocks } from '../filesContentTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 
 installFilesContentCommonModuleMocks({
     reactNative: async () => {
@@ -87,6 +88,8 @@ vi.mock('react-native-svg', () => ({
 
 describe('ChangedFilesReviewDiffBlock (svg previews)', () => {
     it('renders a validated SvgAst preview for svg images on native when no diff is available', async () => {
+        const { ChangedFilesReviewDiffBlock } = await import('./ChangedFilesReviewDiffBlock');
+        const { AttachmentImagePreviewModal } = await import('@/components/sessions/attachments/preview/AttachmentImagePreviewModal');
         const loadedState = { status: 'loaded', diff: '', error: null } as const;
         const diffStateSource = {
             getDiffState: () => loadedState,
@@ -96,7 +99,7 @@ describe('ChangedFilesReviewDiffBlock (svg previews)', () => {
         const theme = createThemeFixture();
 
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ChangedFilesReviewDiffBlock
+        const screen = await renderScreen(<ChangedFilesReviewDiffBlock
                     theme={theme}
                     sessionId="s1"
                     snapshotSignature="sig"
@@ -105,9 +108,18 @@ describe('ChangedFilesReviewDiffBlock (svg previews)', () => {
                     diffStateSource={diffStateSource}
                     reviewCommentsEnabled={false}
                     reviewCommentDrafts={[]}
-                />)).tree;
+                />);
+        tree = screen.tree;
 
         expect(tree.findAllByType('SvgAst' as any).length).toBe(1);
         expect(tree.findAllByType('SvgXml' as any).length).toBe(0);
+        await screen.pressByTestIdAsync('scm-review-image-preview');
+        const { Modal } = await import('@/modal');
+        expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+            component: AttachmentImagePreviewModal,
+            props: {
+                images: [{ kind: 'session-image', sessionId: 's1', filePath: 'src/icon.svg', title: 'src/icon.svg', cacheKey: 'sig' }],
+            },
+        }));
     });
 });

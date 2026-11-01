@@ -1,6 +1,12 @@
 export type DownloadProgressInfo = {
   percent: number | null;
   label: string | null;
+  /** Transferred and expected bytes, when the source reports a byte total. */
+  bytes: { loaded: number; total: number } | null;
+  /** Completed and total files, when the source reports a multi-file transfer. */
+  files: { done: number; total: number } | null;
+  /** Bytes already checked against their expected hash, when the source verifies what it downloads. */
+  verifiedBytes: number | null;
 };
 
 function clampPercent(x: number): number {
@@ -16,16 +22,27 @@ function lastPathSegment(raw: string): string {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function parseFileCounts(obj: Record<string, unknown>): DownloadProgressInfo['files'] {
+  const done = obj?.filesDone;
+  const total = obj?.filesTotal;
+  if (!isFiniteNumber(done) || !isFiniteNumber(total) || total <= 0) return null;
+  return { done: Math.min(Math.max(0, Math.floor(done)), total), total };
+}
+
 export function parseDownloadProgress(progress: unknown): DownloadProgressInfo {
   if (typeof progress === 'number' && Number.isFinite(progress)) {
     const isFraction = progress >= 0 && progress <= 1;
     const percent = clampPercent(Math.floor((isFraction ? progress * 100 : progress) as number));
-    return { percent, label: null };
+    return { percent, label: null, bytes: null, files: null, verifiedBytes: null };
   }
 
-  if (!progress || typeof progress !== 'object') return { percent: null, label: null };
+  if (!progress || typeof progress !== 'object') return { percent: null, label: null, bytes: null, files: null, verifiedBytes: null };
 
-  const obj = progress as any;
+  const obj = progress as Record<string, unknown>;
 
   const rawName =
     typeof obj?.name === 'string'
@@ -37,21 +54,25 @@ export function parseDownloadProgress(progress: unknown): DownloadProgressInfo {
           : null;
   const label = rawName ? lastPathSegment(rawName) || rawName.trim() : null;
 
+  const files = parseFileCounts(obj);
+
   const loaded = obj?.loaded;
   const total = obj?.total;
-  if (typeof loaded === 'number' && Number.isFinite(loaded) && typeof total === 'number' && Number.isFinite(total) && total > 0) {
+  if (isFiniteNumber(loaded) && isFiniteNumber(total) && total > 0) {
     const percent = clampPercent(Math.floor((loaded / total) * 100));
-    return { percent, label };
+    const verified = obj?.verified;
+    const verifiedBytes = isFiniteNumber(verified) ? Math.min(Math.max(0, verified), total) : null;
+    return { percent, label, bytes: { loaded: Math.min(Math.max(0, loaded), total), total }, files, verifiedBytes };
   }
 
   const rawProgress = obj?.progress;
-  if (typeof rawProgress === 'number' && Number.isFinite(rawProgress)) {
+  if (isFiniteNumber(rawProgress)) {
     const isFraction = rawProgress >= 0 && rawProgress <= 1;
     const percent = clampPercent(Math.floor((isFraction ? rawProgress * 100 : rawProgress) as number));
-    return { percent, label };
+    return { percent, label, bytes: null, files, verifiedBytes: null };
   }
 
-  return { percent: null, label };
+  return { percent: null, label, bytes: null, files, verifiedBytes: null };
 }
 
 export function formatDownloadProgressDetail(progress: unknown, opts?: { prefix?: string }): string {

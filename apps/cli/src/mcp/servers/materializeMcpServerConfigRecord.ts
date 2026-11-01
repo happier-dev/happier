@@ -12,10 +12,6 @@
  * - when disabled, invalid servers are skipped and surfaced as warnings.
  */
 
-import { tmpdir } from 'node:os';
-import { basename, join, resolve as resolvePath } from 'node:path';
-import { realpathSync } from 'node:fs';
-
 import type { McpServerConfig } from '@/agent';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 import { removeWrittenMcpRuntimeConfigFile, writeSecureMcpRuntimeConfigFile } from '@/mcp/runtime/writeSecureMcpRuntimeConfigFile';
@@ -25,7 +21,7 @@ import {
   type SecretStringV1,
 } from '@happier-dev/protocol';
 
-import { normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
+import { isPackageRunnerCommand, normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 import { resolveMcpValueRefPlaintext } from './resolveMcpValueRefPlaintext';
 
 export type MaterializeMcpServerConfigRecordWarning = Readonly<{
@@ -59,28 +55,6 @@ async function resolveDefaultStdioLauncherCommand(): Promise<Readonly<{ command:
   });
 }
 
-function isPackageRunnerCommand(command: string): boolean {
-  const normalized = basename(command).toLowerCase();
-  return new Set(['npx', 'npx.cmd', 'npm', 'npm.cmd', 'pnpm', 'pnpm.cmd', 'yarn', 'yarn.cmd', 'yarnpkg', 'yarnpkg.cmd', 'bunx', 'bunx.cmd'])
-    .has(normalized);
-}
-
-function resolveNeutralLaunchCwd(processEnv: NodeJS.ProcessEnv): string {
-  const home = typeof processEnv.HOME === 'string' && processEnv.HOME.length > 0 ? processEnv.HOME : null;
-  const userProfile =
-    typeof processEnv.USERPROFILE === 'string' && processEnv.USERPROFILE.length > 0 ? processEnv.USERPROFILE : null;
-  const homeDrive = typeof processEnv.HOMEDRIVE === 'string' ? processEnv.HOMEDRIVE : '';
-  const homePath = typeof processEnv.HOMEPATH === 'string' ? processEnv.HOMEPATH : '';
-
-  const raw = home ?? userProfile ?? (homeDrive && homePath ? `${homeDrive}${homePath}` : tmpdir());
-  const resolved = resolvePath(raw);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
 async function materializeStdioServer(params: Readonly<{
   server: McpServerCatalogEntryV1;
   directory: string;
@@ -100,12 +74,13 @@ async function materializeStdioServer(params: Readonly<{
     const normalizedInvocation = await normalizePackageRunnerInvocation({
       command: params.server.stdio.command,
       args: params.server.stdio.args,
-      processEnv: params.processEnv,
+      processEnv: { ...params.processEnv, ...params.resolvedEnv },
+      cwd: params.directory,
     });
     if (!normalizedInvocation) {
       return {
         ok: false,
-        detail: 'managed pnpm unavailable for package-runner command',
+        detail: `Configured MCP command ${params.server.stdio.command} was not found or is not executable. Install it on this machine or update the server command and PATH.`,
       };
     }
     const launcherCommand = await (params.deps.resolveStdioLauncherCommand?.() ?? resolveDefaultStdioLauncherCommand());
@@ -116,7 +91,7 @@ async function materializeStdioServer(params: Readonly<{
         command: normalizedInvocation.command,
         args: normalizedInvocation.args,
         env: params.resolvedEnv,
-        cwd: normalizedInvocation.cwdPolicy === 'workspace' ? params.directory : resolveNeutralLaunchCwd(params.processEnv),
+        cwd: params.directory,
       },
     });
     params.writtenPaths.push(configPath);

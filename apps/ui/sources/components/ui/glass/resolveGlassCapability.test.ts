@@ -61,6 +61,34 @@ describe('resolveGlassCapability', () => {
         })).toBe('blur');
     });
 
+    it('uses the translucent tint when a native build has no blur (Android)', () => {
+        expect(resolveGlassCapability({
+            liquidGlassAvailable: false,
+            blurAvailable: false,
+            webBlurAvailable: false,
+            tintAvailable: true,
+            reduceTransparency: false,
+        })).toBe('tint');
+    });
+
+    it('prefers native blur over the tint', () => {
+        expect(resolveGlassCapability({
+            liquidGlassAvailable: false,
+            blurAvailable: true,
+            tintAvailable: true,
+            reduceTransparency: false,
+        })).toBe('blur');
+    });
+
+    it('forces solid over the tint when Reduce Transparency is enabled', () => {
+        expect(resolveGlassCapability({
+            liquidGlassAvailable: false,
+            blurAvailable: false,
+            tintAvailable: true,
+            reduceTransparency: true,
+        })).toBe('solid');
+    });
+
     it('forces solid over web blur when Reduce Transparency is enabled', () => {
         expect(resolveGlassCapability({
             liquidGlassAvailable: false,

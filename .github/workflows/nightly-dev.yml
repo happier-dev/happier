@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Snapshot open source-stage issues
         id: snapshot
         env:
@@ -249,7 +249,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Require successful canonical push CI for the exact source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -379,7 +379,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Resolve risk since the last fully promoted nightly
         id: risk
         working-directory: release-source
@@ -619,7 +619,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .node-version
       - name: Reconcile the snapshotted issues
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -653,7 +653,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22.x
+          node-version-file: .release-control/.node-version
 
       - name: Project nightly release status facts
         env:

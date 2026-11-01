@@ -222,7 +222,16 @@ export type ConnectedServiceAuthGroupSwitchResult =
       diagnostics?: unknown;
     }>
   | Readonly<{
+      status: 'quota_proof_unavailable';
+      activeProfileId: string | null;
+      generation: number;
+      retryAtMs?: number;
+      diagnostics?: ConnectedServiceAuthGroupSwitchDecisionDiagnostics;
+    }>
+  | Readonly<{
       status: 'no_eligible_member';
+      /** Present for current-member observation; absent for a full-pool selection. */
+      activeProfileId?: string | null;
       generation: number;
       groupExhausted: true;
       retryAtMs: number | null;
@@ -454,11 +463,13 @@ export function buildLeaseCompletion(input: Readonly<{
 export function buildSessionApplyFromLeaseCompletion(input: Readonly<{
   completion: LeaseCompletion;
   sessionId?: string;
+  reason: string;
 }>): LeaseCompletion {
   const { sessionId: _ownerSessionId, ...completion } = input.completion;
   return {
     ...completion,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    reason: input.reason,
   };
 }
 

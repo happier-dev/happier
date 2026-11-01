@@ -1,4 +1,5 @@
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { readSessionNativeEnvironment } from '@/agent/runtime/sessionNativeEnvironment';
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
@@ -14,12 +15,10 @@ import {
 } from '@happier-dev/protocol';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import * as z from 'zod';
+import { lazySchema } from '@happier-dev/protocol';
 
 const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
-  'CLAUDE_CONFIG_DIR',
-  'CODEX_HOME',
-  'CODEX_SQLITE_HOME',
   HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
 ] as const;
 const NON_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = new Set<string>([
@@ -31,26 +30,26 @@ export type RespawnDescriptorEncryptionMaterial =
   | AccountScopedCryptoMaterial
   | Readonly<{ type: 'dataKey'; publicKey: Uint8Array; machineKey: Uint8Array }>;
 
-const TerminalTmuxSpawnOptionsSchema: z.ZodType<NonNullable<TerminalSpawnOptions['tmux']>> = z
+const TerminalTmuxSpawnOptionsSchema: z.ZodType<NonNullable<TerminalSpawnOptions['tmux']>> = lazySchema(() => z
   .object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
     tmpDir: z.union([z.string(), z.null()]).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const TerminalSpawnOptionsSchema: z.ZodType<TerminalSpawnOptions> = z
+const TerminalSpawnOptionsSchema: z.ZodType<TerminalSpawnOptions> = lazySchema(() => z
   .object({
     mode: z.enum(TERMINAL_MODES).optional(),
     tmux: TerminalTmuxSpawnOptionsSchema.optional(),
     herdr: z.object({ sessionName: z.string().optional() }).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const SealedRespawnEnvironmentVariablesSchema = z.object({
+const SealedRespawnEnvironmentVariablesSchema = lazySchema(() => z.object({
   format: z.literal('account_scoped_v1'),
   ciphertext: z.string().min(1).max(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS),
-}).strict();
+}).strict());
 
 function resolveAccountScopedCryptoMaterial(
   material: RespawnDescriptorEncryptionMaterial,
@@ -119,14 +118,17 @@ function pickSafeRespawnEnvironmentVariables(value: unknown): Record<string, str
   }
 
   const record = value as Record<string, unknown>;
-  const persisted = Object.fromEntries(
-    SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS.flatMap((key) => {
-      const raw = record[key];
-      if (typeof raw !== 'string') return [];
-      const trimmed = raw.trim();
-      return trimmed ? [[key, trimmed]] : [];
-    }),
-  );
+  const persisted = {
+    ...readSessionNativeEnvironment(value),
+    ...Object.fromEntries(
+      SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS.flatMap((key) => {
+        const raw = record[key];
+        if (typeof raw !== 'string') return [];
+        const trimmed = raw.trim();
+        return trimmed ? [[key, trimmed]] : [];
+      }),
+    ),
+  };
 
   return Object.keys(persisted).length > 0 ? persisted : undefined;
 }
@@ -144,7 +146,7 @@ export function buildTrackedSessionRespawnEnvironmentVariables(params: Readonly<
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export const SessionRunnerRespawnDescriptorV1Schema = z
+export const SessionRunnerRespawnDescriptorV1Schema = lazySchema(() => z
   .preprocess((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return value;
@@ -195,7 +197,7 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
-  .passthrough());
+  .passthrough()));
 
 export type SessionRunnerRespawnDescriptorV1 = z.infer<typeof SessionRunnerRespawnDescriptorV1Schema>;
 

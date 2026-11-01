@@ -15,6 +15,7 @@ function createAcceptedPendingPort() {
       accepted: true,
       externalHandoffClaimed: true,
     } as const)),
+    markPendingDeliveryHandled: vi.fn(async () => undefined),
     blockPendingDelivery: vi.fn(async () => undefined),
   };
 }
@@ -1121,7 +1122,9 @@ describe('voiceQaController', () => {
     expect(useVoiceQaStore.getState().status).toBe('error');
   });
 
-  it('surfaces the follow-up assistant reply when a local QA turn is interrupted by a higher-priority update', async () => {
+  it.each(['A read-only permission request is pending. Should I allow or deny it?', null])(
+    'keeps interrupted QA delivery ambiguous while displaying follow-up %s', async (followUp) => {
+    const pendingPort = createAcceptedPendingPort();
     const sendLocalTurn = vi.fn(async () => {
       throw Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
     });
@@ -1133,7 +1136,7 @@ describe('voiceQaController', () => {
       targetSessionId: 's1',
       updatedAt: 1,
     }));
-    const waitForInterruptedLocalAssistantTurn = vi.fn(async () => 'A read-only permission request is pending. Should I allow or deny it?');
+    const waitForInterruptedLocalAssistantTurn = vi.fn(async () => followUp);
     const controller = createVoiceQaController({
       getSettings: () => ({
         voice: {
@@ -1144,7 +1147,7 @@ describe('voiceQaController', () => {
       getVoiceTargetState: () => ({ primaryActionSessionId: 's1', lastFocusedSessionId: null }),
       ensureLocalBinding,
       ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
-      pendingPort: createAcceptedPendingPort(),
+      pendingPort,
       sendLocalTurn,
       stopLocal: vi.fn(async () => {}),
       appendLocalContextUpdate: vi.fn(),
@@ -1163,7 +1166,9 @@ describe('voiceQaController', () => {
         sessionId: 's1',
         prompt: 'Ask the coding session to create a file and then ask me for permission.',
       }),
-    ).resolves.toMatchObject({ assistantText: 'A read-only permission request is pending. Should I allow or deny it?' });
+    ).rejects.toThrow('voice_turn_dispatch_ambiguous');
+    expect(pendingPort.markPendingDeliveryHandled).not.toHaveBeenCalled();
+    expect(pendingPort.blockPendingDelivery).toHaveBeenCalledWith(expect.objectContaining({ reason: 'delivery_outcome_uncertain' }));
 
     expect(waitForInterruptedLocalAssistantTurn).toHaveBeenCalledWith({
       conversationSessionId: 'voice-hidden-s1',
@@ -1175,9 +1180,9 @@ describe('voiceQaController', () => {
     });
     expect(
       useVoiceQaStore.getState().entries.some(
-        (entry) => entry.kind === 'assistant' && entry.text === 'A read-only permission request is pending. Should I allow or deny it?',
+        (entry) => entry.kind === 'assistant' && entry.text === followUp,
       ),
-    ).toBe(true);
+    ).toBe(followUp !== null);
   });
 
   it('surfaces the next hidden-session assistant reply when a local turn completes without a direct assistant response', async () => {

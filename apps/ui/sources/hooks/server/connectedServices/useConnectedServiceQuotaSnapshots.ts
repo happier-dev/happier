@@ -18,7 +18,7 @@ import {
   retainQuotaSnapshotPolling,
   subscribeQuotaSnapshotEntry,
   type QuotaSnapshotLoadContext,
-} from './connectedServiceQuotaSnapshotStore';
+} from '@/sync/domains/connectedServices/connectedServiceQuotaSnapshotStore';
 
 export type ConnectedServiceQuotaProfileRef = Readonly<{
   serviceId: string;

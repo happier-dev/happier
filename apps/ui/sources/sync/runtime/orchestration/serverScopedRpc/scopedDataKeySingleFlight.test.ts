@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     resetScopedMachineDataKeyCacheForTests,
-    resolveScopedMachineDataKey,
+    resolveScopedMachineEncryptionContext,
 } from './serverScopedRpcPool';
 import {
     resetScopedSessionDataKeyCacheForTests,
@@ -77,7 +77,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
 
         // The new-session screen fires ~8-10 capability preflight probes against one
         // machine at once; every one of them resolves the same machine data key.
-        const results = await Promise.all(Array.from({ length: 8 }, () => resolveScopedMachineDataKey({
+        const results = await Promise.all(Array.from({ length: 8 }, () => resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -86,7 +86,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         })));
 
         for (const result of results) {
-            expect(result).toEqual(new Uint8Array([1, 2, 3]));
+            expect(result).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1, 2, 3]) });
         }
         expect(decrypt).toHaveBeenCalledTimes(1);
         expect(countCalls('/v1/machines')).toBe(1);
@@ -109,28 +109,28 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         ));
 
         const [first, second, third, fourth] = await Promise.all([
-            resolveScopedMachineDataKey({
+            resolveScopedMachineEncryptionContext({
                 serverId: 'server-b',
                 serverUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 machineId: 'machine-1',
                 decryptEncryptionKey: decrypt,
             }),
-            resolveScopedMachineDataKey({
+            resolveScopedMachineEncryptionContext({
                 serverId: 'server-b',
                 serverUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 machineId: 'machine-2',
                 decryptEncryptionKey: decrypt,
             }),
-            resolveScopedMachineDataKey({
+            resolveScopedMachineEncryptionContext({
                 serverId: 'server-b',
                 serverUrl: 'https://server-b.example.test',
                 token: 'token-b',
                 machineId: 'machine-1',
                 decryptEncryptionKey: decrypt,
             }),
-            resolveScopedMachineDataKey({
+            resolveScopedMachineEncryptionContext({
                 serverId: 'server-b',
                 serverUrl: 'https://server-b.example.test',
                 token: 'token-b',
@@ -139,10 +139,10 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
             }),
         ]);
 
-        expect(first).toEqual(new Uint8Array([1]));
-        expect(third).toEqual(new Uint8Array([1]));
-        expect(second).toEqual(new Uint8Array([2]));
-        expect(fourth).toEqual(new Uint8Array([2]));
+        expect(first).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1]) });
+        expect(third).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([1]) });
+        expect(second).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([2]) });
+        expect(fourth).toEqual({ mode: 'encrypted', dataKey: new Uint8Array([2]) });
         expect(decrypt).toHaveBeenCalledTimes(2);
     });
 
@@ -162,7 +162,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         });
         const decrypt = vi.fn(async () => new Uint8Array([7]));
 
-        const request = () => resolveScopedMachineDataKey({
+        const request = () => resolveScopedMachineEncryptionContext({
             serverId: 'server-b',
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
@@ -172,12 +172,12 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         });
 
         // The failing burst is coalesced into a single attempt...
-        const failed = await Promise.all([request(), request(), request()]);
-        expect(failed).toEqual([null, null, null]);
+        const failed = await Promise.allSettled([request(), request(), request()]);
+        expect(failed).toEqual(Array.from({ length: 3 }, () => ({ status: 'rejected', reason: expect.objectContaining({ rpcErrorCode: 'machine_rpc_context_unavailable' }) })));
         expect(machineListCalls).toBe(1);
 
         // ...and a failure is never retained, so the next caller retries for real.
-        await expect(request()).resolves.toEqual(new Uint8Array([7]));
+        await expect(request()).resolves.toEqual({ mode: 'encrypted', dataKey: new Uint8Array([7]) });
         expect(machineListCalls).toBe(2);
     });
 
@@ -266,7 +266,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
 
         await resolveSession();
         for (const token of ['machine-token-a', 'machine-token-b']) {
-            await resolveScopedMachineDataKey({
+            await resolveScopedMachineEncryptionContext({
                 serverId: 'server-1',
                 serverUrl: 'https://server.example.test',
                 token,

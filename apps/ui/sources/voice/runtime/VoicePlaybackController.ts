@@ -8,15 +8,15 @@ export type VoicePlaybackController = Readonly<{
 }>;
 
 export function createVoicePlaybackController(): VoicePlaybackController {
-  let activeStopper: (() => void) | null = null;
+  // Several speak calls can overlap (for example a prewarm welcome and a turn reply), so every
+  // active playback is tracked and an interrupt stops all of them.
+  const activeStoppers = new Set<() => void>();
   let playbackEpoch = 0;
 
   const registerStopper: VoicePlaybackStopperRegistrar = (stopper) => {
-    activeStopper = stopper;
+    activeStoppers.add(stopper);
     return () => {
-      if (activeStopper === stopper) {
-        activeStopper = null;
-      }
+      activeStoppers.delete(stopper);
     };
   };
 
@@ -24,13 +24,17 @@ export function createVoicePlaybackController(): VoicePlaybackController {
     captureEpoch: () => playbackEpoch,
     isEpochCurrent: (epoch: number) => playbackEpoch === epoch,
     interrupt: () => {
-      const stopper = activeStopper;
-      if (!stopper) return;
+      // Always advance the epoch: speech queued while waiting for more assistant text has no
+      // stopper yet and must still be dropped after a barge-in.
       playbackEpoch += 1;
-      try {
-        stopper();
-      } catch {
-        // best-effort only
+      const stoppers = [...activeStoppers];
+      activeStoppers.clear();
+      for (const stopper of stoppers) {
+        try {
+          stopper();
+        } catch {
+          // A failing stopper must not prevent the remaining playbacks from stopping.
+        }
       }
     },
     registerStopper,

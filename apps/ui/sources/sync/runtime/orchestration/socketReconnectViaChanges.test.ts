@@ -6,6 +6,87 @@ import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 describe('runSocketReconnectCatchUpViaChanges', () => {
+    it('repairs a missing cursor before reading changes and catches changes that arrive during repair', async () => {
+        const events: string[] = [];
+        const checkpoints: string[] = [];
+        let releaseSnapshot!: () => void;
+        const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+        const fetchChanges = vi.fn<FetchChangesFn>(async ({ afterCursor }) => {
+            events.push(`changes:${afterCursor}`);
+            return {
+                status: 'ok',
+                changes: [{ cursor: 101, kind: 'session', entityId: 'created-during-repair', changedAt: 1 }],
+                nextCursor: '101',
+            };
+        });
+        const run = runSocketReconnectCatchUpViaChanges({
+            credentials,
+            accountId: 'a',
+            afterCursor: null,
+            changesPageLimit: 200,
+            forceSnapshotRefresh: false,
+            fetchCurrentCursor: async () => { events.push('base:100'); return { status: 'ok', cursor: '100' }; },
+            fetchChanges,
+            snapshotRefresh: async () => {
+                events.push('snapshot-start');
+                await snapshotGate;
+                events.push('snapshot-complete');
+                return { status: 'complete' };
+            },
+            applyPlanned: async (planned) => {
+                events.push(`materialized:${planned.sessionIdsToCatchUp.join(',')}`);
+                return { status: 'complete' };
+            },
+            checkpointCursor: (cursor) => { checkpoints.push(cursor); events.push(`checkpoint:${cursor}`); return true; },
+        });
+
+        await Promise.resolve();
+        expect(events).toEqual(['base:100', 'snapshot-start']);
+        expect(checkpoints).toEqual([]);
+        releaseSnapshot();
+        await expect(run).resolves.toEqual({ status: 'ok', nextCursor: '101', shouldPersistCursor: false });
+        expect(events).toEqual([
+            'base:100', 'snapshot-start', 'snapshot-complete', 'checkpoint:100',
+            'changes:100', 'materialized:created-during-repair', 'checkpoint:101',
+        ]);
+    });
+
+    it.each(['partial', 'error'] as const)('does not seed a missing cursor when snapshot repair is %s', async (status) => {
+        const checkpointCursor = vi.fn(() => true);
+        const fetchChanges = vi.fn<FetchChangesFn>(async () => ({ status: 'ok', changes: [], nextCursor: '0' }));
+        const result = await runSocketReconnectCatchUpViaChanges({
+            credentials,
+            accountId: 'a',
+            afterCursor: null,
+            changesPageLimit: 200,
+            forceSnapshotRefresh: false,
+            fetchCurrentCursor: async () => ({ status: 'ok', cursor: '100' }),
+            fetchChanges,
+            snapshotRefresh: async () => ({ status }),
+            applyPlanned: async () => {},
+            checkpointCursor,
+        });
+        expect(result).toEqual({ status: 'fallback' });
+        expect(checkpointCursor).not.toHaveBeenCalled();
+        expect(fetchChanges).not.toHaveBeenCalled();
+    });
+
+    it('does not replay from zero when a missing cursor cannot obtain a snapshot base', async () => {
+        const checkpointCursor = vi.fn(() => true);
+        const fetchChanges = vi.fn<FetchChangesFn>(async () => ({ status: 'ok', changes: [], nextCursor: '0' }));
+        const snapshotRefresh = vi.fn(async () => ({ status: 'complete' as const }));
+        const result = await runSocketReconnectCatchUpViaChanges({
+            credentials, accountId: 'a', afterCursor: null, changesPageLimit: 200,
+            forceSnapshotRefresh: false,
+            fetchCurrentCursor: async () => ({ status: 'error' }),
+            fetchChanges, snapshotRefresh, checkpointCursor, applyPlanned: async () => {},
+        });
+        expect(result).toEqual({ status: 'fallback' });
+        expect(checkpointCursor).not.toHaveBeenCalled();
+        expect(fetchChanges).not.toHaveBeenCalled();
+        expect(snapshotRefresh).not.toHaveBeenCalled();
+    });
+
     it('returns fallback when credentials missing', async () => {
         const res = await runSocketReconnectCatchUpViaChanges({
             credentials: null,

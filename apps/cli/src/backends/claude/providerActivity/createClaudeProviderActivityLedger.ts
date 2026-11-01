@@ -23,12 +23,18 @@ export type ClaudeProviderTaskActivity =
         admission?: 'known-only';
         source?: ClaudeProviderTaskActivitySource;
         confirmsActivity?: false;
+        /** The task (an Agent) that owns this one, from the typed SDK row. */
+        parentTaskId?: string;
     }>)
-    | (ClaudeProviderTaskIdentity & Readonly<{ type: 'progress'; confirmsActivity?: false }>)
+    | (ClaudeProviderTaskIdentity & Readonly<{
+        type: 'progress';
+        confirmsActivity?: false;
+        source?: 'system-task-progress';
+    }>)
     | (ClaudeProviderTaskIdentity & Readonly<{
         type: 'terminal';
         terminalStatus?: 'completed' | 'failed' | 'stopped';
-        rememberIfUnknown?: true;
+        rememberIfUnknown?: boolean;
     }>);
 export type ClaudeProviderTaskActivitySource =
     | 'hook-agent-launch'
@@ -71,10 +77,6 @@ function normalizedString(value: unknown): string | null {
 
 function exactTerminalStatus(value: unknown): 'completed' | 'failed' | 'stopped' | null {
     return value === 'completed' || value === 'failed' || value === 'stopped' ? value : null;
-}
-
-function isTerminalTaskStatus(value: unknown): boolean {
-    return value === 'completed' || value === 'failed' || value === 'stopped' || value === 'killed';
 }
 
 function isFailedToolResponse(value: Readonly<Record<string, unknown>>): boolean {
@@ -144,6 +146,7 @@ export function normalizeClaudeProviderTaskEvent(value: unknown, contextualSessi
             normalizedString(row.task_type ?? row.taskType),
             row.is_backgrounded === true,
         );
+        const parentTaskId = normalizeClaudeAgentSdkProviderTaskId(row.parent_task_id);
         return {
             activity: {
                 type: 'started',
@@ -152,6 +155,7 @@ export function normalizeClaudeProviderTaskEvent(value: unknown, contextualSessi
                 ...(admission === 'known-only'
                     ? { admission: 'known-only' as const }
                     : {}),
+                ...(parentTaskId ? { parentTaskId } : {}),
             },
             interruptTarget,
             backgroundTask,
@@ -159,7 +163,7 @@ export function normalizeClaudeProviderTaskEvent(value: unknown, contextualSessi
     }
     if (row.subtype === 'task_progress') {
         return {
-            activity: { type: 'progress', sessionId, taskId },
+            activity: { type: 'progress', sessionId, taskId, source: 'system-task-progress' },
             interruptTarget,
             backgroundTask,
         };
@@ -262,13 +266,25 @@ export function readClaudeSessionHookProviderTaskActivity(
     const nestedTask = record(toolResponse.task);
     const confirmedTask = nestedTask ?? toolResponse;
     const confirmedTaskId = readTaskId(confirmedTask);
-    if (confirmedTaskId !== requestedTaskId || !isTerminalTaskStatus(confirmedTask.status)) return null;
+    const terminalStatus = confirmedTask.status === 'killed' ? 'stopped' : exactTerminalStatus(confirmedTask.status);
+    if (confirmedTaskId !== requestedTaskId || !terminalStatus) return null;
     if (
         toolName === 'TaskOutput'
         && toolResponse.retrieval_status !== 'success'
         && toolResponse.retrievalStatus !== 'success'
     ) return null;
-    return { type: 'terminal', sessionId, taskId: requestedTaskId };
+    // Tool retrieval/stop confirms a known task's outcome, without admitting an unknown identity.
+    return {
+        type: 'terminal',
+        terminalStatus: toolName === 'TaskStop' ? 'stopped' : terminalStatus,
+        sessionId,
+        taskId: requestedTaskId,
+        rememberIfUnknown: false,
+    };
+}
+
+function withParent(parentTaskId: string | undefined): { parentTaskId?: string } {
+    return parentTaskId ? { parentTaskId } : {};
 }
 
 function keyOf(identity: ClaudeProviderTaskIdentity): string {
@@ -282,11 +298,20 @@ export function createClaudeProviderActivityLedger() {
             identity: ClaudeProviderTaskIdentity;
             sources: Set<ClaudeProviderTaskActivitySource>;
             observed: boolean;
+            parentTaskId?: string;
         }>
         | Readonly<{
             phase: 'terminal-before-confirmation';
             identity: ClaudeProviderTaskIdentity;
             backgroundConfirmed: boolean;
+            /**
+             * Claude reports an Agent `completed` each time it stops, including when it stops to
+             * wait on background children it still owns; it wakes when they settle. Only the
+             * Agent's own typed progress may then reactivate it, so an Agent that never wakes
+             * cannot hold the count open.
+             */
+            awaitingChildren?: true;
+            parentTaskId?: string;
         }>;
     const tasks = new Map<string, ProviderTaskRecord>();
     /**
@@ -307,10 +332,23 @@ export function createClaudeProviderActivityLedger() {
         ownedSessionIds.size > 0 && !ownedSessionIds.has(sessionId)
     );
 
+    /** A child still owns live work while active or while it waits on its own children. */
+    const hasActiveChild = (identity: ClaudeProviderTaskIdentity): boolean => {
+        for (const entry of tasks.values()) {
+            if (
+                entry.parentTaskId === identity.taskId
+                && entry.identity.sessionId === identity.sessionId
+                && (entry.phase === 'active' || entry.awaitingChildren === true)
+            ) return true;
+        }
+        return false;
+    };
+
     const noteActive = (
         identity: ClaudeProviderTaskIdentity,
         source: ClaudeProviderTaskActivitySource,
         confirmsActivity = true,
+        parentTaskId?: string,
     ): boolean => {
         const key = keyOf(identity);
         const current = tasks.get(key);
@@ -320,16 +358,33 @@ export function createClaudeProviderActivityLedger() {
                 if (!current.backgroundConfirmed) tasks.set(key, { ...current, backgroundConfirmed: true });
                 return false;
             }
-            tasks.set(key, { phase: 'active', identity, sources: new Set([source]), observed: confirmsActivity });
+            tasks.set(key, {
+                phase: 'active',
+                identity,
+                sources: new Set([source]),
+                observed: confirmsActivity,
+                ...withParent(current.parentTaskId),
+            });
             return true;
         }
         if (current?.phase === 'active') {
             current.sources.add(source);
-            if (current.observed || !confirmsActivity) return false;
-            tasks.set(key, { ...current, observed: true });
+            // Hook and typed launches race; only the typed row carries the owning Agent.
+            const parent = withParent(current.parentTaskId ?? parentTaskId);
+            if (current.observed || !confirmsActivity) {
+                if (parent.parentTaskId !== current.parentTaskId) tasks.set(key, { ...current, ...parent });
+                return false;
+            }
+            tasks.set(key, { ...current, ...parent, observed: true });
             return true;
         }
-        tasks.set(key, { phase: 'active', identity, sources: new Set([source]), observed: confirmsActivity });
+        tasks.set(key, {
+            phase: 'active',
+            identity,
+            sources: new Set([source]),
+            observed: confirmsActivity,
+            ...withParent(parentTaskId),
+        });
         return true;
     };
 
@@ -357,14 +412,26 @@ export function createClaudeProviderActivityLedger() {
             const current = tasks.get(key);
             if (activity.type === 'terminal') {
                 if (current?.phase === 'active') {
+                    const identity = { sessionId: activity.sessionId, taskId: activity.taskId };
+                    // Only a completed stop can be interim; a failed or stopped Agent never wakes.
+                    const awaitsChildren = activity.terminalStatus === 'completed' && hasActiveChild(identity);
                     tasks.set(key, {
                         phase: 'terminal-before-confirmation',
-                        identity: { sessionId: activity.sessionId, taskId: activity.taskId },
+                        identity,
                         backgroundConfirmed: true,
+                        ...(awaitsChildren ? { awaitingChildren: true as const } : {}),
+                        ...withParent(current.parentTaskId),
                     });
                     return true;
                 }
-                if (!current && (activity.rememberIfUnknown === true || activity.terminalStatus !== undefined)) {
+                if (current?.awaitingChildren === true && activity.terminalStatus !== 'completed') {
+                    // A later stop/failure is final even when the Agent was already waiting.
+                    // Duplicate completed rows still describe the same interim stop.
+                    const { awaitingChildren: _settled, ...terminal } = current;
+                    tasks.set(key, terminal);
+                    return true;
+                }
+                if (!current && (activity.rememberIfUnknown ?? (activity.terminalStatus !== undefined))) {
                     tasks.set(key, {
                         phase: 'terminal-before-confirmation',
                         identity: { sessionId: activity.sessionId, taskId: activity.taskId },
@@ -375,6 +442,21 @@ export function createClaudeProviderActivityLedger() {
             }
             if (activity.type === 'progress' || activity.admission === 'known-only') {
                 if (activity.type === 'progress' && activity.confirmsActivity === false) return false;
+                if (
+                    activity.type === 'progress'
+                    && activity.source === 'system-task-progress'
+                    && current?.phase === 'terminal-before-confirmation'
+                    && current.awaitingChildren === true
+                ) {
+                    tasks.set(key, {
+                        phase: 'active',
+                        identity: current.identity,
+                        sources: new Set(['system-task-progress']),
+                        observed: true,
+                        ...withParent(current.parentTaskId),
+                    });
+                    return true;
+                }
                 if (activity.type === 'started' && current && activity.source === 'hook-agent-resume') {
                     if (current.phase === 'terminal-before-confirmation' && !current.backgroundConfirmed) return false;
                     return noteActive({ sessionId: activity.sessionId, taskId: activity.taskId }, activity.source, activity.confirmsActivity !== false);
@@ -386,6 +468,7 @@ export function createClaudeProviderActivityLedger() {
                 { sessionId: activity.sessionId, taskId: activity.taskId },
                 activity.source ?? 'system-task-started',
                 activity.confirmsActivity !== false,
+                activity.parentTaskId,
             );
         },
         /**

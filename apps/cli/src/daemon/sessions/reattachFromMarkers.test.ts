@@ -1313,10 +1313,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   });
 
   it('recovers a generic happy user session only when the live command proves the session identity and preserves encrypted respawn env', async () => {
-    const credentials: Credentials = {
+    const credentials = {
       token: 't',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
-    };
+    } satisfies Credentials;
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
         pid: 12345,

@@ -331,7 +331,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
             trackedForPid.spawnOptions,
             {
-              ...(storedCredentials ? { encryptionMaterial: storedCredentials.encryption } : {}),
+              ...(storedCredentials?.encryption ? { encryptionMaterial: storedCredentials.encryption } : {}),
               ...(trackedVendorResumeId ? { vendorResumeId: trackedVendorResumeId } : {}),
             },
           )

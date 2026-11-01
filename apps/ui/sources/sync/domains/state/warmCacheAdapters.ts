@@ -4,6 +4,7 @@ import {
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
+import { resolveSessionPresence } from '@/sync/domains/session/sessionLifecycleProjection';
 
 import type {
     MachineDisplayCacheEntryV1,
@@ -235,7 +236,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         } : null,
         thinking: false,
         thinkingAt: 0,
-        presence: entry.active ? 'online' : entry.activeAt,
+        presence: resolveSessionPresence(entry),
         latestTurnId: entry.latestTurnId ?? null,
         latestTurnStatus: entry.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(entry.latestTurnStatusObservedAt),

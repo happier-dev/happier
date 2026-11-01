@@ -18,7 +18,6 @@ import {
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
   type TransferEndpointCandidate,
   SessionHandoffAbortRequestSchema,
-  SessionHandoffCapabilityV2Schema,
   SessionHandoffTargetResumeRequestV2Schema,
   SessionHandoffTargetResumeResponseV2Schema,
   SessionHandoffPrepareTargetRequestV2Schema,
@@ -37,6 +36,7 @@ import {
   type WorkspaceManifest,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { probeSessionHandoffCapability } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
 import type { RpcHandler } from '../rpc/types';
 
 import {
@@ -1385,10 +1385,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     if (!existingStateAvailable) {
       return { ok: false, errorCode: 'upgrade_required', error: 'This daemon cannot run existing-state handoff' } as const;
     }
-    const capability = SessionHandoffCapabilityV2Schema.safeParse(
-      await params.probeHandoffCapability?.(peerMachineId).catch(() => null),
+    const capability = await probeSessionHandoffCapability(
+      async () => params.probeHandoffCapability?.(peerMachineId),
     );
-    if (!capability.success || !capability.data.existingState) {
+    if (!capability?.existingState) {
       return { ok: false, errorCode: 'upgrade_required', error: 'Both handoff peers must support existing-state handoff' } as const;
     }
     return null;

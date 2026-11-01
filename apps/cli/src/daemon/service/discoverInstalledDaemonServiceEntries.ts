@@ -1,13 +1,16 @@
 import * as fs from 'node:fs';
-import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import {
   buildListWindowsScheduledTaskFolderPowerShellCommand,
+  isWindowsScheduledTaskLauncherActionExpected,
+  parsePowerShellQuotedString,
   parseWindowsScheduledTaskFolderPowerShellJson,
+  resolveInstalledWindowsServiceLauncherPaths,
+  runWindowsScheduledTaskQuery,
+  validateWindowsServiceLauncherPe,
 } from '@happier-dev/cli-common/service';
 import { basename, join, win32 as win32Path } from 'node:path';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { happierHomeDirsMatch } from '@/daemon/ownership/happierHomeDirComparableKey';
 
 import {
@@ -20,6 +23,7 @@ import {
   type DaemonServiceMode,
   type DaemonServiceTargetMode,
 } from './plan';
+import { resolveDaemonWindowsServiceLauncherInstallSpec } from './windowsServiceLauncher';
 
 export type InstalledDaemonServiceEntry = Readonly<{
   serverId: string;
@@ -36,6 +40,8 @@ export type InstalledDaemonServiceEntry = Readonly<{
   targetMode: DaemonServiceTargetMode;
   /** `desktop` when the definition carries the desktop marker; `null` (user-owned) otherwise. */
   managedBy?: DaemonServiceManagedBy | null;
+  /** True when the registered task does not have a validated current native launcher action. */
+  windowsLauncherUpgradeNeeded?: boolean;
 }>;
 
 type InstalledServicePathMatch = Readonly<{
@@ -186,8 +192,8 @@ function parseDarwinPlistBoolean(contents: string, key: string): boolean | null 
 }
 
 function parseWindowsWrapperValue(contents: string, key: string): string | null {
-  const match = new RegExp(`\\$env:${key}\\s*=\\s*['"]([^'"]+)['"]`, 'i').exec(contents);
-  return String(match?.[1] ?? '').trim() || null;
+  const match = new RegExp(`^\\$env:${key}\\s*=\\s*(.+)$`, 'im').exec(contents);
+  return match ? parsePowerShellQuotedString(match[1])?.trim() || null : null;
 }
 
 function normalizeWindowsScheduledTaskName(taskName: string): string | null {
@@ -199,61 +205,110 @@ function normalizeWindowsScheduledTaskName(taskName: string): string | null {
   return normalized || null;
 }
 
-function parseWindowsScheduledTaskWrapperPathFromXml(contents: string): string | null {
-  const argumentsMatch = /<Arguments>([\s\S]*?)<\/Arguments>/iu.exec(String(contents ?? ''));
+type WindowsScheduledTaskDefinition = Readonly<{
+  wrapperPath: string;
+  actionKind: 'native-launcher' | 'legacy-powershell';
+  launcherPath?: string;
+  /** Registered arguments of a native-launcher action, compared exactly against the expected action. */
+  launcherArguments?: string;
+  /** XML proves the full action set; the localized LIST fallback does not expose its shape. */
+  hasSingleExecAction?: boolean;
+}>;
+
+function decodeWindowsTaskXmlText(value: string): string {
+  return String(value ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', '\'')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+function parseWindowsScheduledTaskDefinitionFromAction(executable: string, argumentsText: string): WindowsScheduledTaskDefinition | null {
+  const argumentsValue = String(argumentsText ?? '').trim();
+  const nativeQuoted = /--wrapper\s+"([^"]+\.ps1)"/iu.exec(argumentsValue);
+  const nativeBare = /--wrapper\s+([^\s]+\.ps1)/iu.exec(argumentsValue);
+  const nativeWrapperPath = nativeQuoted?.[1]?.trim() || nativeBare?.[1]?.trim() || null;
+  if (nativeWrapperPath) {
+    return {
+      wrapperPath: nativeWrapperPath,
+      actionKind: 'native-launcher',
+      launcherPath: String(executable ?? '').trim().replace(/^"|"$/gu, ''),
+      launcherArguments: argumentsValue,
+    };
+  }
+
+  const legacyQuoted = /-File\s+"([^"]+\.ps1)"/iu.exec(argumentsValue);
+  const legacyBare = /-File\s+([^\s]+\.ps1)/iu.exec(argumentsValue);
+  const legacyWrapperPath = legacyQuoted?.[1]?.trim() || legacyBare?.[1]?.trim() || null;
+  return legacyWrapperPath
+    ? { wrapperPath: legacyWrapperPath, actionKind: 'legacy-powershell' }
+    : null;
+}
+
+function parseWindowsScheduledTaskDefinitionFromXml(contents: string): WindowsScheduledTaskDefinition | null {
+  const actions = /<Actions\b[^>]*>([\s\S]*?)<\/Actions>/iu.exec(String(contents ?? ''))?.[1];
+  const execAction = /<Exec\b[^>]*>([\s\S]*?)<\/Exec>/iu.exec(actions ?? '');
+  if (!execAction) return null;
+  const executable = decodeWindowsTaskXmlText(
+    /<Command>([\s\S]*?)<\/Command>/iu.exec(execAction[1] ?? '')?.[1] ?? '',
+  );
+  const argumentsMatch = /<Arguments>([\s\S]*?)<\/Arguments>/iu.exec(execAction[1] ?? '');
   if (!argumentsMatch) return null;
-  const argumentsText = argumentsMatch[1]
-    ?.replaceAll('&quot;', '"')
-    ?.replaceAll('&apos;', '\'')
-    ?.replaceAll('&amp;', '&')
-    ?.trim();
-  if (!argumentsText) return null;
-
-  const quotedMatch = /-File\s+"([^"]+\.ps1)"/iu.exec(argumentsText);
-  if (quotedMatch?.[1]) {
-    return quotedMatch[1].trim();
-  }
-  const bareMatch = /-File\s+([^\s]+\.ps1)/iu.exec(argumentsText);
-  return bareMatch?.[1]?.trim() || null;
+  const definition = parseWindowsScheduledTaskDefinitionFromAction(
+    executable,
+    decodeWindowsTaskXmlText(argumentsMatch[1] ?? ''),
+  );
+  return definition ? { ...definition, hasSingleExecAction: actions?.trim() === execAction[0] } : null;
 }
 
-function parseWindowsScheduledTaskWrapperPathFromTaskToRun(taskToRunText: string): string | null {
+function parseWindowsScheduledTaskDefinitionFromTaskToRun(taskToRunText: string): WindowsScheduledTaskDefinition | null {
   const taskToRun = String(taskToRunText ?? '').trim();
-  if (!taskToRun) {
-    return null;
+  if (!taskToRun) return null;
+  // `schtasks /FO LIST /V` reports the action as one localized field among many, so locate the
+  // native action by its own shape on its line instead of by field label.
+  for (const line of taskToRun.split(/\r?\n/u)) {
+    const nativeAction = /("?(?:[A-Za-z]:)?[\\/][^"\r\n]*?happier-service-launcher\.exe"?)\s+(--wrapper\s.*)$/iu.exec(line);
+    if (nativeAction) {
+      return parseWindowsScheduledTaskDefinitionFromAction(nativeAction[1] ?? '', nativeAction[2] ?? '');
+    }
   }
-  const quotedMatch = /-File\s+"([^"]+\.ps1)"/iu.exec(taskToRun);
-  if (quotedMatch?.[1]) {
-    return quotedMatch[1].trim();
-  }
-  const bareMatch = /-File\s+([^\s]+\.ps1)/iu.exec(taskToRun);
-  return bareMatch?.[1]?.trim() || null;
+  return parseWindowsScheduledTaskDefinitionFromAction('', taskToRun);
 }
 
-function readWindowsSchtasksTimeoutMs(): number {
-  return readPositiveIntEnv('HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS', 15_000);
-}
-
-function runWindowsSchtasksCommand(args: readonly string[]): ReturnType<typeof spawnBackgroundSync> {
-  return spawnBackgroundSync('schtasks', args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: readWindowsSchtasksTimeoutMs(),
+function isInstalledWindowsLauncherActionHealthy(definition: WindowsScheduledTaskDefinition): boolean {
+  if (definition.actionKind !== 'native-launcher' || !definition.launcherPath || definition.hasSingleExecAction === false) return false;
+  const expected = resolveInstalledWindowsServiceLauncherPaths({
+    definitionPath: definition.wrapperPath,
+    label: win32Path.basename(definition.wrapperPath, '.ps1'),
+    version: resolveDaemonWindowsServiceLauncherInstallSpec().version,
   });
+  if (!isWindowsScheduledTaskLauncherActionExpected({
+    taskToRun: `${definition.launcherPath} ${definition.launcherArguments ?? ''}`,
+    launcherPath: expected.launcherPath,
+    definitionPath: definition.wrapperPath,
+    diagnosticLogPath: expected.diagnosticLogPath,
+  })) return false;
+  try {
+    validateWindowsServiceLauncherPe(fs.readFileSync(expected.launcherPath), expected.launcherPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function readWindowsScheduledTaskWrapperPath(taskName: string): string | null {
+function readWindowsScheduledTaskDefinition(taskName: string): WindowsScheduledTaskDefinition | null {
   const normalizedTaskName = normalizeWindowsScheduledTaskName(taskName);
   if (!normalizedTaskName) return null;
 
-  const result = runWindowsSchtasksCommand(['/Query', '/TN', normalizedTaskName, '/XML']);
-  const xmlPath = !result.error && result.status === 0
-    ? parseWindowsScheduledTaskWrapperPathFromXml(String(result.stdout ?? '')) : null;
-  if (xmlPath) return xmlPath;
-  const fallback = runWindowsSchtasksCommand(['/Query', '/TN', normalizedTaskName, '/FO', 'LIST', '/V']);
-  const listPath = !fallback.error && fallback.status === 0
-    ? parseWindowsScheduledTaskWrapperPathFromTaskToRun(String(fallback.stdout ?? '')) : null;
-  if (listPath) return listPath;
+  const result = runWindowsScheduledTaskQuery('schtasks', ['/Query', '/TN', normalizedTaskName, '/XML']);
+  const xmlDefinition = !result.error && result.status === 0
+    ? parseWindowsScheduledTaskDefinitionFromXml(String(result.stdout ?? '')) : null;
+  if (xmlDefinition) return xmlDefinition;
+  const fallback = runWindowsScheduledTaskQuery('schtasks', ['/Query', '/TN', normalizedTaskName, '/FO', 'LIST', '/V']);
+  const listDefinition = !fallback.error && fallback.status === 0
+    ? parseWindowsScheduledTaskDefinitionFromTaskToRun(String(fallback.stdout ?? '')) : null;
+  if (listDefinition) return listDefinition;
 
   // Failed detail reads cannot prove absence. A successful listing can establish that a task
   // disappeared between enumeration and inspection, without parsing localized error messages.
@@ -279,18 +334,14 @@ function deriveWindowsServiceHomeDirFromWrapperPath(wrapperPath: string | null):
 
 function listWindowsScheduledTaskNames(): readonly string[] {
   // Only the Happier folder: enumerating every task on the machine can outlast the timeout.
-  const result = spawnBackgroundSync('powershell.exe', [
+  const result = runWindowsScheduledTaskQuery('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
     buildListWindowsScheduledTaskFolderPowerShellCommand({ taskFolder: '\\Happier\\' }),
-  ], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: readWindowsSchtasksTimeoutMs(),
-  });
+  ]);
   if (result.error) throw result.error;
   const taskPaths = result.status === 0 ? parseWindowsScheduledTaskFolderPowerShellJson(String(result.stdout ?? '')) : null;
   if (!taskPaths) {
@@ -303,16 +354,17 @@ function listWindowsScheduledTaskNames(): readonly string[] {
     .filter((taskName) => taskName.toLowerCase().startsWith('happier\\happier-daemon'));
 }
 
-function listWindowsScheduledTaskWrapperPaths(): readonly string[] {
+function listWindowsScheduledTaskDefinitions(): readonly (WindowsScheduledTaskDefinition & Readonly<{ taskName: string }>)[] {
   return listWindowsScheduledTaskNames()
     .map((taskName) => {
       try {
-        return readWindowsScheduledTaskWrapperPath(taskName);
+        const definition = readWindowsScheduledTaskDefinition(taskName);
+        return definition ? { ...definition, taskName } : null;
       } catch (cause) {
         throw new Error(`Could not inspect Happier scheduled task ${taskName}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
       }
     })
-    .filter((wrapperPath): wrapperPath is string => Boolean(wrapperPath));
+    .filter((definition): definition is WindowsScheduledTaskDefinition & Readonly<{ taskName: string }> => Boolean(definition));
 }
 
 function hasDaemonStartSyncCommand(contents: string): boolean {
@@ -373,7 +425,7 @@ export function resolveInstalledDaemonServiceDefinitionPath(params: Readonly<{
   platform: 'darwin' | 'linux' | 'win32'; path: string; taskName: string;
 }>): string {
   return params.platform === 'win32'
-    ? readWindowsScheduledTaskWrapperPath(params.taskName) ?? params.path
+    ? readWindowsScheduledTaskDefinition(params.taskName)?.wrapperPath ?? params.path
     : params.path;
 }
 
@@ -616,19 +668,27 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
     }
   }
 
-  let scheduledTaskPaths: readonly string[] = [];
+  let scheduledTaskDefinitions: readonly (WindowsScheduledTaskDefinition & Readonly<{ taskName: string }>)[] = [];
   try {
-    if (params.platform === 'win32') scheduledTaskPaths = listWindowsScheduledTaskWrapperPaths();
+    if (params.platform === 'win32') scheduledTaskDefinitions = listWindowsScheduledTaskDefinitions();
   } catch (error) {
     throw inventoryUnavailable(error);
   }
-  const discoveredCandidates = [
+  const discoveredCandidates: Array<{
+    path: string;
+    source: 'file' | 'task';
+    windowsLauncherUpgradeNeeded?: boolean;
+  }> = [
+    ...scheduledTaskDefinitions.map((definition) => ({
+      path: definition.wrapperPath,
+      source: 'task' as const,
+      windowsLauncherUpgradeNeeded: !isInstalledWindowsLauncherActionHealthy(definition),
+    })),
     ...fileNames.map((fileName) => ({ path: join(servicesDir, fileName), source: 'file' as const })),
-    ...scheduledTaskPaths.map((path) => ({ path, source: 'task' as const })),
   ].filter((candidate, index, allCandidates) => allCandidates.findIndex((other) => other.path === candidate.path) === index);
 
   return discoveredCandidates
-    .flatMap(({ path, source }) => {
+    .flatMap(({ path, source, windowsLauncherUpgradeNeeded }) => {
       const parsed = parseInstalledServicePath(params.platform, path);
       if (!parsed) {
         return [];
@@ -680,6 +740,7 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
         label: parsed.label,
         targetMode: metadata.targetMode,
         managedBy: readInstalledDaemonServiceManagedBy({ platform: params.platform, path }),
+        ...(typeof windowsLauncherUpgradeNeeded === 'boolean' ? { windowsLauncherUpgradeNeeded } : {}),
       }];
     });
 }

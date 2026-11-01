@@ -76,7 +76,9 @@ function resolveRow(item: UpdateItem, params: Readonly<{
     /** A row whose owner has its own "newer?" predicate passes that answer instead. */
     state?: UpdateItemState;
 }>): UpdateItem {
-    const state = params.state ?? versionState(item.currentVersion, item.latestVersion);
+    const version = params.state ?? versionState(item.currentVersion, item.latestVersion);
+    // An older cached answer can establish a known upgrade, but cannot prove nothing newer exists.
+    const state = item.cachedRelease && version === 'upToDate' ? 'unknown' : version;
     if (!params.online) {
         return { ...item, state: 'offline', action: { kind: 'none' } };
     }
@@ -109,17 +111,20 @@ export function buildThisComputerCliUpdateItem(params: Readonly<{
     machineId: string;
     title: string;
     /** This computer's inspection (`cli.update` + provenance); `null` while nothing has answered. */
-    facts: Readonly<{ currentVersion: string | null; latestVersion: string | null; managed: boolean | null; updateCommand: string | null }> | null;
+    facts: Readonly<{ currentVersion: string | null; latestVersion: string | null; managed: boolean | null; updateCommand: string | null; channel?: string | null }> | null;
     task: UpdateRunObservation;
 }>): UpdateItem | null {
     if (!params.facts) return null;
-    const item = baseItem({
-        machineId: params.machineId,
-        subject: { kind: 'happier-cli' },
-        title: params.title,
-        currentVersion: params.facts.currentVersion,
-        latestVersion: params.facts.latestVersion,
-    });
+    const item: UpdateItem = {
+        ...baseItem({
+            machineId: params.machineId,
+            subject: { kind: 'happier-cli' },
+            title: params.title,
+            currentVersion: params.facts.currentVersion,
+            latestVersion: params.facts.latestVersion,
+        }),
+        cachedRelease: { channel: params.facts.channel ?? null },
+    };
     const managed = params.facts.managed === true;
     return resolveRow(item, {
         online: true,
@@ -147,13 +152,16 @@ export function buildRemoteCliUpdateItem(params: Readonly<{
 }>): UpdateItem {
     const facts = params.facts;
     const currentVersion = facts?.currentVersion ?? params.happyCliVersion;
-    const item = baseItem({
-        machineId: params.machineId,
-        subject: { kind: 'happier-cli' },
-        title: params.title,
-        currentVersion,
-        latestVersion: facts?.latestVersion ?? null,
-    });
+    const item: UpdateItem = {
+        ...baseItem({
+            machineId: params.machineId,
+            subject: { kind: 'happier-cli' },
+            title: params.title,
+            currentVersion,
+            latestVersion: facts?.latestVersion ?? null,
+        }),
+        cachedRelease: { channel: facts?.channel ?? null },
+    };
 
     if (!facts) {
         // An older daemon: its version, and the command that updates it — never "up to date".
@@ -162,6 +170,9 @@ export function buildRemoteCliUpdateItem(params: Readonly<{
         return { ...item, state: 'unknown', managedBy: 'happier', action: { kind: 'manual', command } };
     }
 
+    const canRun = facts.installSource === 'managed' && facts.canUpdateRemotely && params.remoteUpdateAdvertised !== false;
+    const manual: UpdateItemAction = { kind: 'manual', command: facts.updateCommand };
+    const retryAction: UpdateItemAction = canRun ? { kind: 'run', verb: 'retry' } : manual;
     const last = facts.lastUpdate;
     if (params.online && !params.task.running && last) {
         if (last.outcome === 'pendingReconnect' && last.targetVersion !== currentVersion) {
@@ -173,7 +184,7 @@ export function buildRemoteCliUpdateItem(params: Readonly<{
                 ...item,
                 state: 'failed',
                 failure: { kind: 'rolledBack', kept: currentVersion, target: last.targetVersion },
-                action: params.remoteUpdateAdvertised !== false ? { kind: 'run', verb: 'retry' } : { kind: 'none' },
+                action: retryAction,
             };
         }
         if (last.outcome === 'failed') {
@@ -187,18 +198,17 @@ export function buildRemoteCliUpdateItem(params: Readonly<{
                         ? t('updates.row.couldNotStart', { message: last.message ?? t('updates.row.failedGeneric') })
                         : last.message ?? t('updates.row.failedGeneric'),
                 },
-                action: params.remoteUpdateAdvertised !== false ? { kind: 'run', verb: 'retry' } : { kind: 'none' },
+                action: retryAction,
             };
         }
     }
 
-    const canRun = facts.installSource === 'managed' && facts.canUpdateRemotely && params.remoteUpdateAdvertised !== false;
-    const manual: UpdateItemAction | null = facts.installSource !== 'managed'
-        ? { kind: 'manual', command: facts.updateCommand }
-        : canRun ? null : { kind: 'manual', command: facts.updateCommand };
-    const resolved = resolveRow(item, { online: params.online, task: params.task, canRun, manual });
+    const resolved = resolveRow(item, { online: params.online, task: params.task, canRun, manual: canRun ? null : manual });
+    const updateCompleted = params.online && !params.task.running
+        && (last?.outcome === 'pendingReconnect' || last?.outcome === 'succeeded')
+        && last.targetVersion === currentVersion;
     // A managed CLI the app cannot reach remotely is still Happier's own: only the action differs.
-    return facts.installSource === 'managed' ? { ...resolved, managedBy: 'happier' } : resolved;
+    return { ...resolved, updateCompleted, managedBy: facts.installSource === 'managed' ? 'happier' : resolved.managedBy };
 }
 
 type AgentCliUpdateData = Readonly<{

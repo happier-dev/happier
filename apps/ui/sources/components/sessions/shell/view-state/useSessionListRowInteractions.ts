@@ -5,6 +5,7 @@ import { useSharedValue } from 'react-native-reanimated';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
+import type { DragHapticsOutcome } from '@/components/ui/treeDragDrop/createDragHapticsSession';
 import {
     measureWindowBounds,
     useTreeDropAutoscroll,
@@ -18,11 +19,12 @@ import {
     type TreeViewportMetrics,
 } from '@/components/ui/treeDragDrop';
 
-import type {
-    UseSessionInlineDragCancelEvent,
-    UseSessionInlineDragDropResultEvent,
-    UseSessionInlineDragResolveDropResultEvent,
-    UseSessionInlineDragResolvedDrop,
+import {
+    isUnchangedSessionDropResult,
+    type UseSessionInlineDragCancelEvent,
+    type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragResolveDropResultEvent,
+    type UseSessionInlineDragResolvedDrop,
 } from '../useSessionInlineDrag';
 import type {
     RegisterSessionListTreeRowBounds,
@@ -36,6 +38,7 @@ import type { SessionListDragSnapshot } from '../drag/_types';
 import { applySessionListTreeDropOperation } from '../commit/applySessionListTreeDropOperation';
 import { buildSessionListDragSource } from '../drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
+import { resolveSessionListDragEligibilityBlock } from '../drop-resolution/resolveSessionListInstruction';
 import type {
     SessionListFolderSortMode,
     SessionListTreeDropResult,
@@ -83,6 +86,7 @@ const IDLE_TREE_DROP_RESULT: SessionListTreeDropResult = Object.freeze({
 });
 
 const IDLE_RESOLVED_DROP: UseSessionInlineDragResolvedDrop = Object.freeze({
+    destinationKey: null,
     result: IDLE_TREE_DROP_RESULT,
     geometry: Object.freeze({ kind: 'none' }),
 });
@@ -94,6 +98,7 @@ const DATE_ORDERING_BLOCKED_TREE_DROP_RESULT: SessionListTreeDropResult = Object
 });
 
 const DATE_ORDERING_BLOCKED_RESOLVED_DROP: UseSessionInlineDragResolvedDrop = Object.freeze({
+    destinationKey: null,
     result: DATE_ORDERING_BLOCKED_TREE_DROP_RESULT,
     geometry: Object.freeze({ kind: 'none' }),
 });
@@ -461,7 +466,7 @@ export function useSessionListRowInteractions({
             })) {
                 return DATE_ORDERING_BLOCKED_RESOLVED_DROP;
             }
-            return { result: resolved.result, geometry: resolved.geometry };
+            return resolved;
         } catch {
             return IDLE_RESOLVED_DROP;
         }
@@ -470,11 +475,11 @@ export function useSessionListRowInteractions({
     // ----- Pointer drag: commit the stable intent onto latest live state ----
 
     const pendingDragIntentRef = React.useRef<ReturnType<typeof buildSessionListDragIntent> | null>(null);
-    const [, runPendingDragCommit] = useHappyAction(async () => {
+    const [, runPendingDragCommit] = useHappyAction<DragHapticsOutcome>(async () => {
         const intent = pendingDragIntentRef.current;
         pendingDragIntentRef.current = null;
-        if (!intent) return;
-        await commitSessionListDragIntent({
+        if (!intent) return 'unchanged';
+        const committed = await commitSessionListDragIntent({
             intent,
             context: {
                 latestItems: sessionListIndexRef.current,
@@ -488,15 +493,19 @@ export function useSessionListRowInteractions({
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
                 setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
-                setSessionFolderAssignment: async (assignment) => { await persistSessionFolderAssignmentByIds(assignment); },
+                setSessionFolderAssignment: async (assignment) => {
+                    if (!await persistSessionFolderAssignmentByIds(assignment)) throw new Error('Session folder assignment is disabled');
+                },
             },
         });
+        return committed.ok ? 'applied' : committed.reason === 'no-change' ? 'unchanged' : 'refused';
     }, { mode: 'drop' });
 
-    const commitDragResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
+    const commitDragResult = React.useCallback(async (event: UseSessionInlineDragDropResultEvent): Promise<DragHapticsOutcome> => {
         const snapshot = activeDragSnapshotRef.current;
         try {
-            if (!snapshot) return;
+            if (!snapshot) return 'unchanged';
+            if (isUnchangedSessionDropResult(event.result)) return 'unchanged';
             const intent = buildSessionListDragIntent({
                 result: event.result,
                 sourceRowId: snapshot.source.sourceRowId,
@@ -504,7 +513,7 @@ export function useSessionListRowInteractions({
                 snapshotSignature: snapshot.signature,
             });
             pendingDragIntentRef.current = intent;
-            runPendingDragCommit();
+            return Promise.resolve(runPendingDragCommit()).then((outcome) => outcome ?? 'unknown');
         } finally {
             clearDragState();
         }
@@ -536,7 +545,9 @@ export function useSessionListRowInteractions({
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
                 setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
-                setSessionFolderAssignment: async (assignment) => { await persistSessionFolderAssignmentByIds(assignment); },
+                setSessionFolderAssignment: async (assignment) => {
+                    if (!await persistSessionFolderAssignmentByIds(assignment)) throw new Error('Session folder assignment is disabled');
+                },
             },
         });
     }, { mode: 'drop' });
@@ -571,10 +582,10 @@ export function useSessionListRowInteractions({
         sourceRowId: string,
         direction: SessionListKeyboardMoveDirection,
     ): SessionListTreeDropResult | null => {
-        if (!folderActionsEnabled) return null;
         try {
             const tree = buildLatestGeometryFreeTree();
             const source = buildSessionListDragSource({ tree, sourceRowId });
+            if (resolveSessionListDragEligibilityBlock({ source, foldersFeatureEnabled: folderActionsEnabled })) return null;
             const result = buildSessionListKeyboardMoveResult({ tree, source, direction, folderSortMode });
             pendingTreeDropRef.current = { tree, source, result };
             runPendingTreeDrop();
@@ -589,11 +600,11 @@ export function useSessionListRowInteractions({
     // ----- Drag lifecycle callbacks -----------------------------------------
 
     const handleTreeDropResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
-        commitDragResult(event);
+        return commitDragResult(event);
     }, [commitDragResult]);
 
     const handleFolderHeaderTreeDropResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
-        commitDragResult(event);
+        return commitDragResult(event);
     }, [commitDragResult]);
 
     const handleDragCancel = React.useCallback((_event: UseSessionInlineDragCancelEvent) => {

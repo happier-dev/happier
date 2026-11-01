@@ -6,6 +6,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { ensureMachineUpdateFactsBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 
@@ -13,7 +14,7 @@ import { buildMachineUpdateGroups, readUpdatableInstallables, type UpdatesGroup 
 import { buildUpdatesSummary, type UpdatesSummary } from './items/buildUpdatesSummary';
 import type { UpdateItem } from './items/updateItem';
 import { useMachinesCapabilitySnapshots } from './machineCapabilitySnapshots';
-import { markUpdateCompletionsSeen, refreshMachineUpdateFacts, runMachineItemUpdate, useMachineUpdateRuns, useUnseenUpdateCompletions, useUpdateBatch, type UpdateAllProgress } from './machineUpdateRuns';
+import { markUpdateCompletionsSeen, refreshMachineUpdateFacts, runMachineItemUpdate, useMachineUpdateRuns, useUnseenUpdateCompletions, useUpdateBatch, useUpdateCheck, type UpdateAllProgress } from './machineUpdateRuns';
 import { useAppUpdateStatus } from './useAppUpdateStatus';
 import { useThisComputerCliUpdate } from './useThisComputerCliUpdate';
 
@@ -34,6 +35,7 @@ export type UpdatesContentModel = Readonly<{
     updateAll: () => Promise<void>;
     stopAfterCurrent: () => void;
     batch: UpdateAllProgress | null;
+    checking: boolean;
     checkNow: () => void;
     skipAppVersion: (() => void) | null;
     /** Release notes stay reachable from the This app group (R13 (e)). */
@@ -134,10 +136,17 @@ export function useUpdatesContentModel(): UpdatesContentModel {
 
     const { batch, updateAll, stopAfterCurrent } = useUpdateBatch(updateScope, allItems, executeItem);
 
+    const check = React.useCallback(async () => {
+        const results = await Promise.allSettled([
+            app.checkNow(),
+            ...(onlineKey ? onlineKey.split('\u0000') : []).map((machineId) => refreshMachineUpdateFacts(serverId, machineId)),
+        ]);
+        for (const result of results) if (result.status === 'rejected') throw result.reason;
+    }, [app.checkNow, onlineKey, serverId]);
+    const { checking, checkNow: runCheck } = useUpdateCheck(serverId, check);
     const checkNow = React.useCallback(() => {
-        void app.checkNow();
-        for (const machineId of onlineKey ? onlineKey.split('\u0000') : []) refreshMachineUpdateFacts(serverId, machineId);
-    }, [app, onlineKey, serverId]);
+        fireAndForget(runCheck(), { tag: 'Updates.checkNow' });
+    }, [runCheck]);
 
     const openWhatsNew = React.useCallback(() => {
         if (releaseNotesLauncher.open()) return;
@@ -162,8 +171,9 @@ export function useUpdatesContentModel(): UpdatesContentModel {
         stopAfterCurrent,
         batch,
         checkNow,
+        checking,
         skipAppVersion: app.skipVersion,
         openWhatsNew,
         whatsNewUnread: releaseNotes.hasUnread,
-    }), [app.skipVersion, batch, checkNow, checkedAt, groups, openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, stopAfterCurrent, summary, uncheckedMachineCount, updateAll]);
+    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, stopAfterCurrent, summary, uncheckedMachineCount, updateAll]);
 }

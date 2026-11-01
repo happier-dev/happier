@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 /**
  * Provider-agnostic structured payload for user messages that are routed to a specific participant
@@ -9,7 +10,7 @@ import { z } from 'zod';
  * - The backend may use this meta to perform provider-specific routing (e.g. Claude Agent Teams).
  */
 
-export const ParticipantRecipientV1Schema = z.discriminatedUnion('kind', [
+export const ParticipantRecipientV1Schema = lazySchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('execution_run'),
     runId: z.string().min(1),
@@ -25,12 +26,12 @@ export const ParticipantRecipientV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('agent_team_broadcast'),
     teamId: z.string().min(1),
   }).passthrough(),
-]);
+]));
 export type ParticipantRecipientV1 = z.infer<typeof ParticipantRecipientV1Schema>;
 
-export const ParticipantMessageV1Schema = z.object({
+export const ParticipantMessageV1Schema = lazySchema(() => z.object({
   recipient: ParticipantRecipientV1Schema,
-}).passthrough();
+}).passthrough());
 export type ParticipantMessageV1 = z.infer<typeof ParticipantMessageV1Schema>;
 
 export function parseParticipantMessageV1(input: unknown): ParticipantMessageV1 | null {

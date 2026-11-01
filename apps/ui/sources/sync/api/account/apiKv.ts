@@ -176,7 +176,7 @@ export async function kvBulkGet(
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ keys })
-        }, { includeAuth: false });
+        }, { includeAuth: false, recoveryRead: 'unbounded' });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {

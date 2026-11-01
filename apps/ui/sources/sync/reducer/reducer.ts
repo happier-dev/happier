@@ -114,7 +114,7 @@
  * - Updated internal state for future processing
  */
 
-import { Message, ToolCall } from "../domains/messages/messageTypes";
+import { Message, ToolCall, type PeerMessageSender } from "../domains/messages/messageTypes";
 import { AgentEvent, NormalizedMessage, UsageData } from "../typesRaw";
 import { createTracer, traceMessages, TracerState } from "./reducerTracer";
 import { AgentState } from "../domains/state/storageTypes";
@@ -189,6 +189,7 @@ export type ReducerMessage = {
     role: 'user' | 'agent';
     text: string | null;
     isThinking?: boolean;
+    peer?: PeerMessageSender;
     event: AgentEvent | null;
     tool: ToolCall | null;
     meta?: MessageMeta;
@@ -773,6 +774,7 @@ function convertReducerMessageToMessage(
             kind: 'agent-text',
             text: reducerMsg.text,
             ...(reducerMsg.isThinking && { isThinking: true }),
+            ...(reducerMsg.peer && { peer: reducerMsg.peer }),
             meta: reducerMsg.meta,
             ...observationMetadata,
         };

@@ -8,7 +8,6 @@ import axios from 'axios';
 import type { Credentials } from '@/persistence';
 import type { initializeRuntimeOverridesSynchronizer as initializeRuntimeOverridesSynchronizerFn } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
-import { createPermissionHandlerSessionStub } from '@/backends/claude/utils/permissionHandler.testkit';
 
 const agentStateUpdateSnapshots = vi.hoisted(() => [] as Array<{
     reason: string;
@@ -134,6 +133,7 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
                 };
                 return {
                 sessionId: 'session-start',
+                keepAlive: vi.fn(),
                 rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn() },
                 ensureMetadataSnapshot: vi.fn(async () => ({ path: '/srv/project' })),
                 getMetadataSnapshot: vi.fn(() => ({ path: '/srv/project' })),
@@ -863,7 +863,16 @@ describe('runClaude startup metadata ordering', () => {
             initialMode = params.initialClaudeUnifiedTerminalMode;
             const onSessionReady = params.onSessionReady;
             if (!onSessionReady) throw new Error('Expected Claude session readiness callback');
-            await onSessionReady(createPermissionHandlerSessionStub('session-start').session);
+            const { Session } = await import('./session');
+            await onSessionReady(new Session({
+                client: params.session,
+                path: params.path,
+                logPath: '',
+                sessionId: null,
+                messageQueue: params.messageQueue,
+                onModeChange: params.onModeChange,
+                hookSettingsPath: params.hookSettingsPath,
+            }));
             return 0;
         });
         const { runClaude } = await import('./runClaude');

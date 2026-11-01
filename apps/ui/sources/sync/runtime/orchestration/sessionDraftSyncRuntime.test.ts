@@ -150,7 +150,7 @@ describe('sessionDraftSyncRuntime', () => {
         let contextAvailable = true;
         const cipher = createSessionDraftCipher({
             accountMode: 'plain',
-            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            accountCryptoMaterial: null,
             getSessionContext: () => contextAvailable ? { mode: 'plain' as const } : null,
             randomBytes: (length) => new Uint8Array(length),
         });

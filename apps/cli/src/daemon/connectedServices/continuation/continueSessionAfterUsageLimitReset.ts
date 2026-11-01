@@ -7,7 +7,7 @@ import {
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
-import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
+import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol';
 import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';
@@ -60,6 +60,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   recovery: SessionUsageLimitRecoveryV1;
   customResumePrompt?: string | null;
   nowMs: number;
+  readiness?: 'provider_ready';
   isCurrent: () => boolean | Promise<boolean>;
   ensureRuntime: () => Promise<boolean>;
   sendMessage?: typeof sendSessionMessage;
@@ -81,7 +82,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
     ? readLatestUsageLimitFailureIssue(input.rawSession) : null;
   if (!issue?.usageLimit || input.rawSession.archivedAt != null
     || issue.usageLimit.recoverability === 'manual' || issue.usageLimit.recoverability === 'switch_account'
-    || issue.usageLimit.resetAtMs !== recovery.resetAtMs
+    || (issue.usageLimit.resetAtMs !== null && issue.usageLimit.resetAtMs !== recovery.resetAtMs)
     || !matchesCurrentBinding(input.metadata, recovery.selectedAuth)) return { status: 'superseded' };
   const failedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue, connectedServices: input.metadata.connectedServices ?? null });
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
@@ -101,7 +102,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   // A manual daemon-owned retry is authorized by the provider reset; local backoff only schedules wakes.
   const dueAtMs = owned ? recovery.resetAtMs : recovery.nextCheckAtMs ?? recovery.resetAtMs
     ?? (recovery.status === 'paused' ? input.nowMs : null);
-  if (dueAtMs === null || input.nowMs < dueAtMs) return { status: 'not_ready' };
+  if (input.readiness !== 'provider_ready' && (dueAtMs === null || input.nowMs < dueAtMs)) return { status: 'not_ready' };
   const dispatcher = createConnectedServiceContinuationMessageDispatcher({
     credentials: input.credentials, sendMessage: input.sendMessage,
   });
@@ -113,6 +114,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
     resumePromptMode: recovery.resumePromptMode,
     customResumePrompt: input.customResumePrompt,
     recoveryKind: 'usage_limit',
+    afterUsageLimitReset: true,
     isCurrent: async ({ rawSession, metadata }) => {
       if (!(await input.isCurrent()) || rawSession.latestTurnStatus !== 'failed' || rawSession.archivedAt != null || !metadata
         || rawSession.latestTurnId !== input.rawSession.latestTurnId) return false;

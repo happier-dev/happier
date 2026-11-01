@@ -738,7 +738,7 @@ export async function reorderTodos(
     todoId: string,
     targetIndex: number,
     targetList: 'done' | 'undone'
-): Promise<void> {
+): Promise<'applied' | 'refused' | 'unchanged' | 'unknown'> {
     const currentState = storage.getState();
     const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
         todos: {},
@@ -750,7 +750,11 @@ export async function reorderTodos(
     const todo = todos[todoId];
     if (!todo) {
         console.error(`Todo ${todoId} not found`);
-        return;
+        return 'refused';
+    }
+    const targetOrder = targetList === 'done' ? doneOrder : undoneOrder;
+    if (todo.done === (targetList === 'done') && targetOrder.indexOf(todoId) === targetIndex) {
+        return 'unchanged';
     }
 
     let updatedTodo = todo;
@@ -783,7 +787,7 @@ export async function reorderTodos(
     });
 
     // Sync to server inside lock
-    await todoLock.inLock(async () => {
+    return await todoLock.inLock(async () => {
         try {
             // Fetch current index from backend
             const indexResponse = await kvGet(credentials, TODO_INDEX_KEY);
@@ -875,14 +879,17 @@ export async function reorderTodos(
                     doneOrder: mergedIndex.completedOrder,  // Map completedOrder to doneOrder
                     versions: newVersions
                 });
+                return 'applied' as const;
             } else {
                 // On failure, refetch everything as last resort
                 console.error('Todo reorder failed, refetching all todos...');
                 await initializeTodoSync(credentials);
+                return 'refused' as const;
             }
         } catch (error) {
             console.error('Failed to reorder todos:', error);
             // Keep optimistic update even on error
+            return 'unknown' as const;
         }
     });
 }

@@ -772,7 +772,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(second).toBe(first);
     });
 
-    it('invalidates the badge snapshot when live pending attention expires', () => {
+    it('keeps live pending attention in the badge past the runtime staleness window until the runtime goes offline', () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
         const selector = createLocalActivityBadgeSnapshotSelector({
@@ -803,10 +803,13 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         const second = selector(createStorageState({
             sessionListRenderables: { session1: renderable },
         }));
+        const offline = selector(createStorageState({
+            sessionListRenderables: { session1: { ...renderable, presence: 1_002_000 } },
+        }));
 
         expect(first.count).toBe(1);
-        expect(second).not.toBe(first);
-        expect(second.count).toBe(0);
+        expect(second.count).toBe(1);
+        expect(offline.count).toBe(0);
     });
 
     it('counts a session once even when several attention reasons are active at the same time', () => {

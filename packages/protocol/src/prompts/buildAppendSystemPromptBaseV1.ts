@@ -1,4 +1,5 @@
 import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
+import { isSessionHappierToolsEnabled } from '../mcpServers/sessionSelectionV1.js';
 import { buildExecutionRunsGuidanceBlockV1, type ExecutionRunsGuidanceEntryV1 } from './executionRunsGuidanceV1.js';
 import { buildMemoryRecallGuidanceBlockV1 } from './memoryRecallGuidanceV1.js';
 import { buildPromptPlanV1, renderPromptPlanV1, type PromptPlanV1 } from './promptPlanV1.js';
@@ -67,6 +68,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
 }>): PromptPlanV1 {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
@@ -76,6 +78,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     : buildHappierBaseSystemPromptV1({
         settings,
         sessionTitleToolAvailable: args.sessionTitleToolAvailable,
+        sessionMetadata: args.sessionMetadata,
       });
 
   const blocks = [{
@@ -84,7 +87,8 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     text: base.trim(),
   }];
 
-  if (args.memoryRecallGuidanceEnabled === true) {
+  const happierToolsEnabled = isSessionHappierToolsEnabled(args.sessionMetadata);
+  if (happierToolsEnabled && args.memoryRecallGuidanceEnabled === true) {
     blocks.push({
       id: 'coding.memory_recall',
       scope: 'session' as const,
@@ -92,7 +96,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     });
   }
 
-  if (!args.executionRunsFeatureEnabled) {
+  if (!happierToolsEnabled || !args.executionRunsFeatureEnabled) {
     return buildPromptPlanV1({ modality: 'coding', blocks });
   }
   if (settings?.executionRunsGuidanceEnabled === false) {
@@ -122,6 +126,7 @@ export function buildAppendSystemPromptBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
 }>): string {
   return renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1(args));
 }

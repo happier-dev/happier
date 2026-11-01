@@ -10,6 +10,7 @@ import {
 } from '@/sync/domains/pets/companionSizeScale';
 import {
     DEFAULT_THEME_PROFILES_LOCAL_STATE,
+    ThemeProfileSelectionSchema,
     ThemeProfilesLocalStateSchema,
 } from '@/theme/profiles/themeProfilePersistence';
 import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders';
@@ -168,13 +169,38 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     themeProfiles: {
         schema: ThemeProfilesLocalStateSchema,
         default: DEFAULT_THEME_PROFILES_LOCAL_STATE,
-        description: 'Local custom theme profiles and active profile selection',
+        description: 'Legacy device theme library retained until account migration succeeds',
+        storageScope: 'local',
+    },
+    themeProfileSelection: {
+        schema: ThemeProfileSelectionSchema.nullable(),
+        default: null,
+        description: 'Active light and dark theme profile IDs on this device',
+        storageScope: 'local',
+    },
+    themeProfileLegacyAccountScope: {
+        schema: z.object({ serverId: z.string(), accountId: z.string() }).nullable().catch(null),
+        default: null,
+        description: 'Account receiving the legacy device theme library during migration',
         storageScope: 'local',
     },
     uiBackdropBlurEnabled: {
         schema: z.boolean(),
         default: true,
         description: 'Enable backdrop blur effects behind modals and overlay menus',
+        storageScope: 'local',
+    },
+    hapticsEnabled: {
+        schema: z.boolean().catch(true),
+        default: true,
+        description: 'Enable haptic feedback on this device',
+        storageScope: 'local',
+    },
+    systemTabBarEnabled: {
+        // A malformed/newer value must not reset every other device preference.
+        schema: z.boolean().catch(true),
+        default: true,
+        description: 'Show tabs in the system side rail on supported iOS windows',
         storageScope: 'local',
     },
     uiContentWidthMode: {

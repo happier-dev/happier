@@ -5,6 +5,11 @@ import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
 import { transcribeWithGoogleGeminiStt } from '@/voice/input/googleGeminiStt';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
+import {
+  resolveGoogleAndroidCertSha1,
+  resolveLocalSttProvider,
+  resolveLocalVoiceAdapterSettings,
+} from '@/voice/local/localVoiceSettings';
 
 export { MissingSttBaseUrlError };
 
@@ -15,28 +20,14 @@ export class MissingGeminiApiKeyError extends Error {
   }
 }
 
-function resolveLocalAdapter(settings: any): any {
-  const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
-  if (providerId === 'local_direct') return voice?.adapters?.local_direct ?? null;
-  if (providerId === 'local_conversation') return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;
-  return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;
-}
-
-function resolveSttProvider(adapter: any): 'device' | 'openai_compat' | 'google_gemini' | 'local_neural' {
-  const stt = adapter?.stt ?? null;
-  const provider = typeof stt?.provider === 'string' ? stt.provider : null;
-  if (provider === 'device' || provider === 'openai_compat' || provider === 'google_gemini' || provider === 'local_neural') return provider;
-  if (stt?.useDeviceStt === true) return 'device';
-  return 'openai_compat';
-}
-
+/** File extension → MIME type for recorder output; Gemini-specific normalization lives in googleGeminiStt. */
 function guessMimeType(uri: string): string {
   const lower = uri.toLowerCase();
   if (lower.endsWith('.webm')) return 'audio/webm';
   if (lower.endsWith('.wav')) return 'audio/wav';
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  return 'audio/mp4';
+  // expo-audio RecordingPresets.HIGH_QUALITY writes AAC in an .m4a container on iOS and Android.
+  return 'audio/m4a';
 }
 
 export async function transcribeRecordedAudioWithProvider(params: {
@@ -45,8 +36,8 @@ export async function transcribeRecordedAudioWithProvider(params: {
   decryptSecretValue?: (value: unknown) => string | null;
 }): Promise<string | null> {
   const decryptSecretValue = params.decryptSecretValue ?? ((value: unknown) => sync.decryptSecretValue(value as any));
-  const adapter = resolveLocalAdapter(params.settings);
-  const provider = resolveSttProvider(adapter);
+  const adapter = resolveLocalVoiceAdapterSettings(params.settings).config;
+  const provider = resolveLocalSttProvider(params.settings);
 
   // Local neural STT is streaming-based (no file upload). File transcription is a no-op.
   // The live controller is responsible for capturing audio and producing transcripts.
@@ -75,6 +66,7 @@ export async function transcribeRecordedAudioWithProvider(params: {
           : null;
 
     const timeoutMs = resolveVoiceNetworkTimeoutMs(adapter?.networkTimeoutMs, 15_000);
+    const androidCertSha1 = resolveGoogleAndroidCertSha1(params.settings);
 	    const uri = params.uri;
 	
 	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
@@ -84,6 +76,7 @@ export async function transcribeRecordedAudioWithProvider(params: {
 	        model,
 	        audio: { kind: 'web', blob, mimeType: blob.type || 'audio/webm' },
 	        language,
+	        androidCertSha1,
 	        timeoutMs,
 	      });
       return text ? text.trim() || null : null;
@@ -94,6 +87,7 @@ export async function transcribeRecordedAudioWithProvider(params: {
       model,
       audio: { kind: 'native', uri, mimeType: guessMimeType(uri) },
       language,
+      androidCertSha1,
       timeoutMs,
     });
     return text ? text.trim() || null : null;

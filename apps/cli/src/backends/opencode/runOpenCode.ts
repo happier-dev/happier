@@ -12,8 +12,6 @@ import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProvider
 import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
-import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminalDisplay';
-
 import { maybeUpdateOpenCodeSessionIdMetadata, type OpenCodeSessionMetadataPublicationState } from './utils/opencodeSessionIdMetadata';
 import { createOpenCodeAcpRuntime } from './acp/runtime';
 import {
@@ -38,6 +36,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     serverBaseUrlExplicit: false,
   };
   const backendMode = resolveOpenCodeBackendModeFromEnv(process.env);
+  const hasHostedTerminal = backendMode === 'server' && hasHostedAttachedTerminalPresentation(opts.terminalRuntime);
   let serverRuntime: ReturnType<typeof createOpenCodeServerRuntime> | null = null;
   let currentSession: Parameters<NonNullable<StandardAcpProviderConfig['onAfterStart']>>[0]['session'] | null = null;
   let currentRuntime: Parameters<NonNullable<StandardAcpProviderConfig['onAfterStart']>>[0]['runtime'] | null = null;
@@ -49,7 +48,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     support: resolveOpenCodeLocalControlSupport({
       backendMode,
       hasTTY: process.stdout.isTTY && process.stdin.isTTY,
-      hasHostedTerminal: hasHostedAttachedTerminalPresentation(opts.terminalRuntime),
+      hasHostedTerminal,
     }),
     startingMode: opts.startingMode ?? (opts.startedBy === 'terminal' && backendMode === 'server' ? 'local' : 'remote'),
     terminalRuntime: opts.terminalRuntime,
@@ -88,7 +87,8 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'opencode',
     startRuntimeBeforeFirstPrompt: backendMode === 'server',
     machineMetadata: initialMachineMetadata,
-    terminalDisplay: OpenCodeTerminalDisplay,
+    terminalHostOwner: hasHostedTerminal ? 'runtime' : 'startup',
+    loadTerminalDisplay: async () => (await import('@/backends/opencode/ui/OpenCodeTerminalDisplay')).OpenCodeTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
     resolveKeepAliveMode: localControl.resolveKeepAliveMode,
     shouldRenderTerminalDisplay: () => localControl.shouldRenderTerminalDisplay(),

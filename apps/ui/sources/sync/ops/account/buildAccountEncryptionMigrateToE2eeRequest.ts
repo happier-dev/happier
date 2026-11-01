@@ -1,3 +1,6 @@
+import { decodeBase64 } from '@/encryption/base64';
+import { Encryption } from '@/sync/encryption/encryption';
+import { buildAccountEncryptionMachinesDirective, type AccountEncryptionMachineMigrationCandidate } from './buildAccountEncryptionMachinesDirective';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
@@ -42,6 +45,8 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
   sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
+  machines?: readonly AccountEncryptionMachineMigrationCandidate[];
+  machineEncryption?: Encryption;
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     content: Readonly<{ t: 'plain'; v: unknown }>;
     metadata?: ConnectedServiceCredentialMetadataInput;
@@ -151,6 +156,12 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
   });
 
+  const machines = params.machines === undefined ? undefined : await buildAccountEncryptionMachinesDirective({
+    candidates: params.machines,
+    sourceEncryption: params.machineEncryption ?? (() => { throw new Error('Machine encryption context is unavailable'); })(),
+    target: { mode: 'e2ee', encryption: await Encryption.create(decodeBase64(params.credentials.secret, 'base64url')) },
+  });
+
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'e2ee',
     expectedSettingsVersion: params.expectedSettingsVersion,
@@ -158,5 +169,6 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     connectedServices,
     automations,
     ...(sessionDrafts ? { sessionDrafts } : {}),
+    ...(machines ? { machines } : {}),
   });
 }

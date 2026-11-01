@@ -125,12 +125,11 @@ export function createClaudeUnifiedTerminalSharedCallbacks<Mode extends Enhanced
           && event.timing !== 'next_idle'
           && effort?.reason !== 'delivered_unverified'
           && typeof effort?.effective === 'string') {
-          const metadata = params.sessionClient.getMetadataSnapshot?.();
           const model = event.changes.find(change => change.key === 'model');
           const modelId = typeof model?.effective === 'string' && model.reason !== 'delivered_unverified'
             ? model.effective
-            : metadata?.sessionModelsV1?.currentModelId ?? metadata?.acpSessionModelsV1?.currentModelId;
-          if (modelId) applyClaudeEffectiveModelUpdate({
+            : undefined;
+          applyClaudeEffectiveModelUpdate({
             client: params.sessionClient, reconcileModels: params.reconcileModels,
             modelId, reasoningEffort: effort.effective, source: 'control', logPrefix: params.logPrefix,
           });

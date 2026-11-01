@@ -6,9 +6,43 @@ import {
   resolveCodingPromptBehaviorV1WithOverride,
   applyCodingPromptBehaviorOverrideToSettings,
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+  resolveCodingPromptBehaviorV1,
+  resolveCodingPromptSessionTitleInstructionModeV1,
 } from './codingPromptBehaviorV1.js';
 
 describe('codingPromptBehaviorV1 (overrides)', () => {
+  it('requests initial title generation only while the session has no usable title', () => {
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: 'Existing title' } })).toBe('disabled');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { name: 'Legacy title' })).toBe('disabled');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: 123 } })).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, { summary: { text: '  ' } })).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({}, null)).toBe('initial');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({
+      codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' },
+    }, { summary: { text: 'Existing title' } })).toBe('ongoing');
+    expect(resolveCodingPromptSessionTitleInstructionModeV1({
+      codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled' },
+    }, null)).toBe('disabled');
+  });
+
+  it.each([
+    undefined,
+    {},
+    { codingPromptBehaviorV1: {} },
+    { codingPromptBehaviorV1: { sessionTitleUpdates: 'invalid' } },
+  ])('defaults absent or invalid title preferences to session start for %j', (settingsLike) => {
+    expect(resolveCodingPromptBehaviorV1(settingsLike)).toEqual({
+      v: 1,
+      sessionTitleUpdates: 'initial',
+      responseOptions: 'agent',
+    });
+  });
+
+  it.each(['initial', 'ongoing', 'disabled'] as const)('preserves an explicit %s title preference', (sessionTitleUpdates) => {
+    expect(resolveCodingPromptBehaviorV1({ codingPromptBehaviorV1: { sessionTitleUpdates } }).sessionTitleUpdates)
+      .toBe(sessionTitleUpdates);
+  });
+
   describe('resolveCodingPromptBehaviorV1WithOverride', () => {
     it('omitted field inherits global', () => {
       const settings = { codingPromptBehaviorV1: {} };
@@ -33,7 +67,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
 
       expect(result).toEqual({
         v: 1,
-        sessionTitleUpdates: 'ongoing', // from global default
+        sessionTitleUpdates: 'initial', // from global default
         responseOptions: 'disabled',   // from override
       });
     });
@@ -74,7 +108,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
         override: undefined,
       });
 
-      expect(result).toEqual({ v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'disabled' });
+      expect(result).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
     });
 
     it('null override => returns global', () => {
@@ -124,7 +158,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
         foo: 'bar',
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'ongoing',
+          sessionTitleUpdates: 'initial',
           responseOptions: 'disabled',
         },
       });
@@ -154,7 +188,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
       expect(result).toEqual({
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'ongoing',
+          sessionTitleUpdates: 'initial',
           responseOptions: 'disabled',
         },
       });
@@ -171,7 +205,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
       expect(result).toEqual({
         codingPromptBehaviorV1: {
           v: 1,
-          sessionTitleUpdates: 'ongoing',
+          sessionTitleUpdates: 'initial',
           responseOptions: 'disabled',
         },
       });

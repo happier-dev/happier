@@ -1,15 +1,16 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
-export const ReviewFindingSeveritySchema = z.enum([
+export const ReviewFindingSeveritySchema = lazySchema(() => z.enum([
   'blocker',
   'high',
   'medium',
   'low',
   'nit',
-]);
+]));
 export type ReviewFindingSeverity = z.infer<typeof ReviewFindingSeveritySchema>;
 
-export const ReviewFindingCategorySchema = z.enum([
+export const ReviewFindingCategorySchema = lazySchema(() => z.enum([
   'correctness',
   'security',
   'performance',
@@ -17,10 +18,10 @@ export const ReviewFindingCategorySchema = z.enum([
   'testing',
   'style',
   'docs',
-]);
+]));
 export type ReviewFindingCategory = z.infer<typeof ReviewFindingCategorySchema>;
 
-export const ReviewFindingSchema = z.object({
+export const ReviewFindingSchema = lazySchema(() => z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   severity: ReviewFindingSeveritySchema,
@@ -34,7 +35,7 @@ export const ReviewFindingSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   suggestion: z.string().min(1).optional(),
   patch: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export type ReviewFindingId = string;

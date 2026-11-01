@@ -4,6 +4,8 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { createMessagesDomain } from './messages';
+import type { NormalizedMessage } from '../../typesRaw';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 function createHarness(initial: any) {
     const state: any = {
@@ -44,6 +46,119 @@ beforeEach(() => {
 });
 
 describe('messages domain: ordering', () => {
+    it.each(['pending', 'approved', 'canceled'] as const)('keeps an older %s question between committed rows as the transcript grows', (status) => {
+        const request = { tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [] }, createdAt: 150 };
+        const session = createSessionFixture({ id: 's1', agentStateVersion: 1,
+            agentState: status === 'pending' ? { requests: { question: request } }
+                : { completedRequests: { question: { ...request, status, completedAt: 175 } } },
+        });
+        const { get, domain } = createHarness({ sessions: { s1: session } });
+        const row = (id: string, seq: number, createdAt: number): NormalizedMessage => ({
+            id, seq, localId: null, createdAt, isSidechain: false, role: 'user',
+            content: { type: 'text', text: id },
+        });
+        const order = () => {
+            const entry = get().sessionMessages.s1;
+            return entry.messageIdsOldestFirst.map((id: string) => {
+                const message: Message = entry.messagesById[id];
+                return message.kind === 'tool-call' ? message.tool.permission?.id : message.kind === 'user-text' ? message.text : id;
+            });
+        };
+        domain.applyMessages('s1', [row('after', 3, 200)]);
+        expect(order()).toEqual(status === 'pending' ? ['question', 'after'] : ['after']);
+        // Completed requests enter only when paging reaches their original time.
+        domain.applyMessages('s1', [row('before', 1, 100)]);
+        expect(order()).toEqual(['before', 'question', 'after']);
+        domain.applyMessages('s1', [row('later', 4, 300)]);
+        expect(order()).toEqual(['before', 'question', 'after', 'later']);
+        domain.applyMessages('s1', [row('old-page', 0, 50)]);
+        expect(order()).toEqual(['old-page', 'before', 'question', 'after', 'later']);
+    });
+
+    it('places a previously received unsequenced tool when its completed request arrives later', () => {
+        const session = createSessionFixture({ id: 's1', agentStateVersion: 1, agentState: { requests: {} } });
+        const { get, domain } = createHarness({ sessions: { s1: session } });
+        domain.applyMessages('s1', [
+            { id: 'before', seq: 1, localId: null, createdAt: 100, isSidechain: false, role: 'user',
+                content: { type: 'text', text: 'before' } },
+            { id: 'tool', localId: null, createdAt: 150, isSidechain: false, role: 'agent', content: [{
+                type: 'tool-call', id: 'question', name: 'AskUserQuestion', input: { questions: [] },
+                description: null, uuid: 'tool-uuid', parentUUID: null,
+            }] },
+            { id: 'after', seq: 3, localId: null, createdAt: 200, isSidechain: false, role: 'user',
+                content: { type: 'text', text: 'after' } },
+        ]);
+        const order = () => {
+            const entry = get().sessionMessages.s1;
+            return entry.messageIdsOldestFirst.map((id: string) => {
+                const row: Message = entry.messagesById[id];
+                return row.kind === 'tool-call' ? row.tool.id : row.kind === 'user-text' ? row.text : id;
+            });
+        };
+        expect(order()).toEqual(['before', 'after', 'question']);
+        const currentSession: typeof session = get().sessions.s1;
+        currentSession.agentStateVersion = 2;
+        currentSession.agentState = { completedRequests: { question: {
+            tool: 'AskUserQuestion', arguments: { questions: [] }, createdAt: 150, completedAt: 175, status: 'canceled',
+        } } };
+        domain.applyMessages('s1', []);
+        expect(order()).toEqual(['before', 'question', 'after']);
+    });
+
+    it('preserves an explicit no-thinking projection without rescanning historical messages on apply', () => {
+        const { get, domain } = createHarness({});
+        const history = Array.from({ length: 400 }, (_, index): NormalizedMessage => ({
+            id: `history-${index}`,
+            seq: index + 1,
+            localId: null,
+            createdAt: index + 1,
+            isSidechain: false,
+            role: 'agent',
+            content: [{ type: 'text', text: `history ${index}`, uuid: `history-${index}`, parentUUID: null }],
+        }));
+        domain.applyMessages('s1', history);
+        expect(get().sessionMessages.s1.latestThinkingMessageId).toBeNull();
+        let historicalVisits = 0;
+        const storedMessages: Record<string, Message> = get().sessionMessages.s1.messagesById;
+        for (const message of Object.values(storedMessages)) {
+            Object.defineProperty(message, 'transcriptObservationProvenance', {
+                configurable: true,
+                enumerable: true,
+                get() {
+                    historicalVisits += 1;
+                    return undefined;
+                },
+            });
+        }
+
+        domain.applyMessages('s1', [{
+            id: 'next', seq: 401, localId: null, createdAt: 401,
+            isSidechain: false, role: 'agent', content: [{ type: 'text', text: 'next', uuid: 'next', parentUUID: null }],
+        }]);
+
+        expect(get().sessionMessages.s1.latestThinkingMessageId).toBeNull();
+        expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(401);
+        expect(historicalVisits).toBe(0);
+    });
+
+    it('recovers the thinking projection when a legacy stored entry omits it', () => {
+        const { get, domain } = createHarness({});
+        domain.applyMessages('s1', [{
+            id: 'thinking', seq: 1, localId: null, createdAt: 1, isSidechain: false,
+            role: 'agent', content: [{ type: 'thinking', thinking: 'working', uuid: 'thinking', parentUUID: null }],
+        }]);
+        const thinkingId: unknown = get().sessionMessages.s1.latestThinkingMessageId;
+        expect(typeof thinkingId).toBe('string');
+        delete get().sessionMessages.s1.latestThinkingMessageId;
+
+        domain.applyMessages('s1', [{
+            id: 'next', seq: 2, localId: null, createdAt: 2,
+            isSidechain: false, role: 'agent', content: [{ type: 'text', text: 'next', uuid: 'next', parentUUID: null }],
+        }]);
+
+        expect(get().sessionMessages.s1.latestThinkingMessageId).toBe(thinkingId);
+    });
+
     it('projects deferred completed questions when paging reaches the beginning, even with no final rows', () => {
         const session = createSessionFixture({
             id: 's1', agentStateVersion: 1,

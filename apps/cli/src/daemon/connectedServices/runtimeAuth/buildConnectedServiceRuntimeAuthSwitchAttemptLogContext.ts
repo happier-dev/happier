@@ -185,6 +185,7 @@ function resolveFailurePhase(input: Readonly<{
       return 'binding_resolution';
     case 'no_eligible_member':
     case 'no_eligible_members':
+    case 'quota_proof_unavailable':
       return 'selection';
     case 'recovery_action_required':
     case 'temporary_retry_armed':

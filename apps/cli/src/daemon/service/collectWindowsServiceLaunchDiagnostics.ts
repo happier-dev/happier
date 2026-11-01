@@ -1,8 +1,9 @@
-import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import {
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
   parseWindowsScheduledTaskStatusPowerShellJson,
+  runWindowsScheduledTaskQuery,
+  validateWindowsServiceLauncherPe,
 } from '@happier-dev/cli-common/service';
 
 /**
@@ -12,7 +13,7 @@ import {
  * "service did not become the active daemon within Xms" timeout with the
  * actual reason the wrapper exited.
  *
- * Three signals are queried, all best-effort — if anything is missing we
+ * Four signals are queried, all best-effort — if anything is missing we
  * return a partial result rather than throw:
  *
  * - PowerShell's ScheduledTasks API for the task: last run time, last result
@@ -20,6 +21,8 @@ import {
  *   the smoking gun — Windows surfaces the wrapper's exit code there before
  *   the daemon ever has a chance to claim relay ownership. Localized
  *   `schtasks` text is only used as a fallback.
+ * - Presence and PE shape of the installed native launcher plus its own
+ *   stage log, which covers failures before the wrapper can redirect output.
  * - Tail of the wrapper's stderr log (where any pre-redirection failure
  *   like `MODULE_NOT_FOUND` or PowerShell `$ErrorActionPreference = "Stop"`
  *   crashes get written, after a successful start).
@@ -32,12 +35,32 @@ export function collectWindowsServiceLaunchDiagnostics(params: Readonly<{
   taskName: string;
   stdoutPath: string;
   stderrPath: string;
+  launcherPath?: string;
+  launcherDiagnosticLogPath?: string;
 }>): string | null {
   const sections: string[] = [];
 
   const scheduledTaskInfo = readScheduledTaskListInfo(params.taskName);
   if (scheduledTaskInfo) {
     sections.push(scheduledTaskInfo);
+  }
+
+  const launcherPath = String(params.launcherPath ?? '').trim();
+  if (launcherPath) {
+    if (!existsSync(launcherPath)) {
+      sections.push(`Windows service launcher is missing: ${launcherPath}`);
+    } else {
+      try {
+        validateWindowsServiceLauncherPe(readFileSync(launcherPath), launcherPath);
+      } catch (error) {
+        sections.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  const launcherTail = tailLogFile(String(params.launcherDiagnosticLogPath ?? ''), 25);
+  if (launcherTail) {
+    sections.push(`Launcher diagnostics (${params.launcherDiagnosticLogPath}):\n${launcherTail}`);
   }
 
   const stderrTail = tailLogFile(params.stderrPath, 25);
@@ -113,7 +136,7 @@ function splitWindowsScheduledTaskName(taskName: string): { taskPath: string; le
 
 function readScheduledTaskPowerShellInfo(taskName: string): string | null {
   const { taskPath, leafTaskName } = splitWindowsScheduledTaskName(taskName);
-  const result = spawnBackgroundSync('powershell.exe', [
+  const result = runWindowsScheduledTaskQuery('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy',
@@ -123,10 +146,8 @@ function readScheduledTaskPowerShellInfo(taskName: string): string | null {
       taskPath,
       taskName: leafTaskName,
     }),
-  ], {
-    encoding: 'utf8',
-  });
-  if (result.error || result.status !== 0 || !result.stdout) {
+  ]);
+  if (!result || result.error || result.status !== 0 || !result.stdout) {
     return null;
   }
   const status = parseWindowsScheduledTaskStatusPowerShellJson(result.stdout);
@@ -152,10 +173,8 @@ function readScheduledTaskPowerShellInfo(taskName: string): string | null {
  * diagnostic source.
  */
 function readScheduledTaskSchtasksListInfo(taskName: string): string | null {
-  const result = spawnBackgroundSync('schtasks', ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'], {
-    encoding: 'utf8',
-  });
-  if (result.error || result.status !== 0 || !result.stdout) {
+  const result = runWindowsScheduledTaskQuery('schtasks', ['/Query', '/TN', taskName, '/FO', 'LIST', '/V']);
+  if (!result || result.error || result.status !== 0 || !result.stdout) {
     return null;
   }
   const fields = parseSchtasksListFields(result.stdout, SCHTASKS_FIELD_ALIASES);

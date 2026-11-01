@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
+import { spawn } from 'node:child_process';
+
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createStepPrinter, runCommandLogged } from './progress';
+
+// Observe the OS launch boundary while preserving real child execution.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 describe('createStepPrinter', () => {
   const writeSpy = vi.spyOn(process.stdout, 'write');
@@ -208,6 +216,7 @@ describe('createStepPrinter', () => {
         return;
       }
       if (scenario === 'child-output') {
+        const spawnIndex = vi.mocked(spawn).mock.calls.length;
         const pending = runCommandLogged({
           label: 'Child command', cmd: process.execPath,
           args: ['-e', 'process.stdout.write("child output\\n")'],
@@ -216,6 +225,7 @@ describe('createStepPrinter', () => {
         try {
           // A real child owns inherited output until it exits.
           expect(vi.getTimerCount()).toBe(0);
+          expect(vi.mocked(spawn).mock.calls[spawnIndex]?.[2]?.windowsHide).not.toBe(true);
         } finally {
           await pending;
         }
@@ -267,11 +277,13 @@ describe('runCommandLogged', () => {
     const writes = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       const logPath = join(directory, 'command.log');
+      const spawnIndex = vi.mocked(spawn).mock.calls.length;
       const result = await runCommandLogged({
         label: 'noop', cmd: process.execPath, args: ['-e', "process.stdout.write('hello')"],
         logPath, showSteps: false,
       });
       expect(result.ok).toBe(true);
+      expect(vi.mocked(spawn).mock.calls[spawnIndex]?.[2]).toMatchObject({ windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       expect(writes).not.toHaveBeenCalled();
       expect(await readFile(logPath, 'utf8')).toContain('hello');
     } finally {

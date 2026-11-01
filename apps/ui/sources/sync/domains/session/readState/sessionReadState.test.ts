@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { deriveSessionReadState, resolveSessionReadStateAction } from './sessionReadState';
 import type { StorageState } from '@/sync/store/types';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import { buildTranscriptRenderableAggregate } from '@/sync/domains/messages/transcriptRenderableAggregate';
 
 const storageState = {
     sessionMessages: {},
@@ -15,6 +17,41 @@ beforeEach(async () => {
 });
 
 describe('sessionReadState', () => {
+    it('reads the maintained unread watermark without visiting historical messages', () => {
+        let historicalVisits = 0;
+        const messages = Array.from({ length: 400 }, (_, index): Message => ({
+            id: `history-${index}`,
+            seq: index + 1,
+            localId: null,
+            kind: 'agent-text',
+            text: 'done',
+            createdAt: index + 1,
+            get transcriptObservationProvenance() {
+                historicalVisits += 1;
+                return undefined;
+            },
+        }));
+        const renderableAggregate = buildTranscriptRenderableAggregate({ messages, completedRequests: null });
+        (storageState as { sessionMessages: Record<string, unknown> }).sessionMessages = {
+            s_aggregate: {
+                isLoaded: true,
+                messageIdsOldestFirst: messages.map((message) => message.id),
+                messagesById: Object.fromEntries(messages.map((message) => [message.id, message])),
+                renderableAggregate,
+            },
+        };
+        historicalVisits = 0;
+
+        expect(deriveSessionReadState({
+            id: 's_aggregate',
+            seq: 400,
+            lastViewedSessionSeq: 400,
+            latestTurnStatus: 'completed',
+            metadata: null,
+        })).toBe('read');
+        expect(historicalVisits).toBe(0);
+    });
+
     it('derives empty state when a session has no committed activity', () => {
         expect(deriveSessionReadState({ seq: 0, lastViewedSessionSeq: null, metadata: null })).toBe('empty');
         expect(resolveSessionReadStateAction({ seq: 0, lastViewedSessionSeq: null, metadata: null })).toEqual({
@@ -153,6 +190,23 @@ describe('sessionReadState', () => {
             visible: true,
             targetState: 'read',
         });
+    });
+
+    it('preserves loaded-empty transcript fallback rules', () => {
+        const session = {
+            id: 's_empty',
+            seq: 9,
+            latestMessageSeq: 8,
+            lastViewedSessionSeq: 7,
+            latestTurnStatus: 'in_progress' as const,
+            metadata: null,
+        };
+        expect(deriveSessionReadState(session)).toBe('unread');
+        (storageState as { sessionMessages: Record<string, unknown> }).sessionMessages = {
+            s_empty: { isLoaded: true, messageIdsOldestFirst: [], messagesById: {} },
+        };
+        expect(deriveSessionReadState(session)).toBe('empty');
+        expect(deriveSessionReadState({ ...session, latestTurnStatus: 'completed' })).toBe('unread');
     });
 
     it('derives unread state from a ready event and offers mark-read', () => {

@@ -239,7 +239,7 @@ describe('renderSelfHostServerEnvText', () => {
         });
 
         expect(rendered).toContain(
-            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
+            'DATABASE_URL=file:C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
         );
     });
 
@@ -254,7 +254,7 @@ describe('renderSelfHostServerEnvText', () => {
       });
 
       expect(rendered).toContain(
-        'DATABASE_URL=file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
+        'DATABASE_URL=file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
       );
     });
 
@@ -274,7 +274,7 @@ describe('renderSelfHostServerEnvText', () => {
         });
 
         expect(rendered).toContain(
-          'DATABASE_URL=file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1&connection_limit=1',
+          'DATABASE_URL=file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=1&connection_limit=1',
         );
       } finally {
         if (typeof previousBusyTimeout === 'string') {
@@ -296,7 +296,7 @@ describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
 
   it('adds canonical socket_timeout without forcing a sqlite connection limit by default', () => {
     expect(render({ dbPath: '/tmp/happier-data/happier-server-light.sqlite', platform: 'linux' })).toBe(
-      'file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30',
+      'file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30',
     );
   });
 
@@ -305,14 +305,14 @@ describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
       dbPath: '/tmp/happier-data/happier-server-light.sqlite',
       platform: 'linux',
       sqlite: { connectionLimit: 2 },
-    })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=2');
+    })).toBe('file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=2');
   });
 
   it('keeps Windows drive-letter URLs Prisma-compatible when appending query params', () => {
     expect(render({
       dbPath: 'C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite',
       platform: 'win32',
-    })).toBe('file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30');
+    })).toBe('file:C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite?socket_timeout=30');
   });
 
   it('converts busy timeout milliseconds to Prisma socket_timeout seconds without rounding down', () => {
@@ -320,7 +320,7 @@ describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
       dbPath: '/tmp/happier-data/happier-server-light.sqlite',
       platform: 'linux',
       sqlite: { busyTimeoutMs: 500 },
-    })).toBe('file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=1');
+    })).toBe('file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=1');
   });
 
   it('omits socket_timeout and connection_limit when both are unconfigured', () => {
@@ -328,14 +328,14 @@ describe('renderPrismaCompatibleSqliteDatabaseUrl', () => {
       dbPath: '/tmp/happier-data/happier-server-light.sqlite',
       platform: 'linux',
       sqlite: { busyTimeoutMs: 0 },
-    })).toBe('file:///tmp/happier-data/happier-server-light.sqlite');
+    })).toBe('file:/tmp/happier-data/happier-server-light.sqlite');
   });
 
-  it('treats literal question marks in dbPath as filesystem path characters', () => {
-    expect(render({
+  it('rejects the Prisma query delimiter in a native database path', () => {
+    expect(() => render({
       dbPath: '/tmp/happier?data/happier-server-light.sqlite',
       platform: 'linux',
-    })).toBe('file:///tmp/happier%3Fdata/happier-server-light.sqlite?socket_timeout=30');
+    })).toThrow(Error);
   });
 });
 

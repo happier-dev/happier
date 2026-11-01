@@ -856,7 +856,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       ? Math.max(0, Math.trunc(outcome.nextRetryAtMs))
       : null;
     const waiting = this.deps.markWaiting(outcome.intent ?? checking, {
-      nextRetryAtMs: explicitNextRetryAtMs ?? nowMs + this.computeBackoffMs(attemptCount),
+      nextRetryAtMs: explicitNextRetryAtMs ?? nowMs + this.computeBackoffMs(settledAttemptCount),
       lastError: this.sanitizeLastError(outcome.lastError),
     });
     const settlement = await this.settleEffectClaim({

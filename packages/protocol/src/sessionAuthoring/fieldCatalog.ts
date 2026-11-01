@@ -12,6 +12,7 @@ import { AcpConfigOptionOverridesV1Schema } from '../sessionMetadata/metadataOve
 import { WindowsRemoteSessionLaunchModeSchema } from '../sessionMetadata/windowsRemoteSessionLaunchMode.js';
 import { WindowsTerminalWindowNameSchema } from '../sessionMetadata/windowsTerminalWindowName.js';
 import { defineSessionAuthoringFields } from './fieldDefinition.js';
+import { lazySchema } from '../lazySchema.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
 export interface SessionAuthoringJsonObject {
@@ -23,7 +24,7 @@ export type SessionAuthoringJsonValue =
   | SessionAuthoringJsonArray
   | SessionAuthoringJsonObject;
 
-const SessionAuthoringJsonValueSchema: z.ZodType<SessionAuthoringJsonValue> = z.lazy(() =>
+const SessionAuthoringJsonValueSchema: z.ZodType<SessionAuthoringJsonValue> = lazySchema(() => z.lazy(() =>
   z.union([
     z.null(),
     z.string(),
@@ -32,16 +33,16 @@ const SessionAuthoringJsonValueSchema: z.ZodType<SessionAuthoringJsonValue> = z.
     z.array(SessionAuthoringJsonValueSchema),
     z.record(z.string(), SessionAuthoringJsonValueSchema),
   ]),
-);
+));
 
-export const SessionAuthoringCheckoutCreationDraftV1Schema = z.object({
+export const SessionAuthoringCheckoutCreationDraftV1Schema = lazySchema(() => z.object({
   kind: z.literal('git_worktree'),
   displayName: z.string().trim().min(1),
   baseRef: z.string().trim().min(1).nullable(),
   branchMode: z.enum(['new', 'existing']).optional(),
-}).strict();
+}).strict());
 
-export const SessionAuthoringTerminalV1Schema = z.object({
+export const SessionAuthoringTerminalV1Schema = lazySchema(() => z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
     sessionName: z.string().optional(),
@@ -49,18 +50,18 @@ export const SessionAuthoringTerminalV1Schema = z.object({
     tmpDir: z.union([z.string(), z.null()]).optional(),
   }).optional(),
   herdr: z.object({ sessionName: z.string().optional() }).optional(),
-}).strict();
+}).strict());
 
-export const SyncedSessionAuthoringTerminalV1Schema = z.object({
+export const SyncedSessionAuthoringTerminalV1Schema = lazySchema(() => z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
   }).strict().optional(),
   herdr: z.object({ sessionName: z.string().optional() }).strict().optional(),
-}).strict();
+}).strict());
 
-export const SyncedSessionAuthoringConnectedServicesV1Schema = z.object({
+export const SyncedSessionAuthoringConnectedServicesV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   bindingsByServiceId: z.partialRecord(ConnectedServiceIdSchema, z.union([
     z.object({ source: z.literal('native') }).strict(),
@@ -76,9 +77,9 @@ export const SyncedSessionAuthoringConnectedServicesV1Schema = z.object({
       profileId: ConnectedServiceProfileIdSchema.optional(),
     }).strict(),
   ])).default({}),
-}).strict();
+}).strict());
 
-export const SessionAuthoringAutomationV1Schema = z.object({
+export const SessionAuthoringAutomationV1Schema = lazySchema(() => z.object({
   enabled: z.boolean(),
   name: z.string(),
   description: z.string(),
@@ -86,9 +87,9 @@ export const SessionAuthoringAutomationV1Schema = z.object({
   everyMinutes: z.number().int().min(1).max(24 * 60),
   cronExpr: z.string(),
   timezone: z.string().nullable(),
-}).strict();
+}).strict());
 
-export const SessionAuthoringCodexBackendModeSchema = z.enum(CODEX_BACKEND_MODES);
+export const SessionAuthoringCodexBackendModeSchema = lazySchema(() => z.enum(CODEX_BACKEND_MODES));
 
 const ALL_AUTHORING_CONTEXTS = [
   'newSession',

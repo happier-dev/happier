@@ -5,7 +5,6 @@ import {
   ACTION_OPERATION_RPC_METHODS_V1,
   ActionOperationListV1ResponseSchema,
   ActionOperationGetV1ResponseSchema,
-  buildBackendTargetKey,
   getActionSpec,
   listNativeReviewEngines,
   normalizeSessionMetadataForRead,
@@ -18,11 +17,9 @@ import {
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import {
-  AGENT_IDS,
   LEGACY_ACP_SESSION_MODES_STATE_KEY,
   SESSION_MODES_STATE_KEY,
   assertNonEscalatingPermissionMode,
-  getProviderCliRuntimeSpec,
   parsePermissionIntentAlias,
   readMetadataAliasValue,
   resolvePermissionPrivilegeFromSessionMetadata,
@@ -33,6 +30,7 @@ import { createCliApprovalsArtifactStore } from '@/approvals/cliApprovalsArtifac
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import type { Credentials } from '@/persistence';
+import { buildAgentBackendItems } from './buildAgentBackendItems';
 import { readSettings } from '@/persistence';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -69,6 +67,7 @@ import {
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
+import { setSessionConfigOption } from '@/session/services/setSessionConfigOption';
 import { setSessionMode } from '@/session/services/setSessionMode';
 import { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
 import { setSessionTitle } from '@/session/services/setSessionTitle';
@@ -120,12 +119,15 @@ import {
   usageLimitRecoveryFeatureDisabledResult,
 } from '@/features/usageLimitRecoveryFeatureGate';
 import { normalizeCliSessionUsageLimitRecoveryOperationResult } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import { hasSameUsageLimitRecoveryIdentity, isPendingUsageLimitRecoveryStatus } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
+import type { UsageLimitContinuationResult } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
 
 export type ResumeInactiveSessionWhenUsageLimitReady = (input: Readonly<{
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
-}>) => Promise<boolean> | boolean;
+  readiness?: 'provider_ready';
+}>) => Promise<boolean | UsageLimitContinuationResult> | boolean | UsageLimitContinuationResult;
 
 export type ScheduleInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   sessionId: string;
@@ -183,12 +185,6 @@ function normalizeActionToolExposureSurface(surface: unknown): 'session_agent' |
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
-}
-
-function normalizeLimit(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
 function normalizeString(value: unknown): string | null {
@@ -413,10 +409,7 @@ function readUsageLimitRecoveryFromResult(result: unknown): SessionUsageLimitRec
 }
 
 function shouldScheduleUsageLimitRecoveryCheck(recovery: SessionUsageLimitRecoveryV1): boolean {
-  return (
-    (recovery.status === 'armed' || recovery.status === 'waiting' || recovery.status === 'checking')
-    && typeof recovery.nextCheckAtMs === 'number'
-  );
+  return isPendingUsageLimitRecoveryStatus(recovery.status);
 }
 
 function readSessionModesState(metadata: Record<string, unknown> | null): Readonly<{
@@ -432,22 +425,6 @@ function readSessionModesState(metadata: Record<string, unknown> | null): Readon
     provider?: string;
     availableModes?: readonly Readonly<{ id?: string; name?: string; description?: string }>[];
   }> | null;
-}
-
-function buildAgentBackendItems(params: Readonly<{ limit?: unknown }>): readonly Readonly<{
-  targetKey: string;
-  label: string;
-  enabled: true;
-  agentId: AgentId;
-}>[] {
-  const limit = normalizeLimit(params.limit);
-  const items = AGENT_IDS.map((agentId) => ({
-    targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId }),
-    label: getProviderCliRuntimeSpec(agentId).title,
-    enabled: true as const,
-    agentId,
-  }));
-  return limit ? items.slice(0, limit) : items;
 }
 
 export function createCliActionInventoryDeps(params: Readonly<{
@@ -534,7 +511,11 @@ export function createCliActionInventoryDeps(params: Readonly<{
       })),
     }),
     agentsBackendsList: async (args) => ({
-      items: buildAgentBackendItems({ limit: (args as { limit?: unknown }).limit }),
+      items: buildAgentBackendItems({
+        settings: await readLiveActionAccountSettings(params.credentials),
+        includeDisabled: (args as { includeDisabled?: unknown }).includeDisabled === true,
+        limit: (args as { limit?: unknown }).limit,
+      }),
     }),
     agentsModelsList: async (args) => {
       const agentId = args.agentId;
@@ -646,7 +627,6 @@ export function createCliActionDeps(params: Readonly<{
   }>;
 
   const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
-  let usageLimitRecoveryFeatureEnabledPromise: Promise<boolean> | null = null;
   let accountProfilePromise: Promise<Awaited<ReturnType<typeof fetchAccountProfile>> | null> | null = null;
   const ambiguousSpawnActionRequestIds = new Set<string>();
 
@@ -766,6 +746,7 @@ export function createCliActionDeps(params: Readonly<{
 
   const resolveTransportForSession = async (
     idOrPrefix: string,
+    options?: { fresh?: boolean },
   ): Promise<CliSessionTransportLookupResult> => {
     if (!params.credentials) {
       return { ok: false, code: 'not_authenticated' };
@@ -776,7 +757,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: false, code: 'session_not_found' };
     }
     const cachedTransport = sessionTransportCache.get(normalized);
-    if (cachedTransport) return { ok: true, ...cachedTransport };
+    if (cachedTransport && !options?.fresh) return { ok: true, ...cachedTransport };
 
     const resolved = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: normalized });
     if (!resolved.ok) {
@@ -984,6 +965,7 @@ export function createCliActionDeps(params: Readonly<{
     sessionId: string,
     operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow' | 'consumeResetCredit',
     request: Record<string, unknown>,
+    expectedRecovery?: SessionUsageLimitRecoveryV1,
   ): Promise<unknown> => {
     if (!params.credentials) {
       return normalizeCliSessionUsageLimitRecoveryOperationResult({
@@ -993,7 +975,7 @@ export function createCliActionDeps(params: Readonly<{
     }
     const credentials = params.credentials;
 
-    const transport = await resolveTransportForSession(sessionId);
+    const transport = await resolveTransportForSession(sessionId, { fresh: true });
     if (!transport.ok) {
       return normalizeCliSessionUsageLimitRecoveryOperationResult({
         sessionId,
@@ -1012,6 +994,13 @@ export function createCliActionDeps(params: Readonly<{
     });
 
     const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
+    if (expectedRecovery && (!recovery.success
+      || !hasSameUsageLimitRecoveryIdentity(recovery.data, expectedRecovery)
+      || !isPendingUsageLimitRecoveryStatus(recovery.data.status))) {
+      return normalizeCliSessionUsageLimitRecoveryOperationResult({ sessionId: transport.sessionId,
+        result: { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded' },
+      });
+    }
     if (operation === 'checkNow' && recovery.success && recovery.data.runtimeAuthRecoveryAttemptId
       && !params.checkRuntimeAuthUsageLimitRecovery) {
       const machineId = normalizeString(transport.rawSession.machineId) ?? normalizeString(metadata?.machineId);
@@ -1107,10 +1096,6 @@ export function createCliActionDeps(params: Readonly<{
     });
   };
 
-  const usageLimitRecoveryFeatureEnabled = async (): Promise<boolean> => {
-    usageLimitRecoveryFeatureEnabledPromise ??= resolveUsageLimitRecoveryFeatureEnabled();
-    return await usageLimitRecoveryFeatureEnabledPromise;
-  };
 
   const scheduleUsageLimitRecoveryCheckFromResult = (
     sessionId: string,
@@ -1124,7 +1109,7 @@ export function createCliActionDeps(params: Readonly<{
         recovery,
         // No explicit mode: the stored intent supplies the resume prompt mode
         // at its own precedence tier when the routed check runs.
-        runCheckNow: async () => await runUsageLimitCheckNow({ sessionId }),
+        runCheckNow: async () => await runUsageLimitCheckNow({ sessionId, expectedRecovery: recovery }),
       });
       return;
     }
@@ -1150,7 +1135,7 @@ export function createCliActionDeps(params: Readonly<{
   );
 
   const runUsageLimitCheckNow = async (
-    input: Readonly<{ sessionId: string; provider?: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>,
+    input: Readonly<{ sessionId: string; provider?: string; resumePromptMode?: 'standard' | 'off' | 'custom'; expectedRecovery?: SessionUsageLimitRecoveryV1 }>,
   ): Promise<unknown> => {
     const normalizedProvider = typeof input.provider === 'string' ? input.provider.trim() : '';
     const resumePromptMode = readExplicitUsageLimitRecoveryResumePromptMode(input.resumePromptMode);
@@ -1158,7 +1143,7 @@ export function createCliActionDeps(params: Readonly<{
       sessionId: input.sessionId,
       ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
       ...(resumePromptMode ? { resumePromptMode } : {}),
-    });
+    }, input.expectedRecovery);
     scheduleUsageLimitRecoveryCheckFromResult(input.sessionId, result);
     return result;
   };
@@ -1664,7 +1649,7 @@ export function createCliActionDeps(params: Readonly<{
     },
     ...(approvalsStore ?? {}),
     ...inventoryDeps,
-    sessionSendMessage: async ({ sessionId, message, localId, requestedAction, wait, timeoutSeconds, permissionModeOverride, modelOverride, callerSurface, callerPermissionMode }) => {
+    sessionSendMessage: async ({ sessionId, message, kind, from, localId, requestedAction, wait, timeoutSeconds, permissionModeOverride, modelOverride, callerSurface, callerPermissionMode }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -1686,6 +1671,8 @@ export function createCliActionDeps(params: Readonly<{
         credentials: params.credentials,
         idOrPrefix: sessionId,
         message: String(message ?? ''),
+        ...(kind ? { kind } : {}),
+        ...(from !== undefined ? { from } : {}),
         ...(localId ? { localId } : {}),
         requestedAction,
         wait: normalizedWait,
@@ -1801,6 +1788,20 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: true, sessionId: res.sessionId, modelId: normalizedModelId, updatedAt };
     },
 
+    sessionConfigOptionSet: async ({ sessionId, configId, valueId }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      const updatedAt = Date.now();
+      const result = await setSessionConfigOption({
+        credentials: params.credentials, idOrPrefix: sessionId, configId, valueId, updatedAt,
+      });
+      if (!result.ok) {
+        return { ok: false, errorCode: result.code, error: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) };
+      }
+      return { ok: true, sessionId: result.sessionId, configId, valueId, updatedAt };
+    },
+
     sessionArchiveSet: async ({ sessionId, archived }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -1859,7 +1860,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitWaitResumeEnable: async ({ sessionId, issueFingerprint, remember, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       const explicitResumePromptMode = readExplicitUsageLimitRecoveryResumePromptMode(resumePromptMode);
@@ -1877,7 +1878,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitWaitResumeCancel: async ({ sessionId, issueFingerprint, armedAtMs, runtimeAuthRecoveryAttemptId }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       const normalizedIssueFingerprint = typeof issueFingerprint === 'string' ? issueFingerprint.trim() : issueFingerprint;
@@ -1925,7 +1926,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitCheckNow: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitCheckNow({
@@ -1936,7 +1937,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitSwitchAccountNow: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitSwitchAccountNow({
@@ -1947,7 +1948,7 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     sessionUsageLimitConsumeResetCredit: async ({ sessionId, provider, resumePromptMode }) => {
-      if (!await usageLimitRecoveryFeatureEnabled()) {
+      if (!await resolveUsageLimitRecoveryFeatureEnabled()) {
         return usageLimitRecoveryFeatureDisabledResult({ sessionId });
       }
       return await runUsageLimitConsumeResetCredit({

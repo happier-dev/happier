@@ -83,6 +83,20 @@ console.log(tarballPath);
     });
     writeText(tempRepo, 'apps/stack/scripts/bundleWorkspaceDeps.mjs', 'process.exit(0);\n');
 
+    // The stubbed bundlers do not copy the release-built Windows service launcher; stage the
+    // minimal x64 GUI PE the release check accepts where real bundling places it.
+    const launcher = Buffer.alloc(512);
+    launcher.writeUInt16LE(0x5a4d, 0);
+    launcher.writeUInt32LE(0x80, 0x3c);
+    launcher.writeUInt32LE(0x00004550, 0x80);
+    launcher.writeUInt16LE(0x8664, 0x84);
+    launcher.writeUInt16LE(0x20b, 0x98);
+    launcher.writeUInt16LE(2, 0x98 + 68);
+    launcher.write('HAPPIER_SERVICE_LAUNCHER_V1', 0x120, 'ascii');
+    for (const pkgDir of ['apps/cli', 'apps/stack']) {
+        writeText(tempRepo, `${pkgDir}/node_modules/@happier-dev/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe`, launcher);
+    }
+
     writeText(
         tempRepo,
         'scripts/pipeline/npm/publish-tarball.mjs',

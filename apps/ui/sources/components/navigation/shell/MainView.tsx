@@ -23,6 +23,7 @@ import { FABWide } from '@/components/ui/buttons/FABWide';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
+import { useScreenSafeAreaBackdrop } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
@@ -30,11 +31,10 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
-import { trackFriendsSearch } from '@/track';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
-import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
+import { FriendsAddButton } from '@/components/friends/FriendsAddButton';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
@@ -210,8 +210,6 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
     const isCustomServer = isUsingCustomServer();
-    const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
     const handleNewSession = React.useCallback((event?: unknown) => {
@@ -250,18 +248,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
         return (
             <View style={styles.headerButtonsRow}>
                 <ActionOperationActivityButton testID="main-header-action-operations" />
-                <Pressable
-                    onPress={() => {
-                        trackFriendsSearch();
-                        router.push('/friends/search');
-                    }}
-                    hitSlop={15}
-                    style={[styles.headerButton, { opacity: friendsIdentityReady ? 1 : 0.5 }]}
-                    disabled={!friendsIdentityReady}
-                    accessibilityState={{ disabled: !friendsIdentityReady }}
-                >
-                    <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
-                </Pressable>
+                <FriendsAddButton />
             </View>
         );
     }
@@ -441,6 +428,9 @@ const PhoneTabbedMainViewContent = React.memo(function PhoneTabbedMainViewConten
         if (!friendsEnabled && normalized === 'friends') return 'sessions';
         return normalized;
     }, [effectiveActiveTab, friendsEnabled, inboxEnabled]);
+
+    // The phone home is a canvas screen: extend it under the side safe-area insets.
+    useScreenSafeAreaBackdrop(theme.colors.background.canvas);
 
     const renderTabContent = React.useCallback(() => {
         switch (effectiveActiveTab) {

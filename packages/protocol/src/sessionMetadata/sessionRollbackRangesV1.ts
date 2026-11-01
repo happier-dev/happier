@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import { lazySchema } from '../lazySchema.js';
 
 export function createSessionRollbackRangeV1Schema(zod: typeof z) {
   return zod
@@ -17,7 +18,7 @@ export function createSessionRollbackRangeV1Schema(zod: typeof z) {
     .passthrough();
 }
 
-export const SessionRollbackRangeV1Schema = createSessionRollbackRangeV1Schema(z);
+export const SessionRollbackRangeV1Schema = lazySchema(() => createSessionRollbackRangeV1Schema(z));
 export type SessionRollbackRangeV1 = z.infer<typeof SessionRollbackRangeV1Schema>;
 
 export function createSessionRollbackRangesV1Schema(zod: typeof z) {
@@ -28,7 +29,7 @@ export function createSessionRollbackRangesV1Schema(zod: typeof z) {
   }).passthrough();
 }
 
-export const SessionRollbackRangesV1Schema = createSessionRollbackRangesV1Schema(z);
+export const SessionRollbackRangesV1Schema = lazySchema(() => createSessionRollbackRangesV1Schema(z));
 export type SessionRollbackRangesV1 = z.infer<typeof SessionRollbackRangesV1Schema>;
 
 export function buildSessionRollbackRangesV1(params: Readonly<{

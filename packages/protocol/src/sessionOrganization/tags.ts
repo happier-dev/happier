@@ -7,13 +7,14 @@ import {
   SESSION_ORGANIZATION_MAX_TAGS,
 } from './constants.js';
 import { SessionOrganizationContentEnvelopeSchema } from './content.js';
+import { lazySchema } from '../lazySchema.js';
 
-const SessionOrganizationSessionIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationTagIdSchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH);
-const SessionOrganizationTagKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH);
-const SessionOrganizationSortKeySchema = z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH);
+const SessionOrganizationSessionIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationTagIdSchema = lazySchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_ID_LENGTH));
+const SessionOrganizationTagKeySchema = lazySchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_KEY_LENGTH));
+const SessionOrganizationSortKeySchema = lazySchema(() => z.string().trim().min(1).max(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH));
 
-export const SessionOrganizationTagSchema = z
+export const SessionOrganizationTagSchema = lazySchema(() => z
   .object({
     tagId: SessionOrganizationTagIdSchema,
     tagKey: SessionOrganizationTagKeySchema,
@@ -23,13 +24,13 @@ export const SessionOrganizationTagSchema = z
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict());
 export type SessionOrganizationTag = z.infer<typeof SessionOrganizationTagSchema>;
 
-export const SessionTagAssignmentSchema = z
+export const SessionTagAssignmentSchema = lazySchema(() => z
   .object({
     sessionId: SessionOrganizationSessionIdSchema,
     tagIds: z.array(SessionOrganizationTagIdSchema).max(SESSION_ORGANIZATION_MAX_TAGS),
   })
-  .strict();
+  .strict());
 export type SessionTagAssignment = z.infer<typeof SessionTagAssignmentSchema>;

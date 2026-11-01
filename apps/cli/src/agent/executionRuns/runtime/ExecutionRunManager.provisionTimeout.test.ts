@@ -100,7 +100,7 @@ describe('ExecutionRunManager backend provisioning bound (QA2-F04)', () => {
     expect(run?.error?.code).toBe('execution_run_backend_provision_timeout');
   });
 
-  it('cancels and disposes a backend session that appears after the provisioning timeout', async () => {
+  it('does not re-enter a disposed backend when its session appears after the provisioning timeout', async () => {
     process.env[PROVISION_TIMEOUT_ENV_KEY] = '200';
     let resolveSession!: (value: { sessionId: SessionId }) => void;
     const session = new Promise<{ sessionId: SessionId }>((resolve) => {
@@ -134,8 +134,9 @@ describe('ExecutionRunManager backend provisioning bound (QA2-F04)', () => {
     await manager.waitForTerminal(started.runId);
 
     resolveSession({ sessionId: 'late-provider-session' as SessionId });
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('late-provider-session'));
-    expect(dispose).toHaveBeenCalledTimes(2);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cancel).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledTimes(1);
     expect(manager.get(started.runId)?.status).toBe('failed');
   });
 

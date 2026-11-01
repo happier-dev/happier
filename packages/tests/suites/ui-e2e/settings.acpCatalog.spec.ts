@@ -29,11 +29,24 @@ async function createConfiguredAcpBackend(params: Readonly<{
   await params.page.getByTestId('settings.acpCatalog.backendEditor.title').fill('UI ACP Stub Backend');
   await params.page.getByTestId('settings.acpCatalog.backendEditor.command').fill('node');
   await params.page.getByTestId('settings.acpCatalog.backendEditor.args').fill(ACP_STUB_PROVIDER_PATH);
+  const resumeSupportId = 'settings.acpCatalog.backendEditor.supportsLoadSession';
+  await expect(params.page.getByTestId(resumeSupportId)).not.toBeChecked();
+  await params.page.getByTestId(resumeSupportId).click();
+  await expect(params.page.getByTestId(resumeSupportId)).toBeChecked();
   const saveButton = params.page.getByTestId('settings.acpCatalog.backendEditor.save');
   await expect(saveButton).toBeEnabled();
   await saveButton.click();
 
   await expect(params.page.getByTestId(`settings.acpCatalog.backend.${params.backendId}`)).toHaveCount(1, { timeout: 60_000 });
+  await params.page.getByTestId(`settings.acpCatalog.backend.${params.backendId}`).click();
+  await expect(params.page.getByTestId(resumeSupportId)).toBeChecked();
+  await params.page.getByTestId(resumeSupportId).click();
+  await expect(params.page.getByTestId(resumeSupportId)).not.toBeChecked();
+  await params.page.getByTestId('settings.acpCatalog.backendEditor.save').click();
+  await params.page.getByTestId(`settings.acpCatalog.backend.${params.backendId}`).click();
+  await expect(params.page.getByTestId(resumeSupportId)).not.toBeChecked();
+  await params.page.getByTestId(resumeSupportId).click();
+  await params.page.getByTestId('settings.acpCatalog.backendEditor.save').click();
 }
 
 async function selectMachineForNewSession(params: Readonly<{

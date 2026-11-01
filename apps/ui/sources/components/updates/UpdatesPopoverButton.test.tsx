@@ -10,7 +10,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { UpdatesPopoverButton } from './UpdatesPopoverButton';
 import { UpdateRow } from './UpdateRow';
 import { UpdatesContent } from './UpdatesContent';
-import type { UpdatesContentModel } from '@/updates/useUpdatesContentModel';
+import { useUpdatesContentModel, type UpdatesContentModel } from '@/updates/useUpdatesContentModel';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -49,7 +49,7 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 
 // Machine RPC (a network boundary) and the modal host (a presentation boundary): Update is the
 // consent, so no modal may be asked for.
-const rpc = vi.hoisted(() => ({ invoke: vi.fn(async (_machineId: string, request: { method: string }) => ({
+const rpc = vi.hoisted(() => ({ detect: vi.fn(async (..._args: unknown[]) => ({ supported: true, response: { protocolVersion: 1, results: { 'tool.systemTasks': { ok: true, checkedAt: Date.now(), data: { kinds: ['cli.update.v1'] } } } } })), invoke: vi.fn(async (_machineId: string, request: { method: string }) => ({
     supported: true,
     response: {
         ok: true,
@@ -61,6 +61,7 @@ const rpc = vi.hoisted(() => ({ invoke: vi.fn(async (_machineId: string, request
 vi.mock('@/sync/ops', async (importOriginal) => ({
     ...(await importOriginal<Record<string, unknown>>()),
     machineCapabilitiesInvoke: rpc.invoke,
+    machineCapabilitiesDetect: rpc.detect,
 }));
 const modal = vi.hoisted(() => ({ confirm: vi.fn(async () => true) }));
 vi.mock('@/modal', async (importOriginal) => {
@@ -174,6 +175,30 @@ describe('UpdatesPopoverButton', () => {
         }
     });
 
+    it('shows Check Updates as busy until every requested machine has answered', async () => {
+        machinesState.value = [{
+            id: 'check-busy', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: Date.now(),
+            metadata: { host: 'check-busy', platform: 'linux', happyCliVersion: '0.2.12', happyHomeDir: '/h/.happier', homeDir: '/h' },
+        } as Machine];
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        function Screen() { return <UpdatesContent model={useUpdatesContentModel()} presentation="screen" />; }
+        const screen = await renderScreen(<Screen />);
+        rpc.detect.mockImplementationOnce(async () => {
+            await pending;
+            return { supported: true, response: { protocolVersion: 1, results: { 'tool.systemTasks': { ok: true, checkedAt: Date.now(), data: { kinds: ['cli.update.v1'] } } } } };
+        });
+        try {
+            await act(async () => { screen.findByTestId('updates.checkNow')?.props.onPress(); });
+            const hasSpinner = screen.findAllByTestId('updates.checkNow.spinner').length > 0;
+            const busy = screen.findByTestId('updates.checkNow')?.props.accessibilityState?.busy;
+            await act(async () => { release(); });
+            expect(hasSpinner).toBe(true);
+            expect(busy).toBe(true);
+            expect(screen.findAllByTestId('updates.checkNow.spinner')).toHaveLength(0);
+        } finally { release(); machinesState.value = []; await screen.unmount(); }
+    });
+
     it('the row\'s session-impact note is part of its accessible name', async () => {
         const item = {
             id: 'studio:happier-cli', subject: { kind: 'happier-cli' }, machineId: 'studio', title: 'Happier CLI',
@@ -198,7 +223,7 @@ describe('UpdatesPopoverButton', () => {
             groups: [{ id: 'this-computer', kind: 'thisComputer', machineName: 'local', machineId: 'unrelated-group-id', online: true, items: [item] }],
             checkedAt: null, uncheckedMachineCount: 0, sessionsRunningOn: new Set(['local']),
             runItem: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {}, batch: null,
-            checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+            checking: false, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
         };
         const screen = await renderScreen(<UpdatesContent model={model} presentation="popover" />);
         const hasNote = () => screen.findAll((node) => typeof node.props?.accessibilityLabel === 'string')
@@ -206,5 +231,23 @@ describe('UpdatesPopoverButton', () => {
         expect(hasNote()).toBe(true);
         await screen.update(<UpdatesContent model={{ ...model, sessionsRunningOn: new Set(['unrelated-group-id']) }} presentation="popover" />);
         expect(hasNote()).toBe(false);
+    });
+
+    it.each(['unknown', 'unchecked', 'checking'] as const)('keeps a %s CLI row visible in the popover instead of collapsing it as current', async (state) => {
+        const item = {
+            id: 'windows:happier-cli', subject: { kind: 'happier-cli' }, machineId: 'windows', title: 'Happier CLI',
+            currentVersion: '0.2.16-dev.9', latestVersion: '0.2.16-dev.9', state, progressPercent: null, step: null,
+            managedBy: 'happier', action: { kind: 'manual', command: 'hdev self update' }, failure: null, skipped: false,
+        } as const;
+        const model: UpdatesContentModel = {
+            summary: { ...TWO, actionableCount: 0, phase: 'none', status: 'unknown' },
+            groups: [{ id: 'windows', kind: 'machine', machineName: 'Windows', machineId: 'windows', online: true, items: [item] }],
+            checkedAt: Date.now(), uncheckedMachineCount: 0, sessionsRunningOn: new Set(),
+            runItem: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {}, batch: null,
+            checking: false, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+        };
+        const screen = await renderScreen(<UpdatesContent model={model} presentation="popover" />);
+        expect(screen.findAllByTestId('updates.row.windows:happier-cli').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('updates.row.windows:happier-cli.action')).toHaveLength(0);
     });
 });

@@ -1,3 +1,4 @@
+import { isClaudeSidechainRuntimeEvidence } from '../utils/sessionHookAttribution';
 import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 
 import { parseProviderResetAt, parseProviderTimestampMs } from '@/daemon/connectedServices/quotas/normalization';
@@ -22,6 +23,7 @@ export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
   action: null;
   connectedService: null;
   sourceProviderAccountId?: string | null;
+  sourceProviderOrganizationId?: string | null;
   /**
    * Set when the evidence row was imported from a subagent transcript (`isSidechain: true`).
    * Sidechain limits are real account-level evidence (quota snapshots may consume them) but
@@ -110,6 +112,11 @@ function collectSyntheticApiErrorRecords(record: Record<string, unknown>): Recor
     records.push(result);
     if (isRecord(result.error)) records.push(result.error);
   }
+  for (const source of [...records]) {
+    const apiErrorParams = isRecord(source.apiErrorParams) ? source.apiErrorParams : null;
+    if (isRecord(apiErrorParams?.rate_limit_info)) records.push(apiErrorParams.rate_limit_info);
+    if (isRecord(source.quotaLimits)) records.push(source.quotaLimits);
+  }
   return records;
 }
 
@@ -123,6 +130,8 @@ function containsRateLimitEvidence(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return [
     value.error,
+    value.errors,
+    value.result,
     value.code,
     value.type,
     value.kind,
@@ -143,6 +152,8 @@ function containsClaudeUsageLimitEvidence(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return [
     value.error,
+    value.errors,
+    value.result,
     value.code,
     value.type,
     value.kind,
@@ -220,6 +231,8 @@ function containsTransientThrottleEvidence(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return [
     value.error,
+    value.errors,
+    value.result,
     value.code,
     value.type,
     value.kind,
@@ -243,6 +256,8 @@ function containsProviderCapacityEvidence(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return [
     value.error,
+    value.errors,
+    value.result,
     value.code,
     value.type,
     value.kind,
@@ -261,7 +276,7 @@ function readSyntheticProviderLimitId(records: readonly Record<string, unknown>[
   // An error code identifies the rejection, not the exhausted allowance. Unknown
   // allowance identity must remain unknown so selected pool limits do not exclude it.
   for (const record of records) {
-    for (const name of ['providerLimitId', 'provider_limit_id', 'limit', 'limitType', 'limit_type']) {
+    for (const name of ['providerLimitId', 'provider_limit_id', 'rateLimitType', 'rate_limit_type', 'limit', 'limitType', 'limit_type']) {
       const text = readString(record[name]);
       if (text) return text;
     }
@@ -303,7 +318,8 @@ function mapSyntheticClaudeApiErrorToUsageDetails(record: Record<string, unknown
     'status_code',
   ]));
   const hasRateLimitEvidence = containsRateLimitEvidence(record);
-  const hasUsageLimitEvidence = containsClaudeUsageLimitEvidence(record);
+  const hasDeclaredUsageLimit = records.some((source) => source.apiError === 'usage_limit_reached');
+  const hasUsageLimitEvidence = hasDeclaredUsageLimit || containsClaudeUsageLimitEvidence(record);
   const hasProviderCapacityEvidence = status === 529 || containsProviderCapacityEvidence(record);
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
   const isAssistantApiError =
@@ -332,7 +348,9 @@ function mapSyntheticClaudeApiErrorToUsageDetails(record: Record<string, unknown
     v: 1,
     resetAtMs,
     retryAfterMs,
-    ...(hasProviderCapacityEvidence ? { limitCategory: 'capacity' as const } : {}),
+    ...(hasProviderCapacityEvidence
+      ? { limitCategory: 'capacity' as const }
+      : hasDeclaredUsageLimit ? { limitCategory: 'usage_limit' as const } : {}),
     quotaScope: 'account',
     recoverability: 'wait',
     ...(providerLimitId ? { providerLimitId } : {}),
@@ -451,8 +469,14 @@ function markSidechainSourcedUsageDetails(
   record: Record<string, unknown> | null,
   details: NormalizedProviderUsageLimitDetailsV1 | null,
 ): NormalizedProviderUsageLimitDetailsV1 | null {
-  if (!details || record?.isSidechain !== true) return details;
+  if (!details || !isClaudeSidechainRuntimeEvidence(record)) return details;
   return { ...details, sourcedFromSidechain: true };
+}
+
+/** Availability telemetry does not establish that the parent operation failed. */
+export function mapClaudeProviderFailureToUsageDetails(event: unknown): NormalizedProviderUsageLimitDetailsV1 | null {
+  if (!isRecord(event) || isClaudeSidechainRuntimeEvidence(event)) return null;
+  return mapSyntheticClaudeApiErrorToUsageDetails(event);
 }
 
 export function mapClaudeRateLimitEventToUsageDetails(event: unknown): NormalizedProviderUsageLimitDetailsV1 | null {
@@ -568,10 +592,15 @@ export function readClaudeRateLimitEventWindows(event: unknown): readonly Normal
   })];
 }
 
-/** Passive quota evidence: the windows of an allowed Claude `rate_limit_event`. */
+/** Availability is quota evidence even when an optional allowance is rejected. */
 export function mapClaudeRateLimitEventToQuotaEvidence(event: unknown): readonly NormalizedProviderUsageLimitDetailsV1[] {
   const record = isRecord(event) ? event : null;
+  if (record && record.type !== 'rate_limit_event' && isClaudeSidechainRuntimeEvidence(record)) {
+    const details = mapSyntheticClaudeApiErrorToUsageDetails(record);
+    return details ? [{ ...details, sourcedFromSidechain: true }] : [];
+  }
   const info = isRecord(record?.rate_limit_info) ? record.rate_limit_info : null;
   const status = readString(info?.status);
-  return status === 'allowed' || status === 'allowed_warning' ? readClaudeRateLimitEventWindows(event) : [];
+  return status === 'allowed' || status === 'allowed_warning' || status === 'rejected'
+    ? readClaudeRateLimitEventWindows(event) : [];
 }

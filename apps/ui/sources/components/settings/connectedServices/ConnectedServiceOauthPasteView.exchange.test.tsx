@@ -77,6 +77,10 @@ describe('Connected Service OAuth paste HTTP composition', () => {
     if (!field) throw new Error('Missing OAuth paste field');
     await act(async () => { changeTextTestInstance(field, input(url.searchParams.get('state')!, url.searchParams.get('redirect_uri')!)); });
     await screen.pressByTestIdAsync('connectedServices.oauthPaste.validateRedirectButton');
+    // Every paste outcome (connected, rejected or failed exchange) ends in an alert. The
+    // credential reads own their response bodies, so settle on that outcome, not a tick count.
+    await vi.waitFor(() => expect(alerts).toHaveBeenCalled());
+    await act(async () => { await flushHookEffects({ cycles: 2, turns: 2 }); });
     return { url, onDone, screen };
   }
 

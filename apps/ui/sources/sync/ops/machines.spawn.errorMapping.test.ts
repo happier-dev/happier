@@ -31,11 +31,6 @@ vi.mock('../api/session/apiSocket', () => ({
   },
 }));
 
-vi.mock('@/sync/runtime/socketIoAckTimeout', () => ({
-  isSocketIoAckTimeoutError: (error: unknown) =>
-    error instanceof Error && error.message.includes('timed out'),
-}));
-
 describe('machineSpawnNewSession error mapping', () => {
   const initialStorageState = storage.getState();
   const spawnCustodyStorageKey = serverAccountScopedStorageKey('session-spawn-attempts-v1', {

@@ -1,7 +1,7 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 
 import axios from 'axios';
 
@@ -30,6 +30,7 @@ import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpB
 import { assertAccountEncryptionModeAllowedByEffectiveClientRequirement } from './resolveEffectiveClientEncryptionRequirement';
 
 function resolveMaterial(credentials: Credentials): { type: 'legacy'; secret: Uint8Array } | { type: 'dataKey'; machineKey: Uint8Array } {
+  requireEncryptionCredentials(credentials);
   return credentials.encryption.type === 'legacy'
     ? { type: 'legacy', secret: credentials.encryption.secret }
     : { type: 'dataKey', machineKey: credentials.encryption.machineKey };

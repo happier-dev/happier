@@ -1,10 +1,20 @@
-import { render } from 'ink';
-import React from 'react';
+import type { render } from 'ink';
 
-import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
-import { GeminiTerminalDisplay } from '@/backends/gemini/ui/GeminiTerminalDisplay';
 import { DEFAULT_GEMINI_MODEL } from '@/backends/gemini/constants';
+import { logger } from '@/ui/logger';
+
+async function loadGeminiInkUi() {
+  const [{ render }, { default: React }, { GeminiTerminalDisplay }] = await Promise.all([
+    import('ink'),
+    import('react'),
+    import('@/backends/gemini/ui/GeminiTerminalDisplay'),
+  ]);
+  return { render, React, GeminiTerminalDisplay };
+}
+
+type GeminiInkUi = Awaited<ReturnType<typeof loadGeminiInkUi>>;
 
 export function createGeminiTerminalUi(params: {
   messageBuffer: MessageBuffer;
@@ -16,6 +26,9 @@ export function createGeminiTerminalUi(params: {
   onDebug: (message: string) => void;
   saveModelToConfig: (model: string) => void;
 }) {
+  // Ink and React load on the first mount, so runners that never show the terminal UI never load them.
+  let inkUiLoad: Promise<GeminiInkUi> | null = null;
+  let inkRequested = false;
   let inkInstance: ReturnType<typeof render> | null = null;
   let displayedModel: string | undefined = params.initialModel;
 
@@ -43,7 +56,23 @@ export function createGeminiTerminalUi(params: {
 
   const mount = () => {
     if (!params.hasTTY) return;
+    inkRequested = true;
+    inkUiLoad ??= loadGeminiInkUi().catch((error: unknown) => {
+      inkUiLoad = null;
+      throw error;
+    });
+    void inkUiLoad
+      .then((ui) => {
+        if (inkRequested && !inkInstance) renderInk(ui);
+      })
+      // The terminal UI is a local convenience view: a failure to load or render it is
+      // logged and leaves the session running for remote clients.
+      .catch((error: unknown) => {
+        logger.warnFile('[gemini] Failed to show the terminal display', error);
+      });
+  };
 
+  const renderInk = ({ render, React, GeminiTerminalDisplay }: GeminiInkUi) => {
     console.clear();
 
     const DisplayComponent = () => {
@@ -74,6 +103,7 @@ export function createGeminiTerminalUi(params: {
   };
 
   const unmount = async () => {
+    inkRequested = false;
     if (params.stdin.isTTY) {
       try {
         params.stdin.setRawMode(false);

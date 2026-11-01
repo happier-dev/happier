@@ -144,7 +144,8 @@ describe('voiceSettings', () => {
 
   it('defaults include local TTS provider selection', () => {
     const tts = (voiceSettingsDefaults as any).adapters?.local_direct?.tts;
-    expect(tts?.provider).toBe('openai_compat');
+    // Device speech works without configuration; network providers need a base URL first.
+    expect(tts?.provider).toBe('device');
     expect(tts?.openaiCompat?.model).toBe('tts-1');
     expect(tts?.openaiCompat?.voice).toBe('alloy');
     expect(tts?.openaiCompat?.format).toBe('mp3');
@@ -154,9 +155,96 @@ describe('voiceSettings', () => {
 
   it('defaults include local STT provider selection', () => {
     const stt = (voiceSettingsDefaults as any).adapters?.local_direct?.stt;
-    expect(stt?.provider).toBe('openai_compat');
+    expect(stt?.provider).toBe('device');
     expect(stt?.openaiCompat?.model).toBe('whisper-1');
     expect(stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
+  });
+
+  it('keeps a stored provider choice when the default changes', () => {
+    const parsed = voiceSettingsParse({
+      adapters: {
+        local_conversation: {
+          stt: { provider: 'openai_compat', openaiCompat: { baseUrl: 'http://stt.local', apiKey: null, model: 'whisper-1' } },
+          tts: { provider: 'openai_compat', openaiCompat: { baseUrl: 'http://tts.local' } },
+        },
+      },
+    });
+    expect(parsed.adapters.local_conversation.stt.provider).toBe('openai_compat');
+    expect(parsed.adapters.local_conversation.tts.provider).toBe('openai_compat');
+  });
+
+  it('degrades only the unrecognized fields of local adapter settings written by a newer app', () => {
+    // Shape a newer app version could persist: new enum values, a new field, and otherwise valid choices.
+    const parsed = voiceSettingsParse({
+      providerId: 'local_conversation',
+      adapters: {
+        realtime_elevenlabs: { billingMode: 'enterprise', tts: { voiceId: 'voice_custom' } },
+        local_direct: {
+          stt: { provider: 'local_neural', localNeural: { assetId: 'sherpa-custom', language: 'sv' } },
+          tts: { provider: 'future_tts', localNeural: { voiceId: 'af_heart' }, autoSpeakReplies: false },
+        },
+        local_conversation: {
+          conversationMode: 'agent',
+          networkTimeoutMs: 20000,
+          stt: {
+            provider: 'future_cloud_stt',
+            localNeural: { assetId: 'sherpa-custom', language: 'sv' },
+            futureCloudStt: { region: 'eu' },
+          },
+          tts: {
+            provider: 'local_neural',
+            localNeural: { model: 'kokoro', assetId: 'kokoro-custom', voiceId: 'af_heart', speed: 1.25 },
+            bargeInEnabled: false,
+          },
+          handsFree: { enabled: true, endpointing: { silenceMs: 1200, minSpeechMs: 'adaptive' } },
+          agent: { permissionPolicy: 'full_access', chatModelId: 'claude-custom', maxWarmRoots: 5 },
+        },
+      },
+    });
+
+    const lc = parsed.adapters.local_conversation;
+    expect(lc.conversationMode).toBe('agent');
+    expect(lc.networkTimeoutMs).toBe(20000);
+    expect(lc.stt.provider).toBe('device');
+    expect(lc.stt.localNeural).toEqual({ assetId: 'sherpa-custom', language: 'sv' });
+    expect(lc.tts.provider).toBe('local_neural');
+    expect(lc.tts.localNeural).toEqual({ model: 'kokoro', assetId: 'kokoro-custom', voiceId: 'af_heart', speed: 1.25 });
+    expect(lc.tts.bargeInEnabled).toBe(false);
+    expect(lc.handsFree).toEqual({ enabled: true, endpointing: { silenceMs: 1200, minSpeechMs: 1000 } });
+    expect(lc.agent.permissionPolicy).toBe('read_only');
+    expect(lc.agent.chatModelId).toBe('claude-custom');
+    expect(lc.agent.maxWarmRoots).toBe(5);
+
+    const ld = parsed.adapters.local_direct;
+    expect(ld.stt.provider).toBe('local_neural');
+    expect(ld.stt.localNeural.assetId).toBe('sherpa-custom');
+    expect(ld.tts.provider).toBe('device');
+    expect(ld.tts.localNeural.voiceId).toBe('af_heart');
+    expect(ld.tts.autoSpeakReplies).toBe(false);
+
+    expect(parsed.adapters.realtime_elevenlabs.billingMode).toBe('happier');
+    expect(parsed.adapters.realtime_elevenlabs.tts.voiceId).toBe('voice_custom');
+  });
+
+  it.each([
+    ['a nested value missing a required field', { encryptedValue: { t: 'enc-v2', c: 'cipher' } }],
+    ['an empty secret object', {}],
+    ['an array where an object belongs', [{ _isSecretValue: true }]],
+  ])('finishes parsing and keeps sibling choices when a secret is %s', (_case, apiKey) => {
+    const parsed = voiceSettingsParse({
+      adapters: {
+        local_conversation: {
+          conversationMode: 'agent',
+          stt: { provider: 'openai_compat', openaiCompat: { baseUrl: 'http://stt.local', apiKey, model: 'whisper-large' } },
+        },
+      },
+    });
+    const stt = parsed.adapters.local_conversation.stt;
+    expect(parsed.adapters.local_conversation.conversationMode).toBe('agent');
+    expect(stt.provider).toBe('openai_compat');
+    expect(stt.openaiCompat.baseUrl).toBe('http://stt.local');
+    expect(stt.openaiCompat.model).toBe('whisper-large');
+    expect(stt.openaiCompat.apiKey).toBeNull();
   });
 
   it('accepts local_neural as a local TTS provider (Kokoro model)', () => {

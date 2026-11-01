@@ -187,10 +187,11 @@ describe('SessionHandoffPickerModal', () => {
         const control = () => screen.tree.findByProps({ testID: 'session-handoff-transfer-session-data' });
         await vi.waitFor(() => expect(control().props.disabled).toBe(false));
         expect(control().props.value).toBe(true);
-        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ onPress: () => void }>;
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
         await act(async () => { start().props.onPress(); });
         expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'transfer' }));
         await act(async () => { invokeTestInstanceHandler(control(), 'onValueChange', false); });
+        expect(start().props.disabled).toBe(false);
         await act(async () => { start().props.onPress(); });
         expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'existing' }));
         expect(onResolve.mock.lastCall?.[0].workspaceTransfer).toBeUndefined();

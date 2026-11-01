@@ -2,39 +2,40 @@ import { z } from 'zod';
 
 import { McpValueRefV1Schema, type McpValueRefV1 } from '../mcpServers/settingsV1.js';
 import { KIRO_ACP_CATALOG_AUTH_PARSER_ID, KIRO_ACP_CATALOG_TRANSPORT_PROFILE_ID } from '../providers/kiro/acpCatalog.js';
+import { lazySchema } from '../lazySchema.js';
 
 const ACP_CATALOG_ID_REGEX = /^[a-z0-9][a-z0-9._-]*$/;
 const ACP_ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
-const AcpCatalogIdV1Schema = z.string().min(1).regex(ACP_CATALOG_ID_REGEX, 'Invalid ACP catalog id');
-const AcpEnvKeyV1Schema = z.string().regex(ACP_ENV_KEY_REGEX, 'Invalid environment variable name');
+const AcpCatalogIdV1Schema = lazySchema(() => z.string().min(1).regex(ACP_CATALOG_ID_REGEX, 'Invalid ACP catalog id'));
+const AcpEnvKeyV1Schema = lazySchema(() => z.string().regex(ACP_ENV_KEY_REGEX, 'Invalid environment variable name'));
 
-export const AcpCatalogAuthSupportV1Schema = z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']);
+export const AcpCatalogAuthSupportV1Schema = lazySchema(() => z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']));
 export type AcpCatalogAuthSupportV1 = z.infer<typeof AcpCatalogAuthSupportV1Schema>;
 
-export const AcpCatalogAuthParserV1Schema = z.enum([
+export const AcpCatalogAuthParserV1Schema = lazySchema(() => z.enum([
   'unknown',
   'exitCodeOnly',
   'stdoutNonEmpty',
   KIRO_ACP_CATALOG_AUTH_PARSER_ID,
-]);
+]));
 export type AcpCatalogAuthParserV1 = z.infer<typeof AcpCatalogAuthParserV1Schema>;
 
-export const AcpCatalogTransportProfileV1Schema = z.enum(['generic', KIRO_ACP_CATALOG_TRANSPORT_PROFILE_ID]);
+export const AcpCatalogTransportProfileV1Schema = lazySchema(() => z.enum(['generic', KIRO_ACP_CATALOG_TRANSPORT_PROFILE_ID]));
 export type AcpCatalogTransportProfileV1 = z.infer<typeof AcpCatalogTransportProfileV1Schema>;
 
-export const AcpCatalogSupportHintV1Schema = z.enum(['unknown', 'yes', 'no']);
+export const AcpCatalogSupportHintV1Schema = lazySchema(() => z.enum(['unknown', 'yes', 'no']));
 export type AcpCatalogSupportHintV1 = z.infer<typeof AcpCatalogSupportHintV1Schema>;
 
 
-export const AcpCatalogCommandV1Schema = z.object({
+export const AcpCatalogCommandV1Schema = lazySchema(() => z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-});
+}));
 
 export type AcpCatalogCommandV1 = z.infer<typeof AcpCatalogCommandV1Schema>;
 
-export const AcpBackendAuthConfigV1Schema = z.object({
+export const AcpBackendAuthConfigV1Schema = lazySchema(() => z.object({
   support: AcpCatalogAuthSupportV1Schema,
   machineLoginKey: z.string().min(1).optional(),
   docsUrl: z.string().url().optional(),
@@ -42,21 +43,21 @@ export const AcpBackendAuthConfigV1Schema = z.object({
   statusCommand: z.array(z.string()).optional(),
   parser: AcpCatalogAuthParserV1Schema.optional(),
   envVars: z.array(AcpEnvKeyV1Schema).optional(),
-});
+}));
 
 export type AcpBackendAuthConfigV1 = z.infer<typeof AcpBackendAuthConfigV1Schema>;
 
-export const AcpBackendCapabilitiesV1Schema = z.object({
+export const AcpBackendCapabilitiesV1Schema = lazySchema(() => z.object({
   supportsLoadSession: z.boolean().default(false),
   supportsModes: AcpCatalogSupportHintV1Schema.default('unknown'),
   supportsModels: AcpCatalogSupportHintV1Schema.default('unknown'),
   supportsConfigOptions: AcpCatalogSupportHintV1Schema.default('unknown'),
   promptImageSupport: AcpCatalogSupportHintV1Schema.default('unknown'),
-});
+}));
 
 export type AcpBackendCapabilitiesV1 = z.infer<typeof AcpBackendCapabilitiesV1Schema>;
 
-export const AcpBackendDefinitionV1Schema = z.object({
+export const AcpBackendDefinitionV1Schema = lazySchema(() => z.object({
   id: AcpCatalogIdV1Schema,
   name: AcpCatalogIdV1Schema,
   title: z.string().min(1),
@@ -77,11 +78,11 @@ export const AcpBackendDefinitionV1Schema = z.object({
   }),
   createdAt: z.number(),
   updatedAt: z.number(),
-});
+}));
 
 export type AcpBackendDefinitionV1 = z.infer<typeof AcpBackendDefinitionV1Schema>;
 
-export const AcpCatalogSettingsV1Schema = z.preprocess(
+export const AcpCatalogSettingsV1Schema = lazySchema(() => z.preprocess(
   (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     return raw;
@@ -108,7 +109,7 @@ export const AcpCatalogSettingsV1Schema = z.preprocess(
         }
       }
     }),
-);
+));
 
 export type AcpCatalogSettingsV1 = z.infer<typeof AcpCatalogSettingsV1Schema>;
 

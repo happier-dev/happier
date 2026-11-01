@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import { ReviewFindingSchema } from '../reviews/ReviewFinding.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const ReviewPublishRequestV1Schema = z.object({
+export const ReviewPublishRequestV1Schema = lazySchema(() => z.object({
   sourceRunRef: z.object({
     runId: z.string().min(1),
     callId: z.string().min(1),
@@ -11,7 +12,7 @@ export const ReviewPublishRequestV1Schema = z.object({
   findingIds: z.array(z.string().min(1)).min(1),
   publishedFindings: z.array(ReviewFindingSchema).min(1),
   threadRefs: z.array(z.string().min(1)).optional(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewPublishRequestV1 = z.infer<typeof ReviewPublishRequestV1Schema>;
 

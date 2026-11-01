@@ -36,6 +36,7 @@ export async function restartStaleSessionRunnersAfterDaemonStart(input: Readonly
   requestRestart: RestartAllInput['requestRestart'];
   resolveActivityDisabledReason?: RestartAllInput['resolveActivityDisabledReason'];
   refreshTrackedSessionRuntimeSnapshot?: RestartAllInput['refreshTrackedSessionRuntimeSnapshot'];
+  readServerRuntimeActivity?: RestartAllInput['readServerRuntimeActivity'];
   logDebug: (message: string, payload?: unknown) => void;
   logWarn: (message: string, payload?: unknown) => void;
 }>): Promise<RestartStaleSessionRunnersAfterDaemonStartOutcome> {
@@ -62,6 +63,7 @@ export async function restartStaleSessionRunnersAfterDaemonStart(input: Readonly
       ...(input.refreshTrackedSessionRuntimeSnapshot
         ? { refreshTrackedSessionRuntimeSnapshot: input.refreshTrackedSessionRuntimeSnapshot }
         : {}),
+      ...(input.readServerRuntimeActivity ? { readServerRuntimeActivity: input.readServerRuntimeActivity } : {}),
       shouldContinue: () => !input.isShuttingDown(),
     });
 

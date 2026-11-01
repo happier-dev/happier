@@ -18,6 +18,8 @@ When the current backend/runtime supports in-flight steering, Happier can inject
 
 If steering is not available for that session/runtime, Happier falls back to the normal busy-send path for the main session.
 
+The main session composer's **Stop run** control follows the active agent's turn-interruption behavior. Codex shell commands can outlive that interruption; see [Codex interruption and session shutdown](/agents/codex#interrupting-a-turn-and-stopping-a-session).
+
 ## Busy-session send policy
 
 In the app, open:

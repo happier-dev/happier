@@ -13,12 +13,13 @@ import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { registerWorkspaceAnchorHandlers } from '@/rpc/handlers/workspaceAnchors/registerWorkspaceAnchorHandlers';
 import { registerWorkspaceFaviconHandlers } from '@/rpc/handlers/workspaceFavicon/registerWorkspaceFaviconHandlers';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
+import { decodeMachineStoredContent, encodeMachineStoredContent } from './machine/machineStoredContent';
 import {
     resolveFilesystemAccessPolicy,
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
-import { encodeBase64, decodeBase64, encrypt, decrypt, getRandomBytes } from './encryption';
+import { getRandomBytes } from './encryption';
 import { backoff } from '@/utils/time';
 import { createConnectedServicesProjectionRetryScheduler } from './connectedServices/connectedServicesProjectionRetryScheduler';
 import { isConnectedServiceGenerationReconciliationNotAcknowledgeableError } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
@@ -72,6 +73,7 @@ import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/a
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import type { RpcHandlerActiveExecution } from '@/api/rpc/types';
+import { PushNotificationClient } from './pushNotifications';
 
 export type ApiMachineClientDeps = Readonly<{
     connectedAccounts?: ScmConnectedAccountCredentialResolver;
@@ -172,6 +174,7 @@ function isMachineReplacedSocketError(error: unknown, diagnostic: Record<string,
 }
 
 export class ApiMachineClient {
+    private onContentKeyChanged: (() => void) | undefined;
     private readonly connectedServiceImportAccount: ApiMachineClientDeps['connectedServiceImportAccount'];
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
     private keepAliveInterval: NodeJS.Timeout | null = null;
@@ -420,6 +423,7 @@ export class ApiMachineClient {
     }: MachineRpcHandlers, deps?: MachineRpcHandlerDeps) {
         const machineRpcLifecycleRegistration = registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
+            machineId: this.machine.id,
             handlers: {
                 spawnSession,
                 ...(spawnSessionForHandoff ? { spawnSessionForHandoff } : {}),
@@ -437,6 +441,7 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                pushNotifications: new PushNotificationClient(this.token, resolveServerHttpBaseUrl()),
                 connectedServiceImportAccount: this.connectedServiceImportAccount,
                 machineRpcWorkingDirectory: this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: this.filesystemAccessPolicy,
@@ -452,6 +457,15 @@ export class ApiMachineClient {
             },
         });
         this.rpcLifecycleRegistrations.push(machineRpcLifecycleRegistration);
+    }
+
+    /** Invoke the registered machine control locally through its canonical handler. */
+    async invokeLocalMachineAction(
+        method: string,
+        request: unknown,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<unknown> {
+        return await this.rpcHandlerManager.invokeLocal(method, request, options);
     }
 
     onUpdate(listener: (update: Update) => boolean | void): () => void {
@@ -575,6 +589,10 @@ export class ApiMachineClient {
 
     emitActionOperationRevision(snapshot: ActionOperationSnapshotV1): void {
         if (!this.socket) return;
+        if (this.machine.encryptionVariant === 'plain') {
+            this.socket.emit('action-operation-updated', { type: 'action-operation-updated', machineId: this.machine.id, content: { t: 'plain', v: snapshot } });
+            return;
+        }
         const material = this.machine.encryptionVariant === 'dataKey'
             ? { type: 'dataKey' as const, machineKey: this.machine.encryptionKey }
             : { type: 'legacy' as const, secret: this.machine.encryptionKey };
@@ -631,19 +649,19 @@ export class ApiMachineClient {
                 event: 'machine-update-metadata',
                 payload: {
                     machineId: this.machine.id,
-                    metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
+                    metadata: encodeMachineStoredContent(this.machine, updated),
                     expectedVersion: this.machine.metadataVersion
                 },
             });
 
             if (answer.result === 'success') {
-                this.machine.metadata = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.metadata));
+                this.machine.metadata = decodeMachineStoredContent(this.machine, answer.metadata);
                 this.machine.metadataVersion = answer.version;
                 logger.debug('[API MACHINE] Metadata updated successfully');
             } else if (answer.result === 'version-mismatch') {
                 if (answer.version > this.machine.metadataVersion) {
                     this.machine.metadataVersion = answer.version;
-                    this.machine.metadata = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.metadata));
+                    this.machine.metadata = decodeMachineStoredContent(this.machine, answer.metadata);
                 }
                 throw new Error('Metadata version mismatch'); // Triggers retry
             }
@@ -666,19 +684,19 @@ export class ApiMachineClient {
                 event: 'machine-update-state',
                 payload: {
                     machineId: this.machine.id,
-                    daemonState: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
+                    daemonState: encodeMachineStoredContent(this.machine, updated),
                     expectedVersion: this.machine.daemonStateVersion
                 },
             });
 
             if (answer.result === 'success') {
-                this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.daemonState));
+                this.machine.daemonState = decodeMachineStoredContent(this.machine, answer.daemonState);
                 this.machine.daemonStateVersion = answer.version;
                 logger.debug('[API MACHINE] Daemon state updated successfully');
             } else if (answer.result === 'version-mismatch') {
                 if (answer.version > this.machine.daemonStateVersion) {
                     this.machine.daemonStateVersion = answer.version;
-                    this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.daemonState));
+                    this.machine.daemonState = decodeMachineStoredContent(this.machine, answer.daemonState);
                 }
                 throw new Error('Daemon state version mismatch'); // Triggers retry
             }
@@ -750,7 +768,9 @@ export class ApiMachineClient {
         onConnect?: () => void | Promise<void>;
         onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
         onMachineReplaced?: () => void;
+        onContentKeyChanged?: () => void;
     }) {
+        this.onContentKeyChanged = params?.onContentKeyChanged;
         logger.debug(`[API MACHINE] Connecting to ${resolveServerHttpBaseUrl()}`);
         let takeoverOnNextConnect = params?.takeover === true;
 
@@ -934,16 +954,17 @@ export class ApiMachineClient {
             }
             if (data.body.t === 'update-machine' && (data.body as UpdateMachineBody).machineId === this.machine.id) {
                 const update = data.body as UpdateMachineBody;
+                if (Object.hasOwn(update, 'dataEncryptionKey') && this.retireIfContentKeyChanged(update.dataEncryptionKey)) return;
 
                 if (update.metadata) {
                     logger.debug('[API MACHINE] Received external metadata update');
-                    this.machine.metadata = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(update.metadata.value));
+                    this.machine.metadata = decodeMachineStoredContent(this.machine, update.metadata.value);
                     this.machine.metadataVersion = update.metadata.version;
                 }
 
                 if (update.daemonState) {
                     logger.debug('[API MACHINE] Received external daemon state update');
-                    this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(update.daemonState.value));
+                    this.machine.daemonState = update.daemonState.value === null ? null : decodeMachineStoredContent(this.machine, update.daemonState.value);
                     this.machine.daemonStateVersion = update.daemonState.version;
                 }
                 return;
@@ -1026,6 +1047,19 @@ export class ApiMachineClient {
                 });
             }
         }));
+    }
+
+    private retireIfContentKeyChanged(publishedKey: unknown): boolean {
+        if (this.machine.publishedDataEncryptionKey === undefined || publishedKey === this.machine.publishedDataEncryptionKey) return false;
+        logger.warn('[API MACHINE] Machine content key changed; restart the daemon to read the current machine', {
+            code: 'MACHINE_CONTENT_KEY_CHANGED', machineId: this.machine.id,
+        });
+        this.projectionSchedulingClosed = true;
+        this.activeTransportGeneration += 1;
+        this.teardownActiveSocket();
+        void this.connectionSupervisor?.stop();
+        this.onContentKeyChanged?.();
+        return true;
     }
 
     private async disposeRpcLifecycleRegistrations(): Promise<void> {
@@ -1127,16 +1161,17 @@ export class ApiMachineClient {
             if (!raw || typeof raw !== 'object') {
                 return;
             }
+            if (this.retireIfContentKeyChanged(raw.dataEncryptionKey ?? null)) return;
 
             const nextMetadata =
                 typeof raw.metadata === 'string'
-                    ? decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(raw.metadata))
+                    ? decodeMachineStoredContent<MachineMetadata>(this.machine, raw.metadata)
                     : null;
             const nextMetadataVersion = typeof raw.metadataVersion === 'number' ? raw.metadataVersion : this.machine.metadataVersion;
 
             const nextDaemonState =
                 typeof raw.daemonState === 'string'
-                    ? decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(raw.daemonState))
+                    ? decodeMachineStoredContent<DaemonState>(this.machine, raw.daemonState)
                     : null;
             const nextDaemonStateVersion = typeof raw.daemonStateVersion === 'number' ? raw.daemonStateVersion : this.machine.daemonStateVersion;
 

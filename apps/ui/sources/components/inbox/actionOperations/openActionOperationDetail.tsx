@@ -75,6 +75,7 @@ function ObservedActionOperationDetail(props: Readonly<{
 
 export function ActionOperationDetailModal(props: ActionOperationDetailModalProps) {
     const operation = useActionOperation(props.operationId);
+    const previousOperation = React.useRef(operation);
     React.useEffect(() => {
         const refresh = props.refreshDetail ?? ((operationId: string) => refreshActionOperationDetail({ operationId }));
         void refresh(props.operationId).catch(() => {
@@ -84,14 +85,18 @@ export function ActionOperationDetailModal(props: ActionOperationDetailModalProp
     }, [props.operationId, props.refreshDetail]);
 
     React.useEffect(() => {
+        const previous = previousOperation.current;
+        previousOperation.current = operation;
+        // Opening acknowledges through the user action below. While that detail
+        // stays open, also acknowledge a newly observed terminal transition.
         if (
-            operation?.state === 'succeeded'
-            || operation?.state === 'failed'
-            || operation?.state === 'cancelled'
+            previous?.operationId === operation?.operationId
+            && (previous?.state === 'accepted' || previous?.state === 'running')
+            && operation
         ) {
             acknowledgeActionOperationPresented(operation);
         }
-    }, [operation?.operationId, operation?.state]);
+    }, [operation]);
 
     if (operation) {
         return <ObservedActionOperationDetail operation={operation} onClose={props.onClose} />;
@@ -133,9 +138,11 @@ export function openActionOperationDetail(operationId: string): string | null {
             return null;
         }
     }
-    return Modal.show({
+    const modalId = Modal.show({
         component: ActionOperationDetailModal,
         props: { operationId },
         closeOnBackdrop: true,
     });
+    if (operation) acknowledgeActionOperationPresented(operation);
+    return modalId;
 }

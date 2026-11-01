@@ -10,6 +10,7 @@ describe('detectLatestSessionTurnActivity', () => {
     const fetchSessionById = vi.fn(async () => ({
       id: 'sess-1',
       latestTurnStatus: 'completed',
+      pendingCount: 0,
       pendingPermissionRequestCount: 0,
       pendingUserActionRequestCount: 0,
       runtimeActivityState: 'active',
@@ -61,10 +62,10 @@ describe('detectLatestSessionTurnActivity', () => {
       turnInFlight: false,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith({
+    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-    });
+    }));
     expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
   });

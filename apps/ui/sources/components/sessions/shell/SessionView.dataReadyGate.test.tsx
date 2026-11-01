@@ -183,7 +183,7 @@ installSessionShellCommonModuleMocks({
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
                         settings: {},
-                        sessionListViewDataByServerId: {},
+                        sessionListRenderables: {}, sessionListViewDataByServerId: {},
                     };
                     return typeof selector === 'function' ? selector(snapshot) : snapshot;
                 },
@@ -192,13 +192,13 @@ installSessionShellCommonModuleMocks({
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
                         settings: {},
-                        sessionListViewDataByServerId: {},
+                        sessionListRenderables: {}, sessionListViewDataByServerId: {},
                     }),
                     getInitialState: () => ({
                         sessions: sessionState ? { s1: sessionState } : {},
                         sessionMessages: {},
                         settings: {},
-                        sessionListViewDataByServerId: {},
+                        sessionListRenderables: {}, sessionListViewDataByServerId: {},
                     }),
                     setState: () => undefined,
                     subscribe: () => () => undefined,

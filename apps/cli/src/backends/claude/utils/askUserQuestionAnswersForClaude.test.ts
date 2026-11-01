@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildAskUserQuestionAnswersForClaude } from './askUserQuestionAnswersForClaude';
+import { buildAskUserQuestionAnswersForClaude, buildNativeAskUserQuestionAnswersForClaude } from './askUserQuestionAnswersForClaude';
 
 describe('buildAskUserQuestionAnswersForClaude', () => {
+  it('projects native id aliases and checkbox order without losing commas or freeform newlines', () => {
+    const result = buildNativeAskUserQuestionAnswersForClaude([
+      { id: 'colors', question: 'Which colors?', multiSelect: true, options: [{ label: 'Amber, gold' }, { label: 'Blue' }], freeform: {} },
+      { id: 'note', question: 'Which note?', options: [{ label: 'None' }], freeform: {} },
+    ], { colors: ['Blue', 'Amber, gold'], note: ['first\nsecond — 雪'] });
+    expect(result).toEqual({ 'Which colors?': 'Amber, gold, Blue', 'Which note?': 'first\nsecond — 雪' });
+  });
   it('projects exact canonical arrays to Claude scalar strings in a null-prototype record', () => {
     const result = buildAskUserQuestionAnswersForClaude({
       single: ['A, B'],

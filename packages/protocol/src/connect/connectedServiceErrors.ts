@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { lazySchema } from '../lazySchema.js';
 
 export const CONNECTED_SERVICE_ERROR_CODES = {
     credentialNotFound: 'connect_credential_not_found',
@@ -18,7 +19,7 @@ export const CONNECTED_SERVICE_ERROR_CODES = {
     authGroupGenerationConflict: 'connect_group_generation_conflict',
 } as const;
 
-export const ConnectedServiceErrorCodeSchema = z.enum([
+export const ConnectedServiceErrorCodeSchema = lazySchema(() => z.enum([
     CONNECTED_SERVICE_ERROR_CODES.credentialNotFound,
     CONNECTED_SERVICE_ERROR_CODES.credentialInvalid,
     CONNECTED_SERVICE_ERROR_CODES.credentialUnsupportedFormat,
@@ -34,6 +35,6 @@ export const ConnectedServiceErrorCodeSchema = z.enum([
     CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
     CONNECTED_SERVICE_ERROR_CODES.authGroupNotFound,
     CONNECTED_SERVICE_ERROR_CODES.authGroupGenerationConflict,
-]);
+]));
 
 export type ConnectedServiceErrorCode = z.infer<typeof ConnectedServiceErrorCodeSchema>;

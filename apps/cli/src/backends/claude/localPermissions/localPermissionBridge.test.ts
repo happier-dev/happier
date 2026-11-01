@@ -5,12 +5,382 @@ import { join } from 'node:path';
 
 import { createPermissionHandlerSessionStub } from '../utils/permissionHandler.testkit';
 import { ClaudeLocalPermissionBridge } from './localPermissionBridge';
+import { routeClaudePermissionHook } from './routeClaudePermissionHook';
+import { createClaudeUnifiedHookLifecycleBridge } from '../unifiedTerminal/createClaudeUnifiedHookLifecycleBridge';
+import { createClaudeUnifiedInputArbiter } from '../unifiedTerminal/createClaudeUnifiedInputArbiter';
+import { createClaudeUnifiedPromptInjector } from '../unifiedTerminal/createClaudeUnifiedPromptInjector';
+import type { SessionHookData } from '../utils/startHookServer';
+import { createClaudeSessionTranscriptProjector } from '../localControl/createClaudeSessionTranscriptProjector';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { loop, type EnhancedMode } from '../loop';
 import {
   CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
   CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
 } from '@happier-dev/agents';
 
 describe('ClaudeLocalPermissionBridge', () => {
+  const nativePermissionResult = {
+    type: 'user', sessionId: 'claude-native-session', isSidechain: false,
+    permissionDecision: { decision: 'accept', source: 'user_temporary', grantScope: 'once' },
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'local-raw-result',
+      is_error: true, content: 'Exit code 127\n/bin/bash: line 1: python: command not found' }] },
+  };
+
+  function createPermissionTranscriptProjector(
+    session: ReturnType<typeof createPermissionHandlerSessionStub>['session'],
+    bridge: ClaudeLocalPermissionBridge,
+  ) {
+    session.sessionId = nativePermissionResult.sessionId;
+    Object.defineProperty(session, 'observeClaudePermissionTranscript', {
+      value: (value: unknown) => bridge.observeTranscript(value),
+    });
+    return createClaudeSessionTranscriptProjector({ session, logPrefix: '[permission-transcript-test]' });
+  }
+
+  it.each(['PostToolUse', 'accepted transcript', 'denied transcript'] as const)('reconciles plan metadata from the existing observed bridge completion (%s)', async (producer) => {
+    const { session, client } = createPermissionHandlerSessionStub('observed-bridge-plan');
+    const metadata = {
+      sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+    };
+    client.metadata = metadata;
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const projector = createPermissionTranscriptProjector(session, bridge);
+    const tool = { tool_name: 'ExitPlanMode', tool_input: { plan: '# Harmless plan' }, tool_use_id: 'local-raw-result' };
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', ...tool });
+    await vi.advanceTimersByTimeAsync(0);
+    if (producer === 'PostToolUse') bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...tool });
+    else projector.observeRaw({ ...nativePermissionResult,
+      permissionDecision: { decision: producer === 'accepted transcript' ? 'accept' : 'reject', source: 'user_temporary' },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.metadata).toMatchObject(producer === 'denied transcript' ? metadata : {
+      sessionModeOverrideV1: { modeId: null }, acpSessionModeOverrideV1: { modeId: null },
+    });
+    await expect(hook).resolves.toMatchObject({ continue: true });
+    bridge.dispose();
+  });
+
+  it('retires the app request from a live native approval despite failed execution and rejects stale app denial', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('raw-native-approval');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const projector = createPermissionTranscriptProjector(session, bridge);
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', tool_name: 'Bash',
+      tool_input: { command: 'python -c "print(671)"' }, tool_use_id: 'local-raw-result' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeDefined();
+
+    projector.observeRaw(nativePermissionResult, { historicalReplay: true });
+    projector.observeRaw({ ...nativePermissionResult, sessionId: 'different-native-session' });
+    projector.observeRaw({ ...nativePermissionResult, isSidechain: true });
+    projector.observeRaw({ ...nativePermissionResult, parentToolUseId: 'subagent-parent-tool' });
+    projector.observeRaw({ ...nativePermissionResult, message: { content: 'No tool result here' } });
+    projector.observeRaw({ ...nativePermissionResult, permissionDecision: undefined });
+    projector.observeRaw({ ...nativePermissionResult, message: { content: [{
+      type: 'tool_result', tool_use_id: 'other-local-tool', is_error: true,
+    }] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeDefined();
+    expect(client.agentState.completedRequests['local-raw-result']).toBeUndefined();
+
+    projector.observeRaw(nativePermissionResult, { historicalReplay: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeUndefined();
+    expect(client.agentState.completedRequests['local-raw-result']).toMatchObject({ status: 'approved', reason: 'Approved in Claude terminal' });
+    await expect(hook).resolves.toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } });
+    const completed = client.agentState.completedRequests['local-raw-result'];
+    await client.rpcHandlerManager.getHandler('permission')!({ id: 'local-raw-result', approved: false });
+    projector.observeRaw(nativePermissionResult);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeUndefined();
+    expect(client.agentState.completedRequests['local-raw-result']).toEqual(completed);
+    bridge.dispose();
+  });
+
+  it('records a live native denial and releases its held hook without replaying another decision', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('raw-native-denial');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const projector = createPermissionTranscriptProjector(session, bridge);
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', tool_name: 'Bash',
+      tool_input: { command: 'python -c "print(671)"' }, tool_use_id: 'local-raw-result' });
+    await vi.advanceTimersByTimeAsync(0);
+    projector.observeRaw({ ...nativePermissionResult, toolDenialKind: 'user-rejected',
+      permissionDecision: { decision: 'reject', source: 'user_reject' },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeUndefined();
+    expect(client.agentState.completedRequests['local-raw-result']).toMatchObject({ status: 'denied' });
+    await expect(hook).resolves.toMatchObject({ continue: true, hookSpecificOutput: { hookEventName: 'PermissionRequest' } });
+    bridge.dispose();
+  });
+
+  it('retains the raw native outcome until durable admission succeeds before releasing the held hook', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('raw-native-admission');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const projector = createPermissionTranscriptProjector(session, bridge);
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', tool_name: 'Bash',
+      tool_input: { command: 'python -c "print(671)"' }, tool_use_id: 'local-raw-result' });
+    let resumed = false;
+    void hook.then(() => { resumed = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    const admit = client.updateAgentStateRequestSettlement.bind(client);
+    let allowAdmission!: () => void;
+    client.updateAgentStateRequestSettlement = (updater) => new Promise<void>((resolve, reject) => {
+      allowAdmission = () => { void admit(updater).then(resolve, reject); };
+    });
+    projector.observeRaw(nativePermissionResult);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resumed).toBe(false);
+    expect(client.agentState.requests['local-raw-result']).toBeDefined();
+    expect(allowAdmission).toBeTypeOf('function');
+    allowAdmission();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests['local-raw-result']).toBeUndefined();
+    expect(client.agentState.completedRequests['local-raw-result']).toMatchObject({ status: 'approved' });
+    await expect(hook).resolves.toMatchObject({ continue: true });
+    bridge.dispose();
+  });
+
+  it('retires the native request through the real loop session producer and shared transcript projector', async () => {
+    const { session: stub, client } = createPermissionHandlerSessionStub('raw-native-loop');
+    // Session client transport boundary; the real Session owns its keep-alive timer.
+    Object.assign(client, { keepAlive: () => {} });
+    const abort = new AbortController();
+    abort.abort();
+    let bridge: ClaudeLocalPermissionBridge | null = null;
+    await expect(loop({
+      path: '/tmp', onModeChange: () => {}, session: stub.client,
+      messageQueue: new MessageQueue2<EnhancedMode>(() => 'default'), hookSettingsPath: '/tmp/hooks.json',
+      signal: abort.signal,
+      observeClaudePermissionTranscript: (value) => bridge?.observeTranscript(value),
+      onSessionReady: async (session) => {
+        try {
+          session.sessionId = nativePermissionResult.sessionId;
+          bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+          bridge.activate();
+          const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', tool_name: 'Bash',
+            tool_input: { command: 'python -c "print(671)"' }, tool_use_id: 'local-raw-result' });
+          await vi.advanceTimersByTimeAsync(0);
+          const projector = createClaudeSessionTranscriptProjector({ session, logPrefix: '[permission-loop-test]' });
+          projector.observeRaw(nativePermissionResult);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(client.agentState.requests['local-raw-result']).toBeUndefined();
+          expect(client.agentState.completedRequests['local-raw-result']).toMatchObject({ status: 'approved' });
+          await expect(hook).resolves.toMatchObject({ continue: true });
+        } finally {
+          bridge?.dispose();
+          session.cleanup();
+        }
+      },
+    })).resolves.toBe(0);
+  });
+
+  it.each(['disconnect', 'PostToolUse'] as const)('keeps duplicated permission input blocked until %s retires the request', async (completion) => {
+    const { session, client } = createPermissionHandlerSessionStub('duplicated-hook-disconnect');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const injectedTexts: string[] = [];
+    const injector = createClaudeUnifiedPromptInjector({
+      // Native terminal writes are the boundary; lifecycle, arbitration and injection stay real.
+      inputInjection: {
+        hostKind: 'tmux',
+        injectUserPrompt: async ({ text }) => {
+          injectedTexts.push(text);
+          return { status: 'injected', at: Date.now(), bytesWritten: text.length };
+        },
+      },
+    });
+    const arbiter = createClaudeUnifiedInputArbiter({ quietPeriodMs: 0, injectPrompt: injector.injectPrompt });
+    let observeHook: ((data: SessionHookData) => void) | undefined;
+    const lifecycle = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: (callback) => {
+        observeHook = callback;
+        return () => { observeHook = undefined; };
+      },
+      arbiter,
+      completionQuiescenceMs: 0,
+    });
+    lifecycle.start({ abortSignal: new AbortController().signal });
+    arbiter.observeLifecycle({ type: 'output' });
+    const firstTransport = new AbortController();
+    const secondTransport = new AbortController();
+    const data = {
+      hook_event_name: 'PermissionRequest', tool_name: 'Bash',
+      tool_input: { command: 'pwd' }, tool_use_id: 'duplicated-hook-disconnect',
+    };
+    session.onClaudeSessionHook = (hook) => { observeHook?.(hook); };
+    const handleHook = (signal: AbortSignal) => routeClaudePermissionHook({
+      data, options: { signal }, session, bridge,
+      settings: { claudeUnifiedTerminalPermissionResponseLocation: 'app_only' },
+      unifiedTerminalActive: true,
+    });
+    const first = handleHook(firstTransport.signal);
+    const second = handleHook(secondTransport.signal);
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await arbiter.enqueueUiMessage({ message: 'continue after permission', origin: { kind: 'ui_immediate' } });
+      await arbiter.drainWhenSafe();
+      expect(injectedTexts).toEqual([]);
+      if (completion === 'PostToolUse') {
+        // Provider completion releases both references even before their transport callbacks finish.
+        const completedHook = { ...data, hook_event_name: 'PostToolUse' };
+        observeHook?.(completedHook);
+        await arbiter.drainWhenSafe();
+        expect(injectedTexts).toEqual(['continue after permission']);
+        bridge.handleSessionHook(completedHook);
+        await expect(first).resolves.toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } });
+        await expect(second).resolves.toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } });
+        // Both synthetic completions have now arrived and must leave input unblocked.
+        expect(arbiter.snapshot().permissionBlocked).toBe(false);
+        expect(client.agentState.completedRequests['duplicated-hook-disconnect']).toMatchObject({ status: 'approved' });
+        return;
+      }
+      firstTransport.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(first).resolves.toMatchObject({ continue: true });
+      expect(client.agentState.requests['duplicated-hook-disconnect']).toBeDefined();
+      expect(client.agentState.completedRequests['duplicated-hook-disconnect']).toBeUndefined();
+      await arbiter.drainWhenSafe();
+      expect(injectedTexts).toEqual([]);
+      expect(arbiter.snapshot().permissionBlocked).toBe(true);
+
+      secondTransport.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(second).resolves.toMatchObject({ continue: true });
+      expect(client.agentState.requests['duplicated-hook-disconnect']).toBeUndefined();
+      expect(client.agentState.completedRequests['duplicated-hook-disconnect']).toMatchObject({ status: 'canceled' });
+      await arbiter.drainWhenSafe();
+      expect(injectedTexts).toEqual(['continue after permission']);
+    } finally {
+      firstTransport.abort();
+      secondTransport.abort();
+      await Promise.allSettled([first, second]);
+      bridge.dispose();
+      lifecycle.dispose();
+      await arbiter.dispose();
+    }
+  });
+
+  it('disposes a live hook after durable cancellation admission while the acknowledgement transport is offline', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-dispose-offline');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hook = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'dispose-offline',
+    });
+    let result: unknown;
+    void hook.then((value) => { result = value; }, (error) => { result = error; });
+    await vi.advanceTimersByTimeAsync(0);
+    client.updateAgentState = () => { throw new Error('ack transport offline'); };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(result).toMatchObject({ continue: true });
+    expect(client.agentState.completedRequests['dispose-offline']).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests['dispose-offline']).toBeUndefined();
+  });
+
+  it('publishes automatic history through the caught history writer when no pending request exists', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-auto-history');
+    client.updateMetadata((metadata) => ({ ...metadata, permissionMode: 'yolo', permissionModeUpdatedAt: 123 }));
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    client.updateAgentStateRequestSettlement = async () => { throw new Error('no durable storage'); };
+    await expect(bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'auto-history',
+    })).resolves.toMatchObject({ continue: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests['auto-history']).toMatchObject({ status: 'approved' });
+    bridge.dispose();
+  });
+
+  it('retains an observed native PostToolUse completion before releasing its hook and permits admission retry', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-durable-local-admission');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hookData = {
+      tool_name: 'Write', tool_input: { file_path: '/workspace/file' }, tool_use_id: 'local-durable',
+    };
+    const pending = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', ...hookData });
+    await vi.advanceTimersByTimeAsync(0);
+    let admit!: () => void;
+    let fail!: (error: Error) => void;
+    const original = client.updateAgentStateRequestSettlement.bind(client);
+    client.updateAgentStateRequestSettlement = (updater) => new Promise<void>((resolve, reject) => {
+      admit = () => { void original(updater).then(resolve, reject); };
+      fail = reject;
+    });
+    let resumed = false;
+    void pending.then(() => { resumed = true; });
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...hookData });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resumed).toBe(false);
+    fail(new Error('storage admission failed'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resumed).toBe(false);
+    expect(client.agentState.requests['local-durable']).toBeDefined();
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...hookData });
+    admit();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toMatchObject({ continue: true });
+    bridge.dispose();
+  });
+
+  it('retains an observed PostToolUse completion arriving while a pre-effect UI acknowledgement is pending', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-observed-during-ui');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const data = { tool_name: 'Write', tool_input: {}, tool_use_id: 'observed-during-ui' };
+    const hook = bridge.handlePermissionHook({ hook_event_name: 'PermissionRequest', ...data });
+    let outcome = 'pending';
+    void hook.then(() => { outcome = 'allowed'; }, () => { outcome = 'canceled'; });
+    await vi.advanceTimersByTimeAsync(0);
+    let failAcknowledgement!: (error: Error) => void;
+    client.updateAgentState = () => new Promise<never>((_resolve, reject) => {
+      if (!failAcknowledgement) failAcknowledgement = reject;
+      else reject(new Error('UI acknowledgement unavailable'));
+    });
+    const respond = client.rpcHandlerManager.getHandler('permission')!;
+    const response = respond({ id: data.tool_use_id, approved: true });
+    await vi.advanceTimersByTimeAsync(0);
+    bridge.handleSessionHook({ hook_event_name: 'PostToolUse', ...data });
+    failAcknowledgement(new Error('UI acknowledgement unavailable'));
+    await expect(response).resolves.toMatchObject({ ok: false, errorCode: 'permission_response_failed' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('allowed');
+    expect(client.agentState.completedRequests[data.tool_use_id]).toMatchObject({
+      status: 'approved', reason: 'Approved in Claude terminal',
+    });
+    bridge.dispose();
+  });
+
+  it('rejects the disposed local waiter on failed cancellation admission and retains its occurrence for retirement retry', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('local-dispose-admission-failure');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    const hook = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: {}, tool_use_id: 'dispose-failed',
+    });
+    let outcome = 'pending';
+    void hook.then(() => { outcome = 'allowed'; }, () => { outcome = 'canceled'; });
+    await vi.advanceTimersByTimeAsync(0);
+    const admit = client.updateAgentStateRequestSettlement.bind(client);
+    client.updateAgentStateRequestSettlement = async () => { throw new Error('journal unavailable'); };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('canceled');
+    expect(client.agentState.requests['dispose-failed']).toBeDefined();
+    client.updateAgentStateRequestSettlement = admit;
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests['dispose-failed']).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests['dispose-failed']).toBeUndefined();
+  });
+
   it('keeps a failed UI approval retryable before releasing its native hook', async () => {
     const { session, client } = createPermissionHandlerSessionStub('local-approval-retry');
     const bridge = new ClaudeLocalPermissionBridge(session);
@@ -94,6 +464,24 @@ describe('ClaudeLocalPermissionBridge', () => {
       source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     });
     expect(client.agentState.requests.other_owner_question).toBeDefined();
+  });
+
+  it('retires source-only requests added after activation when disposed', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-local-disposal-orphan');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+    await vi.advanceTimersByTimeAsync(0);
+    const request = { tool: 'Bash', arguments: {}, createdAt: 1 };
+    const claimed = { ...request, source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+      permissionResponseClaimV1: { owner: 'other-runtime' } };
+    client.agentState.requests = {
+      orphan: { ...request, source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE },
+      background: request, claimed,
+    };
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.completedRequests.orphan).toMatchObject({ status: 'canceled' });
+    expect(client.agentState.requests).toEqual({ background: request, claimed });
   });
 
   it('leaves a source-owned opaque claimed request outstanding through activation and disposal', async () => {

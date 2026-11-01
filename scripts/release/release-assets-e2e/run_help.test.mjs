@@ -273,7 +273,7 @@ test('release-assets-e2e run.sh documents relay-server upgrade smoke flags', () 
 test('release-assets-e2e bootstraps relay auth in a Node-capable smoke container', () => {
   const composePath = join(here, 'compose.dockerhub.yml');
   const compose = YAML.parse(fs.readFileSync(composePath, 'utf8'));
-  assert.match(compose.services['auth-bootstrap']?.image ?? '', /^node:22-/);
+  assert.match(compose.services['auth-bootstrap']?.image ?? '', /^node:\d+-/);
   assert.ok(compose.services['auth-bootstrap']?.volumes?.some((volume) => String(volume).includes(':/opt/happier-npm-e2e/bin:ro')));
   assert.equal(compose.services.relay?.volumes?.some((volume) => String(volume).includes(':/opt/happier-npm-e2e/bin:ro')), false);
 

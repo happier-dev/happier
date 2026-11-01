@@ -125,17 +125,28 @@ async function withUiWebExportLock<T>(
 }
 
 export function resolveUiWebExportBuildTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, 240_000);
+  // The build is the work its before-all budget exists for; a shorter default cut off cold CI exports.
+  const containingBudgetMs = resolveUiWebExportBeforeAllMinTimeoutMs(env) - resolveUiWebExportBeforeAllHeadroomMs(env);
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, Math.max(1, containingBudgetMs));
 }
 
 export function resolveUiWebExportLockTimeoutMs(env: NodeJS.ProcessEnv): number {
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_LOCK_TIMEOUT_MS, resolveUiWebExportBeforeAllTimeoutMs(env));
 }
 
+function resolveUiWebExportBeforeAllMinTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS, 900_000);
+}
+
+function resolveUiWebExportBeforeAllHeadroomMs(env: NodeJS.ProcessEnv): number {
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_HEADROOM_MS, 60_000);
+}
+
 export function resolveUiWebExportBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const minTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS, 900_000);
-  const headroomMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_HEADROOM_MS, 60_000);
-  return Math.max(minTimeoutMs, resolveUiWebExportBuildTimeoutMs(env) + headroomMs);
+  return Math.max(
+    resolveUiWebExportBeforeAllMinTimeoutMs(env),
+    resolveUiWebExportBuildTimeoutMs(env) + resolveUiWebExportBeforeAllHeadroomMs(env),
+  );
 }
 
 function readServerUrlFromEnv(env: NodeJS.ProcessEnv): string {

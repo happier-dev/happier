@@ -11,13 +11,14 @@ export async function discardPendingBeforeSwitchToLocal(opts: {
   sendStatusMessage: (message: string) => void;
   formatError: (error: unknown) => string;
   onCancelled?: () => void;
+  signal?: AbortSignal;
 }): Promise<DiscardPendingBeforeSwitchToLocalResult> {
   if (opts.queuedCount === 0 && opts.serverPendingCount === 0) {
     return 'proceed';
   }
 
   const confirmed = await opts.confirmDiscard();
-  if (!confirmed) {
+  if (!confirmed || opts.signal?.aborted) {
     opts.onCancelled?.();
     return 'cancelled';
   }

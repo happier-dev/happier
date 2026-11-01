@@ -1,7 +1,22 @@
 import { logger } from "@/ui/logger";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getProjectPath } from "./path";
+
+export class ClaudeResumeSessionUnavailableError extends Error {
+    readonly code = 'claude_resume_session_unavailable';
+    readonly providerSessionId: string;
+
+    constructor(providerSessionId: string, options?: ErrorOptions) {
+        super(
+            `Claude session ${providerSessionId} cannot be resumed because its transcript is unavailable. `
+            + 'Happier did not start a new session because the requested operation was resume.',
+            options,
+        );
+        this.name = 'ClaudeResumeSessionUnavailableError';
+        this.providerSessionId = providerSessionId;
+    }
+}
 
 export function resolveClaudeSessionTranscriptPath(
     sessionId: string,
@@ -11,6 +26,25 @@ export function resolveClaudeSessionTranscriptPath(
 ): string {
     const explicitPath = typeof transcriptPath === 'string' ? transcriptPath.trim() : '';
     return explicitPath || join(getProjectPath(path, claudeConfigDir), `${sessionId}.jsonl`);
+}
+
+// Materialization is weaker than Session's complete-record publication proof. Keep
+// this filesystem threshold shared by identity discovery and remote resume validation.
+export function hasClaudeMaterializedSessionTranscript(
+  sessionId: string,
+  path: string,
+  transcriptPath: string | null,
+  configDir: string | null,
+): boolean {
+  const sessionFile = resolveClaudeSessionTranscriptPath(sessionId, path, transcriptPath, configDir);
+  try {
+    return statSync(sessionFile).size > 0;
+  } catch (error) {
+    const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : null;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    // An inspection failure cannot authorize a fresh conversation or an automatic retry.
+    throw new ClaudeResumeSessionUnavailableError(sessionId, { cause: error });
+  }
 }
 
 export function claudeCheckSession(

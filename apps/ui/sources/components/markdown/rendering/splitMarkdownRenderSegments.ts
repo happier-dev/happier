@@ -1,4 +1,5 @@
 import { parseMarkdownBlockSource } from '../streaming/parseMarkdownBlockSource';
+import { readMarkdownOption } from '../parseMarkdownBlock';
 import { preprocessStreamingMarkdown } from '../streaming/preprocessStreamingMarkdown';
 import {
     splitMarkdownIntoBlockSources,
@@ -31,7 +32,8 @@ type PendingEnrichedGroup = Readonly<{
 
 type DraftMarkdownRenderSegment =
     | Omit<Extract<MarkdownRenderSegment, { type: 'enriched-markdown' }>, 'first' | 'last'>
-    | Omit<Extract<MarkdownRenderSegment, { type: 'special-block' }>, 'first' | 'last'>;
+    | Omit<Extract<MarkdownRenderSegment, { type: 'special-block' }>, 'first' | 'last'>
+    | Omit<Extract<MarkdownRenderSegment, { type: 'container-block' }>, 'first' | 'last'>;
 
 function hashMarkdownSource(source: string): string {
     let hash = 2166136261;
@@ -60,9 +62,11 @@ function locateSources(markdown: string, sources: readonly MarkdownBlockSource[]
 }
 
 function isSpecialSource(source: LocatedMarkdownBlockSource): boolean {
+    if (source.container || source.codeBlock) return true;
     if (source.incompleteKind) return true;
     return source.blockType === 'FencedCode'
-        || source.blockType === 'Table' || source.source.trimStart().startsWith('<options>');
+        || source.blockType === 'Table' || source.source.trimStart().startsWith('<options>')
+        || source.source.split('\n').some((line) => readMarkdownOption(line) !== null);
 }
 
 function withReferenceDefinitions(markdown: string, definitions: string): string {
@@ -181,6 +185,19 @@ export function splitMarkdownRenderSegments(params: Readonly<{
         }
 
         flushPendingEnrichedSources();
+        if (source.container) {
+            segments.push({
+                type: 'container-block',
+                key: nextSegmentKey(),
+                sourceStart: source.sourceStart,
+                sourceLength: source.sourceLength,
+                sourceHash: source.sourceHash,
+                sourceRange: source.sourceRange,
+                markdown: source.source,
+                container: source.container,
+            });
+            continue;
+        }
         segments.push({
             type: 'special-block',
             key: nextSegmentKey(),

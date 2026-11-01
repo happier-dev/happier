@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { Encryption } from '@/sync/encryption/encryption';
+import { MachineEncryption } from '@/sync/encryption/machineEncryption';
+import { EncryptionCache } from '@/sync/encryption/encryptionCache';
+import { decodeBase64 } from '@/encryption/base64';
+import { decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
   buildConnectedServiceCredentialRecord,
@@ -35,6 +41,43 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToPlainRequest', () => {
+  it('decodes legacy encrypted Machine documents completely before converting to plain', async () => {
+    const credentials = createLegacyCredentials();
+    const encryption = await Encryption.create(decodeBase64(credentials.secret, 'base64url'));
+    const codec = new MachineEncryption('legacy', await encryption.openEncryption(null), new EncryptionCache());
+    const metadata = { displayName: 'Keep this name', extension: { nested: [1, 2] } };
+    const state = { status: 'running', extension: { custom: true } };
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials, expectedSettingsVersion: 0,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as never,
+      connectedServiceProfiles: [], automations: [],
+      machines: [{ id: 'legacy', metadata: await codec.encryptRaw(metadata), metadataVersion: 4,
+        daemonState: await codec.encryptRaw(state), daemonStateVersion: 8, dataEncryptionKey: null }],
+      machineEncryption: encryption,
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => null,
+    });
+    if (request.machines?.action !== 'migrate') throw new Error('Missing Machine migration');
+    const item = request.machines.items[0];
+    expect(item.expected).toEqual({ dataEncryptionKey: null, metadataVersion: 4, daemonStateVersion: 8 });
+    expect(item.next.dataEncryptionKey).toBe(MACHINE_PLAIN_DATA_KEY_MARKER);
+    expect(decodePlainMachineStoredContent(item.next.metadata)).toEqual(metadata);
+    expect(decodePlainMachineStoredContent(item.next.daemonState!)).toEqual(state);
+  });
+
+  it('aborts conversion when a published Machine content key is unavailable', async () => {
+    await expect(buildAccountEncryptionMigrateToPlainRequest({
+      credentials: createLegacyCredentials(), expectedSettingsVersion: 0,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as never,
+      connectedServiceProfiles: [], automations: [],
+      machines: [{ id: 'unavailable', metadata: 'opaque-metadata', metadataVersion: 1,
+        daemonState: null, daemonStateVersion: 0, dataEncryptionKey: 'bWFsZm9ybWVk' }],
+      machineEncryption: Encryption.createWithoutKeyMaterial(),
+      fetchConnectedServiceCredentialSealed: async () => { throw new Error('unexpected credential read'); },
+      decryptAutomationTemplateRaw: async () => null,
+    })).rejects.toMatchObject({ code: 'encryption_material_unavailable' });
+  });
+
   it('reseals exact server-backed new-session drafts as target Account plaintext', async () => {
     const credentials = createLegacyCredentials();
     const address = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000111' } as const;

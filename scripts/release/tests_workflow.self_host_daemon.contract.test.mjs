@@ -56,3 +56,19 @@ test('Windows self-host checkout verification explicitly uses bash', async () =>
     'bash syntax must not run under the Windows PowerShell default',
   );
 });
+
+test('Windows self-host prepares and validates the native launcher before packaging HStack', async () => {
+  const workflow = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const jobStart = workflow.indexOf('  self-host-schtasks-e2e:');
+  const nextJob = workflow.indexOf('\n  self-host-daemon-e2e:', jobStart);
+  assert.ok(jobStart >= 0 && nextJob > jobStart);
+  const job = workflow.slice(jobStart, nextJob);
+  const compile = job.indexOf('node scripts\\pipeline\\release\\build-windows-service-launcher.mjs');
+  const lifecycle = job.indexOf('-File packages/cli-common/native/windows/service-launcher.test.ps1');
+  const integration = job.indexOf('node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs');
+
+  assert.ok(compile >= 0, 'the clean Windows checkout must produce the packaged launcher');
+  assert.match(job.slice(0, compile), /VsDevCmd\.bat" -arch=x64/);
+  assert.ok(lifecycle > compile, 'validate the launcher built in this job');
+  assert.ok(integration > lifecycle, 'HStack packaging requires the validated launcher');
+});

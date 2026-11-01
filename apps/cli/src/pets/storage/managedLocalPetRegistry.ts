@@ -9,6 +9,7 @@ import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { createPetSourceKey } from '../discovery/createPetSourceKey';
 import { validatePetPackage } from '../validation/validatePetPackage';
 import { resolveManagedPetRoot } from './resolveManagedPetRoot';
+import { lazySchema } from '@happier-dev/protocol';
 
 export const MANAGED_LOCAL_PET_REGISTRY_FILE = '.managed-local-pet-registry-v1.json';
 
@@ -37,18 +38,18 @@ type ManagedLocalPetRegistryForgetResult =
   | Readonly<{ ok: true; sourceKey: string }>
   | Readonly<{ ok: false; errorCode: 'not_found' | 'validation_failed' | 'unsupported_source' | 'internal_error'; error: string }>;
 
-const PetSourceKeySchema = z.string().regex(/^pet:[a-f0-9]{32}$/u);
+const PetSourceKeySchema = lazySchema(() => z.string().regex(/^pet:[a-f0-9]{32}$/u));
 
-const ManagedLocalPetRegistryEntrySchema = z.object({
+const ManagedLocalPetRegistryEntrySchema = lazySchema(() => z.object({
   kind: z.literal('happierManagedLocal'),
   sourceKey: PetSourceKeySchema,
   packagePath: z.string().min(1).max(10_000),
-}).strip();
+}).strip());
 
-const ManagedLocalPetRegistryFileSchema = z.object({
+const ManagedLocalPetRegistryFileSchema = lazySchema(() => z.object({
   version: z.literal(1),
   pets: z.record(z.string(), z.unknown()),
-}).strip();
+}).strip());
 
 function registryPath(managedRoot: string): string {
   return join(managedRoot, MANAGED_LOCAL_PET_REGISTRY_FILE);

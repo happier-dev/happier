@@ -103,6 +103,7 @@ describe('resolveSessionTransportContext', () => {
         if (!result.ok) {
             throw new Error(`Expected resolved session transport context, got ${JSON.stringify(result)}`);
         }
+        if (result.ctx.encryptionVariant === 'plain') throw new Error('Expected encrypted context');
         expect(Array.from(result.ctx.encryptionKey)).toEqual(Array.from(sessionDataKey));
     });
 });

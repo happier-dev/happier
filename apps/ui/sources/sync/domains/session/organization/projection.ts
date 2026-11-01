@@ -4,6 +4,7 @@ import {
     readSessionOrganizationServerScopedId,
 } from './keys';
 import type { NormalizedSessionOrganizationState, SessionOrganizationProjection } from './types';
+import { readSessionAppearanceColorFromDisplay, type SessionAppearanceColor } from './appearanceColor';
 import type {
     SessionAttentionStanding,
     SessionOrganizationFolder,
@@ -11,6 +12,7 @@ import type {
     SessionOrganizationOrderEntry,
     SessionOrganizationPin,
     SessionOrganizationTag,
+    SessionOrganizationSessionAppearance,
 } from '@happier-dev/protocol';
 
 function compareNullableSortKey(a: string | null, b: string | null): number {
@@ -30,6 +32,8 @@ export function buildSessionOrganizationProjection(
     const tagsById: Record<string, SessionOrganizationTag> = {};
     const tagAssignmentsBySessionId: Record<string, readonly string[]> = {};
     const attentionStandingsBySessionId: Record<string, SessionAttentionStanding> = {};
+    const appearancesBySessionId: Record<string, SessionAppearanceColor> = {};
+    const sessionAppearancesBySessionId: Record<string, SessionOrganizationSessionAppearance> = {};
     const orderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]> = {};
     const labelsByLabelKey: Record<string, SessionOrganizationLabel> = {};
 
@@ -65,6 +69,12 @@ export function buildSessionOrganizationProjection(
             attentionStandingsBySessionId[standing.sessionId] = standing;
         }
     }
+    for (const [key, appearance] of Object.entries(state.appearancesBySessionKey)) {
+        if (readSessionOrganizationServerScopedId(key, serverId) !== appearance.sessionId) continue;
+        sessionAppearancesBySessionId[appearance.sessionId] = appearance;
+        const color = readSessionAppearanceColorFromDisplay(appearance.display);
+        if (color) appearancesBySessionId[appearance.sessionId] = color;
+    }
     const serverPrefix = `${String(serverId).trim()}:`;
     for (const [key, entries] of Object.entries(state.orderEntriesByScopeKey)) {
         if (key.startsWith(serverPrefix)) {
@@ -94,6 +104,9 @@ export function buildSessionOrganizationProjection(
         tagsById,
         tagAssignmentsBySessionId,
         attentionStandingsBySessionId,
+        appearancesBySessionId,
+        sessionAppearancesBySessionId,
+        sessionAppearancesSupported: state.sessionAppearancesSupportedByServerId[serverId] === true,
         orderEntriesByScopeKey,
         labelsByLabelKey,
     };

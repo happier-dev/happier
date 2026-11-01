@@ -9,6 +9,10 @@ This document records the server implementation behind deployment. Operator reci
 - **Files:** S3-compatible storage or local disk, selected by `HAPPIER_FILES_BACKEND`.
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
+In current development source, source-based server images install the production dependency closure after generation and compilation. Generated Prisma clients and native runtime dependencies remain in the image; development-only Redis validation tools are excluded.
+
+Run `yarn --cwd apps/server validate:redis-adapter` from a development checkout to check fanout. Set `REDIS_URL` to use an existing Redis instance, or let the development dependency acquire and start a temporary instance. The root package configuration defers that acquisition until validation runs, so ordinary dependency installation does not require Redis build tools.
+
 ## Services for the full Postgres/S3 recipe
 1. **Postgres**
    - Owns persisted data in this recipe; light SQLite deployments use persistent local storage instead.
@@ -73,6 +77,8 @@ This document records the server implementation behind deployment. Operator reci
     - `VOICE_LEASE_CLEANUP` (`true`/`false`, default `false`)
     - `VOICE_LEASE_RETENTION_DAYS` (default `30`, clamp 7–365)
     - `VOICE_LEASE_CLEANUP_INTERVAL_MS` (default `21600000` = 6h, min `10000`)
+- Logging format (development source): `HAPPIER_SERVER_LOG_FORMAT=json` opts Node into structured stdout; unset or invalid values retain pretty output. See the published self-hosting environment reference for logging settings.
+- Sentry native CPU profiling (development source): `SENTRY_PROFILE_SESSION_SAMPLE_RATE` defaults to `0`. A positive rate enables the native integration on Node. Bun-based servers cannot load the V8 profiler; they emit a `profiling-unavailable` warning and retain Sentry error capture. Native profiling is not available in Bun-compiled server binaries.
 - Debug logging: `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING` (enables file logging + dev log endpoint).
 
 ## Docker image

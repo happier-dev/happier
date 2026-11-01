@@ -1,3 +1,4 @@
+import { verifyAccountContentPublicKeyBinding } from "@happier-dev/protocol";
 import { eventRouter } from "@/app/events/eventRouter";
 import { Fastify } from "../../types";
 import { z } from "zod";
@@ -31,6 +32,10 @@ import {
     serializeMachineRow,
 } from "@/app/machines/machineSerialization";
 import { registerMachineReplacementRoutes } from "./registerMachineReplacementRoutes";
+import { isPlainMachineDataKeyMarker, machineStoredContentMatchesAccountMode } from "@happier-dev/protocol";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { registerMachineContentKeyTransitionRoutes } from "./registerMachineContentKeyTransitionRoutes";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -97,16 +102,17 @@ function isMachineRevokedError(value: unknown): value is { error: 'machine_revok
 }
 
 export function machinesRoutes(app: Fastify) {
+    registerMachineContentKeyTransitionRoutes(app);
     app.post('/v1/machines', {
         preHandler: app.authenticate,
         schema: {
             body: z.object({
                 id: z.string(),
-                metadata: z.string(), // Encrypted metadata
-                daemonState: z.string().optional(), // Encrypted daemon state
+                metadata: z.string(), // Opaque ciphertext or typed plaintext stored content.
+                daemonState: z.string().optional(),
                 dataEncryptionKey: z.string().nullish(),
                 /**
-                 * When `dataEncryptionKey` is provided, the client must also provide its account content public key.
+                 * Encrypted DEK registrations may provide their account content public key.
                  * This allows the server to reject token/key mismatches that would otherwise create "poisoned" machine rows.
                  */
                 contentPublicKey: z.string().optional(),
@@ -139,8 +145,26 @@ export function machinesRoutes(app: Fastify) {
             contentPublicKeyFingerprint,
         } = request.body;
 
+        const plainRegistration = isPlainMachineDataKeyMarker(dataEncryptionKey);
+        if (plainRegistration && !isServerFeatureEnabledForRequest('encryption.plaintextMachine', process.env)) {
+            return reply.code(404).send({ error: 'not_found' });
+        }
+        if (!machineStoredContentMatchesAccountMode({
+            mode: plainRegistration ? 'plain' : 'e2ee', metadata, daemonState, dataEncryptionKey,
+        })) {
+            return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+        }
+        if (plainRegistration) {
+            const account = await db.account.findUnique({
+                where: { id: userId }, select: { publicKey: true, encryptionMode: true },
+            });
+            if (!account || resolveEffectiveAccountEncryptionModeFromAccountRow(account) !== 'plain') {
+                return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+            }
+        }
+
         let resolvedContentPublicKeyFingerprint =
-            typeof contentPublicKeyFingerprint === "string" && contentPublicKeyFingerprint.trim()
+            !plainRegistration && typeof contentPublicKeyFingerprint === "string" && contentPublicKeyFingerprint.trim()
                 ? contentPublicKeyFingerprint.trim()
                 : null;
         if (resolvedContentPublicKeyFingerprint) {
@@ -154,7 +178,7 @@ export function machinesRoutes(app: Fastify) {
         // Guardrail: for E2EE accounts, reject machine writes that include a DEK envelope but whose
         // claimed content public key does not match the account. Without this, a token/key mismatch
         // can create machine rows that permanently fail DEK decryption for the actual account key.
-        if (typeof dataEncryptionKey === "string") {
+        if (typeof dataEncryptionKey === "string" && !plainRegistration) {
             const requireContentPublicKeyForDek = parseBooleanEnv(
                 process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK,
                 false,
@@ -248,13 +272,11 @@ export function machinesRoutes(app: Fastify) {
                             return reply.code(500).send({ error: "internal" });
                         }
 
-                        const publicKeyBytes = Uint8Array.from(Buffer.from(publicKeyHex, "hex"));
-
-                        const binding = Buffer.concat([
-                            Buffer.from("Happy content key v1\u0000", "utf8"),
-                            Buffer.from(decoded),
-                        ]);
-                        const contentSigOk = tweetnacl.sign.detached.verify(binding, decodedSig, publicKeyBytes);
+                        const contentSigOk = verifyAccountContentPublicKeyBinding({
+                            signingPublicKeyHex: publicKeyHex,
+                            contentPublicKeyB64: contentPublicKeyTrimmed,
+                            contentPublicKeySigB64: contentPublicKeySigTrimmed,
+                        });
                         if (!contentSigOk) {
                             log(
                                 { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
@@ -343,6 +365,9 @@ export function machinesRoutes(app: Fastify) {
             if (machine.revokedAt) {
                 return reply.code(410).send({ error: 'machine_revoked' });
             }
+            if (plainRegistration !== isPlainMachineDataKeyMarker(machine.dataEncryptionKey)) {
+                return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+            }
 
             const nextDataEncryptionKey =
                 dataEncryptionKey === null
@@ -351,21 +376,29 @@ export function machinesRoutes(app: Fastify) {
                         ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64'))
                         : undefined;
 
-            const wantsDaemonStateUpdate = typeof daemonState === 'string' && daemonState !== (machine.daemonState ?? null);
-            const wantsDataEncryptionKeyUpdate =
-                nextDataEncryptionKey !== undefined
-                && !bytesEqual(machine.dataEncryptionKey ?? null, nextDataEncryptionKey);
+            const registrationKeyDiffers =
+                nextDataEncryptionKey === undefined
+                    ? (machine.dataEncryptionKey ?? null) !== null
+                    : !bytesEqual(machine.dataEncryptionKey ?? null, nextDataEncryptionKey);
+            if (plainRegistration && registrationKeyDiffers) {
+                return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+            }
+            // Registration cannot change the key without converting both incumbent ciphertexts.
+            // A randomized re-seal may represent the same key, so return the incumbent content
+            // for the client to open rather than guessing which key encrypted its new state.
+            const wantsDaemonStateUpdate = !plainRegistration && !registrationKeyDiffers
+                && typeof daemonState === 'string' && daemonState !== (machine.daemonState ?? null);
             const installationIdentityUpdate = resolveInstallationIdentityUpdate(machine, verifiedInstallationIdentity);
             if (!installationIdentityUpdate.ok) {
                 return reply.code(400).send({ error: "invalid-params", reason: installationIdentityUpdate.reason });
             }
+            if (registrationKeyDiffers) delete installationIdentityUpdate.data.contentPublicKeyFingerprint;
             const wantsInstallationUpdate = Object.keys(installationIdentityUpdate.data).length > 0;
 
             const wantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
 
             if (
                 !wantsDaemonStateUpdate
-                && !wantsDataEncryptionKeyUpdate
                 && !wantsInstallationUpdate
                 && !wantsAutomaticReplacement
             ) {
@@ -395,22 +428,29 @@ export function machinesRoutes(app: Fastify) {
                     });
                     if (!current) return null;
                     if (current.revokedAt) return { error: 'machine_revoked' as const };
+                    if (plainRegistration !== isPlainMachineDataKeyMarker(current.dataEncryptionKey)) {
+                        return { error: 'invalid_installation_identity' as const, reason: 'machine_storage_mode_mismatch' };
+                    }
 
-                    const currentWantsDaemonStateUpdate =
-                        typeof daemonState === 'string' && daemonState !== (current.daemonState ?? null);
-                    const currentWantsDataEncryptionKeyUpdate =
-                        nextDataEncryptionKey !== undefined
-                        && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
+                    const currentRegistrationKeyDiffers =
+                        nextDataEncryptionKey === undefined
+                            ? (current.dataEncryptionKey ?? null) !== null
+                            : !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
+                    if (plainRegistration && currentRegistrationKeyDiffers) {
+                        return { error: 'invalid_installation_identity' as const, reason: 'machine_storage_mode_mismatch' };
+                    }
+                    const currentWantsDaemonStateUpdate = !plainRegistration && !currentRegistrationKeyDiffers
+                        && typeof daemonState === 'string' && daemonState !== (current.daemonState ?? null);
                     const currentInstallationIdentityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
                     if (!currentInstallationIdentityUpdate.ok) {
                         return { error: 'invalid_installation_identity' as const, reason: currentInstallationIdentityUpdate.reason };
                     }
+                    if (currentRegistrationKeyDiffers) delete currentInstallationIdentityUpdate.data.contentPublicKeyFingerprint;
                     const currentWantsInstallationUpdate = Object.keys(currentInstallationIdentityUpdate.data).length > 0;
                     const currentWantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
 
                     if (
                         !currentWantsDaemonStateUpdate
-                        && !currentWantsDataEncryptionKeyUpdate
                         && !currentWantsInstallationUpdate
                         && !currentWantsAutomaticReplacement
                     ) {
@@ -422,16 +462,12 @@ export function machinesRoutes(app: Fastify) {
                     // encrypted value. Daemons refresh their owned fields through the versioned
                     // machine-update-metadata socket after registration.
                     const updatedMachine = currentWantsDaemonStateUpdate
-                        || currentWantsDataEncryptionKeyUpdate
                         || currentWantsInstallationUpdate
                         ? await tx.machine.update({
                             where: { accountId_id: { accountId: userId, id } },
                             data: {
                                 ...(currentWantsDaemonStateUpdate
                                     ? { daemonState, daemonStateVersion: { increment: 1 } }
-                                    : {}),
-                                ...(currentWantsDataEncryptionKeyUpdate
-                                    ? { dataEncryptionKey: nextDataEncryptionKey }
                                     : {}),
                                 ...(currentWantsInstallationUpdate && verifiedInstallationIdentity
                                     ? currentInstallationIdentityUpdate.data
@@ -442,7 +478,6 @@ export function machinesRoutes(app: Fastify) {
 
                     if (
                         currentWantsDaemonStateUpdate
-                        || currentWantsDataEncryptionKeyUpdate
                         || currentWantsInstallationUpdate
                     ) {
                         await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
@@ -465,14 +500,9 @@ export function machinesRoutes(app: Fastify) {
                 if (error instanceof MachineRegistrationReplacementError) {
                     return reply.code(error.statusCode).send({ error: "invalid-params", reason: error.reason });
                 }
-                if (wantsDataEncryptionKeyUpdate && (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008'))) {
-                    throw error;
-                }
-
                 // Control-plane guardrail: when SQLite is under heavy contention, starting an interactive transaction
                 // can fail (P2028/P1008) which would brick daemon startup/session spawning. Degrade only for
-                // metadata/daemonState best-effort writes; dataEncryptionKey changes must fail closed so callers do
-                // not silently believe the machine key was updated when the server still has the old envelope.
+                // best-effort registration refreshes; content-key changes use their own atomic transition.
                 if (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008')) {
                     log(
                         {
@@ -521,6 +551,14 @@ export function machinesRoutes(app: Fastify) {
             let machineReplacement: MachineRegistrationReplacementResult | null = null;
             try {
                 newMachine = await inTx(async (tx) => {
+                    if (plainRegistration) {
+                        // The preliminary read can precede an Account migration. Read again in
+                        // the same serializable transaction as insertion so its census cannot miss us.
+                        const account = await tx.account.findUnique({
+                            where: { id: userId }, select: { publicKey: true, encryptionMode: true },
+                        });
+                        if (!account || resolveEffectiveAccountEncryptionModeFromAccountRow(account) !== 'plain') return null;
+                    }
                     const created = await tx.machine.create({
                         data: {
                             id,
@@ -591,6 +629,9 @@ export function machinesRoutes(app: Fastify) {
                         if (existingSameAccount.revokedAt) {
                             return reply.code(410).send({ error: 'machine_revoked' });
                         }
+                        if (plainRegistration !== isPlainMachineDataKeyMarker(existingSameAccount.dataEncryptionKey)) {
+                            return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+                        }
                         let concurrentMachineReplacement: MachineRegistrationReplacementResult | null = null;
                         if (verifiedInstallationIdentity?.replacesMachineId) {
                             try {
@@ -633,6 +674,9 @@ export function machinesRoutes(app: Fastify) {
                 throw e;
             }
 
+            if (!newMachine) {
+                return reply.code(400).send({ error: 'invalid-params', reason: 'machine_storage_mode_mismatch' });
+            }
             return reply.send({
                 machine: {
                     ...serializeMachineRow(newMachine),

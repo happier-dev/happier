@@ -11,11 +11,10 @@ installDbModuleMock({ db: dbMocks.db });
 
 let logSessionShareAccess: typeof import("./accessLogger").logSessionShareAccess;
 let logPublicShareAccess: typeof import("./accessLogger").logPublicShareAccess;
-let getIpAddress: typeof import("./accessLogger").getIpAddress;
 let getUserAgent: typeof import("./accessLogger").getUserAgent;
 
 beforeAll(async () => {
-    ({ logSessionShareAccess, logPublicShareAccess, getIpAddress, getUserAgent } = await import("./accessLogger"));
+    ({ logSessionShareAccess, logPublicShareAccess, getUserAgent } = await import("./accessLogger"));
 });
 
 describe("accessLogger", () => {
@@ -100,47 +99,6 @@ describe("accessLogger", () => {
           userAgent: "Chrome/100.0",
         },
       });
-    });
-  });
-
-  describe("getIpAddress", () => {
-    it("should extract IP from x-forwarded-for header", () => {
-      const headers = { "x-forwarded-for": "203.0.113.1, 198.51.100.1" };
-      const result = getIpAddress(headers);
-      expect(result).toBe("203.0.113.1");
-    });
-
-    it("should handle x-forwarded-for as array", () => {
-      const headers = { "x-forwarded-for": ["203.0.113.1, 198.51.100.1"] };
-      const result = getIpAddress(headers);
-      expect(result).toBe("203.0.113.1");
-    });
-
-    it("should extract IP from x-real-ip header", () => {
-      const headers = { "x-real-ip": "203.0.113.5" };
-      const result = getIpAddress(headers);
-      expect(result).toBe("203.0.113.5");
-    });
-
-    it("should prefer x-forwarded-for over x-real-ip", () => {
-      const headers = {
-        "x-forwarded-for": "203.0.113.1",
-        "x-real-ip": "203.0.113.5",
-      };
-      const result = getIpAddress(headers);
-      expect(result).toBe("203.0.113.1");
-    });
-
-    it("should return undefined when no IP headers present", () => {
-      const headers = {};
-      const result = getIpAddress(headers);
-      expect(result).toBeUndefined();
-    });
-
-    it("should trim whitespace from IP address", () => {
-      const headers = { "x-forwarded-for": "  203.0.113.1  , 198.51.100.1" };
-      const result = getIpAddress(headers);
-      expect(result).toBe("203.0.113.1");
     });
   });
 

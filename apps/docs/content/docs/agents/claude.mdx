@@ -26,6 +26,33 @@ how a session behaves — steering, queued input, which runtime controls apply
 live — to be worth reading about first:
 [Claude unified terminal](/sessions/claude-unified-terminal).
 
+### Idle remote sessions (development source)
+
+Idle process reclamation is opt-in and off by default. In the app, open
+**Settings → AI & Agents → AI backends → Claude**, then turn on
+**Release idle Claude processes** under **Idle sessions**. Set **Idle after (minutes)**
+to choose the quiet period; the initial value is 30 minutes. Send a message from
+the app to apply a settings change to an existing session.
+
+With the Agent SDK and legacy runtimes, this releases the background `claude`
+process and the MCP servers it started. The Happier session stays open. Your
+next message starts Claude again and resumes the same conversation, so the first
+reply after a long pause can take a little longer. In-memory runtime state is
+released; enable this only when that tradeoff suits your workflow.
+
+Idle time counts from the end of the last turn. A session stays running while a
+turn, permission or user-input request, background task, agent or native goal is
+active, or after Claude creates a team or schedules its own follow-up (a session
+cron or `/loop` wakeup). Unknown activity, file checkpointing and unified terminal
+sessions also prevent reclamation.
+
+For an opted-in session, `HAPPIER_CLAUDE_REMOTE_IDLE_EXIT_MS` in the Happier
+CLI/daemon environment overrides the duration in milliseconds, up to the
+platform timer limit of 2,147,483,647 milliseconds. `0` disables reclamation on
+that machine. The environment variable alone does not enable the feature.
+Availability in a released Happier build depends on that build including these
+settings and the matching CLI behavior.
+
 ## Start in Happier, continue in the terminal
 
 Claude supports Happier’s attach flow for app-started sessions:

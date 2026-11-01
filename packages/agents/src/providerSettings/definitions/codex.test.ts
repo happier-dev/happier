@@ -1,10 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
+  buildCodexProviderSettingsShape,
+  CODEX_PROVIDER_SETTINGS_DEFINITION,
+  CODEX_PROVIDER_SETTINGS_DEFAULTS,
   isCodexVendorResumeBackendEnabled,
   resolveCodexRuntimeBackendMode,
   resolveCodexSpawnExtrasFromSettings,
 } from './codex.js';
+
+describe('Codex reasoning summary settings', () => {
+  it('preserves native defaults for old settings and accepts independent explicit generation choices', () => {
+    const schema = z.object(buildCodexProviderSettingsShape(z));
+    expect(schema.parse(CODEX_PROVIDER_SETTINGS_DEFAULTS)).toMatchObject({ codexReasoningSummaries: 'default' });
+    expect(CODEX_PROVIDER_SETTINGS_DEFINITION.fields.codexReasoningSummaries?.storageScope).toBe('account');
+    for (const preference of ['default', 'enabled', 'disabled']) {
+      expect(schema.parse({ ...CODEX_PROVIDER_SETTINGS_DEFAULTS, codexReasoningSummaries: preference })).toMatchObject({ codexReasoningSummaries: preference });
+    }
+    expect(schema.parse({ ...CODEX_PROVIDER_SETTINGS_DEFAULTS, codexReasoningSummaries: 'invalid' })).toMatchObject({ codexReasoningSummaries: 'default' });
+  });
+});
 
 describe('resolveCodexRuntimeBackendMode', () => {
   it('prefers explicit canonical backend modes over the legacy ACP flag and fallback mode', () => {

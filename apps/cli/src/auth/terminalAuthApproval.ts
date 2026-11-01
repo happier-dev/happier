@@ -1,10 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+import {
+  AccountKeyProvisioningUnavailableError,
+  assertAccountKeyProvisioningAllowed,
+  deriveAccountMachineKeyFromRecoverySecret,
+  sealTerminalProvisioningV2TokenOnlyPayload,
+  UserResponseSchema,
+} from '@happier-dev/protocol';
 
+import { getAccountEncryptionMode } from '@/api/connectedServices/connectedServiceCredentialApi';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
-import { readCredentials } from '@/persistence';
+import { readCredentials, type Credentials } from '@/persistence';
 
 function decodePublicKey(value: string): Uint8Array {
   const raw = String(value ?? '').trim();
@@ -35,11 +43,11 @@ function encryptForTerminal(recipientPublicKey: Uint8Array, plaintext: Uint8Arra
   return bundle.toString('base64');
 }
 
-function buildApprovalPayload(creds: NonNullable<Awaited<ReturnType<typeof readCredentials>>>): Uint8Array {
+function buildApprovalPayload(encryption: NonNullable<Credentials['encryption']>): Uint8Array {
   const machineKey =
-    creds.encryption.type === 'legacy'
-      ? deriveAccountMachineKeyFromRecoverySecret(creds.encryption.secret)
-      : creds.encryption.machineKey;
+    encryption.type === 'legacy'
+      ? deriveAccountMachineKeyFromRecoverySecret(encryption.secret)
+      : encryption.machineKey;
 
   const plaintext = new Uint8Array(33);
   plaintext[0] = 0;
@@ -53,7 +61,34 @@ export async function approveTerminalAuthRequest(params: Readonly<{ publicKey: s
   if (!creds) {
     throw new Error('Not authenticated. Run `happier auth login` first.');
   }
-  const response = encryptForTerminal(recipientPk, buildApprovalPayload(creds));
+  const mode = await getAccountEncryptionMode({ token: creds.token });
+  if (mode === 'unknown') throw new AccountKeyProvisioningUnavailableError();
+  if (!creds.encryption) {
+    if (mode !== 'plain') throw new AccountKeyProvisioningUnavailableError();
+    const statusResponse = await axios.get<unknown>(`${configuration.apiServerUrl}/v1/auth/request/status`, {
+      params: { publicKey: encodePublicKeyBase64(recipientPk) },
+    });
+    const status = statusResponse.data;
+    if (!status || typeof status !== 'object' || !('supportsTokenOnly' in status) || status.supportsTokenOnly !== true) {
+      throw Object.assign(new Error('This terminal cannot receive token-only credentials. Update the terminal and request authentication again.'), {
+        code: 'terminal_credential_variant_unsupported',
+      });
+    }
+  } else if (mode === 'e2ee') {
+    const subject = decodeJwtPayload(creds.token)?.sub;
+    const accountId = typeof subject === 'string' ? subject.trim() : '';
+    if (!accountId) throw new AccountKeyProvisioningUnavailableError();
+    const profileResponse = await axios.get<unknown>(
+      `${configuration.apiServerUrl}/v1/user/${encodeURIComponent(accountId)}`,
+      { headers: { Authorization: `Bearer ${creds.token}` } },
+    );
+    const parsed = UserResponseSchema.safeParse(profileResponse.data);
+    if (!parsed.success || parsed.data.user.id !== accountId) throw new AccountKeyProvisioningUnavailableError();
+    assertAccountKeyProvisioningAllowed({ mode, account: parsed.data.user, material: creds.encryption });
+  }
+  const response = creds.encryption
+    ? encryptForTerminal(recipientPk, buildApprovalPayload(creds.encryption))
+    : Buffer.from(sealTerminalProvisioningV2TokenOnlyPayload({ recipientPublicKey: recipientPk, randomBytes })).toString('base64');
 
   await axios.post(
     `${configuration.apiServerUrl}/v1/auth/response`,

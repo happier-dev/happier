@@ -1,4 +1,4 @@
-import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey as createProtocolServerUrlComparableKey, sanitizeBugReportUrl } from '@happier-dev/protocol';
 
 import { isLocalishHostname } from './serverUrlClassification';
 
@@ -61,4 +61,14 @@ export function createServerUrlComparableKey(raw: string): string {
     } catch {
         return writeBoundedCache(comparableServerUrlCache, key, '');
     }
+}
+
+/** Diagnostics compare endpoints, including their paths, rather than credential scopes alone. */
+export function createDiagnosticServerUrlKey(raw: string): string {
+    const sanitized = sanitizeBugReportUrl(raw) ?? raw;
+    const canonical = canonicalizeServerUrl(sanitized);
+    // A malformed nonempty URL is not evidence that two endpoints are equivalent.
+    if (!canonical) return sanitized.replace(/\/+$/, '');
+    const path = new URL(canonical).pathname;
+    return `${createServerUrlComparableKey(canonical)}${path === '/' ? '' : path}`;
 }

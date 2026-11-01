@@ -158,7 +158,10 @@ describe('createCursorAcpRuntime', () => {
     });
   });
 
-  it('applies startup model aliases through Cursor ACP config options', async () => {
+  it.each([
+    { modelId: 'gpt-5.1-codex-max-medium-fast', fast: 'true' },
+    { modelId: 'gpt-5.1-codex-max[fast=false]', fast: 'false' },
+  ])('applies startup model $modelId through Cursor ACP config options', async ({ modelId, fast }) => {
     await withTempDir('happier-cursor-runtime-config-', async (dir) => {
       const callsPath = join(dir, 'config-calls.json');
       const cursorPath = writeCursorConfigStubAgent({ dir, callsPath });
@@ -175,7 +178,7 @@ describe('createCursorAcpRuntime', () => {
         },
         startupOverrides: {
           model: {
-            modelId: 'gpt-5.1-codex-max-medium-fast',
+            modelId,
             updatedAt: 123,
           },
         },
@@ -195,7 +198,7 @@ describe('createCursorAcpRuntime', () => {
           {
             sessionId: 'cursor-config-stub-session',
             configId: 'fast',
-            value: 'true',
+            value: fast,
           },
         ]);
       } finally {

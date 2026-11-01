@@ -1578,14 +1578,16 @@ describe('createCliActionDeps session controls', () => {
       errorCode: 'session_rpc_failed',
       error: 'session_rpc_failed',
     }, true],
-  ])('handles a stale active Codex session when %s', async (_scenario, liveResult, shouldSpawn) => {
-    mocks.callSessionRpc.mockResolvedValueOnce(liveResult);
-    mocks.callMachineRpc.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_stale' });
+  ])('handles a stale active Codex session when %s', async (scenario, liveResult, usesTimedFallback) => {
+    const recoverySessionId = `sess_stale_${scenario.replace(/[^a-z]/g, '_')}`;
+    const response = liveResult.ok ? { ...liveResult, sessionId: recoverySessionId } : liveResult;
+    mocks.callSessionRpc.mockResolvedValueOnce(response);
+    mocks.callMachineRpc.mockResolvedValueOnce({ type: 'success', sessionId: recoverySessionId });
     mocks.resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true as const,
-      sessionId: 'sess_stale',
+      sessionId: recoverySessionId,
       rawSession: {
-        id: 'sess_stale',
+        id: recoverySessionId,
         active: true,
         latestTurnStatus: 'failed',
         path: '/repo',
@@ -1640,10 +1642,11 @@ describe('createCliActionDeps session controls', () => {
       rawSession: { metadata: {} },
     });
 
-    await expect(deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess_stale', provider: 'codex' })).resolves.toEqual(shouldSpawn ? {
-      ok: false, status: 'unsupported', sessionId: 'sess_stale',
-      errorCode: 'session_usage_limit_recovery_control_provider_unsupported',
-    } : { ok: true, status: 'ready', sessionId: 'sess_stale' });
+    const result = await deps.sessionUsageLimitCheckNow?.({ sessionId: recoverySessionId, provider: 'codex' });
+    expect(result).toMatchObject({ ok: true, status: 'ready', sessionId: recoverySessionId });
+    if (usesTimedFallback) expect(result).toMatchObject({ metadata: {
+      sessionUsageLimitRecoveryV1: { status: 'waiting', attemptCount: 0 },
+    } });
     expect(mocks.callSessionRpc).toHaveBeenCalledTimes(1);
     // Attaching a process cannot claim resumption without a continuation handoff.
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
@@ -1657,7 +1660,7 @@ describe('createCliActionDeps session controls', () => {
     mocks.getSessionUsageLimitRecoveryControlAdapter.mockResolvedValue({
       checkNow,
     });
-    mocks.resolveSessionTransportContext.mockResolvedValueOnce({
+    mocks.resolveSessionTransportContext.mockResolvedValue({
       ok: true as const,
       sessionId: 'sess_inactive',
       rawSession: {
@@ -1733,7 +1736,7 @@ describe('createCliActionDeps session controls', () => {
     expect(mocks.callSessionRpc).not.toHaveBeenCalled();
     expect(mocks.getSessionUsageLimitRecoveryControlAdapter).not.toHaveBeenCalled();
     expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledTimes(2);
-    // The owner-tagged cancelled attempt cannot be reconstructed from the old issue.
+    // Each action re-resolves the same target; owned checks still use the daemon route.
     expect(checkNow).not.toHaveBeenCalled();
 
   });

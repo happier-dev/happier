@@ -7,7 +7,7 @@ import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
 
 type AckableSocket = {
-    emitWithAck: (event: string, ...args: any[]) => Promise<any>;
+    emitWithAck(event: string, ...args: unknown[]): Promise<unknown>;
     timeout?: (ms: number) => AckableSocket;
     connected?: boolean;
 };
@@ -52,6 +52,7 @@ function readLoggedCurrentModeId(metadata: Record<string, unknown> | null | unde
 
 export async function updateSessionMetadataWithAck(opts: {
     socket: AckableSocket;
+    getSocket?: () => AckableSocket;
     sessionId: string;
     sessionEncryptionMode: 'e2ee' | 'plain';
     encryptionKey: Uint8Array;
@@ -71,6 +72,7 @@ export async function updateSessionMetadataWithAck(opts: {
 
 export async function updateSessionMetadataWithAckResult<TResult>(opts: {
     socket: AckableSocket;
+    getSocket?: () => AckableSocket;
     sessionId: string;
     sessionEncryptionMode: 'e2ee' | 'plain';
     encryptionKey: Uint8Array;
@@ -109,7 +111,7 @@ export async function updateSessionMetadataWithAckResult<TResult>(opts: {
                 ? JSON.stringify(projectSessionMetadataForWire(updated))
                 : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, projectSessionMetadataForWire(updated)));
         const answer = await emitSocketWithAck<any>({
-            socket: opts.socket,
+            socket: opts.getSocket?.() ?? opts.socket,
             event: 'update-metadata',
             payload: {
                 sid: opts.sessionId,
@@ -172,6 +174,7 @@ export async function updateSessionMetadataWithAckResult<TResult>(opts: {
 
 export async function updateSessionAgentStateWithAck(opts: {
     socket: AckableSocket;
+    getSocket?: () => AckableSocket;
     sessionId: string;
     sessionEncryptionMode: 'e2ee' | 'plain';
     encryptionKey: Uint8Array;
@@ -202,7 +205,7 @@ export async function updateSessionAgentStateWithAck(opts: {
                 : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null);
         const activitySummaryV1 = deriveActivitySummaryFromAgentState(updated);
         const answer = await emitSocketWithAck<any>({
-            socket: opts.socket,
+            socket: opts.getSocket?.() ?? opts.socket,
             event: 'update-state',
             payload: {
                 sid: opts.sessionId,
@@ -244,5 +247,12 @@ export async function updateSessionAgentStateWithAck(opts: {
             'agent_state_update_failed',
             false,
         );
+    }).catch((error: unknown) => {
+        logger.infoFile('[API] session_agent_state_update_failed', {
+            phase: 'terminal_failure',
+            operation: 'update-state',
+            sessionId: opts.sessionId,
+        });
+        throw error;
     });
 }

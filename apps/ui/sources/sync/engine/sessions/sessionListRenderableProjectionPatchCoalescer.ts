@@ -90,7 +90,7 @@ export function createSessionListRenderableProjectionPatchCoalescer<Payload>(par
             }
 
             let simulatedRenderable = renderable;
-            let finalPatch: Partial<Omit<SessionListRenderableSession, 'id'>> | null = null;
+            let hasPatch = false;
             for (const entry of entries) {
                 if (!entry.shouldContinue()) {
                     skippedEntries += 1;
@@ -100,18 +100,16 @@ export function createSessionListRenderableProjectionPatchCoalescer<Payload>(par
                     renderable: simulatedRenderable,
                     payload: entry.payload,
                 });
-                finalPatch = {
-                    ...(finalPatch ?? {}),
-                    ...patch,
-                };
+                hasPatch = true;
                 simulatedRenderable = applySessionListRenderablePatch(simulatedRenderable, patch);
             }
 
-            if (finalPatch && !areSessionListRenderablesEqual(renderable, simulatedRenderable)) {
-                patches.push({ sessionId, patch: finalPatch });
+            if (hasPatch && !areSessionListRenderablesEqual(renderable, simulatedRenderable)) {
+                const { id: _id, ...patch } = simulatedRenderable;
+                patches.push({ sessionId, patch });
                 continue;
             }
-            if (finalPatch) {
+            if (hasPatch) {
                 noopSessions += 1;
             } else {
                 noPatchSessions += 1;

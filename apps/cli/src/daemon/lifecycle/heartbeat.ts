@@ -9,6 +9,7 @@ import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
 import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
 import { configuration } from '@/configuration';
+import { AGENTS } from '@/backends/catalog';
 import {
   readDaemonRestartVerifyPollMs,
   readDaemonRestartVerifyTimeoutMs,
@@ -127,8 +128,8 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
   // Every 60 seconds:
   // 1. Prune stale sessions
-  // 2. Check if daemon needs update
-  // 3. If outdated, restart with latest version
+  // 2. Reconcile provider resources and collect stale local state
+  // 3. Check for an update and restart with the latest version if needed
   // 4. Write heartbeat
   const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 60000);
   const restartVerifyTimeoutMs = readDaemonRestartVerifyTimeoutMs();
@@ -242,6 +243,15 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           && typeof tracked.stopRequestedAtMs !== 'number'
           && tracked.reportMarkerCustody?.retiring !== true) {
           await params.onTrackedSessionHealthy?.(tracked);
+        }
+      }
+
+      for (const agent of Object.values(AGENTS)) {
+        if (!agent?.reconcileDaemonResources) continue;
+        try {
+          await agent.reconcileDaemonResources();
+        } catch (error) {
+          logger.warn(`[DAEMON RUN] Failed to reconcile ${agent.id} resources`, error);
         }
       }
 

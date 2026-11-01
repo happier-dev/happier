@@ -26,13 +26,6 @@ export default function VoiceSettingsScreen() {
   const popoverBoundaryRef = React.useRef<any>(null);
   const [openMenu, setOpenMenu] = React.useState<null | 'assistantLanguage'>(null);
 
-  React.useEffect(() => {
-    if (happierVoiceSupported !== false) return;
-    if (voice.providerId !== 'realtime_elevenlabs') return;
-    if (voice.adapters.realtime_elevenlabs.billingMode !== 'happier') return;
-    setVoice({ ...voice, providerId: 'off' });
-  }, [happierVoiceSupported, setVoice, voice]);
-
   const effectiveAssistantLanguageId =
     voice.adapters?.realtime_elevenlabs?.assistantLanguage
     ?? voice.assistantLanguage

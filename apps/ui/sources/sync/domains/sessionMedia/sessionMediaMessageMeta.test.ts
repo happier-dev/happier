@@ -26,6 +26,14 @@ function buildSessionMediaMeta(path: string): unknown {
 }
 
 describe('parseSessionMediaMessageMeta', () => {
+    it('treats absent media envelopes as an empty projection', () => {
+        for (const meta of [undefined, null, {}, { happier: null }, { happierMedia: null }]) {
+            expect(parseSessionMediaMessageMeta(meta)).toEqual({
+                inlineImages: [], unavailableMedia: [], legacyAttachments: null,
+            });
+        }
+    });
+
     it('preserves a bounded generated description for generic presentation', () => {
         const meta = buildSessionMediaMeta('.happier/uploads/generated/message-1/generated.png') as {
             happier: { payload: { media: Array<Record<string, unknown>> } };

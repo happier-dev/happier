@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { fixNodePtyPackageSpawnHelperPermissions } from '../../nodePtySpawnHelperPermissions.cjs';
+import { resolveInstalledPackage } from '../workspaces/index.js';
 import type { BinaryTarget } from './targets.js';
 
 const AUDITED_DUPLICATE_PACKAGE_PAIRS = [
@@ -23,7 +24,7 @@ const AUDITED_DUPLICATE_PACKAGE_PAIRS = [
     duplicate: '@modelcontextprotocol/sdk/node_modules/express/node_modules/body-parser/node_modules/qs',
     survivor: '@modelcontextprotocol/sdk/node_modules/express/node_modules/qs',
   },
-  // Sharp 0.34.5's locked Darwin/Linux packages depend on libvips 1.2.4;
+  // Sharp's Darwin/Linux packages depend on separate libvips packages;
   // Windows packages contain their own libraries and have no libvips package.
   ...['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'linuxmusl-arm64', 'linuxmusl-x64'].map((target) => ({
     duplicate: `sharp/node_modules/@img/sharp-${target}/node_modules/@img/sharp-libvips-${target}`,
@@ -144,13 +145,24 @@ function resolveSharpTargetOptionalPackageNames(target: BinaryTarget): readonly 
 }
 
 async function assertTargetOptionalPackages(params: Readonly<{
-  directory: string;
+  consumerDirectory: string;
+  nodeModulesDirectory: string;
   packageNames: readonly string[];
   scope: string;
   target: BinaryTarget;
 }>): Promise<void> {
-  const installed = new Set((await readDirectories(params.directory)).map((entry) => entry.name));
-  const missing = params.packageNames.filter((name) => !installed.has(name));
+  const require = createRequire(join(params.consumerDirectory, 'package.json'));
+  const missing = params.packageNames.filter((name) => {
+    let installed: ReturnType<typeof resolveInstalledPackage>;
+    try {
+      installed = resolveInstalledPackage({ require, packageName: `${params.scope}/${name}` });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'MODULE_NOT_FOUND') return true;
+      throw error;
+    }
+    const path = relative(params.nodeModulesDirectory, installed.packageDir);
+    return path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path);
+  });
   if (missing.length > 0) {
     throw new Error(
       `[component-artifacts] missing target optional runtime package(s) for ${params.target.os}-${params.target.arch}: ${missing.map((name) => `${params.scope}/${name}`).join(', ')}; install dependencies with --ignore-platform before building cross-target artifacts`,
@@ -164,7 +176,7 @@ function shouldKeepTargetOptionalPackage(directory: string, target: BinaryTarget
 
   if (parent === '@img' && (
     /^sharp(?:-libvips)?-(?:darwin|linux|linuxmusl|win32)-(?:x64|arm64|arm|ia32|ppc64|riscv64|s390x)$/.test(name)
-    || name === 'sharp-wasm32'
+    || /^sharp-(?:(?:freebsd|webcontainers)-)?wasm32$/.test(name)
   )) {
     // The cross-target release install materializes every locked optional package.
     // Linux artifacts support both glibc and musl, so retain both libc variants.
@@ -182,13 +194,14 @@ function shouldKeepTargetOptionalPackage(directory: string, target: BinaryTarget
   return null;
 }
 
-async function projectNativePackage(directory: string, target: BinaryTarget): Promise<boolean> {
+async function projectNativePackage(directory: string, target: BinaryTarget, nodeModulesDirectory: string): Promise<boolean> {
   const platform = target.os === 'windows' ? 'win32' : target.os;
   const name = basename(directory);
   const parent = basename(dirname(directory));
   if (name === 'sharp' && parent === 'node_modules') {
     await assertTargetOptionalPackages({
-      directory: join(directory, 'node_modules', '@img'),
+      consumerDirectory: directory,
+      nodeModulesDirectory,
       packageNames: resolveSharpTargetOptionalPackageNames(target),
       scope: '@img',
       target,
@@ -296,8 +309,8 @@ async function projectNativePackage(directory: string, target: BinaryTarget): Pr
   return true;
 }
 
-async function projectNativePackages(directory: string, target: BinaryTarget): Promise<void> {
-  if (!await projectNativePackage(directory, target)) return;
+async function projectNativePackages(directory: string, target: BinaryTarget, nodeModulesDirectory = directory): Promise<void> {
+  if (!await projectNativePackage(directory, target, nodeModulesDirectory)) return;
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return [];
     throw error;
@@ -306,7 +319,7 @@ async function projectNativePackages(directory: string, target: BinaryTarget): P
   await Promise.all(entries.map(async (entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      await projectNativePackages(path, target);
+      await projectNativePackages(path, target, nodeModulesDirectory);
     } else if (entry.isFile() && /(?:\.d\.(?:ts|mts|cts)\.map|\.tsbuildinfo)$/.test(entry.name)) {
       // Declarations remain available to SDK/plugin authors and executable
       // source maps remain available to Bun and Node diagnostics. Only declaration

@@ -21,7 +21,7 @@ export {
 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceCredentialApi } from '@/api/connectedServices/connectedServiceCredentialApi';
-import type { Credentials } from '@/persistence';
+import { requireEncryptionCredentials, type Credentials } from '@/persistence';
 import { resolveConnectedServiceAccountMode } from './resolveConnectedServiceAccountMode';
 
 export class ConnectedServiceCredentialResolutionError extends Error {
@@ -105,6 +105,7 @@ async function readSealedConnectedServiceCredential(params: Readonly<{
   });
   if (!sealed) return null;
 
+  requireEncryptionCredentials(params.credentials);
   const opened = openConnectedServiceCredentialCiphertext({
     material:
       params.credentials.encryption.type === 'legacy'

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
+import { lazySchema } from '../../lazySchema.js';
 
-export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('t', [
+export const AccountSettingsStoredContentEnvelopeSchema = lazySchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: AccountSettingsPersistedObjectSchema,
@@ -11,6 +12,6 @@ export const AccountSettingsStoredContentEnvelopeSchema = z.discriminatedUnion('
     t: z.literal('encrypted'),
     c: z.string().min(1),
   }),
-]);
+]));
 
 export type AccountSettingsStoredContentEnvelope = z.infer<typeof AccountSettingsStoredContentEnvelopeSchema>;

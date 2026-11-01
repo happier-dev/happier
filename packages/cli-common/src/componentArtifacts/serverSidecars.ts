@@ -1,9 +1,10 @@
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { commandExists, execOrThrow, resolveYarnCommand, type RunCommand } from './commands.js';
 import { resolveServerBuildDbProviders } from './serverBuildDbProviders.js';
 import type { BinaryTarget } from './targets.js';
+import { resolveSharpRuntimeSidecarEntries } from './sharpRuntimeSidecars.js';
 
 export type StageEntry = {
   sourcePath: string;
@@ -13,13 +14,6 @@ export type StageEntry = {
 export type ServerDbProvider = 'sqlite' | 'mysql';
 export type ServerComponent = 'happier-server' | 'happier-server-light';
 
-type PackageJson = {
-  name?: string;
-  dependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-  os?: string[];
-  cpu?: string[];
-};
 
 export function resolveRequestedServerDbProviders(buildDbProviders: string): ServerDbProvider[] {
   return [...resolveServerBuildDbProviders(buildDbProviders)]
@@ -92,98 +86,6 @@ async function ensureUiWebDist({
     },
   });
   return uiDistPath;
-}
-
-function packageNameToNodeModulesPath(packageName: string): string {
-  return join('node_modules', ...packageName.split('/'));
-}
-
-async function readPackageJson(packageJsonPath: string): Promise<PackageJson> {
-  const raw = await readFile(packageJsonPath, 'utf8');
-  const parsed = JSON.parse(raw) as unknown;
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`[component-artifacts] invalid package.json: ${packageJsonPath}`);
-  }
-  return parsed as PackageJson;
-}
-
-function matchesPackageConstraint(values: string[] | undefined, targetValue: string): boolean {
-  if (!values || values.length === 0) return true;
-  const denied = values.some((value) => value === `!${targetValue}`);
-  if (denied) return false;
-  const allowedValues = values.filter((value) => !value.startsWith('!'));
-  return allowedValues.length === 0 || allowedValues.includes(targetValue);
-}
-
-function packageSupportsTarget(packageJson: PackageJson, target: BinaryTarget): boolean {
-  const npmOs = target.os === 'windows' ? 'win32' : target.os;
-  return matchesPackageConstraint(packageJson.os, npmOs)
-    && matchesPackageConstraint(packageJson.cpu, target.arch);
-}
-
-function requiredSharpRuntimePackages(target: BinaryTarget): string[] {
-  const platform = target.os === 'windows' ? 'win32' : target.os;
-  const suffix = `${platform}-${target.arch}`;
-  return target.os === 'windows'
-    ? [`@img/sharp-${suffix}`]
-    : [`@img/sharp-${suffix}`, `@img/sharp-libvips-${suffix}`];
-}
-
-async function collectInstalledPackageSidecars({
-  repoRoot,
-  packageName,
-  target,
-  optional,
-  visited,
-}: {
-  repoRoot: string;
-  packageName: string;
-  target: BinaryTarget;
-  optional: boolean;
-  visited: Set<string>;
-}): Promise<StageEntry[]> {
-  if (visited.has(packageName)) return [];
-  const packageDir = join(repoRoot, packageNameToNodeModulesPath(packageName));
-  const packageJsonPath = join(packageDir, 'package.json');
-  const packageJsonInfo = await stat(packageJsonPath).catch(() => null);
-  if (!packageJsonInfo?.isFile()) {
-    if (optional) return [];
-    throw new Error(`[component-artifacts] missing runtime package ${packageName}: ${packageJsonPath}`);
-  }
-
-  const packageJson = await readPackageJson(packageJsonPath);
-  if (!packageSupportsTarget(packageJson, target)) {
-    if (optional) return [];
-    throw new Error(`[component-artifacts] runtime package ${packageName} is incompatible with ${target.os}-${target.arch}`);
-  }
-
-  visited.add(packageName);
-  const entries: StageEntry[] = [{
-    sourcePath: packageDir,
-    targetPath: packageNameToNodeModulesPath(packageName),
-  }];
-
-  for (const depName of Object.keys(packageJson.dependencies ?? {})) {
-    entries.push(...await collectInstalledPackageSidecars({
-      repoRoot,
-      packageName: depName,
-      target,
-      optional: false,
-      visited,
-    }));
-  }
-
-  for (const depName of Object.keys(packageJson.optionalDependencies ?? {})) {
-    entries.push(...await collectInstalledPackageSidecars({
-      repoRoot,
-      packageName: depName,
-      target,
-      optional: true,
-      visited,
-    }));
-  }
-
-  return entries;
 }
 
 export async function resolveServerBinarySidecarEntries({
@@ -359,25 +261,7 @@ export async function resolveServerBinarySidecarEntries({
     targetPath: join('node_modules', '@prisma', 'client'),
   });
 
-  if (target) {
-    const sharpVisited = new Set<string>();
-    entries.push(...await collectInstalledPackageSidecars({
-      repoRoot,
-      packageName: 'sharp',
-      target,
-      optional: false,
-      visited: sharpVisited,
-    }));
-    for (const packageName of requiredSharpRuntimePackages(target)) {
-      entries.push(...await collectInstalledPackageSidecars({
-        repoRoot,
-        packageName,
-        target,
-        optional: false,
-        visited: sharpVisited,
-      }));
-    }
-  }
+  entries.push(...await resolveSharpRuntimeSidecarEntries({ resolveFromPackageJsonPath: join(repoRoot, 'apps', 'server', 'package.json'), target }));
 
   return entries;
 }

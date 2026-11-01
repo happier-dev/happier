@@ -3,6 +3,7 @@ import {
     normalizeCodexRolloutToolInput,
 } from './rolloutToolNameMapping';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
+import { readCodexReasoningText } from '../utils/readCodexReasoningText';
 import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle';
 
 export type CodexRolloutAction =
@@ -11,6 +12,7 @@ export type CodexRolloutAction =
     | { type: 'context-compaction'; phase: 'completed'; lifecycleId: string; source: 'provider-event' | 'transcript-inference'; providerEventId?: string }
     | { type: 'user-text'; text: string }
     | { type: 'assistant-text'; text: string }
+    | { type: 'thinking'; text: string }
     | { type: 'tool-call'; callId: string; name: string; input: unknown }
     | { type: 'tool-result'; callId: string; output: unknown }
     | { type: 'collaboration-tool-call'; callId: string; name: 'spawn_agent' | 'wait_agent' | 'close_agent'; prompt: string | null; nickname: string | null; role: string | null }
@@ -259,6 +261,11 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
     if (env.type !== 'response_item') return [];
     const payload = asRecord(env.payload) ?? {};
     const payloadType = typeof (payload as any).type === 'string' ? String((payload as any).type) : '';
+
+    if (payloadType === 'reasoning') {
+        const text = readCodexReasoningText(payload);
+        return text ? [{ type: 'thinking', text }] : [];
+    }
 
     if (payloadType === 'message') {
         const role = typeof (payload as any).role === 'string' ? String((payload as any).role) : '';

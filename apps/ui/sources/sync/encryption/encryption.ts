@@ -110,6 +110,14 @@ function getDataKeyFingerprint(dataKey: Uint8Array | null): string {
     return dataKey ? encodeBase64(dataKey, 'base64') : NO_KEY_FINGERPRINT;
 }
 
+export class EncryptionMaterialUnavailableError extends Error {
+    readonly code = 'encryption_material_unavailable';
+    constructor() {
+        super('Encryption key material is unavailable for this account');
+        this.name = 'EncryptionMaterialUnavailableError';
+    }
+}
+
 export class Encryption {
 
     static async create(masterSecret: Uint8Array) {
@@ -137,13 +145,33 @@ export class Encryption {
         return new Encryption(anonID, fallbackKey, contentKeyPair, true);
     }
 
-    private readonly fallbackEncryption: Encryptor & Decryptor;
+    static createWithoutKeyMaterial(): Encryption {
+        return new Encryption(null, null, null);
+    }
+
+    hasEncryptionMaterial(): boolean {
+        return this.contentKeyPair !== null;
+    }
+
+    private requireContentKeyPair(): LibsodiumKeyPair {
+        if (!this.contentKeyPair) throw new EncryptionMaterialUnavailableError();
+        return this.contentKeyPair;
+    }
+
+    private requireFallbackEncryption(): Encryptor & Decryptor {
+        if (!this.fallbackEncryption) throw new EncryptionMaterialUnavailableError();
+        return this.fallbackEncryption;
+    }
+
+    private readonly fallbackEncryption: (Encryptor & Decryptor) | null;
     // Automation templates must be decryptable by the daemon across credential modes.
     // We always seal them with secretbox using the master secret (legacy) or machine key (dataKey).
-    private readonly automationTemplateEncryption: Encryptor & Decryptor;
-    private readonly contentKeyPair: LibsodiumKeyPair;
-    readonly anonID: string;
-    readonly contentDataKey: Uint8Array;
+    private readonly automationTemplateEncryption: (Encryptor & Decryptor) | null;
+    private readonly contentKeyPair: LibsodiumKeyPair | null;
+    readonly anonID: string | null;
+    get contentDataKey(): Uint8Array {
+        return this.requireContentKeyPair().publicKey;
+    }
 
     // Session and machine encryption management
     private sessionEncryptions = new Map<string, SessionEncryption>();
@@ -163,23 +191,22 @@ export class Encryption {
     private nativeCryptoWorkerServerId: string | null = null;
     private nativeCryptoWorkerGenerations = new Map<string, number>();
     private sessionEncryptionScopes = new Map<string, ResolvedEncryptionScope>();
-    private readonly fallbackSecret: Uint8Array;
+    private readonly fallbackSecret: Uint8Array | null;
     private readonly useDataKeyFallback: boolean;
 
     private constructor(
-        anonID: string,
-        masterSecret: Uint8Array,
-        contentKeyPair: LibsodiumKeyPair,
+        anonID: string | null,
+        masterSecret: Uint8Array | null,
+        contentKeyPair: LibsodiumKeyPair | null,
         useDataKeyFallback = false
     ) {
         this.anonID = anonID;
         this.contentKeyPair = contentKeyPair;
         this.fallbackSecret = masterSecret;
         this.useDataKeyFallback = useDataKeyFallback;
-        this.fallbackEncryption = this.createFallbackEncryption(masterSecret);
-        this.automationTemplateEncryption = new SecretBoxEncryption(masterSecret);
+        this.fallbackEncryption = masterSecret ? this.createFallbackEncryption(masterSecret) : null;
+        this.automationTemplateEncryption = masterSecret ? new SecretBoxEncryption(masterSecret) : null;
         this.cache = new EncryptionCache();
-        this.contentDataKey = contentKeyPair.publicKey;
     }
 
     configureAesBatchConcurrencyLimit(limit: number): void {
@@ -249,7 +276,7 @@ export class Encryption {
     }
 
     getContentPrivateKey(): Uint8Array {
-        return this.contentKeyPair.privateKey;
+        return this.requireContentKeyPair().privateKey;
     }
 
     private resolveEncryptionScope(scope: EncryptionScopeInput = {}): ResolvedEncryptionScope {
@@ -328,7 +355,8 @@ export class Encryption {
 
     async openEncryption(dataEncryptionKey: Uint8Array | null, scopeInput: EncryptionScopeInput = {}): Promise<Encryptor & Decryptor> {
         if (!dataEncryptionKey) {
-            return scopeInput.sessionId ? this.createFallbackEncryption(this.fallbackSecret, scopeInput) : this.fallbackEncryption;
+            if (!this.fallbackSecret) throw new EncryptionMaterialUnavailableError();
+            return scopeInput.sessionId ? this.createFallbackEncryption(this.fallbackSecret, scopeInput) : this.requireFallbackEncryption();
         }
         return new AES256Encryption(dataEncryptionKey, {
             batchConcurrencyLimit: this.aesBatchConcurrencyLimit,
@@ -430,9 +458,15 @@ export class Encryption {
      * Initialize machines with their encryption keys
      * This should be called once when machines are loaded
      */
-    async initializeMachines(machines: Map<string, Uint8Array | null>): Promise<void> {
+    async initializeMachines(machines: Map<string, Uint8Array | null>, options?: Readonly<{ unavailableMachineIds?: ReadonlySet<string>; plainMachineIds?: ReadonlySet<string> }>): Promise<void> {
+        for (const machineId of options?.unavailableMachineIds ?? []) {
+            this.machineEncryptions.delete(machineId);
+            this.machineKeyFingerprints.delete(machineId);
+            this.cache.clearMachineCache(machineId);
+        }
         for (const [machineId, dataKey] of machines) {
-            const fingerprint = dataKey ? encodeBase64(dataKey, 'base64') : '__no_key__';
+            const isPlain = options?.plainMachineIds?.has(machineId) === true;
+            const fingerprint = isPlain ? '__plain__' : getDataKeyFingerprint(dataKey);
             const existing = this.machineEncryptions.get(machineId);
             const existingFingerprint = this.machineKeyFingerprints.get(machineId);
             // Skip if already initialized with the same key (or both missing).
@@ -440,8 +474,15 @@ export class Encryption {
                 continue;
             }
 
-            // Create appropriate encryptor based on data key
-            const encryptor = await this.openEncryption(dataKey);
+            this.cache.clearMachineCache(machineId);
+
+            // A keyless account cannot read a legacy encrypted row. Keep other plain rows usable.
+            if (!isPlain && !dataKey && !this.hasEncryptionMaterial()) {
+                this.machineEncryptions.delete(machineId);
+                this.machineKeyFingerprints.delete(machineId);
+                continue;
+            }
+            const encryptor = isPlain ? null : await this.openEncryption(dataKey);
 
             // Create and cache machine encryption
             const machineEnc = new MachineEncryption(
@@ -471,19 +512,20 @@ export class Encryption {
             'sync.encryption.account.encryptRaw',
             { items: 1 },
             async () => {
-                const encrypted = await this.fallbackEncryption.encrypt([data]);
+                const encrypted = await this.requireFallbackEncryption().encrypt([data]);
                 return encodeBase64(encrypted[0], 'base64');
             },
         );
     }
 
     async decryptRaw(encrypted: string): Promise<any | null> {
+        this.requireFallbackEncryption();
         try {
             const encryptedData = decodeBase64(encrypted, 'base64');
             const decrypted = await syncPerformanceTelemetry.measureAsync(
                 'sync.encryption.account.decryptRaw',
                 { items: 1 },
-                async () => this.fallbackEncryption.decrypt([encryptedData]),
+                async () => this.requireFallbackEncryption().decrypt([encryptedData]),
             );
             return decrypted[0] || null;
         } catch (error) {
@@ -525,7 +567,7 @@ export class Encryption {
                     const machineDecrypted = await new SecretBoxEncryption(machineKey).decrypt([encryptedData]);
                     if (machineDecrypted[0]) return machineDecrypted[0];
 
-                    const decrypted = await this.automationTemplateEncryption.decrypt([encryptedData]);
+                    const decrypted = await this.automationTemplateEncryption!.decrypt([encryptedData]);
                     return decrypted[0] || null;
                 } catch {
                     return null;
@@ -547,6 +589,10 @@ export class Encryption {
         // Nothing to open. Short-circuited before routing so an empty call is not
         // recorded as a routing decision it never made.
         if (encryptedValues.length === 0) return [];
+        // Keyless accounts may retain encrypted history alongside readable plain rows.
+        // A missing recipient key has the same per-envelope result as a key that cannot open it.
+        if (!this.contentKeyPair) return encryptedValues.map(() => null);
+        const contentKeyPair = this.contentKeyPair;
         return syncPerformanceTelemetry.measureAsync(
             'sync.encryption.account.decryptDataKey',
             { items: encryptedValues.length },
@@ -559,7 +605,7 @@ export class Encryption {
                         const encryptedKey = decodeBase64(value, 'base64');
                         const opened = openEncryptedDataKeyEnvelopeV1({
                             envelope: encryptedKey,
-                            recipientSecretKeyOrSeed: this.contentKeyPair.privateKey,
+                            recipientSecretKeyOrSeed: contentKeyPair.privateKey,
                         });
                         return opened ? bytesToCryptoWorkerBase64(opened) : null;
                     } catch {
@@ -571,7 +617,7 @@ export class Encryption {
                 // at this call site would take the JS path without the owner ever
                 // recording which branch chose it.
                 const payloadBytes = estimateCryptoWorkerBatchBridgeBytes(encryptedValues).totalBridgeBytes
-                    + estimateCryptoWorkerRawBytesBridgeBytes(this.contentKeyPair.privateKey).totalBridgeBytes * encryptedValues.length;
+                    + estimateCryptoWorkerRawBytesBridgeBytes(contentKeyPair.privateKey).totalBridgeBytes * encryptedValues.length;
                 let capturedScope: CryptoWorkerScope | null = null;
                 const result = await runNativeCryptoWorkerBatch<string | null>({
                     operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1,
@@ -585,7 +631,7 @@ export class Encryption {
                         const serializeStartedAtMs = shouldMeasureSerialization ? nowMs() : 0;
                         let serializeMs = 0;
                         let bytesOut = 0;
-                        const recipientSecretKeyOrSeedBase64 = bytesToCryptoWorkerBase64(this.contentKeyPair.privateKey);
+                        const recipientSecretKeyOrSeedBase64 = bytesToCryptoWorkerBase64(contentKeyPair.privateKey);
                         const scope = this.getCurrentNativeCryptoWorkerScope(scopeInput);
                         capturedScope = scope;
                         const nativeItems = encryptedValues.map((envelopeBase64) => ({
@@ -660,7 +706,7 @@ export class Encryption {
                 // Use public key for encryption (encrypt TO ourselves)
                 return sealEncryptedDataKeyEnvelopeV1({
                     dataKey: key,
-                    recipientPublicKey: this.contentKeyPair.publicKey,
+                    recipientPublicKey: this.requireContentKeyPair().publicKey,
                     randomBytes: getRandomBytes,
                 });
             },

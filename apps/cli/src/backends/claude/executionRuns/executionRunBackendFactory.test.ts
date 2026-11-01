@@ -49,7 +49,7 @@ describe('claude execution run isolation', () => {
     expect(bundle.settingsPath).toBe(join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_1', 'claude', 'settings.json'));
     expect(JSON.parse(await readFile(bundle.settingsPath!, 'utf8'))).toEqual({});
     await bundle.cleanup?.();
-    await expect(access(bundle.settingsPath!)).rejects.toThrow();
+    await expect(access(join(configuration.activeServerDir, 'isolation', 'claude', 'execution_run', 'run_1'))).rejects.toThrow();
   });
 
   it('uses the canonical execution-run permission handler', () => {

@@ -16,6 +16,15 @@ vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
 }));
 
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from './sessionUsageLimitRecoverySwitchAccountNow';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from '@/daemon/connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { resolveRuntimeAuthFailureSourceProfile } from '@/daemon/connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
+import {
+  ConnectedServiceAuthGroupSwitchCoordinator,
+  InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
+  type ConnectedServiceAuthGroupSwitchState,
+} from '@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
 function createUsageLimitIssue(
   patch: Partial<SessionRuntimeIssueV1> = {},
@@ -123,6 +132,61 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       }),
       resumePromptMode: 'off',
     });
+  });
+
+  it('switches a Claude group through the real recovery owner from the strict public issue without organization fields', async () => {
+    let state: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'claude-subscription', groupId: 'happier', activeProfileId: 'primary',
+      generation: 7, runtimeStateRevision: 0,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: [
+        { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
+        { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },
+      ],
+      memberStatesByProfileId: new Map([['backup', {
+        quotaSnapshot: { capturedAtMs: 1000, effectiveRemainingPercent: 99 },
+      }]]),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1000,
+      quotaFreshnessMs: 60_000, loadState: async () => state,
+      commitSwitch: async ({ toProfileId, expectedGeneration }) => {
+        expect(state.generation).toBe(expectedGeneration);
+        state = { ...state, activeProfileId: toProfileId, generation: expectedGeneration + 1 };
+        return state;
+      },
+      applyGeneration: async () => {},
+    });
+    const result = await routeSessionUsageLimitRecoverySwitchAccountNow({
+      sessionId: 'session-1', rawSession: createRawSession(createUsageLimitIssue({
+        provider: 'claude', usageLimit: {
+          v: 1, resetAtMs: 10_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'switch_account',
+          connectedService: { serviceId: 'claude-subscription', profileId: 'primary', groupId: 'happier' },
+        },
+      })),
+      request: { sessionId: 'session-1', provider: 'claude' },
+      notifyRuntimeAuthFailure: async (body) => ({ ok: true,
+        result: await handleConnectedServiceRuntimeAuthFailureForSession({
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
+            spawnOptions: { directory: '/tmp/project', connectedServices: { v: 1, bindingsByServiceId: {
+              'claude-subscription': { source: 'connected', selection: 'group', profileId: 'primary', groupId: 'happier' },
+            } } },
+          }],
+          sessionId: body.sessionId, switchesThisTurn: body.switchesThisTurn ?? 0,
+          classification: sanitizeConnectedServiceRuntimeFailureClassification(body.classification),
+          switchCoordinator: coordinator,
+          resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => (
+            await resolveRuntimeAuthFailureSourceProfile({ classification,
+              getGroupMembers: async () => [{ profileId: 'primary', enabled: true }, { profileId: 'backup', enabled: true }],
+              resolveProviderAccountIdentity: async (profileId) => ({ providerAccountId: 'same-user', providerOrganizationId: profileId }),
+            })
+          ),
+        }),
+      }),
+      ...createLocalSwitchAccountParams(),
+    });
+    expect(parseOperationResult(result)).toEqual({ ok: true, status: 'switch_applied', sessionId: 'session-1' });
+    expect(state).toMatchObject({ activeProfileId: 'backup', generation: 8 });
   });
 
   it('maps no eligible group member to exhausted', async () => {

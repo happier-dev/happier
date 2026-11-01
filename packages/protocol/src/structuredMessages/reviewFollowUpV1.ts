@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { ReviewAssumptionSchema } from '../reviews/ReviewAssumption.js';
 import { ReviewFindingSchema } from '../reviews/ReviewFinding.js';
 import { ReviewQuestionSchema } from '../reviews/ReviewQuestion.js';
+import { lazySchema } from '../lazySchema.js';
 
-export const ReviewFollowUpV1Schema = z.object({
+export const ReviewFollowUpV1Schema = lazySchema(() => z.object({
   parentRunRef: z.object({
     runId: z.string().min(1),
     callId: z.string().min(1),
@@ -19,7 +20,7 @@ export const ReviewFollowUpV1Schema = z.object({
   questions: z.array(ReviewQuestionSchema).optional(),
   assumptions: z.array(ReviewAssumptionSchema).optional(),
   generatedAtMs: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough());
 
 export type ReviewFollowUpV1 = z.infer<typeof ReviewFollowUpV1Schema>;
 
