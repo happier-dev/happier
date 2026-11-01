@@ -2959,7 +2959,7 @@ if [ -n "$heavyweight_admission_prefix" ]; then
   # Preparation may wait on a dependency/build lock whose holder still needs
   # admission. Finish it before reserving the payload's compilation envelope;
   # Dist producers own joint lease readiness and canonical admission.
-  heavyweight_command_body="set -euo pipefail; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
+  heavyweight_command_body="set -euo pipefail; printf '%s\n' $(quote_remote "[preferred-execution] admitted on $selected_name") >&2; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
   if [ "$resource_governor_priority" = background ]; then
     # Keep niceness on the actual child process while the admission wrapper
     # owns its slot. A guest without `nice` still waits and runs normally.
@@ -3226,11 +3226,22 @@ exec 9<> "$custody_pipe"
 [ "$control_stdin" != 1 ] || exec 5<&0
 [ "$explicit_tty" != 1 ] || exec 4<&0
 run_selected_ssh_with_custody() {
-  # Preserve streaming, byte-for-byte stderr while retaining the owner's
-  # execution-qualified pre-dispatch result. SSH -E contains only SSH errors.
+  # Retain every execution-qualified result for routing. Automatic probes
+  # report transient BUSY internally; only the retained queue is user-facing.
+  # SSH -E contains only SSH errors.
   if [ "$heavyweight_admission_required" -eq 1 ] && [ "$explicit_tty" != 1 ]; then
     exec 9>&-
-    tee "$admission_error_log" < "$admission_error_pipe" >&2 &
+    if [ -z "$explicit_target_number" ] && [ "$_selected_available" != busy ]; then
+      awk -v output_log="$admission_error_log" -v busy="HSTACK_ADMISSION_BUSY:$admission_failure_id" '
+        {print >> output_log; fflush(output_log)}
+        $0 == busy {next}
+        $0 == "[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)" {next}
+        $0 == "[preferred-execution] heavyweight admission refused (HSTACK_WORKSPACE_RESOURCE_BUSY)" {next}
+        {print; fflush()}
+      ' < "$admission_error_pipe" >&2 &
+    else
+      tee "$admission_error_log" < "$admission_error_pipe" >&2 &
+    fi
     admission_error_reader=$!
     (run_selected_ssh < "$custody_pipe" 2> "$admission_error_pipe")
     admission_transport_status=$?
@@ -3256,6 +3267,9 @@ release_custody_pipe() {
   [ -z "$admission_error_log" ] || rm -f -- "$admission_error_log" "$admission_error_pipe"
 }
 trap release_custody_pipe EXIT
+if [ "$_selected_available" = busy ]; then
+  printf '[preferred-execution] workers busy; queued on %s for memory, waiting (Ctrl-C cancels)\n' "$selected_name" >&2
+fi
 run_selected_ssh_with_custody &
 ssh_pid=$!
 cancel_remote_execution() {
@@ -3366,7 +3380,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$admission_failure_id" ] && [ 
   [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
   HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS="${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} $selected_name"
   export HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS
-  printf '[preferred-execution] %s admission busy before dispatch; re-evaluating automatic placement\n' "$selected_name" >&2
   retry_other_target_before_dispatch "$@"
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" ]; then

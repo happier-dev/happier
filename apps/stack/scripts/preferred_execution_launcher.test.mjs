@@ -534,6 +534,11 @@ esac
     child.stderr.on('data', chunk => { stderr += chunk; });
     const exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await exited; });
+    if (typecheck) {
+      await waitForRuntime(() => /HSTACK_(?:[A-Z_]*_)?BUSY|queued on /.test(stderr),
+        () => `public typecheck never reported its placement outcome:\n${stderr}`);
+      assert.doesNotMatch(stderr, /HSTACK_(?:[A-Z_]*_)?BUSY/, 'pool probes must not look like terminal refusals');
+    }
     const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
     await waitForRuntime(async () => stderr.includes('waiting for heavyweight admission')
       && (await readdir(waiters).catch(() => [])).length === 1, () => `full busy sweep never retained its native queue position:\n${stderr}`);
@@ -549,7 +554,10 @@ esac
     };
     const initialCosts = await costs();
     assert.deepEqual(initialCosts.dispatches, ['starved', 'roomy', 'starved'], 'one full capacity sweep, then the best eligible native queue');
-    assert.equal((stderr.match(/admission busy before dispatch/g) ?? []).length, 2);
+    assert.doesNotMatch(stderr, /HSTACK_(?:[A-Z_]*_)?BUSY/, 'pool probes must not look like terminal refusals');
+    assert.equal((stderr.match(/queued on starved for memory, waiting \(Ctrl-C cancels\)/g) ?? []).length, 1,
+      'the retained queue must be visible exactly once before any verdict');
+    assert.doesNotMatch(stderr, /admitted on /, 'waiting is not admission');
     assert.equal(payloadOutput(stdout), '');
     // Let a real pressure retry elapse. Waiting must not re-sync or bootstrap.
     await new Promise(resolve => setTimeout(resolve, 1200));
@@ -571,6 +579,8 @@ esac
       assert.deepEqual(await exited, { code: typecheck ? 2 : 0, signal: null }, stderr);
       if (typecheck) assert.match(stdout, /TS2322/, 'the queued public typecheck must produce its compiler verdict');
       else assert.equal(await readFile(join(fixture.config.targets[0].repoDir, 'payload-runs'), 'utf8'), 'once\n');
+      assert.equal((stderr.match(/queued on /g) ?? []).length, 1, 'queue output must not repeat while waiting');
+      assert.equal((stderr.match(/admitted on starved/g) ?? []).length, 1, 'capacity recovery announces admission once');
       assert.deepEqual(await readdir(waiters), []);
       assert.deepEqual(await costs(), initialCosts);
     }
@@ -1225,7 +1235,7 @@ test('automatic admission reroutes busy workers without an unavailable TTL while
     });
     assert.equal(result.status, payloadExit, result.stderr);
     assert.equal(result.stdout, 'payload:roomy\n');
-    assert.match(result.stderr, /admission busy before dispatch.*re-evaluating/);
+    assert.doesNotMatch(result.stderr, /HSTACK_(?:[A-Z_]*_)?BUSY|admission busy before dispatch/);
   }
   assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
   const pinned = spawnSync('/bin/sh', [launcher, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
