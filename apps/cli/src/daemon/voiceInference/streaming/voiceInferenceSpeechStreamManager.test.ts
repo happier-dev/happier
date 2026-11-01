@@ -944,4 +944,54 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       restoreLogger();
     }
   });
+
+  it('restores PCM and per-frame events after asynchronous compatibility admission reorders frames', async () => {
+    const received: Array<{ seq: number; pcm: number[] }> = [];
+    nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: async () => ({
+      appendPcm16: async ({ seq, pcm16Bytes }) => {
+        received.push({ seq, pcm: [...pcm16Bytes] });
+        return { events: [{ type: 'partial', seq, text: `frame ${seq}`, isEndpoint: false, confidence: null }] };
+      },
+      finish: async () => ({ text: 'heard in order', language: 'en', events: [] }),
+      cancel: async () => {}, close: async () => {},
+    }) };
+    const manager = createVoiceInferenceSpeechStreamManager({
+      streamRoot: await createTempStreamRoot(), voiceInferenceWorker: worker,
+    });
+    managers.push(manager);
+    const started = await manager.start({ requestId: 'async-admission-order', packId, language: 'en',
+      streamingMode: 'runtime', format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT });
+    if (!started.ok) throw new Error('Stream did not start');
+    const firstAdmission = deferred<void>();
+    const admitted: number[] = [];
+    // The composed RPC suite covers real authorization. Here the resulting
+    // asynchronous arrival order reaches the real manager and worker unchanged.
+    const append = async (seq: number) => {
+      if (seq === 0) await firstAdmission.promise;
+      admitted.push(seq);
+      return await manager.appendCompatibilityChunk({
+        streamId: started.streamId, generation: started.generation, seq,
+        pcm16Base64: Buffer.from([seq, 0]).toString('base64'),
+      });
+    };
+    const first = append(0);
+    const third = append(2);
+    const second = append(1);
+    try {
+      expect(admitted).toEqual([2, 1]);
+      expect(received).toEqual([]);
+    } finally {
+      firstAdmission.resolve();
+    }
+    const replies = await Promise.all([first, second, third]);
+    expect(replies.map(reply => DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(reply)))
+      .toMatchObject([0, 1, 2].map(seq => ({
+        ok: true, events: [{ type: 'partial', seq, text: `frame ${seq}` }],
+      })));
+    expect(admitted).toEqual([2, 1, 0]);
+    expect(received).toEqual([0, 1, 2].map(seq => ({ seq, pcm: [seq, 0] })));
+    expect(DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(await manager.finish({
+      streamId: started.streamId, generation: started.generation, finalSeq: 2,
+    }))).toMatchObject({ ok: true, finalText: 'heard in order' });
+  });
 });
