@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
+import { createTurnEndpointController } from './TurnEndpointController';
 
 import {
     createRuntimeTurnPolicyController,
     type RuntimeTurnCaptureProvider,
+    type RuntimeStoppedCaptureAction,
 } from './createRuntimeTurnPolicyController';
 
 function createEndpointSignal(
@@ -77,25 +79,44 @@ describe('createRuntimeTurnPolicyController', () => {
         });
     });
 
-    it('turns adaptive endpoint decisions into runtime-owned stop outcomes', () => {
+    it.each(['ok', 'yes', 'stop please', 'yeah'])('submits the silent assistant reply %s without applying the interruption gate', (transcript) => {
         const controller = createRuntimeTurnPolicyController();
-
-        expect(controller.resolveStoppedCaptureAction({
-            adaptiveConfig: { ignoredPhrases: ['yeah'] },
-            continueHandsFree: true,
-            provider: 'local_neural',
-            sessionId: 'session-1',
-            transcript: ' yeah ',
-        })).toEqual({
-            kind: 'ignore',
+        const submissions: RuntimeStoppedCaptureAction[] = [];
+        const endpoints = createTurnEndpointController({ onSignal: signal => {
+            submissions.push(controller.resolveStoppedCaptureAction({
+                adaptiveConfig: { ignoredPhrases: ['yeah'] },
+                continueHandsFree: true,
+                provider: 'local_neural',
+                sessionId: 'session-1',
+                transcript: signal.transcript,
+                durationMs: signal.durationMs,
+            }));
+        } });
+        endpoints.startSession('session-1');
+        endpoints.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript: ` ${transcript} `, durationMs: 400 });
+        endpoints.signalEndpointDetected({ sessionId: 'session-1', source: 'daemon_stream', transcript, durationMs: 400 });
+        expect(submissions).toEqual([{
+            kind: 'submit_turn',
             followUp: {
                 kind: 'rearm_capture',
                 provider: 'local_neural',
                 sessionId: 'session-1',
             },
-            reason: 'backchannel',
-        });
+            transcript,
+        }]);
+    });
 
+    it('submits substantive speech and rejects an empty capture while retaining hands-free rearming', () => {
+        const controller = createRuntimeTurnPolicyController();
+        expect(controller.resolveStoppedCaptureAction({
+            adaptiveConfig: { ignoredPhrases: [] },
+            continueHandsFree: true,
+            provider: 'device',
+            sessionId: 'session-2',
+            transcript: '  ',
+        })).toEqual({ kind: 'ignore', reason: 'empty_transcript', followUp: {
+            kind: 'rearm_capture', provider: 'device', sessionId: 'session-2',
+        } });
         expect(controller.resolveStoppedCaptureAction({
             adaptiveConfig: { ignoredPhrases: ['yeah'] },
             continueHandsFree: true,

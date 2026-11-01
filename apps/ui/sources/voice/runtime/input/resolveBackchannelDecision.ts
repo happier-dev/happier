@@ -8,7 +8,7 @@ import {
 /**
  * Tunable thresholds for the contextual backchannel / false-barge filter.
  *
- * Replaces the old exact-full-string match: short, low-word, low-confidence
+ * Applies only to interruption during assistant playback: short, low-word, low-confidence
  * utterances (and anything inside the agent's protected speaking head) are
  * treated as backchannels and do not yield the floor. The phrase list remains
  * an additional fast-path for very short acknowledgements.
@@ -95,7 +95,7 @@ function buildPhraseSet(ignoredPhrases: readonly string[]): ReadonlySet<string> 
  *  5. short (≤ maxWords) AND measured short-enough (≤ maxDurationMs) → backchannel.
  *     Unknown duration is not enough to demote a finalized STT turn because
  *     finalized fallback sources often cannot measure the spoken span.
- * Otherwise it is a substantive turn that may submit / interrupt.
+ * With no active playback, any non-empty final is ordinary user input.
  */
 export function resolveBackchannelDecision(args: Readonly<{
     config: AdaptiveInterruptionConfig;
@@ -111,6 +111,8 @@ export function resolveBackchannelDecision(args: Readonly<{
     if (!normalized) {
         return { isBackchannel: true, reason: 'empty_transcript' };
     }
+
+    if (!args.speaking) return { isBackchannel: false };
 
     const gate = resolveGate(args.config);
 
