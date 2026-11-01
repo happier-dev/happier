@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
 import { parseAgyNativeCredential, readAgyNativeCredential as readNativeCredential } from './nativeCredentials.js';
 const AGY_OAUTH_CLIENT_ID = ANTIGRAVITY_OAUTH_PROFILE.clientId;
 const readAgyNativeCredential = (source: 'acp' | 'cli' | 'cli-file', signal?: AbortSignal) => readNativeCredential(source, () => {}, signal);

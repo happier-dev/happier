@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./agents/antigravity/oauth-profile": {
+      "happier-source": "./src/agents/antigravity/oauthProfile.ts",
+      "types": "./dist/agents/antigravity/oauthProfile.d.ts",
+      "default": "./dist/agents/antigravity/oauthProfile.js"
+    },
     "./execution/runs/activityV1": {
       "happier-source": "./src/execution/runs/activityV1.ts",
       "types": "./dist/execution/runs/activityV1.d.ts",
