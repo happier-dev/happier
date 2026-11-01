@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./agents/claude/connected-account-materialization": {
+      "happier-source": "./src/agents/claude/connectedAccountMaterialization.ts",
+      "types": "./dist/agents/claude/connectedAccountMaterialization.d.ts",
+      "default": "./dist/agents/claude/connectedAccountMaterialization.js"
+    },
     "./agents/antigravity/oauth-profile": {
       "happier-source": "./src/agents/antigravity/oauthProfile.ts",
       "types": "./dist/agents/antigravity/oauthProfile.d.ts",

@@ -1,4 +1,4 @@
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 
 export const OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES = [{
   purpose: 'openai-codex',

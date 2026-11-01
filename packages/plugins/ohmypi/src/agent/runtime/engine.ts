@@ -13,7 +13,7 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
-} from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
