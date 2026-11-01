@@ -1,5 +1,5 @@
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -446,7 +446,7 @@ export function createServerSession(options: CreateServerSessionOptions): Server
                 const detail = readLspObject(error);
                 if (nativeGeneration === generation && !stopping) {
                     state = 'unavailable';
-                    reason = detail?.reason === 'server_missing' ? 'server_missing' : 'start_failed';
+                    reason = isPluginError(error) && error.code === 'server_missing' ? 'server_missing' : 'start_failed';
                     stderrPreview = typeof detail?.stderrPreview === 'string' ? detail.stderrPreview : undefined;
                     clearDiagnostics();
                 }

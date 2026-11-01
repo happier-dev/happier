@@ -16,7 +16,7 @@ import { createLanguageServerHost } from './languageServerHost';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 describe('managed language server protocol', () => {
-    it.each(['protocol', 'retirement', 'host-disable', 'host-replacement', 'project-check', 'project-check-retirement'] as const)('launches an installed declaration through its %s lifecycle', async scenario => {
+    it.each(['missing-managed', 'protocol', 'retirement', 'host-disable', 'host-replacement', 'project-check', 'project-check-retirement'] as const)('launches an installed declaration through its %s lifecycle', async scenario => {
         await withTempDir('happier-lsp-managed-', async rootPath => {
             const pluginId = 'fixture.language';
             const pluginRoot = join(rootPath, 'plugin');
@@ -29,10 +29,14 @@ describe('managed language server protocol', () => {
                         ...(scenario.startsWith('project-check') ? { projectCheck: { executable: { kind: 'systemTool', id: 'native' },
                             args: [resolve('src/lsp/__fixtures__/projectCheck.cjs'), scenario === 'project-check' ? 'diagnostics' : 'wait', logPath],
                             projectFile: 'tsconfig.json', output: { kind: 'typescript' } } } : {}),
-                        executable: { kind: 'systemTool', id: 'native' }, args: scenario.startsWith('host-')
+                        executable: scenario === 'missing-managed' ? { kind: 'managedDependency', id: 'native' } : { kind: 'systemTool', id: 'native' }, args: scenario.startsWith('host-')
                             ? [resolve('src/lsp/__fixtures__/languageServer.cjs'), logPath, JSON.stringify({ delayHover: true })]
                             : [resolve('src/lsp/__fixtures__/managedProtocol.cjs'), logPath] }],
                     systemTools: [{ id: 'native', title: 'Fixture native executable', executableNames: [basename(process.execPath)] }],
+                    ...(scenario === 'missing-managed' ? { managedDependencies: [{ id: 'native', title: 'Fixture missing language server',
+                        executable: 'fixture-language-server', sources: [{ kind: 'pinnedArchive', installId: 'dep.fixture-language-server', version: '1.0.0',
+                            assetsByPlatform: { 'linux-x64': { archiveUrl: 'https://example.test/language-server.tgz',
+                                executableSubpath: 'package/server', sha256: 'a'.repeat(64) } } }] }] } : {}),
                 },
             }));
             const happyHomeDir = join(rootPath, 'home');
@@ -53,6 +57,21 @@ describe('managed language server protocol', () => {
             const definition = createLanguageServerDefinitions({ readCurrentContributionRegistry: () => registry.contributes })
                 .readLanguageServerDefinitions().find(candidate => candidate.pluginId === pluginId);
             if (!definition) throw new Error('Installed language-server definition was not projected');
+            if (scenario === 'missing-managed') {
+                const host = createLanguageServerHost({ readCurrentContributionRegistry: () => registry.contributes, openProtocol });
+                try {
+                    const opened = await host.sync({ rootPath, op: { op: 'open', path: 'a.ts', languageId: 'fixture', text: 'const a = 1;', version: 1, unsaved: false } });
+                    expect(opened).toMatchObject({ status: 'ok', servers: [{ state: 'unavailable', reason: 'server_missing',
+                        installable: { pluginId, dependencyId: 'native' } }] });
+                    expect(host.readProcessRoots()).toEqual([]);
+                    const checker = createLanguageServerProjectChecker({ acquireRuntimeRegistry: () => controller.acquireRuntimeRegistry() });
+                    expect(await checker.run({ definition: { ...definition, projectCheck: { executable: definition.executable, args: [],
+                        projectFile: 'tsconfig.json', output: { kind: 'typescript' } } }, rootPath,
+                        processOwner: { kind: 'service', serviceId: `lsp:${definition.id}:123456789abc` }, signal: new AbortController().signal }))
+                        .toMatchObject({ status: 'failed', reason: 'server_missing' });
+                } finally { await host.dispose(); await controller.shutdown(); }
+                return;
+            }
             if (scenario.startsWith('project-check')) {
                 const checker = createLanguageServerProjectChecker({ acquireRuntimeRegistry: () => controller.acquireRuntimeRegistry() });
                 try {

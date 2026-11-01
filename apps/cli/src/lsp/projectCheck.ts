@@ -3,6 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { pathToFileURL } from 'node:url';
 import type { LanguageIntelligenceDiagnostic } from '@happier-dev/protocol/machines/languageIntelligence';
 import type { PluginProcessHandle, PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ProcessOwnerRef } from '@/processes/ownerTag';
@@ -11,7 +12,7 @@ import { readSupervisedPluginProcessIdForHost } from '@/plugins/runtime/exec/pro
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { LanguageServerDefinition } from './languageServerDefinitions';
-import { createLanguageServerManagedExecAcquirer, LanguageServerProtocolUnavailableError,
+import { createLanguageServerManagedExecAcquirer,
     type AcquireLanguageServerManagedExec, type LanguageServerManagedExec } from './managedProtocol';
 import { resolveWorkspacePath, workspaceUriToPath } from './workspaceUris';
 
@@ -149,7 +150,7 @@ export function createLanguageServerProjectChecker(options: Readonly<{
                 return { status: 'completed', diagnostics: decoded.diagnostics };
             } catch (error) {
                 if (input.signal.aborted || managed?.signal.aborted) return { status: 'cancelled' };
-                return { status: 'failed', reason: error instanceof LanguageServerProtocolUnavailableError ? 'server_missing' : 'start_failed' };
+                return { status: 'failed', reason: isPluginError(error) && error.code === 'server_missing' ? 'server_missing' : 'start_failed' };
             } finally {
                 try { await handle?.dispose(); }
                 finally {
