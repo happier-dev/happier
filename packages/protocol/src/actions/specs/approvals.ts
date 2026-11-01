@@ -54,7 +54,7 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
 
 export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
   {
-    id: 'approval.request.list', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
+    id: 'approval.request.list', executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' }, approvalPolicy: { control: true }, approval: {result: 'required'},
     title: 'List approval requests',
     description: 'List approval queue entries from targeted approval artifact headers.',
     safety: 'safe',
@@ -96,7 +96,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.get', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
+    id: 'approval.request.get', executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' }, approvalPolicy: { control: true }, approval: {result: 'required'},
     prompting: { voiceHotPath: true },
     title: 'Get approval request',
     description: 'Fetch one approval request by approval artifact id.',
