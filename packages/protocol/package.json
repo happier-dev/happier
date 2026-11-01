@@ -625,6 +625,11 @@
       "types": "./dist/usage/coach/buildUsageCoachRemedies.d.ts",
       "default": "./dist/usage/coach/buildUsageCoachRemedies.js"
     },
+    "./usage/coach/coachVendorFacts": {
+      "happier-source": "./src/usage/coach/coachVendorFacts.ts",
+      "types": "./dist/usage/coach/coachVendorFacts.d.ts",
+      "default": "./dist/usage/coach/coachVendorFacts.js"
+    },
     "./tools/toolMutationClassification": {
       "happier-source": "./src/tools/toolMutationClassification.ts",
       "types": "./dist/tools/toolMutationClassification.d.ts",

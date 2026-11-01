@@ -3,6 +3,7 @@ import type { TrackedSession } from '../types';
 import type { LiveWorkItemV1, LiveWorkListenerV1, LiveWorkProducerV1 } from './managedActivity';
 import type { createSpawnRequestCoalescer } from '../spawn/spawnRequestCoalescer';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { projectSessionLiveWorkItems } from '@/agent/runtime/session/input/sessionLiveWorkEligibility';
 
 /** Queries the live host rather than deriving idle from a nullable turn marker or process presence. */
 export function createSessionLiveWorkProducer(params: Readonly<{
@@ -38,14 +39,9 @@ export function createSessionLiveWorkProducer(params: Readonly<{
           ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath
           : candidatePath;
         const workspace = workspacePath ? { workspacePath } : {};
-        return [
-          { category: 'session', ownerRef: tracked, attribution, ...workspace, state: activity.session,
-            ...(activity.settledAt !== undefined ? { settledAt: activity.settledAt } : {}) },
-          { category: 'input', ownerRef: tracked, attribution, ...workspace, state: activity.input },
-          { category: 'agents', ownerRef: tracked, attribution, ...workspace, state: activity.agents ?? 'unknown',
-            ...('agentsActiveCount' in activity ? { activeCount: activity.agentsActiveCount } : {}) },
-          { category: 'attention', ownerRef: tracked, attribution, ...workspace, state: activity.attention ?? 'unknown' },
-        ] satisfies LiveWorkItemV1[];
+        return projectSessionLiveWorkItems(activity).map(item => ({
+          ...item, ownerRef: tracked, attribution, ...workspace,
+        } satisfies LiveWorkItemV1));
       });
       const items: LiveWorkItemV1[] = [
         ...(params.startup?.readInFlightRequests() ?? []).map(ownerRef => ({

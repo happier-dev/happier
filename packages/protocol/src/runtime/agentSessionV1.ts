@@ -440,7 +440,7 @@ const OutputSchemas = [
       historyComplete: z.optional(z.boolean()),
     })),
     ...UsageMeasurementShape,
-  })).check(z.refine((value) => value.tokens !== undefined || value.cost !== undefined || value.context !== undefined, 'At least one usage measurement is required'))),
+  })).check(z.refine((value) => value.tokens !== undefined || value.cost !== undefined || value.context !== undefined || value.promptCache !== undefined, 'At least one usage measurement is required'))),
   lazyZodSchema(() => z.strictObject({
     ...TurnEventBaseShape,
     kind: z.literal('turn-rollback-boundary'),
