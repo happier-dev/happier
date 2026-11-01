@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
 
 describe('resolveVoiceToolResultHumanSummary', () => {
+    it.each([false, true])('reports a created settings approval as pending rather than completed (envelope=%s)', envelope => {
+        const input = { anchor: 'voiceConversations.verbosity', value: 'balanced' };
+        const result = { kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'settings.set' };
+        expect(resolveVoiceToolResultHumanSummary({
+            toolName: envelope ? 'action_execute' : 'settings_set',
+            toolInput: envelope ? { actionId: 'settings.set', input } : input,
+            toolResult: envelope ? { ok: true, result } : { ok: true, ...result },
+            shareFilePaths: true, shareSessionSummary: true,
+        })).toBe(t('approvals.status.open'));
+    });
+
     it('mentions when more sessions are available after the current page', () => {
         const summary = resolveVoiceToolResultHumanSummary({
             toolName: 'listSessions',

@@ -1,3 +1,4 @@
+import { resolveSpokenActionOutcome } from './spokenActionOutcome';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -167,6 +168,8 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     // Keep the runtime boundary fail-closed for untyped, legacy, or malformed callers too.
     const shareFilePaths = params.shareFilePaths === true;
     const shareSessionSummary = params.shareSessionSummary === true;
+    const outcome = resolveSpokenActionOutcome({ t: params.toolName, args: params.toolInput, result: params.toolResult });
+    if (outcome) return maybeRedact(outcome, shareFilePaths);
 
     // An explicit `result.summary` (or `error.message`) is summary text, so it must honor the
     // `shareSessionSummary` toggle, not only `shareFilePaths` (X-L1). When summary sharing is

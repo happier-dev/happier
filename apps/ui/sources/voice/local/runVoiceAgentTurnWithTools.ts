@@ -1,3 +1,4 @@
+import { readSpokenActionOutcomeOwner, resolveSpokenActionOutcome } from '@/voice/context/spokenActionOutcome';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import {
   createVoiceToolHandlers,
@@ -312,6 +313,8 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   const toolResultBatches: Array<ReadonlyArray<LocalVoiceAgentToolResultEntry>> = [];
   let totalActions = 0;
   let nextPrompt = params.userText;
+  let spokenActionOutcome: string | null = null;
+  let ownerPresentsOutcome = false;
 
   for (let turnIndex = 0; turnIndex <= maxToolRounds; turnIndex += 1) {
     throwIfAborted(params.signal);
@@ -320,7 +323,15 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.sessionId,
       nextPrompt,
       {
-        ...(params.onOutputEvent && turnIndex < maxToolRounds ? { onOutputEvent: params.onOutputEvent } : {}),
+        ...(params.onOutputEvent && turnIndex < maxToolRounds ? { onOutputEvent: async output => {
+          if (output.effects.some(effect => effect.kind === 'execute_side_effect'
+            && readSpokenActionOutcomeOwner(effect.action.t, effect.action.args))) ownerPresentsOutcome = true;
+          // Action-bearing prose precedes execution; follow-up prose can contradict
+          // a refusal. Neither can replace this mutation owner's settlement.
+          await params.onOutputEvent?.(ownerPresentsOutcome ? { ...output,
+            effects: output.effects.filter(effect => effect.kind !== 'speak' && effect.kind !== 'persist_final'),
+          } : output);
+        } } : {}),
         ...(params.onPreparedInstructionsFor ? { onPreparedInstructionsFor: params.onPreparedInstructionsFor } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(turnIndex === 0
@@ -356,7 +367,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     if (actions.length === 0) {
       // Action-bearing text precedes execution and cannot confirm an outcome.
       // Only the follow-up informed by the real result is a spoken answer.
-      const assistantText = String(response.assistantText ?? '').trim();
+      const assistantText = spokenActionOutcome ?? String(response.assistantText ?? '').trim();
       assistantTurns.push(assistantText);
       await params.onAssistantTurn?.({ assistantText, actions, turnIndex });
       return {
@@ -370,6 +381,11 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     const actionRun = await runActionsOnce(actions);
     const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
+    const outcomes = toolResults.map(resolveSpokenActionOutcome).filter(outcome => outcome !== null);
+    if (outcomes.length > 0) {
+      ownerPresentsOutcome = true;
+      spokenActionOutcome = [spokenActionOutcome, ...outcomes].filter(Boolean).join(' ');
+    }
     await params.onToolResults?.({
       toolResults,
       turnIndex,
