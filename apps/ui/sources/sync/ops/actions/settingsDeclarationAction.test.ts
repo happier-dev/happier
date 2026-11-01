@@ -66,6 +66,7 @@ import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceS
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { activateStorageAccountScope } from '@/dev/testkit/mocks/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
 import { resolveVoiceConversationLanguageSetting } from '@/voice/settings/voiceSettingsDeclarations';
 import { t } from '@/text';
@@ -1444,7 +1445,7 @@ describe('declared settings owner', () => {
         onTestFinished(() => { vi.unstubAllGlobals(); });
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/elevenlabs/src/manifest');
         const { VOICE_PROVIDER_PRESENTATIONS } = await import('../../../../../../packages/plugins/elevenlabs/src/ui/voice/entries');
-        const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PLUGIN_MANIFEST), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
+        const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(PLUGIN_MANIFEST)), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
         const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const entry = registry.get(providerId);
         if (!entry?.providerSettings) throw new Error('Missing real catalog provider');
@@ -2007,7 +2008,7 @@ describe('declared settings owner', () => {
     it('uses one coupled language declaration and canonical state without concealing an unsupported retained choice', async () => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/elevenlabs/src/manifest');
         const { VOICE_PROVIDER_PRESENTATIONS } = await import('../../../../../../packages/plugins/elevenlabs/src/ui/voice/entries');
-        const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PLUGIN_MANIFEST), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
+        const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(PLUGIN_MANIFEST)), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
         const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const entry = registry.get(providerId);
         if (!entry) throw new Error('Missing real coupled provider');

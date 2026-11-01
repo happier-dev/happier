@@ -1,4 +1,5 @@
 import { expect, vi } from 'vitest';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import type { DaemonVoiceClientAccountOperationRequestV1 } from '@happier-dev/protocol/daemon/voiceCredentials';
 import type { installVoiceWebRtcBrowserBoundary } from './voiceWebRtcHarness';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
@@ -81,7 +82,8 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
   const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
   const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
   const { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema } = await import('@happier-dev/protocol/sessions/control/contract');
-  const { PLUGIN_MANIFEST: OPENAI_SOURCE_MANIFEST } = await import('../../../../../../packages/plugins/openai/src/manifest');
+  const { PLUGIN_MANIFEST: authoredOpenAiManifest } = await import('../../../../../../packages/plugins/openai/src/manifest');
+  const OPENAI_SOURCE_MANIFEST = PluginManifestV2Schema.parse(authoredOpenAiManifest);
   const { activate: activateOpenAiVoice } = await import('../../../../../../packages/plugins/openai/src/ui/voice/runtime');
   const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
   const { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');

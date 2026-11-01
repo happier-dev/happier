@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
@@ -41,7 +42,7 @@ it('refreshes the root language search label when the same selected service enve
     await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: home.id });
     const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/elevenlabs/src/manifest');
     const { VOICE_PROVIDER_PRESENTATIONS } = await import('../../../../../../../packages/plugins/elevenlabs/src/ui/voice/entries');
-    const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PLUGIN_MANIFEST), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
+    const registry = createVoiceProviderRegistry({ bundledContributions: projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(PLUGIN_MANIFEST)), bundledPresentations: VOICE_PROVIDER_PRESENTATIONS });
     const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
     const entry = registry.get(providerId);
     if (!entry) throw new Error('Missing current language contribution');

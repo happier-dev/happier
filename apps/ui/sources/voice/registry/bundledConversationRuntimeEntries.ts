@@ -2,6 +2,7 @@ import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type { VoiceProviderContribution } from '@happier-dev/plugin-sdk/voice';
 
 import { projectBundledVoiceManifestContributions } from './bundledVoiceManifestProjection';
+import type { BundledVoiceManifestProjection } from './bundledVoiceManifestProjection';
 
 export type BundledConversationRuntimeEntry = Readonly<{
   pluginId: string;
@@ -15,7 +16,7 @@ export type BundledConversationRuntimeEntry = Readonly<{
  * composition so settings initialization never imports the live Voice host.
  */
 export function createBundledConversationRuntimeEntries(
-  manifest: unknown,
+  manifest: BundledVoiceManifestProjection,
   activate: BundledConversationRuntimeEntry['activate'],
 ): readonly BundledConversationRuntimeEntry[] {
   return Object.freeze(projectBundledVoiceManifestContributions(manifest).flatMap((entry) => (

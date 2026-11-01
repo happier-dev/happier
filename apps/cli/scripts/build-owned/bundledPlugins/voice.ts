@@ -17,10 +17,13 @@ function renderBundledVoiceManifestProjectionConstant(
   source: BundledFirstPartyVoiceProjectionSource,
 ): readonly string[] {
   const prefix = toBundledVoiceImportPrefix(source.pluginPackageId);
+  const projection = { id: source.manifest.id,
+    contributes: { voiceProviders: source.manifest.contributes.voiceProviders } };
   return [
-    `const ${prefix}_BUNDLED_PLUGIN_MANIFEST = Object.freeze(`,
-    `${renderJsonLiteral(source.manifest as unknown as JsonValue)} as const,`,
-    ');',
+    `export const ${prefix}_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProjectionInput>(`,
+    `${renderJsonLiteral(projection as unknown as JsonValue)} satisfies BundledVoiceManifestProjectionInput,`,
+    // Admission already established the output brands; JSON preserves their values, not their types.
+    ') as BundledVoiceManifestProjection;',
   ];
 }
 
@@ -39,7 +42,7 @@ export function renderBundledVoiceEntriesTs(
   lines.push(' */');
   lines.push('');
   lines.push("import { projectBundledVoiceManifestContributions } from './bundledVoiceManifestProjection';");
-  lines.push("import type { BundledVoiceManifestContribution } from './bundledVoiceManifestProjection';");
+  lines.push("import type { BundledVoiceManifestContribution, BundledVoiceManifestProjection, BundledVoiceManifestProjectionInput } from './bundledVoiceManifestProjection';");
   lines.push("import type { VoiceProviderPresentation } from './voiceProviderPresentation';");
   lines.push("import { createBundledVoiceProviderPresentations } from './bundledVoiceManifestProjection';");
   lines.push("import { BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS } from '@happier-dev/protocol/voice/settings/generatedBundledVoiceSelectionOptions';");
@@ -53,7 +56,7 @@ export function renderBundledVoiceEntriesTs(
   }
   lines.push('export const BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS = Object.freeze([');
   for (const source of sources) {
-    lines.push(`  ...projectBundledVoiceManifestContributions(${toBundledVoiceImportPrefix(source.pluginPackageId)}_BUNDLED_PLUGIN_MANIFEST),`);
+    lines.push(`  ...projectBundledVoiceManifestContributions(${toBundledVoiceImportPrefix(source.pluginPackageId)}_BUNDLED_VOICE_MANIFEST),`);
   }
   lines.push(']) satisfies readonly BundledVoiceManifestContribution[];');
   lines.push('');
@@ -119,17 +122,11 @@ export function renderBundledVoiceRuntimeEntriesTs(
       `import { ${source.conversationClient.exportName} as ${prefix}_BUNDLED_VOICE_ACTIVATE } from '${source.packageName}/happier-plugin-ui/${source.conversationClient.artifactId}';`,
     );
   }
-  if (applicableSources.length > 0) {
-    lines.push('');
-    for (const source of applicableSources) {
-      lines.push(...renderBundledVoiceManifestProjectionConstant(source));
-      lines.push('');
-    }
-  }
+  if (applicableSources.length > 0) lines.push(`import { ${applicableSources.map(source => `${toBundledVoiceImportPrefix(source.pluginPackageId)}_BUNDLED_VOICE_MANIFEST`).join(', ')} } from './generatedBundledVoiceEntries';`);
   for (const source of applicableSources) {
     const prefix = toBundledVoiceImportPrefix(source.pluginPackageId);
     lines.push(`const ${prefix}_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(`);
-    lines.push(`  ${prefix}_BUNDLED_PLUGIN_MANIFEST,`);
+    lines.push(`  ${prefix}_BUNDLED_VOICE_MANIFEST,`);
     lines.push(`  ${prefix}_BUNDLED_VOICE_ACTIVATE,`);
     lines.push(');');
   }

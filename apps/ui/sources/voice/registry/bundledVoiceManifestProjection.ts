@@ -1,6 +1,6 @@
-import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { VoiceProviderContribution, VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { z } from 'zod/mini';
 
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
 
@@ -10,14 +10,25 @@ export type BundledVoiceManifestContribution = Readonly<{
   declaration: VoiceProviderContribution;
 }>;
 
+/** The generator admits the manifest; runtime consumers need only this projection. */
+export type BundledVoiceManifestProjection = Readonly<{
+  id: string;
+  contributes: Readonly<{ voiceProviders: readonly VoiceProviderContribution[] }>;
+}>;
+
+/** Serialized declarations lose the nominal types established by generator admission. */
+export type BundledVoiceManifestProjectionInput = Readonly<{
+  id: string;
+  contributes: Readonly<{ voiceProviders: readonly z.input<typeof VoiceProviderContributionSchema>[] }>;
+}>;
+
 export function projectBundledVoiceManifestContributions(
-  manifest: unknown,
+  manifest: BundledVoiceManifestProjection,
 ): readonly BundledVoiceManifestContribution[] {
-  const parsed = PluginManifestV2Schema.parse(manifest);
-  return Object.freeze(parsed.contributes.voiceProviders.map((declaration) => Object.freeze({
-    pluginId: parsed.id,
+  return Object.freeze(manifest.contributes.voiceProviders.map((declaration) => Object.freeze({
+    pluginId: manifest.id,
     providerId: buildQualifiedPluginContributionKey(createPluginContributionIdentity({
-      pluginId: parsed.id,
+      pluginId: manifest.id,
       localId: declaration.id,
     })),
     declaration,

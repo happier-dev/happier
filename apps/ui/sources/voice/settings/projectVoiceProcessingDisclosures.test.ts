@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 
 import {
   readLocalConversationVoiceSettings,
@@ -11,9 +12,11 @@ import { XAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../packages/plugins/x
 import { tLoose } from '@/text';
 import { projectVoiceProcessingDisclosures } from './projectVoiceProcessingDisclosures';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
-import { PLUGIN_MANIFEST as openaiManifest } from '../../../../../packages/plugins/openai/src/manifest';
+import { PLUGIN_MANIFEST as authoredOpenaiManifest } from '../../../../../packages/plugins/openai/src/manifest';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
 import { VoiceProviderContributionSchema, VoiceProviderSettingsPresentationFieldSchema, VoiceProviderSettingsSchema } from '../../../../../packages/protocol/src/plugins/contributions/voiceProviders';
+
+const openaiManifest = PluginManifestV2Schema.parse(authoredOpenaiManifest);
 
 /**
  * Resolves a projected disclosure exactly the way the Privacy view does, so the

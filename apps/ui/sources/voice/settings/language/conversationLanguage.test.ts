@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 
 import {
   readLocalConversationVoiceSettings,
@@ -18,8 +19,8 @@ import { VOICE_PROVIDER_PRESENTATIONS as OPENAI_PRESENTATIONS } from '../../../.
 import { VOICE_PROVIDER_PRESENTATIONS as ELEVENLABS_PRESENTATIONS } from '../../../../../../packages/plugins/elevenlabs/src/ui/voice/entries';
 
 const sourceRegistry = createVoiceProviderRegistry({ bundledContributions: [
-  ...projectBundledVoiceManifestContributions(OPENAI_MANIFEST),
-  ...projectBundledVoiceManifestContributions(ELEVENLABS_MANIFEST),
+  ...projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(OPENAI_MANIFEST)),
+  ...projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(ELEVENLABS_MANIFEST)),
 ], bundledPresentations: [...OPENAI_PRESENTATIONS, ...ELEVENLABS_PRESENTATIONS] });
 
 function localDirect(stt: Record<string, unknown>, tts: Record<string, unknown> = {}, root: Partial<VoiceSettings> = {}) {

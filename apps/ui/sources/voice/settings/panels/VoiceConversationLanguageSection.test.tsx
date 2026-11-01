@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { act } from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import 'fake-indexeddb/auto';
@@ -29,8 +30,8 @@ vi.mock('expo-router', async () => {
 
 const registry = createVoiceProviderRegistry({
   bundledContributions: [
-    ...projectBundledVoiceManifestContributions(OPENAI_MANIFEST),
-    ...projectBundledVoiceManifestContributions(ELEVENLABS_MANIFEST),
+    ...projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(OPENAI_MANIFEST)),
+    ...projectBundledVoiceManifestContributions(PluginManifestV2Schema.parse(ELEVENLABS_MANIFEST)),
   ],
   bundledPresentations: [...OPENAI_PRESENTATIONS, ...ELEVENLABS_PRESENTATIONS],
 });
