@@ -1041,7 +1041,14 @@ describe('UI local-services runtime action executor', () => {
         }));
     });
 
-    it('dispatches localServices.preview.revoke to the daemon route and publishes the refreshed snapshot', async () => {
+    it.each([
+        { binding: 'inventory', serviceTarget: undefined },
+        { binding: 'managed Service', serviceTarget: {
+            kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'managed-web',
+            workspaceId: 'workspace_1', cwd: '/workspace',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } },
+        } },
+    ])('revokes a $binding preview with its exact binding and publishes the refreshed snapshot', async ({ serviceTarget }) => {
         const mod = await import('./runtimeActionExecutor');
 
         const revokePreview = vi.fn(async () => ({ ok: true as const, response: previewRevokeResponse }));
@@ -1054,11 +1061,11 @@ describe('UI local-services runtime action executor', () => {
 
         await expect(execute(runtimeArgs({
             actionId: 'localServices.preview.revoke',
-            input: { previewId: previewResource.previewId },
+            input: { previewId: previewResource.previewId, ...(serviceTarget ? { serviceTarget } : {}) },
         }))).resolves.toEqual(previewRevokeResponse);
 
         expect(revokePreview).toHaveBeenCalledWith({
-            request: { machineId: 'machine_1', previewId: previewResource.previewId },
+            request: { machineId: 'machine_1', previewId: previewResource.previewId, ...(serviceTarget ? { serviceTarget } : {}) },
             serverId: undefined,
         });
         expect(onPreviewSnapshot).toHaveBeenCalledWith(expect.objectContaining({

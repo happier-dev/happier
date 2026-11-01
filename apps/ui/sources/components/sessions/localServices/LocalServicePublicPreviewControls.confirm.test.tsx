@@ -280,6 +280,25 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         await result.unmount();
     });
 
+    it('offers only browser-shareable modes when policy also allows signed-in API access', async () => {
+        const create = vi.fn(async () => undefined);
+        answerExposureSheet({ chooseModeIndex: 1 });
+        const state = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            ...snapshot,
+            policy: { ...snapshot.policy, allowedModes: ['authenticated', 'secret_link', 'public'] },
+        });
+        const result = await renderWithAppProviders(
+            <LocalServicePublicPreviewControls launchTargets={[target]} state={state}
+                actions={{ create, copyUrl: vi.fn(async () => true), revoke: vi.fn(async () => undefined) }} />,
+        );
+        try {
+            await findCreatePressable(result).props.onPress();
+            await flushCreateChain();
+            expect(lastExposureSheetProps().modeChoices.map(choice => choice.mode)).toEqual(['secret_link', 'public']);
+            expect(create).toHaveBeenCalledWith(target, { mode: 'public', ttlMs: 600_000 });
+        } finally { await result.unmount(); }
+    });
+
     it('only revokes an active public preview after confirmation is accepted', async () => {
         modalSpies.confirm.mockResolvedValueOnce(true);
         const revoke = vi.fn(async () => undefined);

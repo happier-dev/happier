@@ -284,6 +284,8 @@ function resolvePublicLinkChoices(state: LocalServicePublicPreviewState): Readon
     const allowedModes = state.policy?.allowedModes ?? [];
     return {
         modeChoices: (allowedModes.length > 0 ? allowedModes : (['secret_link'] as const))
+            // Browser sharing has no signed-in admission yet; API callers retain that mode.
+            .filter((mode) => mode !== 'authenticated')
             .map((mode) => ({ mode, label: modeLabel(mode) })),
         ttlChoices: resolveTtlChoices(state.policy?.maxTtlMs)
             .map((ttlMs) => ({ ttlMs, label: ttlChoiceLabel(ttlMs) })),

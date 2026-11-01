@@ -295,6 +295,12 @@ someone's Machine reachable without sign-in; only use a development deployment w
 operator intends that exposure. Current development admission is controlled by the real
 server policy, not a separate review-completion condition.
 
+In current 0.3 development, browser sharing offers secret links and public access
+when allowed by the relay policy. The **Signed-in people** mode is hidden from
+that sheet until browser sign-in is supported for public sharing. Authenticated
+API and agent requests can still use that mode; an ordinary browser cannot open
+its URL using the Happier app's sign-in.
+
 If you enable it, the relay still refuses to mint links until six further prerequisites
 are all satisfied, and the app names whichever ones are missing on the service row:
 
