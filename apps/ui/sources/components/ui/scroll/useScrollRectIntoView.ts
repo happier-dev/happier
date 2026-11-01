@@ -26,6 +26,16 @@ export type ScrollRectIntoViewRegistry = Readonly<{
     onViewportLayout: (event: NativeLayoutEvent) => void;
     onContentSizeChange: (width: number, height: number) => void;
     onScroll: (event: NativeScrollEvent) => void;
+    /** Where the scroller is now, for content that materializes only what is in view (a long menu). */
+    viewport: ScrollViewportSource;
+}>;
+
+export type ScrollViewport = Readonly<{ offsetY: number; viewportHeight: number }>;
+
+/** Read the scroller's position and hear when it moves, without re-rendering the scroller's owner. */
+export type ScrollViewportSource = Readonly<{
+    get: () => ScrollViewport;
+    subscribe: (listener: () => void) => () => void;
 }>;
 
 type ScrollRect = Readonly<{
@@ -111,7 +121,6 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
     /** Rest on a whole row (`resolveScrollOffsetForVisibleRect`'s `rowStarts`, taken from the registered items). */
     snapToRowStarts?: boolean;
 }>): ScrollRectIntoViewRegistry {
-    const scrollRef = React.useRef<ScrollView | null>(null);
     const itemLayoutsRef = React.useRef(new Map<string, ScrollRect>());
     const activeKeyRef = React.useRef<string | null>(params.activeKey);
     const metricsRef = React.useRef<ScrollMetrics>({
@@ -119,7 +128,35 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
         viewportHeight: 0,
         contentHeight: 0,
     });
+    // The metrics belong to one scroller: a scroller mounted afresh (a menu opened again) starts at its top,
+    // whatever the previous one was scrolled to, until it reports otherwise. The same scroller attached again (a
+    // callback ref detaching and re-attaching) has not moved, so it keeps its metrics.
+    const scrollRef = React.useMemo((): React.MutableRefObject<ScrollView | null> => {
+        let node: ScrollView | null = null;
+        let lastAttached: ScrollView | null = null;
+        return {
+            get current() { return node; },
+            set current(next: ScrollView | null) {
+                node = next;
+                if (next === null || next === lastAttached) return;
+                lastAttached = next;
+                metricsRef.current = { offsetY: 0, viewportHeight: 0, contentHeight: 0 };
+                settledActiveKeyRef.current = null;
+            },
+        };
+    }, []);
     const settledActiveKeyRef = React.useRef<string | null>(null);
+    const viewportListenersRef = React.useRef(new Set<() => void>());
+    const viewport = React.useMemo((): ScrollViewportSource => ({
+        get: () => metricsRef.current,
+        subscribe: (listener) => {
+            viewportListenersRef.current.add(listener);
+            return () => { viewportListenersRef.current.delete(listener); };
+        },
+    }), []);
+    const notifyViewport = React.useCallback(() => {
+        for (const listener of viewportListenersRef.current) listener();
+    }, []);
     const [revision, setRevision] = React.useState(0);
 
     const bumpRevision = React.useCallback(() => {
@@ -140,7 +177,11 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
             alignment: params.alignment,
             ...(params.snapToRowStarts ? { rowStarts: Array.from(itemLayoutsRef.current.values(), (item) => item.y) } : {}),
         });
-        if (nextOffset === null) return;
+        if (nextOffset === null) {
+            // Already in view counts as revealed: once the person scrolls on, the row does not pull them back.
+            if (params.once === true) settledActiveKeyRef.current = activeKey;
+            return;
+        }
         const scrollView = scrollRef.current;
         if (!scrollView?.scrollTo) return;
         scrollView.scrollTo({
@@ -169,9 +210,10 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
         if (typeof height !== 'number') return;
         if (metricsRef.current.viewportHeight === height) return;
         metricsRef.current = { ...metricsRef.current, viewportHeight: height };
+        notifyViewport();
         bumpRevision();
         ensureActiveItemVisible();
-    }, [bumpRevision, ensureActiveItemVisible]);
+    }, [bumpRevision, ensureActiveItemVisible, notifyViewport]);
 
     const onContentSizeChange = React.useCallback((_width: number, height: number) => {
         if (metricsRef.current.contentHeight === height) return;
@@ -189,7 +231,8 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
             viewportHeight: typeof viewportHeight === 'number' ? viewportHeight : metricsRef.current.viewportHeight,
             contentHeight: typeof contentHeight === 'number' ? contentHeight : metricsRef.current.contentHeight,
         };
-    }, []);
+        notifyViewport();
+    }, [notifyViewport]);
 
     React.useEffect(() => {
         activeKeyRef.current = params.activeKey;
@@ -205,5 +248,6 @@ export function useScrollRectIntoViewRegistry(params: Readonly<{
         onViewportLayout,
         onContentSizeChange,
         onScroll,
+        viewport,
     };
 }

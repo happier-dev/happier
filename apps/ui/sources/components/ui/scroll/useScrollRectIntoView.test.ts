@@ -100,3 +100,25 @@ it('reveals an empty-string row key instead of treating it as no active row', as
     expect(offsets).toContain(0);
     await hook.unmount();
 });
+
+it('keeps the scroller position when the same scroller is attached again, and starts a new scroller at its top', async () => {
+    const hook = await renderHook(() => useScrollRectIntoViewRegistry({ activeKey: null, animated: false }));
+    const scroller = { scrollTo: () => {} } as unknown as import('react-native').ScrollView;
+    const scrolled = (y: number) => ({ nativeEvent: { contentOffset: { y }, layoutMeasurement: { height: 400 }, contentSize: { height: 100_000 } } });
+    await act(async () => {
+        hook.getCurrent().scrollRef.current = scroller;
+        hook.getCurrent().onScroll(scrolled(2_500));
+    });
+    // A callback ref detaches and re-attaches the same scroller: it has not moved.
+    await act(async () => {
+        (hook.getCurrent().scrollRef as { current: unknown }).current = null;
+        (hook.getCurrent().scrollRef as { current: unknown }).current = scroller;
+    });
+    expect(hook.getCurrent().viewport.get().offsetY).toBe(2_500);
+    // A menu opened again mounts a new scroller, which starts at its top.
+    await act(async () => {
+        (hook.getCurrent().scrollRef as { current: unknown }).current = { scrollTo: () => {} };
+    });
+    expect(hook.getCurrent().viewport.get().offsetY).toBe(0);
+    await hook.unmount();
+});
