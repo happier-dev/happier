@@ -281,6 +281,36 @@ describe('ActionExecutor API token grant admission', () => {
     expect(invokeContributedAction).toHaveBeenCalledOnce();
   });
 
+  it('refuses a Session-restricted grant an omitted declared Session operand instead of substituting its routing target', async () => {
+    // An omitted declared operand means an Account-wide read (for example every
+    // Session↔PR relation). The routed Session target must not stand in for it.
+    const invokeContributedAction = vi.fn(async () => ({ ok: true as const, result: { kind: 'relations', links: [] } }));
+    const definition = {
+      kindVersion: 1 as const, id: 'acme.links/actions/relations', title: 'Relations', description: 'Read relations',
+      safety: 'safe' as const, placements: [], slash: null, bindings: null, examples: null,
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
+      sessionTarget: { field: 'sessionId', cardinality: 'one' as const },
+      inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, additionalProperties: false },
+    };
+    // The authenticated Home Session lookup is the host boundary that qualifies an exact operand.
+    const resolveSessionReference: NonNullable<ActionExecutorDeps['resolveSessionReference']> = async ({ sessionId }) =>
+      ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId ?? '' } });
+    const executor = createActionExecutor({ invokeContributedAction, resolveSessionReference,
+      listContributedActionDefinitions: () => [definition] } as unknown as ActionExecutorDeps);
+    const ctx: ActionExecutorContext = { ...context([definition.id]), serverId: 'home',
+      externalActionTarget: { kind: 'session', sessionId: 's1' } };
+    const accountWide = { action: { pluginId: 'acme.links', localId: 'relations' }, input: {} };
+    expect(await executor.execute('action.invoke', accountWide, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', details: { reason: 'target_required' } });
+    expect(invokeContributedAction).not.toHaveBeenCalled();
+    // The same grant still reads its own granted Session; an unrestricted grant keeps the Account-wide read.
+    expect(await executor.execute('action.invoke', { ...accountWide, input: { sessionId: 's1' } }, ctx)).toMatchObject({ ok: true });
+    if (!ctx.externalActionCredential?.grant) throw new Error('expected grant');
+    ctx.externalActionCredential.grant.targets = null;
+    expect(await executor.execute('action.invoke', accountWide, ctx)).toMatchObject({ ok: true });
+    expect(invokeContributedAction).toHaveBeenCalledTimes(2);
+  });
+
   it('does not let generic plugin wait bypass the exact contributed Action grant', async () => {
     let admitted = false;
     const executor = createActionExecutor({ invokeContributedAction: async () => {

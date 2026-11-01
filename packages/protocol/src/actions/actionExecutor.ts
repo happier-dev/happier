@@ -913,7 +913,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const sessionId = definitionSession?.sessionId ?? widgetSessionId ?? (input === undefined ? null
       : normalizeId(readRecord(input).sessionId) || (declaration && !declaration.field.includes('*')
         ? normalizeId(readActionSessionTargetField(readRecord(input), declaration.field)) : null));
-    const target = sessionId ? { kind: 'session' as const, sessionId } : widgetSurface || definitionAction ? null : ctx.externalActionTarget
+    // A contributed handler owns what an omitted declared Session operand means
+    // (often the whole Account). The routed target is not that operand, so a
+    // Session-restricted grant must name a granted Session instead.
+    const omittedContributedTarget = contributedQualifiedId !== undefined && input !== undefined
+      && declaration !== undefined && !declaration.field.includes('*');
+    const target = sessionId ? { kind: 'session' as const, sessionId }
+      : widgetSurface || definitionAction || omittedContributedTarget ? null : ctx.externalActionTarget
       ?? (ctx.defaultSessionId ? { kind: 'session' as const, sessionId: ctx.defaultSessionId } : null);
     const result = evaluateApiTokenGrantV1({
       grant: discovery ? { ...grant, targets: null, create: null, automationIds: null }
