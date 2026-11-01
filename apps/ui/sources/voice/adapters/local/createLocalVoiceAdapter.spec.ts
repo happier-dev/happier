@@ -34,6 +34,53 @@ function admittedProviderText() {
 describe('createLocalVoiceAdapter', () => {
   registerLocalVoiceEngineHarnessHooks();
 
+  it('uses the Session Agent admitted by Start when the first Send is delayed', async () => {
+    await selectAgentMode();
+    const { createLocalVoiceAdapter } = await import('./createLocalVoiceAdapter');
+    const adapter = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
+    await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+    const storage = await getStorage();
+    const carrier = storage.getState().sessions['voice-home-session'];
+    storage.__setState({ sessions: { ...storage.getState().sessions, 'voice-home-session': {
+      ...carrier, metadataLayoutVersion: 1,
+      ownerMetadataView: { ...carrier.metadata, flavor: 'claude' },
+    } } });
+    await adapter.sendTextTurn?.({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'voice-home-session', text: 'Inspect this', localId: 'admitted-agent-turn',
+      deliveryCommand: 'interrupt_and_send', onAccepted: async () => {} });
+    const request = localVoiceAgentRpc.requests.find(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+      || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
+    expect(request?.input).toMatchObject({ start: { backendTarget: { kind: 'backend', backendId: 'codex' } } });
+  });
+
+  it('refuses an unreadable retained Session Agent before opening the microphone', async () => {
+    await selectAgentMode();
+    const { createLocalVoiceAdapter } = await import('./createLocalVoiceAdapter');
+    const { speechRecStart, localVoiceHomeId } = await import('@/voice/local/localVoiceEngine.testHarness');
+    const adapter = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
+    await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+    await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+    const storage = await getStorage();
+    const carrier = storage.getState().sessions['voice-home-session'];
+    storage.__setState({ sessions: { ...storage.getState().sessions, 'voice-home-session': {
+      ...carrier, metadata: { ...carrier.metadata, voiceConversationBindingV1: {
+        v: 1, adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        transcriptMode: 'native_session', targetSessionId: 'missing-coding-root',
+        targetServerId: localVoiceHomeId, updatedAt: Date.now(),
+      } },
+    } } });
+    speechRecStart.mockClear();
+    localVoiceAgentRpc.requests.length = 0;
+    await expect(adapter.start({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      requestedTargetSessionAddress: null,
+    })).rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+    expect(adapter.getSnapshot()).toMatchObject({ errorCode: 'provider_setup_required',
+      errorMessage: 'VOICE_AGENT_SELECTION_UNAVAILABLE', errorRecoveryAction: 'open_settings' });
+    expect(speechRecStart).not.toHaveBeenCalled();
+    expect(localVoiceAgentRpc.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+      || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)).toHaveLength(0);
+  });
+
   it('exposes the requested adapter id on the disconnected snapshot', async () => {
     const { createLocalVoiceAdapter } = await import('./createLocalVoiceAdapter');
     const adapter = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });

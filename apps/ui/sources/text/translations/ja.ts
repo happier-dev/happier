@@ -14052,6 +14052,7 @@ settingsSession: {
         mic_unavailable: 'マイクが見つかりません。接続してからもう一度お試しください。',
         speech_recognition_unavailable: 'ここでは音声認識を利用できません。別の音声認識エンジンを選んでください。',
         previous_session_stop_failed: '前の音声セッションを停止できませんでした。',
+        agent_selection_unavailable: '選択したエージェントを利用できません。音声設定でエージェントを選択してください。',
       },},
     privacy: {
       title: "コンテキストの共有",

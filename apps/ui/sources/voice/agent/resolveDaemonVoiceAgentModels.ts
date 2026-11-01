@@ -1,5 +1,6 @@
-import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { resolveVoiceSessionAgentSelection } from './resolveVoiceSessionAgentSelection';
 import {
     describeEffectiveModelMode,
 } from '@/sync/domains/models/describeEffectiveModelMode';
@@ -23,6 +24,7 @@ export type DaemonVoiceAgentModelIds = Readonly<{
  */
 export function resolveDaemonVoiceAgentModelIds(params: {
     metadata: Metadata | null;
+    admittedAgentTarget?: BackendTargetRefV1;
     agent: {
         chatModelSource?: 'session' | 'custom';
         chatModelId?: string;
@@ -31,12 +33,10 @@ export function resolveDaemonVoiceAgentModelIds(params: {
     };
 }): DaemonVoiceAgentModelIds | null {
     const metadata = params.metadata;
-    const sessionBackend = resolveSessionActionDefaultBackend({ session: { metadata } });
-    const target = resolveSessionActionDefaultTarget(sessionBackend);
-    const agentId = target ? resolveOperationalBackendTargetForAgentSelection({
-        backendTarget: target,
-        selectedEntry: sessionBackend?.defaultAgentId ? { agentId: sessionBackend.defaultAgentId } : null,
-    })?.backendId : null;
+    const selection = params.admittedAgentTarget
+        ? { ok: true as const, backendTarget: params.admittedAgentTarget }
+        : resolveVoiceSessionAgentSelection(metadata);
+    const agentId = selection.ok ? readBackendTargetRefV2(selection.backendTarget).backendId : null;
     if (!agentId) return null;
 
     const chatSelected =

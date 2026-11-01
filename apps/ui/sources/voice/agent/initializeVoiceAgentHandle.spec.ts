@@ -18,6 +18,7 @@ import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoice
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { SessionAppliedModelV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionActiveModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
@@ -220,8 +221,8 @@ describe('initializeVoiceAgentHandle', () => {
             ]));
         storage.setState({
             ...state,
-            settings: { experiments: true,
-                featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...state.settings },
+            settings: settingsParse({ experiments: true,
+                featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true }, ...state.settings }),
             profileScope: { serverId: home.id, accountId: 'account-a' },
             sessions: normalizeSessions(state.sessions),
             sessionListRowsByServerId: { [home.id]: normalizeSessions(state.sessionListRowsByServerId[previousServerId]) },
@@ -470,7 +471,10 @@ describe('initializeVoiceAgentHandle', () => {
             voiceSessionBindingStore.getState().unbind(carrierId);
             const sessions = { ...storage.getState().sessions };
             delete sessions[carrierId];
-            storage.setState({ sessions, settings: previousSettings });
+            const rows = { ...storage.getState().sessionListRowsByServerId[connection.home.id] };
+            delete rows[carrierId];
+            storage.setState({ sessions, settings: previousSettings,
+                sessionListRowsByServerId: { ...storage.getState().sessionListRowsByServerId, [connection.home.id]: rows } });
             state = storage.getState();
         }
     });
@@ -730,6 +734,49 @@ describe('initializeVoiceAgentHandle', () => {
                 sessionListRowsByServerId: state.sessionListRowsByServerId,
             });
             state = storage.getState();
+        }
+    });
+
+    it('consumes the Session Agent admitted before capture without re-deciding it at first Send', async () => {
+        state.sessions.s1.metadata = null;
+        state.sessionListRowsByServerId[state.profileScope.serverId].s1.metadata = null;
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        await initializeVoiceAgentHandle({ sessionId: 's1',
+            admittedSessionAgentTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+            setDeferredTargetSessionContext: vi.fn(),
+        });
+        expect(admittedStart()).toMatchObject({ backendTarget: { kind: 'backend', backendId: 'codex' } });
+    });
+
+    it('admits the bound coding Session Agent once for Start and delayed Send', async () => {
+        const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+        const transport = createVoiceExecutionTransport();
+        await transport.prepareAgentSelection('s1', new AbortController().signal);
+        state.sessions.s1.metadata = null;
+        state.sessionListRowsByServerId[state.profileScope.serverId].s1.metadata = null;
+        await transport.prepareAgentSelection('s1', new AbortController().signal);
+        await transport.ensureRunning('s1');
+        expect(admittedStart()).toMatchObject({ backendTarget: { kind: 'backend', backendId: 'codex' } });
+        await transport.stop('s1');
+    });
+
+    it('refuses a retained unreadable coding root at capture preparation despite a healthy carrier', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+        voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation',
+            controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 's1',
+            conversationSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic',
+            targetSessionAddress: { serverId: connection.home.id, sessionId: 'missing-coding-root' }, updatedAt: 1 });
+        try {
+            const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+            const transport = createVoiceExecutionTransport();
+            await expect(transport.prepareAgentSelection(VOICE_AGENT_GLOBAL_SESSION_ID, new AbortController().signal))
+                .rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE', message: 'voice_agent_selection_unavailable' });
+            expect(start).not.toHaveBeenCalled();
+        } finally {
+            voiceSessionBindingStore.getState().unbind('s1');
         }
     });
 

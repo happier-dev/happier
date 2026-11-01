@@ -13773,6 +13773,7 @@ settingsSession: {
         mic_unavailable: 'No se encontró ningún micrófono. Conecta uno y vuelve a intentarlo.',
         speech_recognition_unavailable: 'El reconocimiento de voz no está disponible aquí. Elige otro motor de voz.',
         previous_session_stop_failed: 'No se pudo detener la sesión de voz anterior.',
+        agent_selection_unavailable: 'El agente seleccionado no está disponible. Elige un agente en los ajustes de voz.',
       },},
     privacy: {
       title: "Contexto compartido",

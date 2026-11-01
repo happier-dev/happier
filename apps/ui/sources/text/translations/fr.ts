@@ -13647,6 +13647,7 @@ settingsSession: {
         mic_unavailable: 'Aucun micro trouvé. Branches-en un et réessaie.',
         speech_recognition_unavailable: 'La reconnaissance vocale n’est pas disponible ici. Choisis un autre moteur de reconnaissance.',
         previous_session_stop_failed: 'La session vocale précédente n’a pas pu être arrêtée.',
+        agent_selection_unavailable: 'L’agent sélectionné est indisponible. Choisissez un agent dans les réglages vocaux.',
       },},
     privacy: {
       title: "Partage du contexte",

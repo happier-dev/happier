@@ -30,6 +30,7 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
  */
 export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
     voice_previous_session_stop_failed: 'settingsVoice.local.machineErrors.previous_session_stop_failed',
+    voice_agent_selection_unavailable: 'settingsVoice.local.machineErrors.agent_selection_unavailable',
 } as const;
 
 export type VoiceMachineErrorTranslationKey =
@@ -47,8 +48,10 @@ export function resolveVoiceMachineErrorTranslationKey(
     kind: VoiceMachineErrorKind,
     reason?: string,
 ): VoiceMachineErrorTranslationKey {
-    if (kind === 'service_temporarily_unavailable' && isVoiceMachineErrorReasonWithCopy(reason)) {
-        return VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS[reason];
+    // Capture retains the public error code; Send retains the safe message.
+    const copyReason = reason?.toLowerCase();
+    if ((kind === 'service_temporarily_unavailable' || kind === 'provider_setup_required') && isVoiceMachineErrorReasonWithCopy(copyReason)) {
+        return VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS[copyReason];
     }
     switch (kind) {
         case 'mic_permission_revoked':

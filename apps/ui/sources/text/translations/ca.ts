@@ -12795,6 +12795,7 @@ settingsSession: {
                 mic_unavailable: 'No s’ha trobat cap micròfon. Connecta’n un i torna-ho a provar.',
                 speech_recognition_unavailable: 'El reconeixement de veu no està disponible aquí. Tria un altre motor de veu.',
                 previous_session_stop_failed: 'No s’ha pogut aturar la sessió de veu anterior.',
+                agent_selection_unavailable: 'L’agent seleccionat no està disponible. Tria un agent a la configuració de veu.',
             },},
         privacy: {
             title: 'Context compartit',

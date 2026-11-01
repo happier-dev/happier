@@ -13885,6 +13885,7 @@ settingsSession: {
         mic_unavailable: 'Nenhum microfone encontrado. Conecte um e tente novamente.',
         speech_recognition_unavailable: 'O reconhecimento de fala não está disponível aqui. Escolha outro mecanismo de fala.',
         previous_session_stop_failed: 'Não foi possível encerrar a sessão de voz anterior.',
+        agent_selection_unavailable: 'O agente selecionado não está disponível. Escolha um agente nas configurações de voz.',
       },},
     privacy: {
       title: "Compartilhamento de contexto",

@@ -554,6 +554,7 @@ async function ensureLocalConversationBindingForSession(
       requestedTargetServerId: requestedTargetSessionAddress?.serverId,
       signal: preparationController.signal,
     });
+    await voiceAgentSessions.prepareAgentSelection(controlSessionId, preparationController.signal);
   } catch (error) {
     if (!localVoicePreparationAttemptGuard.isCurrent(attempt)) {
       return false;

@@ -13284,6 +13284,7 @@ settingsSession: {
         mic_unavailable: '未找到麦克风。请连接麦克风后重试。',
         speech_recognition_unavailable: '这里无法使用语音识别。请选择其他语音识别引擎。',
         previous_session_stop_failed: '无法停止上一个语音会话。',
+        agent_selection_unavailable: '所选智能体不可用。请在语音设置中选择智能体。',
       },},
     privacy: {
       title: "上下文共享",

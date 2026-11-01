@@ -11012,6 +11012,7 @@ settingsSession: {
         mic_unavailable: '找不到麥克風。請連接麥克風後再試一次。',
         speech_recognition_unavailable: '這裡無法使用語音辨識。請選擇其他語音辨識引擎。',
         previous_session_stop_failed: '無法停止上一個語音工作階段。',
+        agent_selection_unavailable: '所選的代理程式無法使用。請在語音設定中選擇代理程式。',
       },},
         privacy: {
             title: '上下文分享',

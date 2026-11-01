@@ -29,6 +29,11 @@ const expectedTranslationKeys = {
 } as const satisfies Readonly<Record<VoiceMachineErrorKind, string>>;
 
 describe('voiceMachineErrorCopy', () => {
+    it.each(['voice_agent_selection_unavailable', 'VOICE_AGENT_SELECTION_UNAVAILABLE'])(
+        'explains the unavailable Session Agent with the existing setup recovery (%s)', reason => {
+        expect(resolveVoiceMachineErrorTranslationKey('provider_setup_required', reason))
+            .toBe('settingsVoice.local.machineErrors.agent_selection_unavailable');
+    });
     it('maps every machine error kind onto one canonical translation key', () => {
         for (const [kind, key] of Object.entries(expectedTranslationKeys)) {
             expect(resolveVoiceMachineErrorTranslationKey(kind as VoiceMachineErrorKind)).toBe(key);
