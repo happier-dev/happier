@@ -308,7 +308,9 @@ async function requestLifecycleOwnerShutdown(
 }
 
 async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName }) {
-  const control = await pingDaemon({ cliHomeDir, serverUrl, env, stackName });
+  // Session drain has no deadline; its control proof must not impose the
+  // shorter listener-observation budget before the lifecycle owner can stop it.
+  const control = await pingDaemon({ cliHomeDir, serverUrl, env, stackName, timeoutMs: null });
   if (!control.ok) {
     return { ok: control.reason === 'missing_state' || control.reason === 'daemon_not_running', skipped: true, reason: control.reason, stoppedSessionIds: [] };
   }

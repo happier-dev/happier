@@ -9,6 +9,7 @@ import { stopStackWithEnv } from './utils/stack/stop.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from './utils/server/listener_ownership.mjs';
 
 async function readJson(req) {
   return await new Promise((resolve, reject) => {
@@ -51,6 +52,9 @@ async function startDaemonControlServer({ token, stopResult = { status: 'stopped
     }
 
     if (url === '/ping') {
+      if (stopResult.pingDelayMs) {
+        await new Promise(resolve => setTimeout(resolve, stopResult.pingDelayMs));
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok' }));
       return;
@@ -84,8 +88,12 @@ async function startDaemonControlServer({ token, stopResult = { status: 'stopped
   };
 }
 
-for (const stopResult of [{ status: 'stopped' }, { status: 'incomplete', reason: 'runner_exit_timeout' }]) {
-test(`explicit child stop handles ${stopResult.status} before signaling the lifecycle owner`, async (t) => {
+for (const stopResult of [
+  { status: 'stopped' },
+  { status: 'incomplete', reason: 'runner_exit_timeout' },
+  { status: 'stopped', pingDelayMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS + 100 },
+]) {
+test(`explicit child stop handles ${stopResult.status} before signaling the lifecycle owner (${stopResult.pingDelayMs ? 'slow ping' : 'immediate ping'})`, async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-stop-token-'));
   t.after(async () => {
     await rm(tmp, { recursive: true, force: true });
