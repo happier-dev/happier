@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { checkCommitTypeCoherence } from './checkCommitTypeCoherence.mjs';
+import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 
 // A shared dirty checkout: the worktree holds both halves of a change, a commit takes only one.
 async function checkout(t) {
@@ -156,7 +157,27 @@ test('excluded unmodified importers do not inject globals into the owner, while 
   assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh.map(({ file, code }) => [file, code]), [['consumer.ts', 2322]]);
   await write('excluded.composed.ts', "import { original } from './producer';\ndeclare global { interface Error { rendererOnly: true } }\nexport const invalid: number = 'invalid';\n");
   const changedExcluded = commitOnly('excluded.composed.ts');
-  assert.deepEqual(checkCommitTypeCoherence({ repo, base: tree, tree: changedExcluded }).fresh.map(({ file, code }) => [file, code]), [['excluded.composed.ts', 2322]]);
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base: tree, tree: changedExcluded }).fresh, []);
+});
+
+test('an aggregate with a renamed excluded renderer importer uses the package compiler context', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ['*.ts'], exclude: ['*.composed.ts'] }));
+  await write('renderer.test.ts', "import { original } from './producer';\ndeclare global { interface Error { rendererOnly: true } }\n");
+  const base = commitOnly('tsconfig.json', 'renderer.test.ts');
+  execFileSync('git', ['mv', 'renderer.test.ts', 'renderer.composed.ts'], { cwd: repo });
+  commitOnly('renderer.composed.ts');
+  await write('producer.ts', "export const original = 1;\nexport const error: Error = { name: 'Error', message: 'fixture' };\n");
+  const tree = commitOnly('producer.ts');
+
+  const args = ['--showConfig', '-p', join(repo, 'tsconfig.json')];
+  // --showConfig only reads configuration; this boundary fixture needs no compiler admission.
+  const compiler = resolveTypeScriptCliInvocation({ args, workspaceDir: repo, env: { CI: 'true' } });
+  const configured = JSON.parse(execFileSync(compiler.command, [...compiler.argsPrefix, ...args], { cwd: repo, encoding: 'utf8' }));
+  assert.deepEqual(configured.files.sort(), ['./consumer.ts', './producer.ts']);
+  // Later worktree configuration must not change the committed package's membership.
+  await write('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ['*.ts'] }));
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh, []);
 });
 
 test('a new diagnostic location is not hidden by an identical message elsewhere in the base', async (t) => {

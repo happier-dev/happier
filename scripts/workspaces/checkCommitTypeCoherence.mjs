@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Commit-slice type coherence for a shared dirty checkout. Type-checks the TypeScript files a commit
-// (or a private-index tree) changes, plus their direct importers, as they exist in that tree rather
-// than in the worktree, and reports only diagnostics that the base tree does not already have.
+// (or a private-index tree) changes, plus their direct importers, within each owner's configured
+// file membership, as they exist in that tree rather than in the worktree. Reports only diagnostics
+// that the base tree does not already have.
 //
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
@@ -18,9 +19,10 @@
 // importers reached only through barrels are not roots, and the package typecheck remains the gate.
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { posix } from 'node:path';
+import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API } from '@typescript/native/sync';
+import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 
 const TYPESCRIPT_SOURCE = /\.(?:[cm]?ts|tsx)$/u;
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
@@ -219,15 +221,15 @@ function repository(repo) {
     return { groups, unowned };
   }
 
-  // One synthetic project per owning tsconfig: its own options, sources instead of dist declarations,
-  // and the roots added to its normal file set so ambient declarations stay in the program.
-  function virtualConfigs(api, groups) {
+  // Slice diagnostics, but preserve the owning project's complete configured membership.
+  // Adding excluded files as roots would also add all of their ambient declarations.
+  function virtualConfigs(membership, groups) {
     const files = {};
     const configs = new Map();
     for (const [dir, roots] of groups) {
       const prefix = dir === '.' ? '' : `${dir}/`;
       const config = abs(`${prefix}${VIRTUAL_CONFIG}`);
-      const own = api.readConfigFile(abs(`${prefix}tsconfig.json`)).config;
+      const own = membership.getProjects().find(project => project.configFileName === abs(`${prefix}tsconfig.json`)).parsedCommandLine;
       const compilerOptions = {
         noEmit: true,
         incremental: false,
@@ -238,20 +240,19 @@ function repository(repo) {
         rootDir: repo,
         customConditions: ['happier-source'],
       };
-      const paths = own?.compilerOptions?.paths;
+      const paths = own.options.paths;
       if (paths)
         compilerOptions.paths = Object.fromEntries(
           Object.entries(paths).map(([key, targets]) => [
             key,
-            targets.map(redirectDist),
+            targets.map(target => redirectDist(resolve(own.options.pathsBasePath ?? abs(prefix), target).replaceAll('\\', '/'))),
           ]),
         );
       files[config] = JSON.stringify({
         extends: './tsconfig.json',
         compilerOptions,
-        files: roots.map(abs),
-        ...(own?.include ? { include: own.include } : {}),
-        ...(own?.exclude ? { exclude: own.exclude } : {}),
+        files: own.fileNames,
+        include: [],
       });
       configs.set(config, roots.map(abs));
     }
@@ -311,24 +312,26 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
   ];
   const { groups, unowned } = git.groupRoots(roots, treeIndex);
   Object.assign(result, { roots: roots.length, unowned });
-  const api = new API({ cwd: repo });
+  const compiler = resolveTypeScriptCliInvocation({ args: ['--api'], workspaceDir: repo });
+  const api = new API({ cwd: repo, tsserverPath: compiler.apiExecutable });
   try {
     const layer = git.layerFor(tree, treeIndex);
-    // Discovered importers belong to their configured program. Forcing an excluded
-    // composed test into a Node project can inject a second platform's globals.
-    // Explicitly changed files remain roots even when their config excludes them.
+    // Changed files and discovered importers both belong to their configured program.
+    // In an aggregate, a renamed composed test is changed but is still excluded.
     const membership = api.createSnapshot({
       openProjects: [...groups.keys()].map(dir => git.abs(dir === '.' ? 'tsconfig.json' : `${dir}/tsconfig.json`)),
       fileSystem: layer,
     });
-    const included = new Set(membership.getProjects().flatMap(project => project.parsedCommandLine.fileNames));
-    const explicit = new Set(changed.filter(({ status }) => status !== 'D').map(({ path }) => path));
-    for (const [dir, files] of groups)
-      groups.set(dir, files.filter(file => explicit.has(file) || included.has(git.abs(file))));
-    roots = roots.filter(file => explicit.has(file) || included.has(git.abs(file)));
+    for (const [dir, files] of groups) {
+      const included = new Set(membership.getProjects().find(project => project.configFileName === git.abs(dir === '.' ? 'tsconfig.json' : `${dir}/tsconfig.json`)).parsedCommandLine.fileNames);
+      const selected = files.filter(file => included.has(git.abs(file)));
+      if (selected.length) groups.set(dir, selected);
+      else groups.delete(dir);
+    }
+    roots = [...groups.values()].flat();
     result.roots = roots.length;
+    const head = git.virtualConfigs(membership, groups);
     membership.dispose();
-    const head = git.virtualConfigs(api, groups);
     Object.assign(layer.files, head.files);
     const headSnapshot = api.createSnapshot({
       openProjects: [...head.configs.keys()],
@@ -356,13 +359,9 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
       .filter((file) => baseIndex.has(file));
     const seen = new Set();
     if (baseRoots.length) {
-      const prior = git.virtualConfigs(
-        api,
-        git.groupRoots(baseRoots, baseIndex).groups,
-      );
       const revert = {
         kind: 'layer',
-        files: { ...prior.files },
+        files: {},
         removedPaths: [],
       };
       const inputs = slice
@@ -378,6 +377,14 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
         if (entry) revert.files[git.abs(path)] = priorBlobs.get(entry.oid);
         else revert.removedPaths.push(git.abs(path));
       }
+      const baseGroups = git.groupRoots(baseRoots, baseIndex).groups;
+      const baseMembership = api.createSnapshot({
+        openProjects: [...baseGroups.keys()].map(dir => git.abs(dir === '.' ? 'tsconfig.json' : `${dir}/tsconfig.json`)),
+        fileSystem: { ...layer, files: { ...layer.files, ...revert.files }, removedPaths: [...layer.removedPaths, ...revert.removedPaths] },
+      });
+      const prior = git.virtualConfigs(baseMembership, baseGroups);
+      baseMembership.dispose();
+      Object.assign(revert.files, prior.files);
       const baseSnapshot = headSnapshot.update({
         openProjects: [...prior.configs.keys()],
         fileSystem: revert,

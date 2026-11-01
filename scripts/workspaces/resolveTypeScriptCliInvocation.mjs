@@ -84,6 +84,11 @@ export function resolveTypeScriptCliInvocation(params) {
   }
 
   const compilerPath = resolve(dirname(packageJsonPath), tscBin);
+  // The synchronous native API spawns an executable, not the Node CLI wrapper.
+  // Reuse the selected package's platform resolver; API tooling always selects Microsoft.
+  const apiExecutable = params.args?.includes('--api')
+    ? { apiExecutable: createRequire(packageJsonPath)('./lib/getExePath.js').default() }
+    : {};
   // Rust snapshots and internal declarations never share Microsoft's caches.
   const cacheSuffix = options ? '.tsrs' : '';
   const buildInfoPath = options && ts.getTsBuildInfoEmitOutputFilePath(options);
@@ -113,6 +118,7 @@ export function resolveTypeScriptCliInvocation(params) {
         `--machine=${env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
         '--exec-admitted', '--', processExecPath, ...compilerArgs],
       compilerPath,
+      ...apiExecutable,
       cacheSuffix,
       ...cacheArgs,
     };
@@ -121,6 +127,7 @@ export function resolveTypeScriptCliInvocation(params) {
     command: processExecPath,
     argsPrefix: compilerArgs,
     compilerPath,
+    ...apiExecutable,
     cacheSuffix,
     ...cacheArgs,
   };
