@@ -3041,16 +3041,18 @@ test('package input fingerprint changes with the selected compiler bytes', async
   const first = fingerprint();
   writeFileSync(compilerPath, 'compiler two changed\n');
   assert.notEqual(fingerprint(), first);
-  for (const [path, contents, contract] of [
+  for (const [path, contents, contract, changesInput = true] of [
     [nativeExecutable, 'native compiler two\n', 'native compiler replacement'],
     [compilerHelper, 'native resolution helper two\n', 'executable-resolution helper replacement'],
-    [join(repoRoot, 'pnpm-lock.yaml'), 'external-types@2:\n', 'external declaration dependency-lock change'],
-    [join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\nnodeLinker: hoisted\n', 'package-manager policy change'],
+    // Installed compiler, runtime bytes and external declarations decide build
+    // freshness. Unapplied/unrelated policy changes are not consumed inputs.
+    [join(repoRoot, 'pnpm-lock.yaml'), 'external-types@2:\n', 'unrelated dependency-lock change', false],
+    [join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\nnodeLinker: hoisted\n', 'unapplied package-manager policy change', false],
     [outputScriptOwner, 'export const stagedManifest = 2;\n', 'staged manifest preparation owner replacement'],
   ]) await t.test(contract, () => {
     const before = fingerprint();
     writeFileSync(path, contents);
-    assert.notEqual(fingerprint(), before, contract);
+    assert.equal(fingerprint() !== before, changesInput, contract);
   });
 });
 

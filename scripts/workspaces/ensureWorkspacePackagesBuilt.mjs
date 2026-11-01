@@ -9,6 +9,8 @@ import { readBundledPluginPackageNames } from '../../apps/cli/scripts/build-owne
 
 import { buildIntoTempThenReplace } from '../../apps/stack/scripts/utils/fs/atomic_dir_swap.mjs';
 import { readCachedFileDigestSync } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
+import { readSourceRuntimeDependencyIdentity } from '../../apps/stack/scripts/build/source_author_inputs.mjs';
+import { collectExternalRuntimeDependencies } from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 export { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
@@ -583,10 +585,6 @@ export function readWorkspacePackageInputFingerprint({
   // The canonical selector's @typescript installation owns the actual native
   // executable and launcher helpers. Its launcher alone is not tool identity.
   const compilerInstallationDir = dirname(dirname(dirname(compilerPath)));
-  const dependencyLockRepoDir = coerceHappyMonorepoRootFromPath(packageDir) || identitySourceRepoDir;
-  const dependencyPolicyPaths = dependencyLockRepoDir
-    ? ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].map(name => join(dependencyLockRepoDir, name))
-    : [];
   const buildOwnerPaths = ['ensureWorkspacePackagesBuilt.mjs', 'buildTypeScriptPackageDist.mjs', 'workspaceOutputScriptArgs.mjs'].map(name => {
     const capturedPath = identitySourceRepoDir && join(identitySourceRepoDir, 'scripts/workspaces', name);
     return capturedPath && existsSync(capturedPath) ? capturedPath : fileURLToPath(new URL(`./${name}`, import.meta.url));
@@ -605,7 +603,6 @@ export function readWorkspacePackageInputFingerprint({
     compilerPath,
     compilerPackageJson,
     ...buildOwnerPaths,
-    ...dependencyPolicyPaths.filter(path => existsSync(path)),
   ])].sort((a, b) => identityPathFor(a) < identityPathFor(b) ? -1 : identityPathFor(a) > identityPathFor(b) ? 1 : 0);
   for (const path of paths) {
     const identityPath = identityPathFor(path);
@@ -613,6 +610,26 @@ export function readWorkspacePackageInputFingerprint({
   }
   hash.update(`compiler-installation:${identityPathFor(compilerInstallationDir)}\0`);
   digestDirectory(compilerInstallationDir, hash, { followSymlinks: true });
+  // Installation policy is not a package's dependency identity: unrelated UI
+  // lock/patch updates must not invalidate every workspace. Reuse the installed
+  // closure owner. Runtime dependencies consume bytes; development and peer
+  // dependencies supply declarations to this TypeScript compilation.
+  const resolveFrom = join(installedDependencyRepoDir && identitySourceRepoDir
+    ? remapPathToDirectory(packageDir, { sourceDir: identitySourceRepoDir, destinationDir: installedDependencyRepoDir })
+    : packageDir, 'package.json');
+  const runtimeDependencies = collectExternalRuntimeDependencies(packageJson)
+    .filter(dependency => !dependency.declaredSpec.startsWith('workspace:'));
+  const runtimeDependencyNames = new Set(runtimeDependencies.map(dependency => dependency.name));
+  const declarationDependencies = collectExternalRuntimeDependencies({
+    dependencies: { ...packageJson.peerDependencies, ...packageJson.devDependencies },
+  }).filter(dependency => !dependency.declaredSpec.startsWith('workspace:') && !runtimeDependencyNames.has(dependency.name));
+  for (const [dependencies, declarationsOnly] of [[runtimeDependencies, false], [declarationDependencies, true]]) {
+    hash.update(readSourceRuntimeDependencyIdentity({
+      imports: dependencies.map(dependency => ({ path: dependency.name, resolveFrom })),
+      declarationsOnly,
+      identityPathFor,
+    }));
+  }
   for (const dependencyDir of [...dependencyDirs].sort()) {
     const identityDependencyDir = identityRepoDir && identitySourceRepoDir
       ? remapPathToDirectory(dependencyDir, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : dependencyDir;

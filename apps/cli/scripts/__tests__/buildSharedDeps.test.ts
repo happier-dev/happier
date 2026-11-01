@@ -3717,6 +3717,90 @@ describe('buildSharedDeps', () => {
     }
   });
 
+  it('keeps source-dev publication current across Metro-only dependency refreshes and rebuilds only changed closure inputs', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-source-dev-dependency-closure-');
+    const names = ['leaf', 'consumer', 'unrelated'];
+    const packageNames = names.map((name) => `@happier-dev/${name}`);
+    const dirs = names.map((name) => writeWorkspacePackageFixture({
+      repoRoot, workspacePath: `packages/${name}`, packageName: `@happier-dev/${name}`,
+      manifestOverrides: name === 'consumer' ? { dependencies: { '@happier-dev/leaf': 'workspace:*' } }
+        : name === 'leaf' ? { dependencies: { 'fixture-runtime': '^1.0.0' },
+          devDependencies: { 'fixture-build-types': '1.0.0' } } : {},
+      files: { 'src/index.ts': 'export const value = 1;\n', 'tsconfig.json': '{}\n' },
+    }));
+    try {
+      const runtimeDir = join(repoRoot, 'node_modules/fixture-runtime');
+      mkdirSync(runtimeDir, { recursive: true });
+      writeFileSync(join(runtimeDir, 'package.json'), JSON.stringify({ name: 'fixture-runtime', version: '1.0.0', main: './index.js' }));
+      writeFileSync(join(runtimeDir, 'index.js'), 'module.exports = 1;\n');
+      const typesDir = join(repoRoot, 'node_modules/fixture-build-types');
+      const metroDir = join(repoRoot, 'node_modules/metro');
+      for (const [dir, manifest] of [
+        [typesDir, { name: 'fixture-build-types', dependencies: { metro: '1.0.0' } }],
+        [metroDir, { name: 'metro', version: '1.0.0' }],
+      ] as const) {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest));
+        writeFileSync(join(dir, 'index.js'), 'module.exports = 1;\n');
+      }
+      writeFileSync(join(typesDir, 'index.d.ts'), 'export declare const value: number;\n');
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: packageNames });
+      const compiled: string[] = [];
+      const buildOwner = createWorkspaceCompilerBoundary(repoRoot, packageNames, (dir, outDir) => {
+        compiled.push(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name as string);
+        writeFileSync(join(outDir, 'index.js'), readFileSync(join(dir, 'src/index.ts')));
+        writeFileSync(join(outDir, 'index.d.ts'), 'export declare const value: number;\n');
+      });
+      const sync = () => syncSharedDepsForSourceDev({
+        repoRoot, includeRuntimeDependencies: false,
+        ensureWorkspacePackagesBuiltByNameImpl: buildOwner,
+      });
+      await sync();
+      compiled.length = 0;
+      const outputIdentities = () => dirs.map((dir) => {
+        const info = statSync(join(dir, 'dist'));
+        return [info.ino, info.mtimeMs];
+      });
+      const published = outputIdentities();
+      mkdirSync(join(repoRoot, 'patches'), { recursive: true });
+      writeFileSync(join(repoRoot, 'patches/metro.patch'), 'Metro UI-only patch changed\n');
+      writeFileSync(join(metroDir, 'index.js'), 'module.exports = 2;\n');
+      writeFileSync(join(typesDir, 'index.d.ts'), 'export declare const value: number;\n');
+      writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# unrelated Metro patch refresh\n');
+      writeFileSync(join(repoRoot, 'pnpm-workspace.yaml'), `${FIXTURE_PNPM_WORKSPACE_YAML}\n# unrelated UI workspace wiring\n`);
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+      expect(outputIdentities()).toEqual(published);
+      expect(inspectSourceDevSharedDepsForSourceDev({ repoRoot, includeRuntimeDependencies: false }).current).toBe(true);
+
+      writeFileSync(join(runtimeDir, 'index.js'), 'module.exports = 2;\n');
+      expect(await sync()).toEqual({ synced: true, stamped: true });
+      expect(compiled).toEqual(['@happier-dev/leaf']);
+      compiled.length = 0;
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+
+      writeFileSync(join(typesDir, 'index.d.ts'), 'export declare const value: string;\n');
+      expect(await sync()).toEqual({ synced: true, stamped: true });
+      expect(compiled).toEqual(['@happier-dev/leaf']);
+      compiled.length = 0;
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+
+      const nextRuntimeDir = join(repoRoot, 'installed-runtime-next');
+      mkdirSync(nextRuntimeDir);
+      writeFileSync(join(nextRuntimeDir, 'package.json'), JSON.stringify({ name: 'fixture-runtime', version: '1.0.1', main: './index.js' }));
+      writeFileSync(join(nextRuntimeDir, 'index.js'), 'module.exports = 2;\n');
+      rmSync(runtimeDir, { recursive: true });
+      symlinkSync(nextRuntimeDir, runtimeDir, process.platform === 'win32' ? 'junction' : 'dir');
+      expect(await sync()).toEqual({ synced: true, stamped: true });
+      expect(compiled).toEqual(['@happier-dev/leaf']);
+      compiled.length = 0;
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+    } finally { cleanup(); }
+  });
+
   it('prepares newly invalidated declaration dependents in one watch sync without rebuilding unrelated plugins', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-watch-dependent-');
     const names = ['leaf', 'consumer', 'plugins-unrelated'];

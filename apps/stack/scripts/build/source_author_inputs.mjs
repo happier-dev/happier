@@ -19,12 +19,15 @@ export function readSourceAuthorDependencyIdentity({ sourceRepoDir, repoDir, wor
 
 /** External imports emitted by the runtime select its installed package closure.
  * Reuse the author producer's file identity, but omit compiler/ambient lookup
- * roots: those are build inputs, not dependencies of an already emitted CLI. */
-export function readSourceRuntimeDependencyIdentity({ imports, signal }) {
-  return readInstalledDependencyIdentity({ runtimeImports: imports, signal });
+ * roots: those are build inputs, not dependencies of an already emitted CLI.
+ * Package compilation also uses this closure's declaration-only projection
+ * for development/peer inputs, without treating their JS tooling as runtime. */
+export function readSourceRuntimeDependencyIdentity({ imports, declarationsOnly = false, identityPathFor, signal }) {
+  return readInstalledDependencyIdentity({ runtimeImports: imports, declarationsOnly, identityPathFor, signal });
 }
 
-function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePackages = new Map(), compilerPath, runtimeImports, signal }) {
+function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePackages = new Map(), compilerPath, runtimeImports,
+  declarationsOnly = false, identityPathFor = path => path, signal }) {
   const hash = createHash('sha256');
   const visited = new Set();
   const moduleRoots = new Set();
@@ -32,15 +35,15 @@ function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePack
   const workspaceNames = new Set(workspacePackages.keys());
   const entries = directory => existsSync(directory)
     ? readdirSync(directory, {withFileTypes:true}).sort((a,b) => a.name.localeCompare(b.name)) : [];
-  const file = path => {
+  const file = (path, identityPath = identityPathFor(path)) => {
     const info = statSync(path, {bigint:true});
     // Author builds retain their metadata proof. Runtime freshness compares
     // content: pnpm can change shared-file ctimes during unrelated workspace
     // wiring. The digest owner uses metadata only to reuse unchanged digests.
     const identity = runtimeImports ? readCachedFileDigestSync(path, info) : fileDigestMetadataIdentity(info);
-    hash.update(JSON.stringify([path, String(info.mode), identity]));
+    hash.update(JSON.stringify([identityPath, String(info.mode), identity]));
   };
-  const directory = path => {
+  const directory = (path, identityPath = identityPathFor(path)) => {
     signal?.throwIfAborted();
     const physical = realpathSync(path);
     if (visited.has(physical)) return;
@@ -48,19 +51,21 @@ function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePack
     for (const entry of entries(physical)) {
       const child = join(physical, entry.name);
       if (entry.name === 'node_modules') { if (!runtimeImports) modules(child); continue; }
-      if (entry.isSymbolicLink()) hash.update(JSON.stringify([child, readlinkSync(child)]));
+      if (!declarationsOnly && entry.isSymbolicLink()) hash.update(JSON.stringify([identityPathFor(child), readlinkSync(child)]));
       const info = entry.isSymbolicLink() ? statSync(child) : entry;
-      if (info.isDirectory()) directory(child);
-      else if (info.isFile()) file(child);
+      const childIdentityPath = declarationsOnly ? join(identityPath, entry.name) : identityPathFor(child);
+      if (info.isDirectory()) directory(child, childIdentityPath);
+      else if (info.isFile() && (!declarationsOnly || /\.(?:ts|tsx|mts|cts|json)$/.test(entry.name))) file(child, childIdentityPath);
     }
   };
-  const installedPackage = (name, path) => {
+  const installedPackage = (name, path, logicalPath = name) => {
     if (workspaceNames.has(name) || isInternalWorkspacePackageName(name)) return;
     const physical = realpathSync(path);
-    // Include resolution topology even when two public links share one tree.
-    hash.update(JSON.stringify([path, physical]));
+    // Runtime consumes physical topology. Declaration inputs use logical edges:
+    // a pnpm JS-only patch can relocate an otherwise identical type package.
+    hash.update(JSON.stringify(declarationsOnly ? [logicalPath] : [identityPathFor(path), identityPathFor(physical)]));
     if (visited.has(physical)) return;
-    directory(physical);
+    directory(physical, declarationsOnly ? logicalPath : identityPathFor(physical));
     if (runtimeImports) {
       const packageJsonPath = join(physical, 'package.json');
       const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
@@ -73,10 +78,10 @@ function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePack
           installed = resolveInstalledRuntimePackage({ packageName: dependency.name, resolveFromPackageJsonPath: packageJsonPath });
         } catch (error) {
           if (!dependency.optional || error.code !== 'MODULE_NOT_FOUND') throw error;
-          hash.update(JSON.stringify([physical, dependency.name, 'absent']));
+          hash.update(JSON.stringify([declarationsOnly ? logicalPath : identityPathFor(physical), dependency.name, 'absent']));
           continue;
         }
-        installedPackage(dependency.name, installed.packageDir);
+        installedPackage(dependency.name, installed.packageDir, join(logicalPath, 'node_modules', dependency.name));
       }
       return;
     }
@@ -110,10 +115,10 @@ function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePack
         try { installed = resolveInstalledRuntimePackage({ packageName: name, resolveFromPackageJsonPath: resolveFrom }); }
         catch (error) {
           if (error.code !== 'MODULE_NOT_FOUND') throw error;
-          hash.update(JSON.stringify([resolveFrom, path, 'absent']));
+          hash.update(JSON.stringify([identityPathFor(resolveFrom), path, 'absent']));
           continue;
         }
-        installedPackage(name, installed.packageDir);
+        installedPackage(name, installed.packageDir, `${identityPathFor(resolveFrom)}:${path}`);
         continue;
       }
       // A removed import must refuse rather than accidentally inventorying an

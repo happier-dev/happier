@@ -554,6 +554,22 @@ whole V8 Script source strings for Unicode comments or raw template text. esbuil
 does not escape Unicode regular-expression literals; first-party regex owners
 use equivalent Unicode escapes to keep those source graphs Latin-1-safe.
 
+Checkout source-dev Agent launches prepare shared dependencies through
+`syncSharedDepsForDev.mjs`'s canonical publisher, sharing its publication lock
+with Stack preparation and bundled Plugin runtime loading. A stale checkout
+starts publication or waits for the publisher already running; a read-only
+inspection cannot leave the spawn waiting for an unscheduled producer.
+The preflight adds no default process, lock or package-build deadline ahead of
+that owner. Cancellation and explicit caller overrides remain available.
+
+Workspace package fingerprints consume their installed runtime dependency bytes,
+compiler installation and workspace/external type inputs through the existing
+installed-input identity owner. The complete lockfile and workspace policy file
+are installation inputs, rather than inputs to every package build. External
+development and peer dependencies contribute TypeScript and JSON inputs through
+logical dependency paths, so a pnpm JavaScript-only patch relocation with
+identical type inputs does not rebuild unrelated packages.
+
 Retained source daemon bundles also compile bundled Plugin UI graphs through
 `prepareSourcePluginUiArtifacts.mjs`, the same SDK compiler/inventory owner used
 by native CLI construction. The generated manifests and complete file sets live
@@ -724,6 +740,15 @@ mutation; their existing supervisor resumes them when mutation completes.
 A pending start or foreign Stack's Expo consumer blocks mutation: development warns and continues with installed
 bytes, retrying on the next input change or startup. Explicit skip/disable refresh
 flags and service-mode refresh permission retain their existing semantics.
+A reader waits for an active installer through the existing dependency lock.
+A failed install leaves the readiness marker unchanged and records its safe pnpm
+error code on that attempt. Later readers receive the same typed installation
+failure with its fix-and-retry instruction, rather than a generic unfinished
+installation refusal. A successful retry settles the attempt and publishes
+readiness; a failed attempt never certifies possibly partial installed bytes.
+An interrupted writer without a recorded failure reports the existing unfinished
+installation error with the same preparation remedy.
+
 In 0.3 development, `hstack dev` admits each component's runnable last-green
 output before refreshing current inputs, including with `--no-watch` (one
 background refresh). Server-only admission validates only the server's retained
