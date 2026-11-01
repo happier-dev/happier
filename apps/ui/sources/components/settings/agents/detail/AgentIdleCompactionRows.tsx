@@ -43,13 +43,13 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
+import { formatMachineDuration } from '@/components/machines/durationWords';
 import { formatTokenCountLong } from '@/utils/format/usageNumbers';
 import { AGENT_SETTINGS } from '../agentsSettings';
 import { useAgentPreferenceWriter } from '../useAgentPreferenceWriter';
 
 const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
 
 /** The documented windows (C7 vendor facts), shortest first; the UI never writes its own list. */
 const CACHE_WINDOW_PRESETS_MS: readonly number[] = [
@@ -111,16 +111,6 @@ function honoursMinimum(
     idle?.mode === 'host' ||
     (idle?.mode === 'native' && idle.nativeHonorsMinimum === true)
   );
-}
-
-function formatCacheWindow(ms: number): string {
-  const hours = ms % HOUR_MS === 0;
-  return new Intl.NumberFormat(getPreferredLanguage(), {
-    style: 'unit',
-    unit: hours ? 'hour' : 'minute',
-    unitDisplay: 'long',
-    maximumFractionDigits: 2,
-  }).format(hours ? ms / HOUR_MS : ms / MINUTE_MS);
 }
 
 /** Digits with the reader's grouping marks; anything else is not a count. */
@@ -268,7 +258,7 @@ export const AgentIdleCompactionRows = React.memo(
     const windowLabel =
       preference.cacheWindowOverrideMs === undefined
         ? t('settingsAgents.idleCompaction.cacheWindowAutomatic')
-        : formatCacheWindow(preference.cacheWindowOverrideMs);
+        : formatMachineDuration(preference.cacheWindowOverrideMs);
     const summary = [
       showMinimum
         ? preference.minContextTokens
@@ -319,7 +309,8 @@ export const AgentIdleCompactionRows = React.memo(
                   {...state.headerProps}
                   testID="settings.agents.detail.idleCompaction.when.header"
                   title={t('settingsAgents.idleCompaction.whenTitle')}
-                  detail={summary}
+                  // Open, the values sit right below; the header doesn't repeat them.
+                  detail={state.expanded ? undefined : summary}
                 />
               )}
             >
@@ -383,6 +374,8 @@ const IdleCompactionMinimumRow = React.memo(function IdleCompactionMinimumRow(
   };
   const title = t('settingsAgents.idleCompaction.minContextTokens');
   const hasDefault = props.declaredDefault !== undefined;
+  // "No minimum" reads as a word, never "No minimum tokens": the unit shows only beside a number.
+  const unitShown = hasDefault || props.stored !== undefined || (draft ?? '') !== '';
   return (
     <SettingAnchor
       setting={AGENT_SETTINGS.settings['idleCompaction.minContextTokens']}
@@ -397,9 +390,7 @@ const IdleCompactionMinimumRow = React.memo(function IdleCompactionMinimumRow(
           <SchemaFieldValueSlot
             kind="number"
             unit={
-              hasDefault || props.stored !== undefined || (draft ?? '') !== ''
-                ? t('settingsAgents.idleCompaction.tokensUnit')
-                : undefined
+              unitShown ? t('settingsAgents.idleCompaction.tokensUnit') : undefined
             }
           >
             <SchemaFieldControl
@@ -407,7 +398,9 @@ const IdleCompactionMinimumRow = React.memo(function IdleCompactionMinimumRow(
               inputProps={{
                 testID:
                   'settings.agents.detail.idleCompaction.minContextTokens.input',
-                accessibilityLabel: title,
+                accessibilityLabel: unitShown
+                  ? `${title}, ${t('settingsAgents.idleCompaction.tokensUnit')}`
+                  : title,
                 value: draft ?? shown,
                 placeholder: hasDefault
                   ? formatTokenCountLong(props.declaredDefault!)
@@ -464,14 +457,11 @@ const IdleCompactionWindowRow = React.memo(function IdleCompactionWindowRow(
         id: AUTOMATIC_ID,
         category: 'automatic',
         title: t('settingsAgents.idleCompaction.cacheWindowAutomatic'),
-        subtitle: t(
-          'settingsAgents.idleCompaction.cacheWindowAutomaticSubtitle',
-        ),
       },
       ...CACHE_WINDOW_PRESETS_MS.map((ms) => ({
         id: String(ms),
         category: 'documented',
-        title: formatCacheWindow(ms),
+        title: formatMachineDuration(ms),
       })),
       {
         id: CUSTOM_ID,

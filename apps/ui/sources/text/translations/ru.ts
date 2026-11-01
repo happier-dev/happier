@@ -5809,7 +5809,6 @@ export const ru: TranslationStructure = {
       cacheWindowOverrideMs: 'Окно кеша',
       cacheWindowDescription: '«Автоматически» следует за провайдером. Выбранное вами окно заменяет его.',
       cacheWindowAutomatic: 'Автоматически',
-      cacheWindowAutomaticSubtitle: 'Использует окно, которое сообщает провайдер',
       cacheWindowCustom: 'Своё',
       cacheWindowCustomOption: 'Своё…',
       minutesUnit: 'минут',

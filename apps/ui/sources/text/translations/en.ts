@@ -7218,7 +7218,6 @@ const enSettingsAgents = {
     cacheWindowOverrideMs: 'Cache window',
     cacheWindowDescription: 'Automatic follows the provider. A window you pick overrides it.',
     cacheWindowAutomatic: 'Automatic',
-    cacheWindowAutomaticSubtitle: 'Uses the window the provider reports',
     cacheWindowCustom: 'Custom',
     cacheWindowCustomOption: 'Custom…',
     minutesUnit: 'minutes',

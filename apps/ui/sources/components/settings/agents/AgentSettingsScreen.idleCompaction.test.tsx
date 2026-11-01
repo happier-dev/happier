@@ -145,6 +145,9 @@ describe('Session defaults · Compact while idle', () => {
     );
     expect(field?.props.value).toBe('');
     expect(field?.props.placeholder).toBe('200,000');
+    expect(field?.props.accessibilityLabel).toBe('Minimum conversation size, tokens');
+    // Open, the values sit below; the header no longer repeats them.
+    expect(screen.getTextContent()).not.toContain('Over 200,000 tokens');
 
     const before = settingsWrites();
     await act(async () => {
@@ -162,7 +165,6 @@ describe('Session defaults · Compact while idle', () => {
       expect(stored().minimum[CLAUDE]).toBe(150_000),
     );
     expect(settingsWrites()).toBe(before + 1);
-    expect(screen.getTextContent()).toContain('Over 150,000 tokens');
 
     // Clearing resets this Agent's field: the entry goes, nothing is stored as null.
     await commitField(
@@ -173,7 +175,6 @@ describe('Session defaults · Compact while idle', () => {
     await waitForHomeGovernance(() =>
       expect(Object.hasOwn(stored().minimum, CLAUDE)).toBe(false),
     );
-    expect(screen.getTextContent()).toContain('Over 200,000 tokens');
 
     // A count it can't read is put back, with no write.
     const beforeInvalid = settingsWrites();
@@ -266,7 +267,13 @@ describe('Session defaults · Compact while idle', () => {
       expect(stored().window[EXTERNAL]).toBe(2_700_000),
     );
     expect(settingsWrites()).toBe(before + 2);
-    expect(screen.getTextContent()).toContain('45 minutes');
+    // The shared duration wording, and one string per thought: Automatic carries no subtitle.
+    const menuItems = screen.findAllByType(DropdownMenu)[0]!.props.items as readonly { title: string; subtitle?: string }[];
+    expect(menuItems.map((item) => item.title)).toEqual(['Automatic', '5 min', '30 min', '1 h', 'Custom…']);
+    expect(menuItems.every((item) => item.subtitle === undefined)).toBe(true);
+    await screen.pressByTestIdAsync('settings.agents.detail.idleCompaction.when.header');
+    expect(screen.getTextContent()).toContain('Any size · 45 min');
+    await screen.pressByTestIdAsync('settings.agents.detail.idleCompaction.when.header');
 
     await chooseWindow(screen, 'automatic');
     await waitForHomeGovernance(() =>

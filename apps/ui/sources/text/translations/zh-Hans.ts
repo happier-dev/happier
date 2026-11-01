@@ -5797,7 +5797,6 @@ export const zhHans: TranslationStructure = {
       cacheWindowOverrideMs: '缓存时长',
       cacheWindowDescription: '“自动”跟随提供商。你选择的时长会覆盖它。',
       cacheWindowAutomatic: '自动',
-      cacheWindowAutomaticSubtitle: '使用提供商报告的时长',
       cacheWindowCustom: '自定义',
       cacheWindowCustomOption: '自定义…',
       minutesUnit: '分钟',

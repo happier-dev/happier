@@ -5072,7 +5072,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             cacheWindowOverrideMs: '快取時長',
             cacheWindowDescription: '「自動」跟隨供應商。你選擇的時長會覆寫它。',
             cacheWindowAutomatic: '自動',
-            cacheWindowAutomaticSubtitle: '使用供應商回報的時長',
             cacheWindowCustom: '自訂',
             cacheWindowCustomOption: '自訂…',
             minutesUnit: '分鐘',

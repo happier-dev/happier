@@ -6394,7 +6394,6 @@ localTailscale: {
           cacheWindowOverrideMs: 'キャッシュ期間',
           cacheWindowDescription: '自動はプロバイダーに従います。選んだ期間がそれに優先します。',
           cacheWindowAutomatic: '自動',
-          cacheWindowAutomaticSubtitle: 'プロバイダーが報告する期間を使います',
           cacheWindowCustom: 'カスタム',
           cacheWindowCustomOption: 'カスタム…',
           minutesUnit: '分',
