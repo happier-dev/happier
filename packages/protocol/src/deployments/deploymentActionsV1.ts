@@ -362,7 +362,7 @@ export const DeploymentEnvironmentDeleteResultV1Schema = lazyZodSchema(() => z.u
 export type DeploymentTargetUnlinkResultV1 = z.infer<typeof DeploymentTargetUnlinkResultV1Schema>;
 export type DeploymentEnvironmentDeleteResultV1 = z.infer<typeof DeploymentEnvironmentDeleteResultV1Schema>;
 export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject(result), DeploymentActionFailureV1Schema,
+  z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentTargetLinkAlreadyLinkedResultV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false), error: z.literal('provider_scope_already_linked'),
