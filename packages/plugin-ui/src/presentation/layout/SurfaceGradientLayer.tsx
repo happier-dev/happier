@@ -2,6 +2,7 @@ import { useId } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import { Svg, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import type { HappierSurfaceGradient } from './material.js';
+import { happierSvgGradientStop } from './svgGradientStop.js';
 
 /** One native paint layer. Web draws the same stops on its existing surface element. */
 export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: HappierSurfaceGradient | null; underlay?: HappierSurfaceGradient | null; borderRadius?: number }>) {
@@ -9,7 +10,7 @@ export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: Happier
   if (Platform.OS === 'web' || (!props.gradient && !props.underlay)) return null;
   const paints = [props.underlay, props.gradient].filter((gradient): gradient is HappierSurfaceGradient => Boolean(gradient));
   const radius = props.borderRadius ?? 0;
-  const stops = (gradient: HappierSurfaceGradient) => gradient.colors.map((color, index) => <Stop key={index} offset={gradient.locations?.[index] ?? index / (gradient.colors.length - 1)} stopColor={color} />);
+  const stops = (gradient: HappierSurfaceGradient) => gradient.colors.map((color, index) => <Stop key={index} offset={gradient.locations?.[index] ?? index / (gradient.colors.length - 1)} {...happierSvgGradientStop(color)} />);
   const full = paints.filter(gradient => !gradient.band);
   return <>
     {full.length > 0 ? <Svg pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFillObject} width="100%" height="100%">
