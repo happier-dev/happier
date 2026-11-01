@@ -1,16 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storage } from '@/sync/domains/state/storage';
-
-const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'active-server' })));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    subscribeActiveServer: () => () => {},
-    getActiveServerSnapshot: () => getActiveServerSnapshotMock(),
-}));
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 const initialState = storage.getState();
+const activeServerId = getActiveServerSnapshot().serverId;
+const ownerServerId = activeServerId + '-owner';
 
 function createSession(id: string, serverId?: string) {
     return {
@@ -40,8 +36,6 @@ function createRenderableSession(id: string, serverId: string) {
 
 describe('resolvePreferredServerIdForSessionId', () => {
     beforeEach(() => {
-        getActiveServerSnapshotMock.mockReset();
-        getActiveServerSnapshotMock.mockReturnValue({ serverId: 'active-server' });
         storage.setState(initialState, true);
     });
 
@@ -50,7 +44,7 @@ describe('resolvePreferredServerIdForSessionId', () => {
     });
 
     it('prefers the locally resolved owning server for a known session', async () => {
-        const session = createSession('session-1', 'owner-server');
+        const session = createSession('session-1', ownerServerId);
         storage.setState((state) => ({
             ...state,
             sessions: {
@@ -60,17 +54,17 @@ describe('resolvePreferredServerIdForSessionId', () => {
             // is projected there. Duplicating it under the focused Home would be
             // the two-Home collision the fail-closed case below covers.
             sessionListRowsByServerId: {
-                'owner-server': {
-                    'session-1': createRenderableSession('session-1', 'owner-server'),
+                [ownerServerId]: {
+                    'session-1': createRenderableSession('session-1', ownerServerId),
                 },
             },
-            ordinarySessionListMembershipByServerId: { 'owner-server': ['session-1'] },
+            ordinarySessionListMembershipByServerId: { [ownerServerId]: ['session-1'] },
             sessionListIndexByServerId: {
-                'owner-server': [
+                [ownerServerId]: [
                     {
                         type: 'session',
                         sessionId: 'session-1',
-                        serverId: 'owner-server',
+                        serverId: ownerServerId,
                         serverName: 'Owner',
                     },
                 ],
@@ -80,25 +74,25 @@ describe('resolvePreferredServerIdForSessionId', () => {
 
         const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
 
-        expect(resolvePreferredServerIdForSessionId('session-1')).toBe('owner-server');
+        expect(resolvePreferredServerIdForSessionId('session-1')).toBe(ownerServerId);
     });
 
-    it('falls back to the active server when the owning server is unknown', async () => {
+    it('resolves ordinary Home membership without a hydrated Session', async () => {
         storage.setState((state) => ({
             ...state,
             sessions: {},
             sessionListRowsByServerId: {
-                'active-server': {
-                    'session-1': createRenderableSession('session-1', 'active-server'),
+                [activeServerId]: {
+                    'session-1': createRenderableSession('session-1', activeServerId),
                 },
             },
-            ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
+            ordinarySessionListMembershipByServerId: { [activeServerId]: ['session-1'] },
             sessionListIndexByServerId: {
-                'active-server': [
+                [activeServerId]: [
                     {
                         type: 'session',
                         sessionId: 'session-1',
-                        serverId: 'active-server',
+                        serverId: activeServerId,
                         serverName: 'Active',
                     },
                 ],
@@ -108,7 +102,7 @@ describe('resolvePreferredServerIdForSessionId', () => {
 
         const { resolvePreferredServerIdForSessionId } = await import('./resolvePreferredServerIdForSessionId');
 
-        expect(resolvePreferredServerIdForSessionId('session-1')).toBe('active-server');
+        expect(resolvePreferredServerIdForSessionId('session-1')).toBe(activeServerId);
     });
 
     it('ignores a stale canonical row without authoritative membership', async () => {
@@ -116,8 +110,8 @@ describe('resolvePreferredServerIdForSessionId', () => {
             ...state,
             sessions: {},
             sessionListRowsByServerId: {
-                'active-server': {
-                    'session-1': createRenderableSession('session-1', 'active-server'),
+                [activeServerId]: {
+                    'session-1': createRenderableSession('session-1', activeServerId),
                 },
             },
             ordinarySessionListMembershipByServerId: {},
@@ -134,26 +128,26 @@ describe('resolvePreferredServerIdForSessionId', () => {
         storage.setState((state) => ({
             ...state,
             sessions: {
-                'session-1': createSession('session-1', 'active-server'),
+                'session-1': createSession('session-1', activeServerId),
             },
             sessionListRowsByServerId: {
-                'active-server': {
-                    'session-1': createRenderableSession('session-1', 'active-server'),
+                [activeServerId]: {
+                    'session-1': createRenderableSession('session-1', activeServerId),
                 },
-                'owner-server': {
-                    'session-1': createRenderableSession('session-1', 'owner-server'),
+                [ownerServerId]: {
+                    'session-1': createRenderableSession('session-1', ownerServerId),
                 },
             },
             ordinarySessionListMembershipByServerId: {
-                'active-server': ['session-1'],
-                'owner-server': ['session-1'],
+                [activeServerId]: ['session-1'],
+                [ownerServerId]: ['session-1'],
             },
             sessionListIndexByServerId: {
-                'active-server': [
+                [activeServerId]: [
                     {
                         type: 'session',
                         sessionId: 'session-1',
-                        serverId: 'active-server',
+                        serverId: activeServerId,
                         serverName: 'Active',
                     },
                 ],
@@ -171,7 +165,7 @@ describe('resolvePreferredServerIdForSessionId', () => {
             ...state,
             sessions: {},
             sessionListIndexByServerId: {
-                'active-server': [],
+                [activeServerId]: [],
             },
             concurrentSessionListCacheByServerId: {},
         }), true);

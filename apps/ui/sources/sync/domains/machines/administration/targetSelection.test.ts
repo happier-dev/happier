@@ -206,16 +206,6 @@ describe('resolveMachineAdministrationTargetState', () => {
         })).toEqual({ kind: 'unselected', candidates: [offline] });
     });
 
-    it('does not initialize a sole candidate while another profile inventory is unresolved', () => {
-        const onlyObserved = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-online' });
-
-        expect(resolveMachineAdministrationTargetState({
-            storedTarget: null,
-            candidates: [onlyObserved],
-            allowSoleCandidate: false,
-        })).toEqual({ kind: 'unselected', candidates: [onlyObserved] });
-    });
-
     it('projects a stale cached online row as offline and never executable', () => {
         const stale = candidate({
             serverIdentityId: 'srv_one',

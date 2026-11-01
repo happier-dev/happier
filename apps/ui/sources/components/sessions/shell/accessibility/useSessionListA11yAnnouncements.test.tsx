@@ -161,7 +161,7 @@ describe('useSessionListA11yAnnouncements', () => {
         hook.getCurrent().announceSelectionCount({ count: 3 });
 
         expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
-            expect.stringContaining('sessionsList.selectionA11ySelectedCount'),
+            'sessionsList.selectionA11ySelectedCount:{"count":3}',
         );
     });
 });

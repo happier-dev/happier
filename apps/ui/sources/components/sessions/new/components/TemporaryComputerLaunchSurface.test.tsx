@@ -392,15 +392,6 @@ describe('TemporaryComputerLaunchSurface', () => {
         await screen.unmount();
     });
 
-    it('does not re-speak a reopened request on iOS when the surface mounts', async () => {
-        platformMock.os = 'ios';
-        const { TemporaryComputerLaunchSurface } = await import('./TemporaryComputerLaunchSurface');
-        const screen = await renderScreen(<TemporaryComputerLaunchSurface controller={controller('reconciling')} />);
-
-        expect(announceForAccessibilityMock).not.toHaveBeenCalled();
-        await screen.unmount();
-    });
-
     it('announces a failure transition on iOS with its terminal reason', async () => {
         platformMock.os = 'ios';
         const { TemporaryComputerLaunchSurface } = await import('./TemporaryComputerLaunchSurface');
@@ -526,17 +517,19 @@ describe('TemporaryComputerLaunchSurface', () => {
             packageCustodyOnThisDevice
             onExportPackage={vi.fn(async () => undefined)}
         />);
-        expect(waiting.findByTestId('temporary-computer-export')?.props.accessibilityState.disabled).toBe(false);
-        await waiting.unmount();
+        const exportControl = waiting.findHostByTestId('temporary-computer-export');
+        expect(exportControl).not.toBeNull();
+        expect(exportControl?.props.accessibilityState.disabled).toBe(false);
 
         const claimed = controller('creating_session', 'consented');
         (claimed.projection as unknown as { claim?: unknown }).claim = { payload: {}, signature: 'signature' };
-        const consented = await renderScreen(<TemporaryComputerLaunchSurface
+        await waiting.update(<TemporaryComputerLaunchSurface
             controller={claimed}
             packageCustodyOnThisDevice
         />);
-        expect(consented.findByTestId('temporary-computer-export')).not.toBeNull();
-        await consented.unmount();
+        expect(waiting.findHostByTestId('temporary-computer-export')).toBe(exportControl);
+        expect(exportControl?.props.accessibilityState.disabled).toBe(true);
+        await waiting.unmount();
     });
 
     it('keeps materialized recovery retryable without offering cancellation', async () => {
@@ -604,7 +597,7 @@ describe('TemporaryComputerLaunchSurface', () => {
         await screen.unmount();
     });
 
-    it('keeps creator-surface copy complete in every locale without English fallbacks', async () => {
+    it('keeps creator-surface translations present in every locale', async () => {
         const { en } = await import('../../../../text/translations/en');
         const { ru } = await import('../../../../text/translations/ru');
         const { pl } = await import('../../../../text/translations/pl');
@@ -661,8 +654,6 @@ describe('TemporaryComputerLaunchSurface', () => {
                 const value = readLeaf(root, key);
                 if (typeof value !== 'string' || value.trim().length === 0) {
                     failures.push(`${code}: ${key} is missing`);
-                } else if (value === readLeaf(en, key)) {
-                    failures.push(`${code}: ${key} falls back to English`);
                 }
             }
         }

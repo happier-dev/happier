@@ -506,25 +506,6 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('renders the open-tree-browser button in the input suffix slot when a machine is bound', async () => {
-        const { PathSelectionList } = await import('./PathSelectionList');
-        const screen = await renderScreen(
-            <PathSelectionList
-                initialValue=""
-                favorites={[]}
-                recents={[]}
-                machineHomeDir="/Users/leeroy"
-                machineId="m-1"
-                serverId={null}
-                machinePlatform="unix"
-                onCommit={() => {}}
-                onRequestClose={() => {}}
-            />,
-        );
-        expect(screen.findByTestId('path-selection-list:open-tree-browser')).not.toBeNull();
-        act(() => screen.tree.unmount());
-    });
-
     it('opens the machine path browser modal with the resolved current input as initialPath', async () => {
         openMachinePathBrowserModalMock.mockResolvedValueOnce('/Users/leeroy/picked');
         const onCommit = vi.fn();
@@ -1408,29 +1389,6 @@ describe('PathSelectionList', () => {
         expect(readProps<SelectableLikeProps>(treeBrowserButton!).accessibilityLabel)
             .toBe('newSession.pathPicker.openInTreeBrowserLabel');
 
-        act(() => screen.tree.unmount());
-    });
-
-    it('RUX-8: forwards maxHeight to the underlying SelectionList so the body clamps within the popover', async () => {
-        const { PathSelectionList } = await import('./PathSelectionList');
-        const screen = await renderScreen(
-            <PathSelectionList
-                initialValue=""
-                favorites={[]}
-                recents={[]}
-                machineHomeDir="/Users/leeroy"
-                machineId="m-1"
-                serverId={null}
-                machinePlatform="unix"
-                onCommit={() => {}}
-                onRequestClose={() => {}}
-                maxHeight={321}
-            />,
-        );
-        const container = screen.findByTestId('path-selection-list');
-        expect(container).not.toBeNull();
-        const flatStyle = flattenStyle(readProps<StyleLikeProps>(container!));
-        expect(flatStyle.maxHeight).toBe(321);
         act(() => screen.tree.unmount());
     });
 

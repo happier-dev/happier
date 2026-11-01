@@ -519,35 +519,6 @@ describe('prompt invocation selection characterization (D-20)', () => {
     beforeEach(seedPromptInvocationDocument);
     afterEach(disposePromptInvocationDocument);
 
-    it('rewrites the whole input, not just the token, for an insert-behavior invocation', async () => {
-        const result = await applySlashCommandSelection({
-            promptInvocation: {
-                invocationId: 'tmpl_1',
-                token: '/qa',
-                targetArtifactId: promptArtifactId,
-                behavior: 'insert',
-                allowArgs: false,
-            },
-            inputText: 'before /qa after',
-            selection: { start: 10, end: 10 },
-            activeWord: { offset: 7, endOffset: 10 },
-        });
-
-        expect(result).toEqual({
-            handled: true,
-            text: 'before Run QA now after',
-            cursorPosition: 17,
-        });
-    });
-
-    it('declines to handle a suggestion without a prompt invocation', async () => {
-        await expect(applySlashCommandSelection({
-            inputText: 'before /qa after',
-            selection: { start: 10, end: 10 },
-            activeWord: { offset: 7, endOffset: 10 },
-        })).resolves.toEqual({ handled: false });
-    });
-
     it('declines to handle an insert_and_send invocation at selection time', async () => {
         await expect(applySlashCommandSelection({
             promptInvocation: {

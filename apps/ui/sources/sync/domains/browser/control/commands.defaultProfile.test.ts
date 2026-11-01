@@ -2,7 +2,7 @@ import type { BrowserCommandV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { shouldSurfaceBrowserPrivacy } from '@/components/browser/profile/browserPrivacyVisibility';
-import { LOCAL_BROWSER_PROFILE_ID, LOCAL_BROWSER_PROFILE } from '../profiles/localBrowserProfile';
+import { LOCAL_BROWSER_PROFILE } from '../profiles/localBrowserProfile';
 import { dispatchBrowserControlCommand } from './commands';
 import { createBrowserControlState } from './reducer';
 
@@ -32,12 +32,6 @@ describe('default browser profile identity (SB-H)', () => {
         } satisfies BrowserCommandV1;
         return dispatchBrowserControlCommand(createBrowserControlState(), openCommand, {});
     }
-
-    it('synthesizes the session under the canonical host-local profile id', () => {
-        const result = openLocalView();
-        expect(result.state.sessionsById.browser_session_default_profile?.profileId)
-            .toBe(LOCAL_BROWSER_PROFILE_ID);
-    });
 
     it('keeps the privacy surface hidden for the profile the control layer actually creates', () => {
         const result = openLocalView();

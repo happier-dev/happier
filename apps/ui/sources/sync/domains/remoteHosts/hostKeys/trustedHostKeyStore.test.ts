@@ -50,6 +50,19 @@ describe('remote host trusted host-key store', () => {
             remoteHostId: 'remote-1',
             nowMs: 100,
         });
+        store.trust({
+            host: 'example.test', port: 22, algorithm: 'ssh-ed25519',
+            fingerprintSha256: 'SHA256:port', nowMs: 200,
+        });
+        store.trust({
+            host: 'example.test', port: 2222, algorithm: 'ssh-rsa',
+            fingerprintSha256: 'SHA256:algorithm', nowMs: 300,
+        });
+
+        expect(store.get({ host: 'example.test', port: 22, algorithm: 'ssh-ed25519' }))
+            .toMatchObject({ fingerprintSha256: 'SHA256:port' });
+        expect(store.get({ host: 'example.test', port: 2222, algorithm: 'ssh-rsa' }))
+            .toMatchObject({ fingerprintSha256: 'SHA256:algorithm' });
 
         expect(store.get({
             host: 'example.TEST',

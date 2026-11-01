@@ -120,8 +120,13 @@ describe('chunkedBridge', () => {
         }
     });
 
-    it('rejects chunk envelopes that declare too many parts', () => {
-        expect(() =>
+    it('rejects excessive chunk counts without evicting an admitted assembly', () => {
+        const envelope = { v: 1 as const, type: 'doc', payload: { doc: 'keep this assembly' } };
+        const chunks = encodeChunkedEnvelope({ envelope, maxChunkBytes: 16, messageId: 'preserved' });
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(decodeChunkedEnvelope({ message: chunks[0]!, maxPendingMessages: 1, nowMs: 0 })).toBeNull();
+
+        expect(
             decodeChunkedEnvelope({
                 message: {
                     v: 1,
@@ -129,11 +134,19 @@ describe('chunkedBridge', () => {
                     payload: {
                         messageId: 'too-many',
                         index: 0,
-                        total: 2 ** 32,
+                        // One beyond the decoder's existing 4,096-part boundary.
+                        total: 4_097,
                         data: 'YQ==',
                     },
                 },
+                maxPendingMessages: 1,
+                nowMs: 0,
             }),
-        ).not.toThrow();
+        ).toBeNull();
+
+        const completed = chunks.slice(1).map((message) =>
+            decodeChunkedEnvelope({ message, maxPendingMessages: 1, nowMs: 0 }),
+        ).filter((message) => message !== null);
+        expect(completed).toEqual([envelope]);
     });
 });

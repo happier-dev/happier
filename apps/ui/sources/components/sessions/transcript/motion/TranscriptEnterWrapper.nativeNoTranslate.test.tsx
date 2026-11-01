@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
-import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { createTranscriptMotionTestRuntime, installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { TranscriptMotionContext } from './TranscriptMotionContext';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,17 +36,6 @@ installTranscriptMotionCommonModuleMocks({
     },
 });
 
-vi.mock('./TranscriptMotionContext', () => ({
-    useTranscriptMotion: () => ({
-        config: { preset: 'full', animateNewItemsEnabled: true },
-        gate: {
-            isFresh: () => true,
-            consumeFreshness: () => true,
-            markPainted: () => undefined,
-        },
-    }),
-}));
-
 /**
  * J/D4: a fresh row enters by fade only, on NATIVE too. The previous code read
  * `const animateTranslateOnWeb = Platform.OS !== 'web'` — true on native — so native rows also slid
@@ -62,9 +52,11 @@ describe('TranscriptEnterWrapper (native)', () => {
         const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
         const screen = await renderScreen(
-            <TranscriptEnterWrapper id="m1" createdAt={1}>
-                <div />
-            </TranscriptEnterWrapper>,
+            <TranscriptMotionContext.Provider value={createTranscriptMotionTestRuntime(1_000)}>
+                <TranscriptEnterWrapper id="m1" createdAt={990}>
+                    <div />
+                </TranscriptEnterWrapper>
+            </TranscriptMotionContext.Provider>,
         );
         await flushHookEffects();
 
@@ -75,18 +67,6 @@ describe('TranscriptEnterWrapper (native)', () => {
         // The translate timing was the only `toValue: 0` animation; opacity animates to 1.
         expect(capturedTimingConfigs[0]?.toValue).toBe(1);
         expect(capturedTimingConfigs.some((cfg) => cfg?.toValue === 0)).toBe(false);
-    });
-
-    it('allocates one animated value (opacity) for a fresh row', async () => {
-        const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
-
-        await renderScreen(
-            <TranscriptEnterWrapper id="m2" createdAt={1}>
-                <div />
-            </TranscriptEnterWrapper>,
-        );
-        await flushHookEffects();
-
         expect(constructedAnimatedInitialValues).toEqual([0]);
     });
 });

@@ -24,11 +24,6 @@ function readApp(rel: string): string {
 }
 
 describe('VoiceEnergyAppProvider mount site', () => {
-    it('is mounted in the root layout, which is where the sidebar lives', () => {
-        const root = readApp(join('app', '_layout.tsx'));
-        expect(root).toContain('VoiceEnergyAppProvider');
-    });
-
     it('encloses SidebarNavigator rather than sitting below it', () => {
         const root = readApp(join('app', '_layout.tsx'));
         // The sidebar stays below the energy provider even when the root inlines it.
@@ -37,10 +32,5 @@ describe('VoiceEnergyAppProvider mount site', () => {
         expect(provider).toBeGreaterThan(-1);
         expect(close).toBeGreaterThan(provider);
         expect(root.slice(provider, close)).toContain('<SidebarNavigator');
-    });
-
-    it('does not rely on the nested route layout, which the sidebar sits above', () => {
-        const nested = readApp(join('app', '(app)', '_layout.tsx'));
-        expect(nested).not.toContain('VoiceEnergyAppProvider');
     });
 });

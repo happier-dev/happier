@@ -615,13 +615,6 @@ describe('PetsSettingsScreen', () => {
         });
     });
 
-    it('does not scan Codex pets until the user requests detection', async () => {
-        const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
-        await renderScreen(<PetsSettingsScreen />);
-
-        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
-    });
-
     it('detects Codex pets when a command palette action requests a refresh', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,

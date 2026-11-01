@@ -71,19 +71,21 @@ describe('projectSyncedSessionAuthoringFields', () => {
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             permissionMode: 'acceptEdits',
         }));
-        expect(projected).not.toEqual(expect.objectContaining({
-            prompt: expect.anything(),
-            displayText: expect.anything(),
-            environmentVariables: expect.anything(),
-            permissionModeUpdatedAt: expect.anything(),
-            modelUpdatedAt: expect.anything(),
-            modelId: expect.anything(),
-            connectedServicesUpdatedAt: expect.anything(),
-            existingSessionId: expect.anything(),
-            sessionEncryptionMode: expect.anything(),
-            sessionEncryptionKeyBase64: expect.anything(),
-            sessionEncryptionVariant: expect.anything(),
-        }));
+        for (const field of [
+            'prompt',
+            'displayText',
+            'environmentVariables',
+            'permissionModeUpdatedAt',
+            'modelUpdatedAt',
+            'modelId',
+            'connectedServicesUpdatedAt',
+            'existingSessionId',
+            'sessionEncryptionMode',
+            'sessionEncryptionKeyBase64',
+            'sessionEncryptionVariant',
+        ]) {
+            expect(projected).not.toHaveProperty(field);
+        }
     });
 
     it('rejects the retired flat launch-selection vocabulary instead of projecting it', () => {

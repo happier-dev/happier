@@ -38,12 +38,12 @@ describe('resolveItemGroupColumnCountForWidth', () => {
         })).toBe(1);
     });
 
-    it('never returns less than one column for degenerate widths', () => {
+    it('uses one finite column until a usable width is measured', () => {
         for (const availableWidthPx of [0, -10, Number.NaN, Number.POSITIVE_INFINITY]) {
             expect(resolveItemGroupColumnCountForWidth({
                 availableWidthPx,
                 requestedColumns: 2,
-            })).toBeGreaterThanOrEqual(1);
+            })).toBe(1);
         }
     });
 

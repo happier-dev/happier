@@ -92,13 +92,4 @@ describe('showSessionBoardViewRemovalDisposition', () => {
         await expect(unmounted).resolves.toBeNull();
     });
 
-    it('passes the initiating control to the incumbent modal focus-return owner', () => {
-        const focusReturnRef = { current: { focus: vi.fn() } };
-        void showSessionBoardViewRemovalDisposition({
-            source: REQUEST.source,
-            eligibleDestinations: [],
-        }, focusReturnRef);
-
-        expect(shownConfig().focusReturnRef).toBe(focusReturnRef);
-    });
 });

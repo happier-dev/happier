@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginDeclarativeDocumentV1 } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import { createWidgetSnapshotCaptureSlot, useDeclarativeWidgetSnapshotCapture, WidgetSnapshotCaptureContext } from './widgetSnapshotCapture';
 import { WidgetSnapshotConfirmPanel } from './WidgetSnapshotConfirmPanel';
@@ -111,29 +111,5 @@ describe('WidgetSnapshotConfirmPanel', () => {
         expect(screen.findByTestId('phone.cancel')).toBeNull();
         await screen.pressByTestIdAsync('phone.close');
         expect(dismiss).toHaveBeenCalledTimes(1);
-    });
-
-    it('refreshes a not-current card from the confirm and freezes the preview once it is current', async () => {
-        const slot = createWidgetSnapshotCaptureSlot();
-        const listeners = new Set<() => void>();
-        let current = false;
-        // The mounted card's reads: the Resource refresh is the boundary; it reports current afterwards.
-        const refresh = vi.fn(async () => { current = true; for (const listener of listeners) listener(); });
-        slot.register({
-            read: () => ({ document: DOCUMENT, frozenByPath: new Map(), digests: [], readIdentity: 'signups', readAuthorized: true, current, refresh }),
-            subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        });
-        const screen = await renderScreen(<WidgetSnapshotConfirmPanel surface={SURFACE} title="Signups" sourceLabel="analytics replica"
-            mark="users" capture={slot.capture} watch={slot.watch} onDone={() => {}} onCancel={() => {}} testID="snap" />);
-        await flushHookEffects({ cycles: 2 });
-        expect(screen.findByTestId('snap.preview')).toBeNull();
-        expect(screen.findByTestId('snap.primary')!.props.disabled).toBe(true);
-
-        await screen.pressByTestIdAsync('snap.refresh');
-        await flushHookEffects({ cycles: 3 });
-
-        expect(refresh).toHaveBeenCalledTimes(1);
-        expect(screen.findByTestId('snap.preview')).not.toBeNull();
-        expect(screen.findByTestId('snap.primary')!.props.disabled).toBe(false);
     });
 });

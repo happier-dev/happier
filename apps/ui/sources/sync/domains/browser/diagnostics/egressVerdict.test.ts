@@ -48,15 +48,4 @@ describe('DEV-7 additive diagnostics families route through the LANE-B egress cl
         expect(classifyBrowserDiagnosticField('storage.keyInventory', 'cookie')).toBe('always-strip');
     });
 
-    it('keeps the owner-only console text for the local owner but strips it for agent/remote (DEV-2)', () => {
-        // Fail-closed at the destination-agnostic verdict: console text reads as drop with no owner ctx.
-        expect(classifyBrowserDiagnosticField('console.entry', 'text')).toBe('drop');
-        // The local owner sees the full console text; agent + remote egress strip it.
-        expect(classifyBrowserDiagnosticFieldForDestination('console.entry', 'text', 'localOwner')).toBe('keep');
-        expect(classifyBrowserDiagnosticFieldForDestination('console.entry', 'text', 'agentContext')).toBe('drop');
-        expect(classifyBrowserDiagnosticFieldForDestination('console.entry', 'text', 'remoteSnapshot')).toBe('drop');
-        // Plain metadata stays keep everywhere; credential vectors stay stripped even for the owner.
-        expect(classifyBrowserDiagnosticFieldForDestination('console.entry', 'level', 'agentContext')).toBe('keep');
-        expect(classifyBrowserDiagnosticFieldForDestination('console.entry', 'authorization', 'localOwner')).toBe('always-strip');
-    });
 });

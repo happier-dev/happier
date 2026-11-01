@@ -54,29 +54,22 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             },
         } });
     });
-    it('projects the normalized Codex backend mode into strict V2 configuration', () => {
+    it.each([123, undefined])('projects the normalized Codex backend mode into strict V2 configuration (timestamp: %s)', (updatedAt) => {
+        const expectedUpdatedAt = updatedAt ?? expect.any(Number);
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
             settings: makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
             resumeSessionId: '',
-            updatedAt: 123,
+            updatedAt,
         })).toEqual({
             sessionConfigOptionOverrides: {
                 v: 1,
-                updatedAt: 123,
+                updatedAt: expectedUpdatedAt,
                 overrides: {
-                    codexBackendMode: { value: 'acp', updatedAt: 123 },
+                    codexBackendMode: { value: 'acp', updatedAt: expectedUpdatedAt },
                 },
             },
         });
-    });
-
-    it('does not emit legacy experimentalCodexAcp when codexBackendMode is present', () => {
-        expect(buildSpawnSessionExtrasFromUiState({
-            agentId: 'codex',
-            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
-            resumeSessionId: '',
-        })).not.toHaveProperty('experimentalCodexAcp');
     });
 
     it('maps retired codex mcp setting onto app-server', () => {

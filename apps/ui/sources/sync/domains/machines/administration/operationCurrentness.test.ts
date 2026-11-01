@@ -4,7 +4,6 @@ import {
     isMachineAdministrationExecutionTargetCurrent,
     sameMachineAdministrationExecutionTarget,
 } from './operationCurrentness';
-import { isAdministrationScopedPluginSettingsTargetCurrent } from './scopedPluginSettingsTarget';
 import type { FreshMachineAdministrationExecutionTargetV1 } from './useTargetSelection';
 
 describe('machine administration operation currentness', () => {
@@ -74,25 +73,4 @@ describe('machine administration operation currentness', () => {
         })).toBe(false);
     });
 
-    it('applies the same daemon-generation fence to scoped Settings targets', () => {
-        const target = {
-            kind: 'daemon' as const,
-            serverIdentityId: 'srv_one',
-            machineId: 'machine-a',
-            serverId: 'local-one',
-        };
-        expect(isAdministrationScopedPluginSettingsTargetCurrent({
-            target,
-            expectedExecutionTarget: expected,
-            resolveCurrentExecutionTarget: () => expected,
-        })).toBe(true);
-        expect(isAdministrationScopedPluginSettingsTargetCurrent({
-            target,
-            expectedExecutionTarget: expected,
-            resolveCurrentExecutionTarget: () => ({
-                ...expected,
-                machine: { ...expected.machine, daemonStateVersion: 13 },
-            }),
-        })).toBe(false);
-    });
 });

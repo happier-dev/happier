@@ -9,11 +9,6 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/components/ui/text/Text', async () => {
-    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
-    return createUiTextModuleMock();
-});
-
 import type {
     BrowserDiagnosticsEvalConsoleControls,
     BrowserDiagnosticsEvalConsoleEntry,
@@ -53,8 +48,8 @@ describe('BrowserDiagnosticsEvalConsole', () => {
         expect(screen.findByTestId('diag-eval-result-eval_1-property_100')).not.toBeNull();
     });
 
-    it('submits a typed expression through the eval control and clears the input', async () => {
-        const onSubmitExpression = vi.fn(() => true);
+    it('preserves a refused expression and clears it after the eval control accepts it', async () => {
+        const onSubmitExpression = vi.fn(() => false);
         const screen = await renderScreen(
             <BrowserDiagnosticsEvalConsole
                 controls={createControls({ onSubmitExpression })}
@@ -65,12 +60,20 @@ describe('BrowserDiagnosticsEvalConsole', () => {
         await act(async () => {
             screen.changeTextByTestId('diag-eval-input', '  document.title  ');
         });
+        expect(screen.findByTestId('diag-eval-input')?.props.value).toBe('  document.title  ');
         await act(async () => {
             screen.pressByTestId('diag-eval-submit');
         });
 
         // The trimmed expression reaches the runtime; whitespace is not forwarded.
         expect(onSubmitExpression).toHaveBeenCalledWith('document.title');
+        expect(screen.findByTestId('diag-eval-input')?.props.value).toBe('  document.title  ');
+
+        onSubmitExpression.mockReturnValue(true);
+        await act(async () => {
+            screen.pressByTestId('diag-eval-submit');
+        });
+        expect(screen.findByTestId('diag-eval-input')?.props.value).toBe('');
     });
 
     it('renders a stored eval result and expands its remote object on demand', async () => {

@@ -2,8 +2,6 @@ import * as React from 'react';
 
 type PostHogProperties = Record<string, unknown>;
 
-export const __isHappierPostHogReactNativeStub = true;
-
 export default class PostHog {
     constructor(_apiKey: string, _options?: PostHogProperties) {}
 

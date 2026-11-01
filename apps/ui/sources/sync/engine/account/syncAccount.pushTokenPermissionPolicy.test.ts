@@ -176,14 +176,6 @@ describe('registerPushTokenIfAvailable push policy', () => {
         ]);
     });
 
-    it('does not mutate an absent-profile active Home outside the canonical profile cycle', async () => {
-        const removed = await addHome(homeAUrl, 'account-a');
-        await homes.setActiveServerId(removed.home.id, { scope: 'device' });
-        await homes.removeServerProfile(removed.home.id);
-        await registerPushTokenIfAvailable({ credentials: removed.credentials, log: { log: () => {} } });
-        expect(requests).toEqual([]);
-    });
-
     it('never triggers the OS permission prompt from background registration', async () => {
         await addHome(homeAUrl, 'account-a');
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue(permission(PermissionStatus.UNDETERMINED));

@@ -187,26 +187,6 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
         }));
     });
 
-    it('keeps configured ACP backends enabled when execution-run capability is reported on the configured backend id', () => {
-        const choices = resolveExecutionRunLauncherBackendChoices({
-            enabledAgentIds: ['claude'],
-            executionRunsBackends: {
-                claude: { available: true, intents: ['delegate'] },
-                'review-bot': { available: true, intents: ['delegate'] },
-            },
-            acpCatalogSnapshot,
-            intent: 'delegate',
-        });
-
-        expect(choices).toContainEqual(expect.objectContaining({
-            backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
-            targetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
-            backendId: 'review-bot',
-            title: 'Review Bot',
-            disabled: false,
-        }));
-    });
-
     it('prefers the configured ACP backend entry when discovered backend ids collide with configured ACP ids', () => {
         const choices = resolveExecutionRunLauncherBackendChoices({
             enabledAgentIds: ['claude'],

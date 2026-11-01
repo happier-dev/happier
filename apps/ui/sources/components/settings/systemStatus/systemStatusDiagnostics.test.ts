@@ -15,6 +15,16 @@ describe('system status diagnostics projection', () => {
       carrier: 'iroh',
     });
 
+    expect(projected).toEqual({
+      generation: 1,
+      serverId: 'home-stable-id',
+      serverUrl: 'https://legacy.example.test/path',
+      activeShareableServerUrl: 'https://share.example.test/path',
+      activeShareableServerUrlValidatedAgainstServerUrl: 'https://validated.example.test/path',
+      activeLocalRelayUrl: 'http://127.0.0.1:43122/path',
+      runtimeOrigin: 'http://127.0.0.1:43123/path',
+      carrier: 'iroh',
+    });
     const serialized = JSON.stringify(projected);
     for (const secret of [
       'server-secret',

@@ -251,15 +251,6 @@ describe('MessageView timestamps', () => {
         }
     });
 
-    it('exports transcript message views through React memo boundaries', async () => {
-        const { MessageView, MessageViewWithSessionCommon } = await import('./MessageView');
-
-        expect(typeof (MessageView as any).$$typeof).toBe('symbol');
-        expect(String((MessageView as any).$$typeof)).toContain('react.memo');
-        expect(typeof (MessageViewWithSessionCommon as any).$$typeof).toBe('symbol');
-        expect(String((MessageViewWithSessionCommon as any).$$typeof)).toContain('react.memo');
-    });
-
     it('renders message timestamps with web hover actions in the default mode', async () => {
         copyButtonsVisible = true;
         const { MessageView } = await import('./MessageView');

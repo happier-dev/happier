@@ -17,7 +17,9 @@ vi.mock('@/modal', async () => {
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-        translate: (key: string) => key,
+        translate: (key, params) => key === 'agentInput.nonSteerableSend.applyNamedSettingAndSteer'
+            ? `${params?.setting} → ${params?.value}`
+            : key,
     });
 });
 
@@ -102,7 +104,7 @@ describe('confirmNonSteerableSend (G4 busy-send honesty affordance)', () => {
             settingLabel: 'Permission mode',
             valueLabel: 'Plan',
         });
-        expect(buttons[0]?.text).toBe('agentInput.nonSteerableSend.applyNamedSettingAndSteer');
+        expect(buttons[0]?.text).toBe('Permission mode → Plan');
         buttons[0]?.onPress?.();
         await expect(promise).resolves.toBe('apply_and_steer');
     });

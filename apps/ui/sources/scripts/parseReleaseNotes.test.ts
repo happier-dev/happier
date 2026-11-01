@@ -1,9 +1,9 @@
 import { createHash } from 'crypto';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import * as releaseNotesParser from './parseReleaseNotes';
 
@@ -87,7 +87,8 @@ describe('release notes bundled asset index generation', () => {
         };
         expect(moduleExports.buildReleaseNotesAssetIndexForTests).toBeTypeOf('function');
 
-        const root = join(tmpdir(), `happier-release-notes-parser-${Date.now()}`);
+        const root = mkdtempSync(join(tmpdir(), 'happier-release-notes-parser-'));
+        onTestFinished(() => rmSync(root, { recursive: true, force: true }));
         const assetsDir = join(root, 'assets');
         mkdirSync(join(assetsDir, 'v9.9.9', 'nested'), { recursive: true });
         const assetBody = 'fixture-image';
@@ -136,7 +137,8 @@ describe('release notes bundled asset index generation', () => {
         };
         expect(moduleExports.buildReleaseNotesAssetIndexForTests).toBeTypeOf('function');
 
-        const root = join(tmpdir(), `happier-release-notes-parser-local-${Date.now()}`);
+        const root = mkdtempSync(join(tmpdir(), 'happier-release-notes-parser-local-'));
+        onTestFinished(() => rmSync(root, { recursive: true, force: true }));
         const assetsDir = join(root, 'assets');
         mkdirSync(join(assetsDir, 'v9.9.9'), { recursive: true });
         writeFileSync(join(assetsDir, 'v9.9.9', 'demo.mp4'), 'fixture-video');
@@ -179,7 +181,8 @@ describe('release notes bundled asset index generation', () => {
         };
         expect(moduleExports.buildReleaseNotesAssetIndexForTests).toBeTypeOf('function');
 
-        const root = join(tmpdir(), `happier-release-notes-parser-overrides-${Date.now()}`);
+        const root = mkdtempSync(join(tmpdir(), 'happier-release-notes-parser-overrides-'));
+        onTestFinished(() => rmSync(root, { recursive: true, force: true }));
         const assetsDir = join(root, 'assets');
         mkdirSync(join(assetsDir, 'v9.9.9'), { recursive: true });
         writeFileSync(join(assetsDir, 'v9.9.9', 'hero-mobile.webp'), 'mobile-image');

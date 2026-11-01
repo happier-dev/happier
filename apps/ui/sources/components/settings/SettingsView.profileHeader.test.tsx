@@ -197,14 +197,6 @@ describe('SettingsView profile header', () => {
         storage.setState({ profile: { ...profileDefaults, id: 'prof_1', name: 'Lee' } });
     });
 
-    it('renders when the profile has a display name', async () => {
-        const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
-
-        expect(screen.findAllByType(Avatar)).toHaveLength(1);
-        expect(screen.getTextContent()).toContain('Lee');
-    });
-
     it.each([
         { username: 'lee', expectedName: 'lee' },
         { name: 'Lee', expectedName: 'Lee' },

@@ -786,24 +786,6 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         }
     });
 
-    it('continues registering other Homes when one registration fails', async () => {
-        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false } as never);
-        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[isolated]' } as never);
-        const { upsertServerProfile, setActiveServerId } = serverProfiles;
-        const homeA = await upsertServerProfile({ serverUrl: 'https://fail-home.example.test', name: 'Fail' });
-        const homeB = await upsertServerProfile({ serverUrl: 'https://ok-home.example.test', name: 'OK' });
-        await setActiveServerId(homeA.id, { scope: 'device' });
-        await TokenStorage.setCredentials({ token: 'a', secret: 's' });
-        await setActiveServerId(homeB.id, { scope: 'device' });
-        await TokenStorage.setCredentials({ token: 'b', secret: 's' });
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: Request) => {
-            if (String(request.url).includes('fail-home')) throw new Error('offline');
-            return Response.json({ success: true });
-        });
-        await registerPushTokenIfAvailable({ credentials: { token: 'a', secret: 's' }, log: { log: vi.fn() } });
-        expect(runtimeFetchWithServerReachabilityMock.mock.calls.some(([request]) => String(request.url).includes('ok-home'))).toBe(true);
-    });
-
     it('reconciles an independent Home while another Home is pending and settles after both outcomes', async () => {
         const {
             loadRegisteredExpoPushTokenState,

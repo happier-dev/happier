@@ -11,12 +11,17 @@ describe('applyCurrentSessionPresentationCommand', () => {
     it('rejects stale hosts and wrong clients without applying a one-shot', () => {
         const notify = vi.fn();
         const apply = vi.fn<() => ComposerTransactionResultV1>();
-        expect(applyCurrentSessionPresentationCommand({
-            hostNonce: 'new-host', clientId: 'client-1', isCurrentSession: true,
-            state: { v: 1, hostNonce: 'old-host', revision: 1, statuses: [], widgets: [], command: notifyCommand },
-            notify,
-            composer: { revision: 1, apply },
-        })).toBeNull();
+        for (const target of [
+            { hostNonce: 'new-host', clientId: 'client-1' },
+            { hostNonce: 'old-host', clientId: 'another-client' },
+        ]) {
+            expect(applyCurrentSessionPresentationCommand({
+                ...target, isCurrentSession: true,
+                state: { v: 1, hostNonce: 'old-host', revision: 1, statuses: [], widgets: [], command: notifyCommand },
+                notify,
+                composer: { revision: 1, apply },
+            })).toBeNull();
+        }
         expect(notify).not.toHaveBeenCalled();
         expect(apply).not.toHaveBeenCalled();
     });

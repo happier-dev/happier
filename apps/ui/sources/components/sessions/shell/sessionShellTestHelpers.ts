@@ -191,11 +191,3 @@ export function installSessionShellCommonModuleMocks(
         },
     }));
 }
-
-export function readSessionShellDraftTextForTest(sessionId: string): string | undefined {
-    return sessionShellModuleState.draftStateBySessionId.get(sessionId)?.currentValue;
-}
-
-export function resetSessionShellDraftStateForTest(): void {
-    sessionShellModuleState.draftStateBySessionId.clear();
-}

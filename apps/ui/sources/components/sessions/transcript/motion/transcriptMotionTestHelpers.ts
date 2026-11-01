@@ -1,5 +1,17 @@
 import { vi } from 'vitest';
 
+import { createTranscriptFreshnessGate } from './transcriptFreshnessGate';
+import { resolveTranscriptMotionConfig } from './resolveTranscriptMotionConfig';
+import type { TranscriptMotionRuntime } from './TranscriptMotionContext';
+
+export function createTranscriptMotionTestRuntime(nowMs: number): TranscriptMotionRuntime {
+    const config = resolveTranscriptMotionConfig({ transcriptMotionPreset: 'full' });
+    return {
+        config,
+        gate: createTranscriptFreshnessGate({ freshnessMs: config.freshnessMs, getNowMs: () => nowMs }),
+    };
+}
+
 type TranscriptMotionModuleFactory = () => unknown | Promise<unknown>;
 
 type InstallTranscriptMotionCommonModuleMocksOptions = Readonly<{

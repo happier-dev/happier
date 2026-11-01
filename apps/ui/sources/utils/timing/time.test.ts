@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { HappyError } from '@/utils/errors/errors';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { ServerFetchReadSupersededError } from '@/sync/http/client';
@@ -77,7 +78,16 @@ describe('withTimeout', () => {
     });
 
     it('skips the deadline entirely for a non-positive timeout', async () => {
-        await expect(withTimeout(Promise.resolve('ready'), 0, 'op')).resolves.toBe('ready');
+        vi.useFakeTimers();
+        try {
+            const operation = createDeferred<string>();
+            const pending = withTimeout(operation.promise, 0, 'op');
+            expect(vi.getTimerCount()).toBe(0);
+            operation.resolve('ready');
+            await expect(pending).resolves.toBe('ready');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

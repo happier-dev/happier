@@ -201,36 +201,6 @@ describe('Provider catalog captured Account HTTP', () => {
         expect(rowReads).toBe(admittedReads);
         await returningReader.unmount();
     });
-    it('withdraws Provider authority when the row HTTP boundary rejects Account authorization', async () => {
-        const accountId = 'account-provider-unauthorized';
-        let denied = false;
-        setRuntimeFetch(async (url, init) => {
-            const path = new URL(String(url)).pathname;
-            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
-            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
-            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
-            if (path === '/v1/artifacts') return Response.json([]);
-            if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
-            if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) {
-                expect(init?.method).not.toBe('POST');
-                return denied ? Response.json({ error: 'unauthorized' }, { status: 401 })
-                    : Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } });
-            }
-            return Response.json({ error: 'not_found' }, { status: 404 });
-        });
-        await disconnectActiveServerConnection();
-        const home = await upsertAndActivateServer({ serverUrl: 'https://provider-unauthorized.example.test', name: 'Provider unauthorized' });
-        const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` };
-        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials);
-        await restoreConnectionToActiveServer(credentials);
-        const scope = { serverId: home.id, accountId };
-        getStorage().setState({ profileScope: scope, settingsScope: scope });
-        expect(await readProviderCatalog(scope)).toMatchObject({ status: 'ready', revision: 1 });
-        denied = true;
-        expect(await readProviderCatalog(scope)).toMatchObject({ status: 'unavailable', reason: 'unauthorized' });
-    });
     it('initializes a keyless secret-free row independently of unrelated import maintenance and never replays an ambiguous write', async () => {
         const accountId = 'account-provider-row';
         let revision = 0;

@@ -15,6 +15,9 @@ describe('resolveQualifiedConnectedServiceMarkId', () => {
     it('uses the applied catalog alias without treating a descriptor service id as a brand', () => {
         const service = { pluginId: 'external.plugin', localId: 'account' };
         expect(resolveQualifiedConnectedServiceMarkId({ entries: [{
+            service, serviceId: 'openai', legacyServiceId: 'claude-subscription', connectCommand: '', supportsOauth: false,
+        }] }, service)).toBe('claude-subscription');
+        expect(resolveQualifiedConnectedServiceMarkId({ entries: [{
             service, serviceId: 'openai', connectCommand: '', supportsOauth: false,
         }] }, service)).toBeNull();
     });

@@ -8,14 +8,14 @@ import { ToolHeaderActionsContext, useToolHeaderActions } from './ToolHeaderActi
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useToolHeaderActions (loop safety)', () => {
-    it('does not trigger an update loop when the action node is referentially unstable', async () => {
-        function Child() {
+    it('publishes, updates and clears referentially unstable actions without an update loop', async () => {
+        function Child({ label }: { label: string }) {
             // New element identity each render, but equivalent structure/props.
-            useToolHeaderActions(React.createElement('Action', { style: { opacity: 1 } }, 'Hello'));
+            useToolHeaderActions(React.createElement('Action', { style: { opacity: 1 } }, label));
             return React.createElement('Child');
         }
 
-        function Harness() {
+        function Harness({ label, showChild = true }: { label: string; showChild?: boolean }) {
             const [headerActions, setHeaderActionsState] = React.useState<React.ReactNode | null>(null);
             const callCountRef = React.useRef(0);
             const setHeaderActions = React.useCallback((node: React.ReactNode | null) => {
@@ -27,13 +27,22 @@ describe('useToolHeaderActions (loop safety)', () => {
             }, []);
             return (
                 <ToolHeaderActionsContext.Provider value={{ setHeaderActions }}>
-                    <Child />
+                    {showChild ? <Child label={label} /> : null}
                     <ActionsSlot>{headerActions}</ActionsSlot>
                 </ToolHeaderActionsContext.Provider>
             );
         }
 
-        await expect(renderScreen(<Harness />)).resolves.toBeTruthy();
+        const screen = await renderScreen(<Harness label="Hello" />);
+        expect(screen.findByType('Action').props.children).toBe('Hello');
+
+        await screen.update(<Harness label="Goodbye" />);
+        expect(screen.findAllByType('Action')).toHaveLength(1);
+        expect(screen.findByType('Action').props.children).toBe('Goodbye');
+
+        await screen.update(<Harness label="Goodbye" showChild={false} />);
+        expect(screen.findAllByType('Action')).toHaveLength(0);
+        await screen.unmount();
     });
 });
 

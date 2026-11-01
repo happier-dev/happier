@@ -76,14 +76,6 @@ describe('session realtime SCM consumer hooks', () => {
     standardCleanup();
   });
 
-  it('exposes an explicit realtime SCM transcript consumer hook', async () => {
-    const hooks = await import('./hooks') as typeof import('./hooks') & {
-      useSessionRealtimeScmTranscriptConsumer?: unknown;
-    };
-
-    expect(typeof hooks.useSessionRealtimeScmTranscriptConsumer).toBe('function');
-  });
-
   it('registers a same-session fallback scope before the SCM snapshot hydrates', async () => {
     const sessionId = 'session-explicit-scm-consumer';
     storage.getState().applySessions([buildSession(sessionId)]);

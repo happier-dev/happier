@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    buildSessionRuntimeActivityProjectionPatch,
     resolveSessionRuntimeActivityProjectionFields,
 } from './sessionRuntimeActivityProjection';
 
@@ -38,28 +37,8 @@ describe('sessionRuntimeActivityProjection', () => {
         })).toEqual({});
     });
 
-    it('uses the canonical revision merge when resolving projection fields', () => {
-        expect(resolveSessionRuntimeActivityProjectionFields(current, {
-            runtimeActivityState: 'idle',
-            runtimeActivityActiveCount: 0,
-            runtimeActivityObservedAt: 900,
-            runtimeActivityRevision: 6,
-        })).toEqual({});
-
-        const onResyncRequired = vi.fn();
-        expect(resolveSessionRuntimeActivityProjectionFields(current, {
-            runtimeActivityState: 'idle',
-            runtimeActivityActiveCount: 0,
-            runtimeActivityObservedAt: 501,
-            runtimeActivityRevision: 7,
-        }, onResyncRequired)).toEqual({});
-        expect(onResyncRequired).toHaveBeenCalledWith(expect.objectContaining({
-            reason: 'equal_revision_conflict',
-        }));
-    });
-
     it('orders atomically by revision and never by observedAt', () => {
-        expect(buildSessionRuntimeActivityProjectionPatch(current, {
+        expect(resolveSessionRuntimeActivityProjectionFields(current, {
             runtimeActivityState: 'idle',
             runtimeActivityActiveCount: 0,
             runtimeActivityObservedAt: 400,
@@ -70,7 +49,7 @@ describe('sessionRuntimeActivityProjection', () => {
             runtimeActivityObservedAt: 400,
             runtimeActivityRevision: 8,
         });
-        expect(buildSessionRuntimeActivityProjectionPatch(current, {
+        expect(resolveSessionRuntimeActivityProjectionFields(current, {
             runtimeActivityState: 'idle',
             runtimeActivityActiveCount: 0,
             runtimeActivityObservedAt: 900,
@@ -80,7 +59,7 @@ describe('sessionRuntimeActivityProjection', () => {
 
     it('retains current truth and emits a typed resync trigger on equal conflicts', () => {
         const onResyncRequired = vi.fn();
-        expect(buildSessionRuntimeActivityProjectionPatch(current, {
+        expect(resolveSessionRuntimeActivityProjectionFields(current, {
             runtimeActivityState: 'idle',
             runtimeActivityActiveCount: 0,
             runtimeActivityObservedAt: 501,

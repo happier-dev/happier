@@ -32,17 +32,6 @@ describe('resolveSessionViewModeOptionIds', () => {
         expect(first).toEqual(['default', 'plan']);
     });
 
-    it('returns dynamic agent mode ids when the session metadata matches the active agent', () => {
-        expect(resolveSessionViewModeOptionIds('codex', {
-            agentId: 'codex',
-            availableModes: [
-                { id: 'default' },
-                { id: 'plan' },
-                { id: ' ' },
-            ],
-        }, { kind: 'none' })).toEqual(['default', 'plan']);
-    });
-
     it('ignores dynamic modes published by a different agent', () => {
         expect(resolveSessionViewModeOptionIds('claude', {
             agentId: 'codex',

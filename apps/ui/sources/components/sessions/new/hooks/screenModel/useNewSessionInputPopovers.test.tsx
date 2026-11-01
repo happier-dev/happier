@@ -246,7 +246,9 @@ describe('useNewSessionInputPopovers', () => {
     it('commits the selected Temporary computer workspace before closing the mounted popover', async () => {
         const { useNewSessionInputPopovers } = await import('./useNewSessionInputPopovers');
         const selectTemporaryComputer = vi.fn();
-        const requestClose = vi.fn();
+        const requestClose = vi.fn(() => {
+            expect(selectTemporaryComputer).toHaveBeenCalledWith('linux-x64', { kind: 'choose_on_endpoint' }, undefined);
+        });
         const params = createParams({
             selectedMachine: null,
             selectedMachineId: null,
@@ -295,7 +297,6 @@ describe('useNewSessionInputPopovers', () => {
 
         expect(temporaryComputers[0]?.workspace).toEqual({ kind: 'endpoint_home' });
         temporaryComputers[0]?.onSelect({ kind: 'choose_on_endpoint' }, undefined);
-        expect(selectTemporaryComputer).toHaveBeenCalledWith('linux-x64', { kind: 'choose_on_endpoint' }, undefined);
         expect(requestClose).toHaveBeenCalledOnce();
 
         await hook.unmount();

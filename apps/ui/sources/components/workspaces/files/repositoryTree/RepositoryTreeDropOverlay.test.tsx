@@ -24,17 +24,16 @@ installRepositoryTreeCommonModuleMocks({
 const { RepositoryTreeDropOverlay } = await import('./RepositoryTreeDropOverlay');
 
 describe('RepositoryTreeDropOverlay', () => {
-    it('shows the exact upload destination while a file target is active', async () => {
+    it('hides and restores the outcome while the external file drag remains active', async () => {
         const binding = createExternalFileDropBinding(() => ({ enabled: true, onFilesDropped: () => {} }));
         disposeBinding = binding.mount();
         binding.handlers.onDragEnter({ dataTransfer: { types: ['Files'] }, clientX: 96, clientY: 128 });
-        const screen = await renderScreen(<RepositoryTreeDropOverlay visible destinationLabel="src" />);
-
-        expect(screen.findAll(node => node.children.includes('src')).length).toBeGreaterThan(0);
-    });
-
-    it('retires the outcome when no file target is active', async () => {
         const screen = await renderScreen(<RepositoryTreeDropOverlay visible={false} destinationLabel="src" />);
         expect(screen.findAllByTestId('repository-tree-drop-overlay')).toHaveLength(0);
+        await screen.update(<RepositoryTreeDropOverlay visible destinationLabel="src" />);
+        expect(screen.findByTestId('repository-tree-drop-overlay')).not.toBeNull();
+        await screen.update(<RepositoryTreeDropOverlay visible={false} destinationLabel="src" />);
+        expect(screen.findAllByTestId('repository-tree-drop-overlay')).toHaveLength(0);
+        await screen.unmount();
     });
 });

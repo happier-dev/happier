@@ -134,16 +134,14 @@ describe('vitestRnShim', () => {
         expect(loaded.Path).toBe(svg.Path);
     });
 
-    it('stubs posthog-react-native requires in the Node test runtime', () => {
-        const posthogModule = nodeRuntime.require('posthog-react-native') as {
-            __isHappierPostHogReactNativeStub?: unknown;
-            default?: unknown;
-            PostHogProvider?: unknown;
-        };
+    it('shares the PostHog native boundary between Node requires and Vitest imports', async () => {
+        const imported = await import('posthog-react-native');
+        const posthogModule = nodeRuntime.require('posthog-react-native') as typeof import('./posthogReactNativeStub');
 
-        expect(posthogModule.__isHappierPostHogReactNativeStub).toBe(true);
         expect(typeof posthogModule.default).toBe('function');
         expect(typeof posthogModule.PostHogProvider).toBe('function');
+        expect(posthogModule.default).toBe(imported.default);
+        expect(posthogModule.PostHogProvider).toBe(imported.PostHogProvider);
     });
 
     it('stubs lazy Expo notification and task-manager requires in the Node test runtime', () => {

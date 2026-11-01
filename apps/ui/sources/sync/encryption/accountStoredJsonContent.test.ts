@@ -9,6 +9,7 @@ import {
     decodeBase64StoredJsonContentEnvelope,
     encodeBase64StoredJsonContentEnvelope,
 } from './base64StoredJsonContent';
+import { Encryption } from './encryption';
 
 describe('accountStoredJsonContent', () => {
     it('rejects content from the other Account mode before decryption or disclosure', async () => {
@@ -49,46 +50,40 @@ describe('accountStoredJsonContent', () => {
         })).resolves.toEqual({ title: 'plain task' });
     });
 
-    it('preserves the released raw encrypted representation for e2ee writes and reads', async () => {
-        const encryption = {
-            encryptRaw: vi.fn(async () => 'released-ciphertext'),
-            decryptRaw: vi.fn(async () => ({ title: 'encrypted task' })),
-        };
-
-        await expect(encodeAccountStoredJsonContent({
+    it('roundtrips e2ee content as raw ciphertext readable only by its Account', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(11));
+        const otherAccount = await Encryption.create(new Uint8Array(32).fill(12));
+        const value = { title: 'encrypted task' };
+        const encoded = await encodeAccountStoredJsonContent({
             mode: 'e2ee',
-            value: { title: 'encrypted task' },
+            value,
             encryption,
-        })).resolves.toBe('released-ciphertext');
+        });
 
+        expect(decodeBase64StoredJsonContentEnvelope(encoded)).toBeNull();
+        await expect(encryption.decryptRaw(encoded)).resolves.toEqual(value);
         await expect(decodeAccountStoredJsonContent({
-            encoded: 'released-ciphertext',
+            encoded,
             encryption,
-        })).resolves.toEqual({ title: 'encrypted task' });
-        expect(encryption.decryptRaw).toHaveBeenCalledWith(
-            'released-ciphertext',
-        );
+        })).resolves.toEqual(value);
+        await expect(decodeAccountStoredJsonContent({
+            encoded,
+            encryption: otherAccount,
+        })).resolves.toBeNull();
     });
 
     it('decrypts the ciphertext inside a canonical encrypted envelope', async () => {
-        const encryption = {
-            decryptRaw: vi.fn(async (ciphertext: string) =>
-                ciphertext === 'canonical-ciphertext'
-                    ? { title: 'migrated encrypted task' }
-                    : null),
-        };
+        const encryption = await Encryption.create(new Uint8Array(32).fill(13));
+        const value = { title: 'migrated encrypted task' };
         const encoded = encodeBase64StoredJsonContentEnvelope({
             t: 'encrypted',
-            c: 'canonical-ciphertext',
+            c: await encryption.encryptRaw(value),
         });
 
         await expect(decodeAccountStoredJsonContent({
             encoded,
             encryption,
-        })).resolves.toEqual({ title: 'migrated encrypted task' });
-        expect(encryption.decryptRaw).toHaveBeenCalledWith(
-            'canonical-ciphertext',
-        );
+        })).resolves.toEqual(value);
     });
 
     it('fails closed when encrypted content has no account encryption material', async () => {

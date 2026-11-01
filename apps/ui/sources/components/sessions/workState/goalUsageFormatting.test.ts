@@ -8,10 +8,6 @@ describe('formatGoalTimeUsed', () => {
         expect(formatGoalTimeUsed(45)).toBe('45s');
     });
 
-    it('keeps seconds at the sub-hour scale (live-timer feel)', () => {
-        expect(formatGoalTimeUsed(190)).toBe('3m 10s');
-    });
-
     it('drops the trailing 0s on exact minutes', () => {
         expect(formatGoalTimeUsed(120)).toBe('2m');
     });

@@ -665,6 +665,7 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
                 source: 'server_pending',
                 text: 'server discarded',
                 discardedReason: 'manual',
+                pendingOutboxScope: scope,
             })],
         }));
         expect((await loadPendingOutboxForSession(sessionId, scope))).toEqual([
@@ -706,6 +707,7 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
                 source: 'server_pending',
                 text: 'canonical server envelope',
                 pendingDeliveryStatus: 'server_queued',
+                pendingOutboxScope: scope,
             }),
         ]);
         expect((await loadPendingOutboxForSession(sessionId, scope))).toEqual([]);

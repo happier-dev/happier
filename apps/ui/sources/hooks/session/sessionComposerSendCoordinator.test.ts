@@ -63,24 +63,6 @@ describe('sessionComposerSendCoordinator', () => {
         expect(clearTransientInputState).toHaveBeenCalledTimes(1);
     });
 
-    it('clears text while leaving field-level semantic currentness to the draft owner', () => {
-        const clearDraftForSessionIfCurrentValueMatches = vi.fn(() => true);
-        const clearTransientInputState = vi.fn();
-        const clearSemanticDraftValuesMatchingSnapshot = vi.fn();
-
-        const didClear = clearComposerAfterOutboundHandoff({
-            snapshot: { sessionId: 'session-a', text: 'submitted prompt' },
-            clearDraftForSessionIfCurrentValueMatches,
-            clearTransientInputState,
-            clearSemanticDraftValuesMatchingSnapshot,
-        });
-
-        expect(didClear).toBe(true);
-        expect(clearDraftForSessionIfCurrentValueMatches).toHaveBeenCalledTimes(1);
-        expect(clearSemanticDraftValuesMatchingSnapshot).toHaveBeenCalledTimes(1);
-        expect(clearTransientInputState).toHaveBeenCalledTimes(1);
-    });
-
     it('clears matching semantic fields when newer text keeps the text and transient input state', () => {
         const clearDraftForSessionIfCurrentValueMatches = vi.fn(() => false);
         const clearTransientInputState = vi.fn();
@@ -118,26 +100,6 @@ describe('sessionComposerSendCoordinator', () => {
             sessionId: 'session-a',
             text: 'submitted prompt',
         }, '');
-        expect(restoreSemanticDraftValuesMatchingClearedSnapshot).toHaveBeenCalledTimes(1);
-        expect(restoreTransientInputState).toHaveBeenCalledTimes(1);
-    });
-
-    it('delegates semantic restore currentness to the draft owner', () => {
-        const restoreDraftForSessionIfCurrentValueMatches = vi.fn(() => true);
-        const restoreTransientInputState = vi.fn();
-        const restoreSemanticDraftValuesMatchingClearedSnapshot = vi.fn();
-
-        const didRestore = restoreComposerAfterFailedOutboundHandoff({
-            snapshot: { sessionId: 'session-a', text: 'submitted prompt' },
-            wasClearedAtHandoff: true,
-            isCanonicalOutboundHandoffPresent: () => false,
-            restoreDraftForSessionIfCurrentValueMatches,
-            restoreTransientInputState,
-            restoreSemanticDraftValuesMatchingClearedSnapshot,
-        });
-
-        expect(didRestore).toBe(true);
-        expect(restoreDraftForSessionIfCurrentValueMatches).toHaveBeenCalledTimes(1);
         expect(restoreSemanticDraftValuesMatchingClearedSnapshot).toHaveBeenCalledTimes(1);
         expect(restoreTransientInputState).toHaveBeenCalledTimes(1);
     });

@@ -29,7 +29,7 @@ describe('apiFriends retry modes', () => {
         vi.restoreAllMocks();
     });
 
-    it('does not retry getFriendsList when retry mode is none', async () => {
+    it.each([408, 429])('does not retry getFriendsList after HTTP %s when retry mode is none', async (status) => {
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
@@ -39,7 +39,7 @@ describe('apiFriends retry modes', () => {
             const href = String(url ?? '');
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
             if (href.includes('/v1/auth/ping')) return new Response('{}', { status: 200 });
-            if (href.includes('/v1/friends')) return new Response('nope', { status: 408 });
+            if (href.includes('/v1/friends')) return new Response('nope', { status });
             throw new Error(`Unexpected runtimeFetch URL: ${href}`);
         });
 
@@ -50,9 +50,7 @@ describe('apiFriends retry modes', () => {
             secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
         };
 
-        const promise = (
-            getFriendsList as unknown as (credentials: AuthCredentials, opts?: { retry?: string }) => Promise<unknown>
-        )(credentials, { retry: 'none' });
+        const promise = getFriendsList(credentials, { retry: 'none' });
 
         const assertion = expect(promise).rejects.toThrow();
         await vi.runAllTimersAsync();

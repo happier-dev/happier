@@ -11,14 +11,26 @@ describe('resolveCodeEditorFontMetrics', () => {
         expect(m.scale).toBeCloseTo(2.5, 5);
         expect(m.lineNumberFontSize).toBe(28);
     });
-    it('keeps one file-wide text origin for 1–5 digit rows, scaled glyphs and a review lane', () => {
-        for (const digits of [1, 2, 3, 4, 5]) {
-            for (const digitWidth of [7.8, 15.6, 19.5]) {
-                const numberWidth = Math.max(24, Math.round(digits * digitWidth));
-                expect(resolveCodeEditorGutterMetrics({ lineNumberDigits: digits, digitWidth, reviewLaneWidth: 32 })).toMatchObject({
-                    numberWidth, textOffset: 8 + 32 + 4 + numberWidth + 18,
-                });
-            }
+    it('reserves gutter space for maximum line digits, measured glyphs and a review lane', () => {
+        for (const [digits, digitWidth, numberWidth, textOffset] of [
+            [1, 7.8, 24, 86],
+            [1, 15.6, 24, 86],
+            [1, 19.5, 24, 86],
+            [2, 7.8, 24, 86],
+            [2, 15.6, 31, 93],
+            [2, 19.5, 39, 101],
+            [3, 7.8, 24, 86],
+            [3, 15.6, 47, 109],
+            [3, 19.5, 59, 121],
+            [4, 7.8, 31, 93],
+            [4, 15.6, 62, 124],
+            [4, 19.5, 78, 140],
+            [5, 7.8, 39, 101],
+            [5, 15.6, 78, 140],
+            [5, 19.5, 98, 160],
+        ] as const) {
+            expect(resolveCodeEditorGutterMetrics({ lineNumberDigits: digits, digitWidth, reviewLaneWidth: 32 }))
+                .toEqual({ numberWidth, textOffset });
         }
         expect(resolveCodeEditorGutterMetrics({ lineNumberDigits: 5, digitWidth: 7.8, showLineNumbers: false }).textOffset).toBe(30);
         expect(resolveCodeEditorGutterMetrics({ lineNumberDigits: 5, digitWidth: 7.8, showLineNumbers: false, columns: 2 }).textOffset).toBe(30);

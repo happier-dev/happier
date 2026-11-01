@@ -22,18 +22,6 @@ function getState(): ExpoSpeechStubState {
     return g[STATE_KEY]!;
 }
 
-export function __resetExpoSpeechStub(): void {
-    const state = getState();
-    state.speakImpl = null;
-    state.stopImpl = null;
-}
-
-export function __setExpoSpeechImpls(next: { speak?: SpeakImpl | null; stop?: StopImpl | null }): void {
-    const state = getState();
-    if ('speak' in next) state.speakImpl = next.speak ?? null;
-    if ('stop' in next) state.stopImpl = next.stop ?? null;
-}
-
 export function speak(text: string, options?: SpeakOptions): void {
     const impl = getState().speakImpl;
     impl?.(text, options);

@@ -132,9 +132,13 @@ describe('WorkflowFlowView accessibility structure', () => {
     it('keeps the linear reading order the visual outline shows', async () => {
         const screen = await renderFlow();
 
-        const ordered = ['analyze', 'fan-out', 'fan-out#checks', 'review', 'implement']
-            .map((nodeId) => screen.findByTestId(`flow-node-${nodeId}`));
-        expect(ordered.every((node) => node !== null)).toBe(true);
+        const expected = [
+            'flow-node-analyze', 'flow-node-fan-out', 'flow-node-fan-out#checks',
+            'flow-node-review', 'flow-node-implement',
+        ];
+        const ordered = screen.root.findAll((node) => typeof node.type === 'string'
+            && expected.includes(node.props.testID));
+        expect(ordered.map((node) => node.props.testID)).toEqual(expected);
     });
 });
 

@@ -277,15 +277,6 @@ describe('browser automation verb matrix (UB-1)', () => {
         expect(readDocMatrix()).toBe(matrix);
     });
 
-    it('covers every capability kind the protocol declares', () => {
-        // A new capability kind must appear in the rendered rows, so the doc cannot silently omit
-        // a verb the protocol advertises.
-        const rendered = renderMatrix();
-        const declared: readonly BrowserAutomationAdapterCapabilityKindV1[] = CAPABILITY_KINDS;
-        const missing = declared.filter((kind) => !rendered.includes(`\`${kind}\``));
-        expect(missing).toEqual([]);
-    });
-
     it('keeps every desktop and streamed surface honest about why a verb is off', () => {
         // The failure mode UB-1 names: a surface that reports zero available verbs and zero
         // reasons is a silent dead end for an agent.

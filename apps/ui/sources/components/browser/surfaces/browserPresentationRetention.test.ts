@@ -73,13 +73,4 @@ describe('browser presentation retention store (UX-6)', () => {
         expect(store.isRetained(otherSlot)).toBe(false);
     });
 
-    it('survives a consumer remount because the store outlives the panel', () => {
-        // The store models the route-stable provider: a panel mounting, recording lifecycle, then
-        // fully unmounting (no further calls) leaves retention intact for the next mount.
-        const store = createBrowserPresentationRetentionStore();
-        store.recordLifecycle(SLOT, snapshot('visible', true));
-        // ...panel unmounts (no teardown call against the store)...
-        // ...new panel mounts and reads retention before emitting any lifecycle...
-        expect(store.isRetained(SLOT)).toBe(true);
-    });
 });

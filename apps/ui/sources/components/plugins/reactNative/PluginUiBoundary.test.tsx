@@ -86,6 +86,7 @@ describe('PluginUiBoundary', () => {
                 </PluginUiBoundary>,
             );
 
+            expect(screen.tree.toJSON()).toBeNull();
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
         } finally {
             consoleError.mockRestore();

@@ -70,6 +70,7 @@ describe('selectConnectMoreOffer', () => {
             connectableKeys: new Set(['claude']),
             hidden: new Set(),
         });
+        expect(offer.offered).toEqual([claude]);
         expect(offer.browse).toBe(false);
     });
 });

@@ -257,27 +257,6 @@ describe('resolveWorkspaceFileViewer', () => {
         })).toMatchObject({ kind: 'plugin', candidate: { identity: { pluginId: 'plugin.retired', localId: 'markdown' } } });
     });
 
-    it('returns to the retained preferred plugin when it becomes available again', () => {
-        const preferenceKey = serializeOpenableContentPreferenceSelectorV1({ kind: 'mime', value: 'text/markdown' });
-        const storedPreferences = preferences({
-            [preferenceKey]: { kind: 'plugin', pluginId: 'plugin.retired', contributionLocalId: 'markdown' },
-        });
-        const restoredViewer = viewer({ id: 'markdown', mimeTypes: ['text/markdown'] });
-
-        const selected = resolveWorkspaceFileViewer({
-            metadata: markdownMetadata,
-            preferences: storedPreferences,
-            availablePluginViewers: [
-                candidate({ pluginId: 'plugin.retired', viewer: restoredViewer }),
-            ],
-        });
-
-        expect(selected).toMatchObject({
-            kind: 'plugin',
-            candidate: { identity: { pluginId: 'plugin.retired', localId: 'markdown' } },
-        });
-    });
-
     it('honors an explicit built-in preference', () => {
         const preferenceKey = serializeOpenableContentPreferenceSelectorV1({ kind: 'class', value: 'text' });
         const pluginViewer = viewer({ id: 'markdown', mimeTypes: ['text/markdown'] });

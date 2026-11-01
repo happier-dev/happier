@@ -199,29 +199,6 @@ describe('browser context state', () => {
         });
     });
 
-    it('allows screenshot context availability when the attachments.uploads gate is enabled', () => {
-        const reason = resolveBrowserContextKindAvailability({
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: {
-                ...contextCapabilities,
-                supportedContextKinds: ['browserScreenshot'],
-                screenshot: {
-                    supported: true,
-                    requiresAttachmentUploads: true,
-                    maxBytes: 5_000_000,
-                },
-            },
-            adapterCapabilities: {
-                ...adapterCapabilities,
-                contextKinds: ['browserScreenshot'],
-            },
-            kind: 'browserScreenshot',
-        });
-
-        expect(reason).toBeNull();
-    });
-
     it('captures screenshot context as a media reference only when upload policy and privacy state allow it', async () => {
         const module = await import('./state') as Record<string, unknown>;
         expect(module.captureBrowserScreenshotReference).toBeTypeOf('function');

@@ -362,7 +362,7 @@ describe('sessionScm', () => {
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
-    it('falls back to session RPC when machine RPC reports method not found', async () => {
+    it('refuses an unsupported machine method without falling back to session RPC for an active session', async () => {
         getStateMock.mockReturnValue(createSessionScmState({
             session: createSessionFixture({
                 id: 'session-1',
@@ -390,6 +390,7 @@ describe('sessionScm', () => {
         const response = await sessionScmStatusSnapshot('session-1', {});
 
         expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         expect(machineRpcMock).toHaveBeenCalledTimes(1);
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -992,13 +993,14 @@ describe('SessionBoardSurface', () => {
                     density="full"
                     layout="grid"
                     focusedItemId="note-1"
-                    editor={<React.Fragment><React.Fragment key="editor" /></React.Fragment>}
+                    editor={<View testID="note-editor-content" />}
                 />
             );
         }
 
         const screen = await renderScreen(<FocusedEditorHarness />);
         expect(screen.findHostByTestId('session-board-focused-editor')).not.toBeNull();
+        expect(screen.findHostByTestId('note-editor-content')).not.toBeNull();
     });
 
     it('draws no write affordance while no Board Action producer is bound', async () => {

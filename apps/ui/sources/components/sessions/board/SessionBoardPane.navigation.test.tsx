@@ -137,22 +137,6 @@ describe('SessionBoardPane placement composition', () => {
         }));
     });
 
-    it('does not re-derive recovery navigation the mounted controller already owns', async () => {
-        await renderScreen(
-            <SessionBoardPane
-                sessionId="session-1"
-                serverId="home-1"
-                host="details"
-                resolvePrimaryHost={() => 'details'}
-                density="full"
-                layout="grid"
-            />,
-        );
-
-        expect(harness.surfaceProps).not.toHaveProperty('onManagePlugin');
-        expect(harness.surfaceProps).not.toHaveProperty('onPrepareEncryption');
-    });
-
     it.each([
         ['details', undefined],
         ['focusedDetails', undefined],

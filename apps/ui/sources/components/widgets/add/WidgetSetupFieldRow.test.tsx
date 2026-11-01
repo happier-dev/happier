@@ -33,9 +33,8 @@ afterEach(() => { standardCleanup(); });
 function bindingText(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): string[] {
     const trigger = screen.findByTestId(`${testID}.trigger`);
     if (!trigger) throw new Error(`no binding trigger ${testID}`);
-    return trigger.findAll((node: { type: unknown; props: { children?: unknown } }) => typeof node.type !== 'string'
-        && typeof node.props.children === 'string').map((node: { props: { children?: unknown } }) => node.props.children as string)
-        .filter((text: string, index: number, all: string[]) => all.indexOf(text) === index);
+    return trigger.findAll((node) => typeof node.type === 'string')
+        .flatMap((node) => node.children.filter((child) => typeof child === 'string'));
 }
 
 const declared: ResolvedInputTypeV1 = {

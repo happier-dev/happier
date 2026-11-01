@@ -121,7 +121,9 @@ describe('UsageFilterBar', () => {
     expect(chips.map((chip) => chip.id)).toEqual(['sources', 'agents']);
     // Choosers open from the chip's leading edge (the shared chip's default), never over the navigation.
     const { Popover } = await import('@/components/ui/popover');
-    expect(screen.findAllByType(Popover).every((popover) => (popover.props.portal?.anchorAlign ?? 'start') === 'start')).toBe(true);
+    const popovers = screen.findAllByType(Popover);
+    expect(popovers.length).toBeGreaterThan(0);
+    expect(popovers.every((popover) => (popover.props.portal?.anchorAlign ?? 'start') === 'start')).toBe(true);
     await screen.unmount();
   });
 

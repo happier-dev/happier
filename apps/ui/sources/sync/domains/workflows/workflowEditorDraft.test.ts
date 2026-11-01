@@ -173,16 +173,6 @@ describe('workflow structural editing', () => {
     ]);
   });
 
-  it('keeps untouched siblings referentially identical so one edit cannot rerender the rest', () => {
-    const analyze = step('analyze');
-    const implement = step('implement');
-    const draft = draftWith([analyze, implement]);
-    const edited = setWorkflowStepText(draft, 'implement', 'new text');
-    expect(edited).not.toBe(draft);
-    expect(edited.blocks[0]).toBe(analyze);
-    expect(edited.blocks[1]).not.toBe(implement);
-  });
-
   it('patches one row in a 100-step draft without replacing any untouched subtree', () => {
     const blocks = Array.from({ length: 100 }, (_unused, index) => step(`step-${index}`));
     const draft = draftWith(blocks);

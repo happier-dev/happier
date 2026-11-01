@@ -18,7 +18,7 @@ import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProf
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 
 describe('Summary settings machine catalog admission', () => {
-    it('does not authorize a static default when no executing machine is selected', async () => {
+    it('returns no catalog without a captured Account', async () => {
         const before = storage.getState();
         onTestFinished(() => storage.setState(before, true));
         storage.setState({ settings: settingsDefaults });
@@ -45,9 +45,11 @@ describe('Summary settings machine catalog admission', () => {
         const machine = createMachineFixture({ activeAt: Date.now() });
         let profiles: readonly ScmDiffSummaryCatalogProfile[] = [];
         let unavailable = false;
+        let catalogRequests = 0;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: home.serverUrl,
             serverIdentityId: 'srv_summary_settings', accountId, machineId: machine.id, actionId: 'agents.models.list', tokenEpoch: 1,
             execute(input, context) {
+                catalogRequests += 1;
                 expect(input).toEqual({ purpose: 'scm_diff_summary', machineId: machine.id });
                 expect(context.target).toEqual({ kind: 'machine', machineId: machine.id });
                 return unavailable ? { items: [], source: 'unavailable' } : { items: [], scmDiffSummaryCatalog: { profiles, automaticProfiles: profiles,
@@ -60,6 +62,11 @@ describe('Summary settings machine catalog admission', () => {
         });
         const account = await captureLazyActionAccountContext(home.id);
         onTestFinished(() => account.dispose());
+        storage.setState({ settings: settingsDefaults, profileScope: account.accountLifetime.scope, isDataReady: true });
+        const reader = createScmDiffSummarySettingsCatalogReader(account);
+        expect(await reader(settingsDefaults, '')).toBeNull();
+        expect(catalogRequests).toBe(0);
+
         const settings = { ...settingsDefaults, machineAdministrationTargetsLocalV1: {
             [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.sourceControl]: { serverIdentityId: 'srv_summary_settings', machineId: machine.id },
         } };
@@ -71,9 +78,9 @@ describe('Summary settings machine catalog admission', () => {
         const sources = entries.map(entry => ({ entry, models: getAgentStaticModels(entry.agentId, { catalogOnly: true }),
             catalogModels: getAgentStaticModels(entry.agentId, { catalogOnly: true }),
             agentFormats: getAgentCore(entry.agentId)?.structuredOutput?.formats, runnerCapable: true, discoverable: true }));
-        const reader = createScmDiffSummarySettingsCatalogReader(account);
         const binding = scmDiffSummarySettingBinding<typeof settings>(SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch);
         const signedOut = await reader(settings, '');
+        expect(catalogRequests).toBe(1);
         const empty = projectAgentModelChoices({ purpose: 'walkthrough', sources, executableProfiles: signedOut?.profiles, defaultModelTitle: 'Default' });
         expect(empty.defaultProfile).toBeNull();
         expect(empty.selections.size).toBe(0);

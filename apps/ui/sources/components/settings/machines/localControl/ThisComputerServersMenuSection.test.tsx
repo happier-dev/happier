@@ -79,6 +79,7 @@ describe('ThisComputerServersMenuSection (connection popover, R15 d, R13C-F4)', 
         });
 
         const rows = [0, 1, 2].map((index) => findTestInstanceByTypeWithProps(screen, SelectableRow, { testID: `connection-popover-this-computer-server-${index}` }));
+        expect(screen.findHostByTestId('connection-popover-this-computer-servers')).not.toBeNull();
         expect(rows.map((entry) => entry?.props.subtitle)).toEqual([
             'machine.thisComputer.servers.connected',
             'machine.thisComputer.servers.offline',
@@ -96,7 +97,7 @@ describe('ThisComputerServersMenuSection (connection popover, R15 d, R13C-F4)', 
         const { runner } = runnerWithNoReads();
         const screen = await renderScreen(React.createElement(ThisComputerServersMenuSection, { runner, onClose: () => {} }));
         await publish(runner, { serviceInstalled: false, daemonRunning: false, needsAuth: false, serviceRowsComplete: true, serviceRows: [] });
-        expect(findTestInstanceByTypeWithProps(screen, SelectableRow, { testID: 'connection-popover-this-computer-servers' })).toBeFalsy();
+        expect(screen.findHostByTestId('connection-popover-this-computer-servers')).toBeNull();
     });
 
     it('reports a failed inventory read and leads to This computer instead of implying there are no services', async () => {

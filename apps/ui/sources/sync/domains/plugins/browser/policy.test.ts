@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginBrowserProjectionEntry } from './targets';
 import { resolvePluginBrowserPolicyDecision } from './policy';
 
@@ -23,22 +24,24 @@ const disabledBrowserAction = {
 
 describe('resolvePluginBrowserPolicyDecision', () => {
     it('resolves a keyed disabled reason through the plugin locale before falling back', () => {
-        let locale: 'en' | 'fr' = 'fr';
-        const localize: PluginLocalizedTextResolver = (_pluginId, value) => {
-            if (typeof value === 'string') return value;
-            const candidate = value && typeof value === 'object' && !Array.isArray(value)
-                ? value as Readonly<Record<string, unknown>>
-                : null;
-            const fallback = typeof candidate?.fallback === 'string'
-                ? candidate.fallback
-                : '';
-            return locale === 'fr' ? 'Ouvrir l’aperçu est disponible uniquement sur ordinateur.' : fallback;
+        const projection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            translationsByPluginId: {
+                'acme.preview': {
+                    id: 'translations:acme.preview',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'translations',
+                    locales: ['fr'],
+                    bundles: { fr: { 'browser.preview.desktopOnly': 'Ouvrir l’aperçu est disponible uniquement sur ordinateur.' } },
+                },
+            },
         };
+        const localize = createPluginLocalizedTextResolver({ projection, locale: 'fr' });
         expect(resolvePluginBrowserPolicyDecision(disabledBrowserAction, { platform: 'web' }, localize).unavailableReason)
             .toBe('Ouvrir l’aperçu est disponible uniquement sur ordinateur.');
 
-        locale = 'en';
-        expect(resolvePluginBrowserPolicyDecision(disabledBrowserAction, { platform: 'web' }, localize).unavailableReason)
+        const english = createPluginLocalizedTextResolver({ projection, locale: 'en' });
+        expect(resolvePluginBrowserPolicyDecision(disabledBrowserAction, { platform: 'web' }, english).unavailableReason)
             .toBe('Open preview is available on desktop only.');
     });
 });

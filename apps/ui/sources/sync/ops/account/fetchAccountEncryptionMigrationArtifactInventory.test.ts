@@ -22,8 +22,17 @@ describe('Account transition Artifact inventory', () => {
         expect(await fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'plain' })).toEqual(rows);
     });
 
-    it('refuses duplicate rows and cursor non-advancement instead of claiming complete inventory', async () => {
-        const request = vi.fn(async () => Response.json(page([row(0)], row(0).id)));
+    it.each(['duplicate rows', 'non-advancing cursor'] as const)('refuses %s without a competing refusal hiding it', async failure => {
+        const replies = [
+            page([row(0)], row(0).id),
+            failure === 'duplicate rows'
+                ? page([row(0), row(1)], row(1).id)
+                : page([row(1)], row(0).id),
+            page([], null),
+        ];
+        // The duplicate-row response advances its cursor; the cursor response
+        // contains only new rows. A broken reader can otherwise finish normally.
+        const request = async () => Response.json(replies.shift() ?? page([], null));
         await expect(fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'plain' })).rejects.toThrow();
     });
 

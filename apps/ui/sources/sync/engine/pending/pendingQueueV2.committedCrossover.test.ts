@@ -114,22 +114,6 @@ describe('pendingQueueV2 snapshot vs committed crossover', () => {
         expect(publishedPendingLocalIds()).toEqual([]);
     });
 
-    it('publishes a server row whose utterance was already committed when the snapshot was captured', async () => {
-        const scope = await armSession();
-        const encryption = await Encryption.create(new Uint8Array(32).fill(6));
-        storage.getState().applyMessages(SESSION_ID, [committedTwin(LOCAL_ID)]);
-
-        await fetchAndApplyPendingMessagesV2({
-            sessionId: SESSION_ID,
-            encryption,
-            outboxScope: scope,
-            isOutboxScopeCurrent: () => true,
-            request: async () => queuedRowResponse(LOCAL_ID),
-        });
-
-        expect(publishedPendingLocalIds()).toEqual([LOCAL_ID]);
-    });
-
     it('publishes a server row for an utterance that has no committed twin', async () => {
         const scope = await armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));

@@ -26,7 +26,7 @@ function createBaseMetadata(): Metadata {
 describe('externalSessionAttentionMetadata', () => {
     it('preserves observed attention markers when observed progress advances', () => {
         const progress = deriveExternalSessionObservedProgress([
-            { id: 'msg-2', createdAtMs: 20 } as any,
+            { id: 'msg-2', createdAtMs: 20 },
         ]);
 
         const next = updateMetadataWithObservedExternalSessionProgress(createBaseMetadata(), progress);
@@ -40,15 +40,18 @@ describe('externalSessionAttentionMetadata', () => {
         });
     });
 
-    it('preserves viewed attention markers when viewed progress advances', () => {
-        const next = updateMetadataWithViewedExternalSessionProgress(createBaseMetadata());
+    it('advances viewed progress to the observed progress without changing the observed markers', () => {
+        const metadata = updateMetadataWithObservedExternalSessionProgress(createBaseMetadata(), {
+            token: '20:msg-2', atMs: 20,
+        });
+        const next = updateMetadataWithViewedExternalSessionProgress(metadata);
 
         expect((next as any).externalSessionAttentionV1).toEqual({
             v: 1,
-            observedProgressToken: '10:msg-1',
-            viewedProgressToken: '10:msg-1',
-            observedAtMs: 10,
-            viewedAtMs: 10,
+            observedProgressToken: '20:msg-2',
+            viewedProgressToken: '20:msg-2',
+            observedAtMs: 20,
+            viewedAtMs: 20,
         });
     });
 

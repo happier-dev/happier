@@ -108,12 +108,12 @@ describe('new session route presentation', () => {
         expect(resolveNewSessionPickerRoutePresentation({ mode: 'auto', platformOs: 'android' })).toBe('modal');
     });
 
-    it('agrees with the presentation resolver: floating is exactly the transparent-modal case', () => {
+    it('floats only the simple composer in modal mode on supported platforms', () => {
         for (const variant of ['simple', 'wizard'] as const) {
             for (const platformOs of ['ios', 'android', 'web'] as const) {
                 for (const mode of ['auto', 'modal', 'screen'] as const) {
                     expect(isNewSessionFloatingComposerPresentation({ mode, variant, platformOs }))
-                        .toBe(resolveNewSessionRoutePresentation({ mode, variant, platformOs }) === 'transparentModal');
+                        .toBe(variant === 'simple' && mode !== 'screen');
                 }
             }
         }

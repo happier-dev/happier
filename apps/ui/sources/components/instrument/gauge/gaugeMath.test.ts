@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    CONTEXT_USAGE_DANGER_THRESHOLD_PCT,
-    CONTEXT_USAGE_WARN_THRESHOLD_PCT,
-    GAUGE_HAPTIC_THRESHOLDS_PCT,
     clampUsedPct,
     crossedHapticThreshold,
     resolveUsageTone,
@@ -26,11 +23,6 @@ describe('gaugeMath', () => {
 
     describe('resolveUsageTone', () => {
         // Thresholds mirror contextWarning.ts: remaining ≤5% → danger, ≤10% → warn.
-        it('matches the contextWarning thresholds expressed as used-pct', () => {
-            expect(CONTEXT_USAGE_WARN_THRESHOLD_PCT).toBe(90);
-            expect(CONTEXT_USAGE_DANGER_THRESHOLD_PCT).toBe(95);
-        });
-
         it('maps pct to ok/warn/danger', () => {
             expect(resolveUsageTone(0)).toBe('ok');
             expect(resolveUsageTone(89.9)).toBe('ok');
@@ -67,10 +59,6 @@ describe('gaugeMath', () => {
     });
 
     describe('crossedHapticThreshold', () => {
-        it('exposes the 75/90 haptic thresholds', () => {
-            expect([...GAUGE_HAPTIC_THRESHOLDS_PCT]).toEqual([75, 90]);
-        });
-
         it('detects an upward crossing and returns the highest threshold crossed', () => {
             expect(crossedHapticThreshold(70, 80)).toBe(75);
             expect(crossedHapticThreshold(74.9, 75)).toBe(75);

@@ -88,6 +88,9 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
+// Load the real row after boundaries, outside interaction deadlines.
+await import('./Item');
+
 describe('Item (double press)', () => {
     it('wires onDoublePress to onDoubleClick on web', async () => {
         const onPress = vi.fn();
@@ -172,25 +175,4 @@ describe('Item (double press)', () => {
         expect(onPress).toHaveBeenCalledTimes(0);
     });
 
-    it('treats web click detail=1 as a single press', async () => {
-        const onPress = vi.fn();
-        const onDoublePress = vi.fn();
-        const { Item } = await import('./Item');
-
-        const screen = await renderScreen(
-            <Item
-                testID={ITEM_TEST_ID}
-                title="Hello"
-                onPress={onPress}
-                onDoublePress={onDoublePress}
-                showChevron={false}
-            />,
-        );
-        const pressable = getItemPressable(screen);
-
-        await invokeItemHandler(pressable, 'onPress', { nativeEvent: { detail: 1 } });
-
-        expect(onPress).toHaveBeenCalledTimes(1);
-        expect(onDoublePress).toHaveBeenCalledTimes(0);
-    });
 });

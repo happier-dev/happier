@@ -62,14 +62,7 @@ const sessionGuidanceModuleState = vi.hoisted(() => ({
         text: undefined as SessionGuidanceModuleFactory | undefined,
         unistyles: undefined as SessionGuidanceModuleFactory | undefined,
     },
-    localSettings: {
-        sessionGettingStartedGuidanceDismissed: false,
-    },
 }));
-
-export function setSessionGettingStartedGuidanceDismissedForTests(value: boolean): void {
-    sessionGuidanceModuleState.localSettings.sessionGettingStartedGuidanceDismissed = value;
-}
 
 export function installSessionGuidanceCommonModuleMocks(
     options: InstallSessionGuidanceCommonModuleMocksOptions = {},
@@ -149,7 +142,7 @@ export function installSessionGuidanceCommonModuleMocks(
             useServerScopedSessionListCache: () => ({ s1: [] }),
             useMachineListByServerId: () => ({ s1: [] }),
             useMachineListStatusByServerId: () => ({ s1: 'idle' }),
-            useLocalSetting: () => sessionGuidanceModuleState.localSettings.sessionGettingStartedGuidanceDismissed,
+            useLocalSetting: () => false,
             useSetting: () => [],
         });
     });

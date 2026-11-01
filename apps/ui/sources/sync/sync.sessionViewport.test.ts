@@ -4,7 +4,6 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
-import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
 vi.mock('react-native-mmkv', () => {
@@ -99,18 +98,6 @@ describe('sync session viewport', () => {
         return {
             type: 'session',
             session: buildSessionListRenderableFromSession(createSessionFixture({ id })),
-        };
-    }
-
-    function buildMessage(id: string, seq: number): NormalizedMessage {
-        return {
-            id,
-            localId: null,
-            createdAt: seq,
-            role: 'user',
-            content: { type: 'text', text: id },
-            seq,
-            isSidechain: false,
         };
     }
 
@@ -246,24 +233,6 @@ describe('sync session viewport', () => {
             anchor: null,
         });
         expect(sync.getSessionViewport('session-1')).toMatchObject({ anchor: null });
-    });
-
-    it('stores a valid viewport anchor for observed restore intent', async () => {
-        const { sync } = await import('./sync');
-
-        sync.onSessionViewportChange('session-1', {
-            isPinned: false,
-            offsetY: 420,
-            shouldRestoreViewport: true,
-            anchor: validViewportAnchor,
-        });
-
-        expect(sync.getSessionViewport('session-1')).toMatchObject({
-            isPinned: false,
-            offsetY: 420,
-            source: 'observed',
-            anchor: validViewportAnchor,
-        });
     });
 
     it('stores a valid viewport anchor when the anchored row starts above the viewport', async () => {
@@ -404,35 +373,6 @@ describe('sync session viewport', () => {
         });
     });
 
-    it('marks outbound user messages as live-tail intent', async () => {
-        const { sync } = await import('./sync');
-        const liveTailSync = sync as unknown as {
-            markSessionLiveTailIntent?: (sessionId: string) => void;
-        };
-
-        sync.onSessionViewportChange('session-1', {
-            isPinned: false,
-            offsetY: 420,
-            shouldRestoreViewport: true,
-            anchor: validViewportAnchor,
-        });
-        expect(sync.getSessionViewport('session-1')).toMatchObject({
-            isPinned: false,
-            source: 'observed',
-            anchor: validViewportAnchor,
-        });
-
-        expect(typeof liveTailSync.markSessionLiveTailIntent).toBe('function');
-        liveTailSync.markSessionLiveTailIntent?.('session-1');
-
-        expect(sync.getSessionViewport('session-1')).toMatchObject({
-            isPinned: true,
-            offsetY: 0,
-            source: 'default',
-            anchor: null,
-        });
-    });
-
     it('hydrates durable identity-first viewport state across runtime reloads', async () => {
         const { sync } = await import('./sync');
 
@@ -442,7 +382,12 @@ describe('sync session viewport', () => {
             shouldRestoreViewport: true,
             anchor: validViewportAnchor,
         });
-        expect(sync.getSessionViewport('session-1')).toMatchObject({ anchor: validViewportAnchor });
+        expect(sync.getSessionViewport('session-1')).toMatchObject({
+            isPinned: false,
+            offsetY: 420,
+            source: 'observed',
+            anchor: validViewportAnchor,
+        });
 
         vi.resetModules();
         await loadSyncSingletonForTests();
@@ -491,40 +436,6 @@ describe('sync session viewport', () => {
         sync.markSessionLiveTailIntent('session-shared');
 
         expect(readPersistedSessionViewport('session-shared')).toBeNull();
-    });
-
-    it('preserves stale hidden transcript rows on reveal while scheduling repair', async () => {
-        const { sync } = await import('./sync');
-        const { storage } = await import('@/sync/domains/state/storage');
-        const invalidateCoalesced = vi.fn();
-        const sessionId = 'session-stale-reveal';
-        type StaleTranscriptHarness = {
-            markSessionTranscriptStale: (
-                sessionId: string,
-                marker: { updateType: 'message-updated'; seq: number; messageId: string },
-            ) => void;
-            messagesSync: Map<string, { invalidateCoalesced: () => void }>;
-            sessionMaterializedMaxSeqById: Record<string, number>;
-        };
-        const harness = sync as unknown as StaleTranscriptHarness;
-
-        (sync as any).encryption = { getSessionEncryption: () => null };
-        storage.getState().applyMessages(sessionId, [buildMessage('message-stale', 7)]);
-        storage.getState().applyMessagesLoaded(sessionId);
-        harness.messagesSync = new Map([[sessionId, { invalidateCoalesced }]]);
-        harness.sessionMaterializedMaxSeqById = { [sessionId]: 7 };
-        harness.markSessionTranscriptStale(sessionId, {
-            updateType: 'message-updated',
-            seq: 7,
-            messageId: 'message-stale',
-        });
-
-        sync.onSessionVisible(sessionId);
-
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(1);
-        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
-        expect(harness.sessionMaterializedMaxSeqById[sessionId]).toBe(7);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(1);
     });
 
     it('hydrates deferred hidden session state on reveal and clears the marker', async () => {

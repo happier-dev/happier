@@ -45,6 +45,7 @@ describe('Voice energy app mount', () => {
         // the cost the whole design exists to avoid.
         const mount = readSource('components/voice/light/VoiceEnergyAppProvider.tsx');
         expect(mount.match(/<VoiceEnergyProvider/g)).toHaveLength(1);
+        expect(readSource('app/_layout.tsx').match(/<VoiceEnergyAppProvider\b/g)).toHaveLength(1);
     });
 });
 

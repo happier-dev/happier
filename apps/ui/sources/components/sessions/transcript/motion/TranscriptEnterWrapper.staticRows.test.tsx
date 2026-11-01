@@ -4,13 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
-import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { createTranscriptMotionTestRuntime, installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { TranscriptMotionContext } from './TranscriptMotionContext';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const motionState = vi.hoisted(() => ({
     animatedValueConstructCount: 0,
-    shouldAnimate: false,
 }));
 
 installTranscriptMotionCommonModuleMocks({
@@ -30,32 +30,23 @@ installTranscriptMotionCommonModuleMocks({
     },
 });
 
-vi.mock('./TranscriptMotionContext', () => ({
-    useTranscriptMotion: () => ({
-        config: { preset: 'full', animateNewItemsEnabled: true },
-        gate: {
-            isFresh: () => motionState.shouldAnimate,
-            consumeFreshness: () => motionState.shouldAnimate,
-            markPainted: () => undefined,
-        },
-    }),
-}));
-
 describe('TranscriptEnterWrapper static rows', () => {
     beforeEach(() => {
         motionState.animatedValueConstructCount = 0;
-        motionState.shouldAnimate = false;
     });
 
     it('does not allocate animated values for rows that will not animate', async () => {
         const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-        await renderScreen(
-            <TranscriptEnterWrapper id="old-row" createdAt={1}>
-                <div />
-            </TranscriptEnterWrapper>,
+        const screen = await renderScreen(
+            <TranscriptMotionContext.Provider value={createTranscriptMotionTestRuntime(61_000)}>
+                <TranscriptEnterWrapper id="old-row" createdAt={1}>
+                    <div>Historical row</div>
+                </TranscriptEnterWrapper>
+            </TranscriptMotionContext.Provider>,
         );
 
         expect(motionState.animatedValueConstructCount).toBe(0);
+        expect(screen.findByType('div').props.children).toBe('Historical row');
     });
 });

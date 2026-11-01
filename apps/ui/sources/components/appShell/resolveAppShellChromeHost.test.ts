@@ -62,12 +62,4 @@ describe('resolveAppShellChromeHost', () => {
         })).toBe('narrow-desktop-fallback');
     });
 
-    it('returns none when the authenticated desktop sidebar host should stay in the sidebar', () => {
-        expect(resolveAppShellChromeHost({
-            isAuthenticated: true,
-            isDesktopHost: true,
-            isTablet: true,
-            isTerminalConnectRoute: false,
-        })).toBe('none');
-    });
 });

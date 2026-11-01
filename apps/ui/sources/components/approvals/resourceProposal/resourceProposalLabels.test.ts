@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import { readResourceProposalApproval } from './readResourceProposalApproval';
 import { describeResourceProposalInboxFacts } from './resourceProposalLabels';
@@ -22,5 +23,9 @@ describe('describeResourceProposalInboxFacts', () => {
         expect(mixed).toContain('1');
         // The kinds come from the items' own reasons, once each.
         expect(allSafe.split(' · ')).toHaveLength(2);
+        expect(allSafe.split(' · ')[1]).toBe([
+            t('machineStorage.reasons.merged_clean'),
+            t('machineStorage.reasons.rebuilds'),
+        ].join(', '));
     });
 });

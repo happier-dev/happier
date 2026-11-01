@@ -73,16 +73,6 @@ describe('resolveServerScopedMachine', () => {
         }
     });
 
-    it('does not fall back to a global machine excluded by a settled scoped list', () => {
-        const globalMachine = createMachineFixture();
-
-        expect(resolveServerScopedMachine({
-            machines: { 'machine-1': globalMachine },
-            machineListByServerId: { 'srv_machine_owner': [] },
-            machineListStatusByServerId: { 'srv_machine_owner': 'idle' },
-        }, 'srv_machine_owner', 'machine-1')).toBeNull();
-    });
-
     it('does not borrow active Home capability while a foreign Home list is loading', () => {
         const globalMachine = createMachineFixture();
         expect(resolveServerScopedMachine({

@@ -45,5 +45,10 @@ describe('an edited preset\'s line', () => {
         expect(text).toContain('Coach');
         expect(text).toContain('Daily usage');
         expect(text).not.toContain('Recap');
+        expect(text).toContain(t('widgetFrame.presetChangeList', {
+            first: t('widgetFrame.presetAdded', { item: 'Coach' }),
+            second: t('widgetFrame.presetChanged', { item: 'Daily usage' }),
+            more: 2,
+        }));
     });
 });

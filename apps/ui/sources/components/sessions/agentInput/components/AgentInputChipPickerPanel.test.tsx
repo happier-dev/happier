@@ -139,6 +139,7 @@ describe('AgentInputChipPickerPanel', () => {
         expect(screen.findByTestId('agent-input-chip-picker.close')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:one')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
+        expect(screen.findAllByType('ScrollView')).toHaveLength(0);
     });
 
     it('keeps split detailed selector rows reachable through a scrollable rail', async () => {

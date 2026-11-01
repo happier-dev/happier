@@ -84,8 +84,7 @@ describe('Home orbit scene (lab at-widget.js scene())', () => {
           (Math.atan2(moon.y - scene.py, moon.x - scene.px) * 180) / Math.PI,
         ),
       );
-    expect(new Set(outer).size).toBe(3);
-    expect(outer[0]).toBe(128);
+    expect(outer).toEqual([128, -112, 8]);
   });
 });
 
@@ -100,6 +99,10 @@ describe('Home orbit ring (lab hm-A tetherMap)', () => {
     expect(ring.marks[0]!.y).toBeLessThan(134);
     expect(ring.marks[1]!.x).toBeGreaterThan(150);
     expect(ring.marks[1]!.y).toBeCloseTo(134, 6);
+    expect(ring.marks[2]!.x).toBeCloseTo(150, 6);
+    expect(ring.marks[2]!.y).toBeGreaterThan(134);
+    expect(ring.marks[3]!.x).toBeLessThan(150);
+    expect(ring.marks[3]!.y).toBeCloseTo(134, 6);
     // r 60 would put marks inside the glow (2.1 × 36 = 75.6): the ring grows past it.
     for (const mark of ring.marks) {
       const distance = Math.hypot(mark.x - scene.px, mark.y - scene.py);

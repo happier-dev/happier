@@ -2,7 +2,8 @@ import * as React from 'react';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
-import { installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { createTranscriptMotionTestRuntime, installTranscriptMotionCommonModuleMocks } from './transcriptMotionTestHelpers';
+import { TranscriptMotionContext } from './TranscriptMotionContext';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,8 +22,7 @@ installTranscriptMotionCommonModuleMocks({
           this.__value = initial;
         },
         timing: (_value: any, config: any) => {
-          capturedTimingConfigs.push(config);
-          return { start: () => undefined };
+          return { start: () => { capturedTimingConfigs.push(config); } };
         },
         parallel: (_anims: any[]) => ({ start: () => undefined }),
       },
@@ -31,55 +31,24 @@ installTranscriptMotionCommonModuleMocks({
   },
 });
 
-vi.mock('./TranscriptMotionContext', () => ({
-  useTranscriptMotion: () => ({
-    config: { preset: 'full', animateNewItemsEnabled: true },
-    gate: {
-      isFresh: () => true,
-      consumeFreshness: () => true,
-      markPainted: () => undefined,
-    },
-  }),
-}));
-
 describe('TranscriptEnterWrapper (web native driver)', () => {
   beforeEach(() => {
     capturedTimingConfigs = [];
   });
 
-  it('starts the enter animation on commit, without a layout event', async () => {
+  it('starts an opacity-only animation on commit without the native driver or a layout event', async () => {
     const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
 
-    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
+    await renderScreen(
+      <TranscriptMotionContext.Provider value={createTranscriptMotionTestRuntime(1_000)}>
+        <TranscriptEnterWrapper id="m1" createdAt={990}>
           <div />
-        </TranscriptEnterWrapper>);
+        </TranscriptEnterWrapper>
+      </TranscriptMotionContext.Provider>,
+    );
     await flushHookEffects();
 
-    expect(capturedTimingConfigs.length).toBeGreaterThan(0);
-  });
-
-  it('does not use native driver on web (avoids Animated warnings and jitter)', async () => {
-    const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
-
-    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
-          <div />
-        </TranscriptEnterWrapper>);
-
-    expect(capturedTimingConfigs.length).toBeGreaterThan(0);
-    for (const cfg of capturedTimingConfigs) {
-      expect(cfg.useNativeDriver).toBe(false);
-    }
-  });
-
-  it('does not animate translateY on web (avoids hit-target overlap during enter)', async () => {
-    const { TranscriptEnterWrapper } = await import('./TranscriptEnterWrapper');
-
-    await renderScreen(<TranscriptEnterWrapper id="m1" createdAt={1}>
-          <div />
-        </TranscriptEnterWrapper>);
-
-    // The translateY timing uses `toValue: 0`. On web we skip it to avoid
-    // temporarily overlapping neighboring rows and intercepting pointer events.
-    expect(capturedTimingConfigs.some((cfg) => cfg?.toValue === 0)).toBe(false);
+    expect(capturedTimingConfigs).toHaveLength(1);
+    expect(capturedTimingConfigs[0]).toMatchObject({ toValue: 1, useNativeDriver: false });
   });
 });

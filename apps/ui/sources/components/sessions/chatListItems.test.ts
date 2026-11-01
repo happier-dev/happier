@@ -250,6 +250,8 @@ describe('buildChatListItems', () => {
         });
 
         expect(next.items.map((item) => item.kind)).toEqual(['message', 'message', 'pending-user-action']);
+        expect(next.items[0]).toBe(base.items[0]);
+        expect(next.items[1]).toBe(base.items[1]);
     });
 
     it('appends pending messages after transcript messages', () => {

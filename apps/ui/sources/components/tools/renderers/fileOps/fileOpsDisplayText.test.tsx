@@ -1,14 +1,16 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
-import { collectHostText, makeToolViewProps, renderScreen } from '@/dev/testkit';
+import { collectHostText, collectNodeText, makeToolViewProps, renderScreen } from '@/dev/testkit';
 import { makeCompletedTool } from '../core/truncationView.testHelpers';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
 
+// Load the renderer graph during collection, outside interaction deadlines.
+const { ReadView, projectReadDisplayText } = await import('./ReadView');
+
 describe('file-operation display text', () => {
     it('projects only selected read content and renders a match past the full-view cap', async () => {
-        const { ReadView, projectReadDisplayText } = await import('./ReadView');
         const content = Array.from({ length: 450 }, (_, index) => `line ${index}`).join('\n');
         const tool = makeCompletedTool('Read', { file_path: '/tmp/a' }, {
             file: { content }, content: 'unused content', _raw: { secret: 'hidden metadata' },
@@ -43,7 +45,7 @@ describe('file-operation display text', () => {
         const store = createTranscriptFindRowStore();
         store.publish(new Map([['message', { blocks: [{ id: blockId, sourceRanges: [{ start: 0, end: 6, current: true }] }], reveal: { blockId, requestId: 1 } }]]));
         const screen = await renderScreen(<TranscriptFindProvider store={store}><EditView {...makeToolViewProps(tool, { messageId: 'message' })} /></TranscriptFindProvider>);
-        expect(screen.tree.root.findAll((node) => node.props.testID === 'find-match-current').length).toBeGreaterThan(0);
+        expect(screen.findAllHostsByTestId('find-match-current').flatMap(collectNodeText).join('')).toBe('new 29');
     });
 
     it('reveals the current grep result past the full-view result cap', async () => {
@@ -54,7 +56,7 @@ describe('file-operation display text', () => {
         store.publish(new Map([['message', { blocks: [{ id: blockId, sourceRanges: [{ start: 0, end: 9, current: true }] }], reveal: { blockId, requestId: 1 } }]]));
         const screen = await renderScreen(<TranscriptFindProvider store={store}><GrepView {...makeToolViewProps(tool, { messageId: 'message', detailLevel: 'full' })} /></TranscriptFindProvider>);
         expect(collectHostText(screen.tree).join(' ')).toContain('result 31');
-        expect(screen.tree.root.findAll((node) => node.props.testID === 'find-match-current').length).toBeGreaterThan(0);
+        expect(screen.findAllHostsByTestId('find-match-current').flatMap(collectNodeText).join('')).toBe('result 31');
     });
 
     it('projects unchanged diff context once and reveals a current match inside a collapsed file', async () => {
@@ -67,6 +69,6 @@ describe('file-operation display text', () => {
         const store = createTranscriptFindRowStore();
         store.publish(new Map([['message', { blocks: [{ id: target.id, sourceRanges: [{ start: 0, end: 3, current: true }] }], reveal: { blockId: target.id, requestId: 1 } }]]));
         const screen = await renderScreen(<TranscriptFindProvider store={store}><DiffView {...makeToolViewProps(tool, { messageId: 'message' })} /></TranscriptFindProvider>);
-        expect(screen.tree.root.findAll((node) => node.props.testID === 'find-match-current').length).toBeGreaterThan(0);
+        expect(screen.findAllHostsByTestId('find-match-current').flatMap(collectNodeText).join('')).toBe('new');
     });
 });

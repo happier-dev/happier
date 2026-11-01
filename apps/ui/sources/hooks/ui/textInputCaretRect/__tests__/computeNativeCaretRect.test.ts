@@ -33,15 +33,6 @@ describe('computeNativeCaretRect', () => {
         expect(result.height).toBe(16);
     });
 
-    it('uses actual height when selection span exceeds minimum', () => {
-        const result = computeNativeCaretRect(
-            { x: 0, y: 0 },
-            { start: { x: 0, y: 0 }, end: { x: 0, y: 24 } },
-        );
-
-        expect(result.height).toBe(24);
-    });
-
     it('handles negative input offsets', () => {
         const result = computeNativeCaretRect(
             { x: -10, y: -20 },

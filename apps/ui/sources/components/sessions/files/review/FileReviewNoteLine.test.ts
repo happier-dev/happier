@@ -10,12 +10,12 @@ describe('file review note line', () => {
         const { fileReviewNoteText } = await import('./FileReviewNoteLine');
         const turns = [{ turnId: 'turn-b', startedAt: 20 }, { turnId: 'turn-a', startedAt: 10 }];
         expect(fileReviewNoteText({ action: 'restore', paths: ['src/app.ts'], turnId: 'turn-b' }, turns))
-            .toContain('fileReviewNote.restoreBeforeTurn');
+            .toBe('fileReviewNote.restoreBeforeTurn(paths=src/app.ts,turn=hunkReview.turn(turn=2))');
         expect(fileReviewNoteText({ action: 'restore', paths: ['src/app.ts'], turnId: 'turn-z' }, turns))
             .toContain('fileReviewNote.restore');
         expect(fileReviewNoteText({ action: 'restore', paths: ['src/app.ts'], turnId: 'turn-z' }, turns))
             .not.toContain('restoreBeforeTurn');
         expect(fileReviewNoteText({ action: 'discard', paths: ['src/app.ts'], changeCount: 2, turnId: 'turn-a' }, turns))
-            .toContain('hunkReview.turn');
+            .toBe('fileReviewNote.discard(paths=src/app.ts,count=2) (hunkReview.turn(turn=1))');
     });
 });

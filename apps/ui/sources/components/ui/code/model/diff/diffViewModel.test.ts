@@ -40,7 +40,7 @@ describe('diffViewModel', () => {
         });
     });
 
-    it('handles large text-pair stats without returning negative values', () => {
+    it('approximates net line growth and shrinkage for large text pairs', () => {
         const oldText = Array.from({ length: 15_000 }, (_, index) => `old-${index}`).join('\n');
         const newText = Array.from({ length: 16_000 }, (_, index) => `new-${index}`).join('\n');
 
@@ -50,10 +50,16 @@ describe('diffViewModel', () => {
                 oldText,
                 newText,
             },
+            {
+                filePath: 'shrinking.txt',
+                oldText: newText,
+                newText: oldText,
+            },
         ]);
 
-        expect(entries).toHaveLength(1);
-        expect(entries[0].added).toBeGreaterThanOrEqual(0);
-        expect(entries[0].removed).toBeGreaterThanOrEqual(0);
+        expect(entries.map(({ added, removed }) => ({ added, removed }))).toEqual([
+            { added: 1_000, removed: 0 },
+            { added: 0, removed: 1_000 },
+        ]);
     });
 });

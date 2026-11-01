@@ -45,11 +45,6 @@ describe('resolveHomeDisplayName', () => {
         expect(resolveHomeDisplayName(profile({ name: 'Studio' }))).toBe('Studio');
     });
 
-    it('names a Home by the name it was given', async () => {
-        const { resolveHomeDisplayName } = await import('./homeDisplayName');
-        expect(resolveHomeDisplayName(profile({ name: 'Studio' }))).toBe('Studio');
-    });
-
     it('does not present the address a profile was named after as a Home name', async () => {
         const { resolveHomeDisplayName } = await import('./homeDisplayName');
         expect(resolveHomeDisplayName(profile({}))).toBeNull();

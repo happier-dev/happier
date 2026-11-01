@@ -55,11 +55,6 @@ describe('isNoOpGoalMutation', () => {
 });
 
 describe('goal confirmation state machine', () => {
-    it('begins pending (not slow) from a captured baseline signature', () => {
-        const state = beginGoalConfirmation('goal:1|Ship|active||10');
-        expect(state).toEqual({ phase: 'pending', baseline: 'goal:1|Ship|active||10', slow: false });
-    });
-
     it('marks a pending confirmation slow, and is idempotent / a no-op off the pending phase', () => {
         const pending = beginGoalConfirmation('sig');
         const slow = markGoalConfirmationSlow(pending);

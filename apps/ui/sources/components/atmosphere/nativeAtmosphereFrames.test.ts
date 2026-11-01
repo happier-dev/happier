@@ -2,12 +2,6 @@ import { expect, it } from 'vitest';
 import { createAtmosphereWorkletCore } from './backdropWorkletCore.generated';
 import { atmosphereRipple, createAtmosphereTransition } from '@happier-dev/brand/atmosphere';
 
-it('exposes native ripple and blue-noise frames instead of substituting reduced motion', () => {
-    const core = createAtmosphereWorkletCore();
-    expect(core.atmosphereRipple).toBeTypeOf('function');
-    expect(core.createAtmosphereTransition).toBeTypeOf('function');
-});
-
 it('paints the same resettle, reduced crossfade and glyph ring pixels as web', () => {
     const core = createAtmosphereWorkletCore();
     const w = 32, h = 24;

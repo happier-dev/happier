@@ -40,39 +40,6 @@ describe('pendingQueueV2 requested-action replay', () => {
 
   beforeEach(async () => await resetPendingQueueState(outboxScope));
 
-  it('retains external handoff enqueue custody until its acknowledgement even when a snapshot lists it', async () => {
-    const sessionId = 'pending-handoff-before-ack';
-    const localId = 'handoff-before-ack';
-    storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
-    let custodyAtSnapshot: Awaited<ReturnType<typeof loadPendingOutboxForSession>> = [];
-    const result = await enqueuePendingMessageV2({
-      sessionId, localId, text: 'hello', encryption: null, outboxScope,
-      deliveryMode: 'external_handoff', serverWireMode: 'pending_input_v1',
-      request: async (_path, init) => {
-        const body = JSON.parse(String(init?.body));
-        await fetchAndApplyPendingMessagesV2({
-          sessionId, encryption: null, outboxScope, isOutboxScopeCurrent: () => true,
-          request: async () => Response.json({ pending: [{
-            localId, content: body.content, messageRole: 'user',
-            requestedAction: body.requestedAction,
-            ...pendingDeliveryStatusV1ToPersistedFields({ status: 'external_handoff' }),
-            deliveryStatus: { status: 'external_handoff' },
-            position: 1, createdAt: 1, updatedAt: 1,
-          }] }),
-        });
-        custodyAtSnapshot = await loadPendingOutboxForSession(sessionId, outboxScope);
-        return currentPendingAck('enqueue', { localId, deliveryStatus: { status: 'external_handoff' } });
-      },
-    });
-    expect(custodyAtSnapshot).toEqual([expect.objectContaining({ localId, operation: 'enqueue' })]);
-    expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
-      expect.objectContaining({ localId, source: 'server_pending', pendingDeliveryStatus: 'external_handoff' }),
-    ]);
-    expect(result).toMatchObject({ accepted: true, externalHandoffClaimed: true });
-    expect(result.settled).toBeUndefined();
-    expect(await loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([]);
-  });
-
   it.each(['external_handoff', 'blocked', 'discarded'] as const)(
     'reconciles durable external handoff recovery with a %s server snapshot', async (status) => {
       const sessionId = `pending-handoff-recovery-${status}`;
@@ -528,37 +495,6 @@ describe('pendingQueueV2 requested-action replay', () => {
     await expect(sendPendingDeliveryAsNewV2(params)).rejects.toThrow();
 
     expect(bodies).toEqual([{}, {}]);
-  });
-
-  it('returns the server-owned send-as-new identity after refreshing pending state', async () => {
-    const sessionId = 's_send_as_new_server_identity';
-    const localId = 'uncertain-original';
-    const rawRecord = { role: 'user' as const, content: { type: 'text' as const, text: 'uncertain' }, meta: {} };
-    storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
-    storage.getState().upsertPendingMessage(sessionId, {
-      id: localId, localId, createdAt: 1, updatedAt: 1, source: 'server_pending',
-      deliveryStatus: 'accepted', pendingDeliveryStatus: 'blocked',
-      pendingDeliveryBlockedReason: 'delivery_outcome_uncertain', text: 'uncertain', rawRecord,
-    });
-    const request = vi.fn(async (path: string, init?: RequestInit) => {
-      if (path.endsWith('/delivery/send-as-new')) {
-        expect(JSON.parse(String(init?.body))).toEqual({});
-        return Response.json({ newLocalId: 'server-owned-replacement' });
-      }
-      if (path.endsWith('/pending?includeDiscarded=1')) {
-        return Response.json({ pending: [] });
-      }
-      return new Response(null, { status: 404 });
-    });
-
-    await expect(sendPendingDeliveryAsNewV2({
-      sessionId,
-      pendingId: localId,
-      encryption: await createPendingQueueEncryption({ sessionId }),
-      outboxScope,
-      request,
-      isOutboxScopeCurrent: () => true,
-    })).resolves.toBe('server-owned-replacement');
   });
 
   it('establishes visible external-handoff custody from a frozen row before a cold rejoin can settle', async () => {

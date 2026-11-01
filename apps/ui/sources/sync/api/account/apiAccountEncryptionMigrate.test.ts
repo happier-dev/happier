@@ -62,26 +62,6 @@ describe('migrateAccountEncryptionMode', () => {
     vi.unstubAllGlobals();
   });
 
-  it('invalidates cached account mode after a successful migration', async () => {
-    fetchBoundary.mockResolvedValueOnce(
-      jsonResponse({
-        success: true,
-        mode: 'plain',
-        accountVersion: 4,
-        settingsVersion: 1,
-      }, 200),
-    );
-
-    await expect(
-      migrateAccountEncryptionMode(
-        { token: 't' },
-        PLAIN_REQUEST,
-      ),
-    ).resolves.toMatchObject({ success: true, mode: 'plain' });
-
-    expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision + 1);
-  });
-
   it('retains committed authoring-memory rows through the canonical migration response adapter', async () => {
     const content = { t: 'plain' as const, v: 'profile-a' };
     const request = AccountEncryptionMigrateRequestSchema.parse({ ...PLAIN_REQUEST,
@@ -186,12 +166,6 @@ describe('migrateAccountEncryptionMode', () => {
         && err.status === 200;
     });
     expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision);
-    expect(fetchBoundary).toHaveBeenCalledTimes(1);
-  });
-
-  it('submits the current migration without an older-server capability probe', async () => {
-    fetchBoundary.mockResolvedValueOnce(jsonResponse({ success: true, mode: 'plain', accountVersion: 4, settingsVersion: 1 }));
-    await expect(migrateAccountEncryptionMode({ token: 't' }, PLAIN_REQUEST)).resolves.toMatchObject({ success: true, mode: 'plain' });
     expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 

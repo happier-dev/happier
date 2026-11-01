@@ -10,6 +10,9 @@ import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 installUiListsCommonModuleMocks();
 
+// Load the real row after boundaries, outside interaction deadlines.
+await import('./Item');
+
 describe('Item leading element', () => {
     it('lets a compact list row\'s leading element wider than the glyph box take its width instead of overhanging the title', async () => {
         const { Item } = await import('./Item');

@@ -50,7 +50,10 @@ describe('resolveActivitySurfaceSlots', () => {
                 liveActivitiesMode: 'attention', liveActivitiesStrategy: 'dynamic_primary',
             })), dwellMs: 90_000, staleAfterMs: 120_000 },
         });
-        expect(slots.primarySession?.sessionId).toBe(recency === 'stale' ? next.id : previous.id);
+        const expectedPrimary = recency === 'stale' ? next.id : previous.id;
+        expect(slots.selectionReason).toBe('dynamic_primary');
+        expect(slots.selectedSessions.map((candidate) => candidate.sessionId)).toEqual([expectedPrimary]);
+        expect(slots.primarySession?.sessionId).toBe(expectedPrimary);
         expect(projectUiSessionAwareness(previous, now).freshness).toBe(recency === 'runtime' ? 'live' : 'stale');
     });
     it('excludes ready unread sessions from focused live-activity selection when includeReady is disabled', () => {
@@ -147,51 +150,6 @@ describe('resolveActivitySurfaceSlots', () => {
         expect(slots.overflowCount).toBe(1);
     });
 
-    it('holds the previous dynamic primary inside dwell while it is fresh', () => {
-        const overview = buildActivityOverviewSnapshot({
-            sessions: [
-                createSessionFixture({
-                    id: 'permission',
-                    active: true,
-                    presence: 'online',
-                    pendingPermissionRequestCount: 1,
-                    agentState: pendingAgentState('permission'),
-                    updatedAt: 2_000,
-                }),
-                createSessionFixture({
-                    id: 'action',
-                    serverId: 'server-a',
-                    active: true,
-                    presence: 'online',
-                    pendingUserActionRequestCount: 1,
-                    agentState: pendingAgentState('user_action'),
-                    updatedAt: 1_000,
-                }),
-            ],
-            nowMs: 2_500,
-        });
-        const params = {
-            overview,
-            previousPrimaryAddress: { serverId: 'server-a', sessionId: 'action' },
-            previousPrimaryChangedAtMs: 2_000,
-            nowMs: 2_500,
-            selection: {
-                ...createLiveActivitySelectionSpec(resolveActivitySurfacePolicy({
-                    liveActivitiesMode: 'attention',
-                    liveActivitiesStrategy: 'dynamic_primary',
-                })),
-                dwellMs: 1_000,
-                staleAfterMs: 5_000,
-            },
-        };
-
-        const slots = resolveActivitySurfaceSlots(params);
-
-        expect(slots.selectionReason).toBe('dynamic_primary');
-        expect(slots.selectedSessions.map((candidate) => candidate.sessionId)).toEqual(['action']);
-        expect(slots.primarySession?.sessionId).toBe('action');
-    });
-
     it('switches the dynamic primary after dwell elapses', () => {
         const overview = buildActivityOverviewSnapshot({
             sessions: [
@@ -227,50 +185,6 @@ describe('resolveActivitySurfaceSlots', () => {
                 })),
                 dwellMs: 1_000,
                 staleAfterMs: 5_000,
-            },
-        };
-
-        const slots = resolveActivitySurfaceSlots(params);
-
-        expect(slots.selectedSessions.map((candidate) => candidate.sessionId)).toEqual(['permission']);
-        expect(slots.primarySession?.sessionId).toBe('permission');
-    });
-
-    it('switches the dynamic primary when the previous candidate is stale', () => {
-        const overview = buildActivityOverviewSnapshot({
-            sessions: [
-                createSessionFixture({
-                    id: 'permission',
-                    active: true,
-                    presence: 'online',
-                    pendingPermissionRequestCount: 1,
-                    agentState: pendingAgentState('permission'),
-                    updatedAt: 2_000,
-                }),
-                createSessionFixture({
-                    id: 'action',
-                    serverId: 'server-a',
-                    active: true,
-                    presence: 'online',
-                    pendingUserActionRequestCount: 1,
-                    agentState: pendingAgentState('user_action'),
-                    updatedAt: 1_000,
-                }),
-            ],
-            nowMs: 2_600,
-        });
-        const params = {
-            overview,
-            previousPrimaryAddress: { serverId: 'server-a', sessionId: 'action' },
-            previousPrimaryChangedAtMs: 2_000,
-            nowMs: 2_600,
-            selection: {
-                ...createLiveActivitySelectionSpec(resolveActivitySurfacePolicy({
-                    liveActivitiesMode: 'attention',
-                    liveActivitiesStrategy: 'dynamic_primary',
-                })),
-                dwellMs: 1_000,
-                staleAfterMs: 500,
             },
         };
 

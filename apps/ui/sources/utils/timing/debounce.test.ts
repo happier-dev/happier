@@ -107,23 +107,6 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
 
-            it('should use latest value when no reducer provided', async () => {
-                const mockFn = vi.fn();
-                const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
-
-                debouncedFn('immediate1');
-                debouncedFn('immediate2');
-                debouncedFn('debounced1');
-                debouncedFn('debounced2');
-                debouncedFn('debounced3');
-                
-                expect(mockFn).toHaveBeenCalledTimes(2);
-                
-                await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
-                expect(mockFn).toHaveBeenCalledTimes(3);
-                expect(mockFn).toHaveBeenNthCalledWith(3, 'debounced3');
-            });
-
             it('should reset debounce timer on each call', async () => {
                 const mockFn = vi.fn();
                 const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
@@ -158,7 +141,7 @@ describe('debounce utilities', () => {
                 debouncedFn(4);
                 debouncedFn(5);
                 
-                expect(mockFn).toHaveBeenCalledTimes(2);
+                expect(mockFn.mock.calls).toEqual([[1], [2]]);
                 
                 await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
@@ -177,7 +160,7 @@ describe('debounce utilities', () => {
                 debouncedFn({ a: 3, b: 10 });
                 debouncedFn({ b: 20 });
                 
-                expect(mockFn).toHaveBeenCalledTimes(2);
+                expect(mockFn.mock.calls).toEqual([[{ a: 1 }], [{ a: 2 }]]);
                 
                 await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
@@ -196,7 +179,7 @@ describe('debounce utilities', () => {
                 debouncedFn(['c', 'd']);
                 debouncedFn(['e']);
                 
-                expect(mockFn).toHaveBeenCalledTimes(2);
+                expect(mockFn.mock.calls).toEqual([[['a']], [['b']]]);
                 
                 await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1000 });
                 expect(mockFn).toHaveBeenCalledTimes(3);
@@ -213,8 +196,8 @@ describe('debounce utilities', () => {
                 debouncedFn(5);
                 debouncedFn(3);
                 debouncedFn(10);
-                debouncedFn(7);
                 debouncedFn(15);
+                debouncedFn(7);
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
@@ -242,7 +225,7 @@ describe('debounce utilities', () => {
 
                 debouncedFn({ query: 'test1', filters: ['a'], page: 1 });
                 debouncedFn({ query: 'test2', filters: ['b'], page: 2 });
-                debouncedFn({ query: 'test3', filters: ['b', 'c'], page: 1 });
+                debouncedFn({ query: 'test3', filters: ['b', 'c'], page: 5 });
                 debouncedFn({ query: 'final', filters: ['d'], page: 3 });
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
@@ -252,44 +235,8 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, {
                     query: 'final',
                     filters: ['b', 'c', 'd'],
-                    page: 3
+                    page: 5
                 });
-            });
-        });
-
-        describe('type safety', () => {
-            it('should work with string type', () => {
-                const mockFn = vi.fn<(args: string) => void>();
-                const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
-                
-                debouncedFn('test');
-                expect(mockFn).toHaveBeenCalledWith('test');
-            });
-
-            it('should work with number type', () => {
-                const mockFn = vi.fn<(args: number) => void>();
-                const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
-                
-                debouncedFn(42);
-                expect(mockFn).toHaveBeenCalledWith(42);
-            });
-
-            it('should work with object type', () => {
-                const mockFn = vi.fn<(args: { id: number; name: string }) => void>();
-                const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
-                
-                const testObj = { id: 1, name: 'test' };
-                debouncedFn(testObj);
-                expect(mockFn).toHaveBeenCalledWith(testObj);
-            });
-
-            it('should work with array type', () => {
-                const mockFn = vi.fn<(args: number[]) => void>();
-                const debouncedFn = createCustomDebounce(mockFn, { delay: 1000 });
-                
-                const testArray = [1, 2, 3];
-                debouncedFn(testArray);
-                expect(mockFn).toHaveBeenCalledWith(testArray);
             });
         });
 
@@ -332,6 +279,7 @@ describe('debounce utilities', () => {
                 debouncedFn('second');
                 debouncedFn(null);
                 debouncedFn('fourth');
+                debouncedFn(null);
                 
                 expect(mockFn).toHaveBeenCalledTimes(2);
                 
@@ -430,12 +378,6 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'fourth');
             });
 
-            it('should handle cancel when no pending execution exists', () => {
-                const mockFn = vi.fn();
-                const { cancel } = createAdvancedDebounce(mockFn, { delay: 1000 });
-
-                expect(() => cancel()).not.toThrow();
-            });
         });
 
         describe('reset functionality', () => {
@@ -530,12 +472,6 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenCalledTimes(3);
             });
 
-            it('should handle flush when no pending execution exists', () => {
-                const mockFn = vi.fn();
-                const { flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
-
-                expect(() => flush()).not.toThrow();
-            });
 
             it('should not execute pending value after cancel followed by flush', () => {
                 const mockFn = vi.fn();

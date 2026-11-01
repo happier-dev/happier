@@ -28,10 +28,14 @@ describe('isUniversalSearchTargetCurrent', () => {
         })).toBe(true);
     });
 
-    it('rejects the same unloaded result after its producing Home scope retires', () => {
+    it.each([
+        { serverId: 'home-a', accountId: 'account-b', current: true },
+        { serverId: 'home-b', accountId: 'account-a', current: true },
+        { serverId: 'home-b', accountId: 'account-b', current: false },
+    ])('rejects an unloaded result outside its producing scope: %j', (accountScope) => {
         expect(isUniversalSearchTargetCurrent({
             target: { kind: 'session', serverId: 'home-b', accountId: 'account-b', sessionId: 'archived-unloaded' },
-            accountScope: { serverId: 'home-a', accountId: 'account-a', current: true },
+            accountScope,
             workspaces: [],
             settingsPages: new Map(),
             resolveSessionWorkspaceTarget: () => null,

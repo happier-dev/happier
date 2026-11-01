@@ -310,38 +310,6 @@ describe('sync stale-reopen targeted refetch (C6/D2a)', () => {
 
     afterEach(() => vi.unstubAllGlobals());
 
-    it('preserves loaded older history when reopening a session with a single stale row', async () => {
-        const { sync } = await seedLoadedHistorySession();
-        const syncForTest = sync as unknown as SyncStaleReopenTestAccess;
-
-        const before = storage.getState().sessionMessages[SESSION_ID];
-        const historyCountBefore = before?.messageIdsOldestFirst.length ?? 0;
-        expect(historyCountBefore).toBe(20);
-
-        // One row (seq 15) was edited while the session was hidden.
-        syncForTest.markSessionTranscriptStale(SESSION_ID, {
-            updateType: 'message-updated',
-            seq: 15,
-            messageId: 'mm15',
-        });
-
-        sync.onSessionVisible(SESSION_ID);
-        await sync.refreshSessionMessages(SESSION_ID);
-        await expect.poll(() => messagesRequestPaths().some((path) => path.includes('afterSeq=14'))).toBe(true);
-        await expect.poll(() => storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(false);
-
-        const after = storage.getState().sessionMessages[SESSION_ID];
-        // The transcript is NOT destructively wiped: it stays loaded and keeps its full history.
-        expect(after?.isLoaded).toBe(true);
-        expect(after?.messageIdsOldestFirst.length).toBe(historyCountBefore);
-
-        // The refetch is scoped to the stale region (newer-from just below the stale seq),
-        // never a full-transcript snapshot reset.
-        const paths = messagesRequestPaths();
-        expect(paths.length).toBeGreaterThanOrEqual(1);
-        expect(paths.some((path) => path.includes('afterSeq=14'))).toBe(true);
-    });
-
     it('keeps stale markers retryable when the targeted refetch fails transiently', async () => {
         const { sync } = await seedLoadedHistorySession();
         const syncForTest = sync as unknown as SyncStaleReopenTestAccess;

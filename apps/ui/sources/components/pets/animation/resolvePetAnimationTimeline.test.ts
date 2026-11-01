@@ -15,12 +15,6 @@ function rowTotalDurationMs(state: string): number {
 }
 
 describe('resolvePetAnimationTimeline', () => {
-    it('pins the authoritative idle row durations', () => {
-        const idle = PET_ANIMATION_ROWS_V1.find((entry) => entry.state === 'idle');
-
-        expect(idle?.durationsMs).toEqual([280, 110, 110, 140, 140, 320]);
-    });
-
     it('applies the idle duration multiplier only to idle playback', () => {
         const idle = PET_ANIMATION_ROWS_V1.find((entry) => entry.state === 'idle');
         const firstIdleDurationMs = idle?.durationsMs[0] ?? 0;

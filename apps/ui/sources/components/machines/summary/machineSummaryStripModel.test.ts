@@ -88,7 +88,7 @@ describe('the Machine summary value convention', () => {
 
     it('keeps a 2 → 3 % CPU wiggle flat: the line scales to its peak, never below 40 %', () => {
         const flat = buildMachineSummaryInstruments(summary()).cpu.line;
-        expect(Math.max(...flat.map(value => value ?? 0))).toBeLessThanOrEqual(3 / 40 + 1e-9);
+        expect(flat).toEqual([0.05, 0.075, 0.05, 0.075]);
         const busy = buildMachineSummaryInstruments(summary({ cpu: { busyPct: 80, tone: 'calm', series: line([20, 80]) } })).cpu.line;
         expect(busy).toEqual([0.25, 1]);
     });

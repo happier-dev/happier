@@ -102,35 +102,13 @@ describe('openMachineLiveStreamRelayClient', () => {
         expect(payload.startRequest.authorization?.payload).toEqual(authorization.payload);
     });
 
-    it('selects the relay carrier while direct has no receive/control channel', async () => {
-        const routeKinds: string[] = [];
-        let daemonCalled = false;
-
-        await expect(openMachineLiveStreamRelayClient(openInput({
-            startProduction: async (input): ReturnType<NonNullable<Parameters<typeof openMachineLiveStreamRelayClient>[0]['startProduction']>> => {
-                routeKinds.push(input.routeKind);
-                return { ok: true, routeKind: 'server_relay', startRequest: startRequest(), relayAuthorization: startRequest().authorization! };
-            },
-            startDaemonRelay: async () => {
-                daemonCalled = true;
-                return { ok: true, streamId: 'stream_1' };
-            },
-        }))).resolves.toEqual({ ok: true, streamId: 'stream_1' });
-
-        expect(routeKinds).toEqual(['server_relay']);
-        expect(daemonCalled).toBe(true);
-    });
-
-    it('falls back to server relay and delivers the signed startRequest over machine RPC when loopback is unavailable', async () => {
+    it('selects server relay and delivers the signed startRequest to the exact capture target', async () => {
         const routeKinds: string[] = [];
         const rpcStarts: Array<{ machineId: string; serverId?: string | null; startRequest: MachineLiveStreamStartRequestV1 }> = [];
 
         await expect(openMachineLiveStreamRelayClient(openInput({
             startProduction: async (input) => {
                 routeKinds.push(input.routeKind);
-                if (input.routeKind === 'loopback_direct') {
-                    return { ok: false as const, reasonCode: 'topology_unavailable' };
-                }
                 return {
                     ok: true as const,
                     routeKind: 'server_relay' as const,
@@ -145,19 +123,6 @@ describe('openMachineLiveStreamRelayClient', () => {
         }))).resolves.toEqual({ ok: true, streamId: 'stream_1' });
 
         expect(routeKinds).toEqual(['server_relay']);
-        expect(rpcStarts).toHaveLength(1);
-        expect(rpcStarts[0]?.startRequest).toEqual(startRequest());
-    });
-
-    it('delivers the signed startRequest to the capture daemon over machine RPC (SIM-P0-1)', async () => {
-        const rpcStarts: Array<{ machineId: string; serverId?: string | null; startRequest: MachineLiveStreamStartRequestV1 }> = [];
-        await expect(openMachineLiveStreamRelayClient(openInput({
-            startDaemonRelay: async (input) => {
-                rpcStarts.push(input);
-                return { ok: true, streamId: input.startRequest.streamId };
-            },
-        }))).resolves.toEqual({ ok: true, streamId: 'stream_1' });
-
         expect(rpcStarts).toHaveLength(1);
         expect(rpcStarts[0]?.machineId).toBe('machine_source');
         expect(rpcStarts[0]?.serverId).toBe('server-a');

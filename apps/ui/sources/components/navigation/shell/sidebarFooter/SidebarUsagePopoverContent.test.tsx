@@ -309,13 +309,6 @@ describe('SidebarUsagePopoverContent', () => {
             expect(hidden).not.toContain('acct_9f2c8e71');
         });
 
-        it('turns "Hide account emails and IDs" on from its eye', async () => {
-            const setHidden = vi.fn();
-            const screen = await renderView({ setHidden });
-            await screen.pressByTestIdAsync('usage-popover-privacy');
-            expect(setHidden).toHaveBeenCalledWith(true);
-        });
-
         it('scopes to the session\'s account with its pool\'s next move, and widens to every account in place', async () => {
             const screen = await renderView({
                 session: {

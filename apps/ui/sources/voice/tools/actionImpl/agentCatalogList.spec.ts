@@ -24,6 +24,8 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { MMKV } from 'react-native-mmkv';
+import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 
 let catalogHomeId = '';
 let accountHomes: Awaited<ReturnType<typeof serveAccountHomes>>;
@@ -681,22 +683,12 @@ describe('agent catalog voice tools', () => {
   });
 
   it('prioritizes enabled plugin backends ahead of disabled built-ins when limiting discovery results', async () => {
+    const { listExecutableAgentUniverseIds } = await import('@/agents/catalog/agentUniverse');
     state.settings.backendEnabledByTargetKey = {
-      'agent:happier.agent.claude/claude': false,
-      'agent:happier.agent.codex/codex': false,
-      'agent:happier.agent.opencode/opencode': false,
-      'agent:happier.agent.antigravity/antigravity': false,
-      'agent:happier.agent.gemini/gemini': false,
-      'agent:happier.agent.auggie/auggie': false,
-      'agent:happier.agent.qwen/qwen': false,
-      'agent:happier.agent.kimi/kimi': false,
-      'agent:happier.agent.kilo/kilo': false,
-      'agent:happier.agent.kiro/kiro': false,
-      'agent:happier.agent.cursor/cursor': false,
-      'agent:happier.agent.ohmypi/ohmypi': false,
-      'agent:happier.agent.pi/pi': false,
-      'agent:happier.agent.copilot/copilot': false,
-      'backend:team-review:configured:team-review': false,
+      ...Object.fromEntries(listExecutableAgentUniverseIds().map(agentId => [
+        resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId }), false,
+      ])),
+      [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'team-review', configuredBackendId: 'team-review' })]: false,
       'agent:acme.review/review-bot': true,
     };
 
@@ -735,6 +727,8 @@ describe('agent catalog voice tools', () => {
     });
     expect(pluginIndex).toBeGreaterThanOrEqual(0);
     expect(firstDisabledIndex).toBeGreaterThan(pluginIndex);
+    const limited = await listAgentBackendsForVoiceTool({ includeDisabled: true, limit: 1, machineId: 'm1' });
+    expect(limited).toMatchObject({ items: [{ targetKey: 'agent:acme.review/review-bot', enabled: true }] });
   });
 
   it('uses curated static model labels instead of returning raw mode ids', async () => {
@@ -895,18 +889,22 @@ describe('agent catalog voice tools', () => {
     });
   });
 
-  it('returns an unavailable empty model list when the dynamic model probe returns non-ok', async () => {
-    machineCapabilitiesInvoke.mockResolvedValue({
+  it.each(['non-ok', 'malformed'] as const)('returns an unavailable empty model list when the dynamic model probe returns %s', async (shape) => {
+    const refusal: Awaited<ReturnType<typeof machineCapabilitiesInvokeFn>> = {
       supported: true,
       response: {
         ok: false,
-        errorCode: 'agent_unavailable',
-        errorMessage: 'agent_unavailable',
+        error: { code: 'agent_unavailable', message: 'agent_unavailable' },
       },
-    } as any);
+    };
+    // Malformed wire data is deliberately supplied at the external Socket ACK boundary.
+    const malformed = { supported: true, response: { ok: false,
+      errorCode: 'agent_unavailable', errorMessage: 'agent_unavailable',
+    } } as unknown as Awaited<ReturnType<typeof machineCapabilitiesInvokeFn>>;
+    machineCapabilitiesInvoke.mockResolvedValue(shape === 'non-ok' ? refusal : malformed);
 
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
-    const res: any = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+    const res = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
 
     expect(machineCapabilitiesInvoke).toHaveBeenCalled();
     expect(res).toMatchObject({
@@ -917,28 +915,43 @@ describe('agent catalog voice tools', () => {
       items: [],
       unavailable: true,
     });
+    const key = buildDynamicModelProbeCacheKey({ machineId: 'm1',
+      targetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }),
+      providerConnectionId: null, serverId: catalogHomeId, cwd: null });
+    expect(key).not.toBeNull();
+    const failure = readDynamicModelProbeCache(key!);
+    expect(failure).toMatchObject({ kind: 'error', reason: 'error' });
+    expect(failure?.errorCode).toBe(shape === 'non-ok' ? 'agent_unavailable' : undefined);
   });
 
   it('caches dynamic model probes per machine/agent so repeated calls do not re-invoke the probe', async () => {
-    machineCapabilitiesInvoke.mockResolvedValue({
+    machineCapabilitiesInvoke.mockImplementation(async (machineId, request) => ({
       supported: true,
       response: {
         ok: true,
         result: {
           availableModels: [
-            { id: 'default', name: 'Default' },
-            { id: 'claude-opus', name: 'Claude Opus' },
+            { id: `${machineId}:${request.id}`, name: `${machineId}:${request.id}` },
           ],
           supportsFreeform: false,
         },
       },
-    });
+    }));
 
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
-    await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
-    await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+    const first = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+    expect(first).toMatchObject({ items: expect.arrayContaining([
+      expect.objectContaining({ modelId: 'm1:cli.claude' }),
+    ]) });
+    expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' })).toEqual(first);
 
     expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
+    for (const [machineId, agentId] of [['m2', 'claude'], ['m1', 'codex']] as const) {
+      expect(await listAgentModelsForVoiceTool({ agentId, machineId })).toMatchObject({ items: expect.arrayContaining([
+        expect.objectContaining({ modelId: `${machineId}:cli.${agentId}` }),
+      ]) });
+    }
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(3);
   });
 
   it('probes configured ACP backend models through backendTargetKey', async () => {
@@ -1102,14 +1115,26 @@ describe('agent catalog voice tools', () => {
     expect(machineCapabilitiesInvoke).not.toHaveBeenCalled();
   });  it('keeps provider-owned nonpersistent discovery nonpersistent in the shared cache', async () => {
     machineCapabilitiesInvoke.mockResolvedValue({ supported: true, response: { ok: true, result: {
-      availableModels: [{ id: 'provider-model', name: 'Provider model' }],
+      availableModels: [{ id: 'transient-provider-model', name: 'Provider model' }],
       supportsFreeform: true, source: 'dynamic', cacheable: false,
     } } });
     const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
     const result = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
-    expect(result).toMatchObject({ source: 'preflight', items: expect.arrayContaining([expect.objectContaining({ modelId: 'provider-model', label: 'Provider model' })]) });
+    expect(result).toMatchObject({ source: 'preflight', items: expect.arrayContaining([expect.objectContaining({ modelId: 'transient-provider-model', label: 'Provider model' })]) });
     const key = buildDynamicModelProbeCacheKey({ machineId: 'm1', targetKey: resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), providerConnectionId: null, serverId: catalogHomeId, cwd: null })!;
     expect(readDynamicModelProbeCache(key)).toMatchObject({ kind: 'success', cacheable: false });
+    const scope = readStorageScopeFromEnv();
+    const persisted = scope ? new MMKV({ id: scopedStorageId('dynamic-model-probe-cache', scope) }) : new MMKV();
+    expect(persisted.getString('dynamic-model-probe-cache-v1') ?? '').not.toContain('transient-provider-model');
+    machineCapabilitiesInvoke.mockResolvedValue({ supported: true, response: { ok: true, result: {
+      availableModels: [{ id: 'persisted-provider-model', name: 'Persisted model' }],
+      supportsFreeform: true, source: 'dynamic', cacheable: true,
+    } } });
+    expect(await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm2' })).toMatchObject({
+      source: 'preflight', items: expect.arrayContaining([expect.objectContaining({ modelId: 'persisted-provider-model' })]),
+    });
+    expect(persisted.getString('dynamic-model-probe-cache-v1')).toContain('persisted-provider-model');
+    expect(persisted.getString('dynamic-model-probe-cache-v1')).not.toContain('transient-provider-model');
   });
 
   it('uses a newer daemon last-good observation on failure without renewing its age', async () => {

@@ -82,6 +82,15 @@ describe('terminal stream runtime', () => {
                 bytes: new Uint8Array([68, 69, 70]),
                 source: 'byte-stream',
             },
+            {
+                t: 'bytes',
+                terminalId: 'term-1',
+                seq: 3,
+                byteOffset: 6,
+                byteLength: 3,
+                bytes: new Uint8Array([71, 72, 73]),
+                source: 'byte-stream',
+            },
         ]);
 
         expect(result).toEqual({

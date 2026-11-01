@@ -54,7 +54,10 @@ describe('review comments UI state', () => {
         });
 
         expect(selectReviewComments(state, { engineId: 'review-coderabbit' }).map((row) => row.id)).toEqual(['c1']);
-        expect(selectReviewComments(state, { runId: 'run-2', states: ['resolved'] }).map((row) => row.id)).toEqual(['c2']);
+        expect(selectReviewComments(state, { runId: 'run-2' }).map((row) => row.id)).toEqual(['c2']);
+        expect(selectReviewComments(state, { states: ['resolved'] }).map((row) => row.id)).toEqual(['c2']);
+        expect(selectReviewComments(state, { filePath: 'src/missing.ts' })).toEqual([]);
+        expect(selectReviewComments(state, { authorKind: 'user' })).toEqual([]);
         expect(selectReviewComments(state, { filePath: 'src/a.ts', authorKind: 'plugin' }).map((row) => row.id)).toEqual(['c2', 'c1']);
     });
 

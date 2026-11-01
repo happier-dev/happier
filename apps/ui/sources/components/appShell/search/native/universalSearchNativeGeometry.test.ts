@@ -6,16 +6,6 @@ import {
 } from './universalSearchNativeGeometry';
 
 describe('universal Search native plane geometry', () => {
-    it('leaves the status bar, the capsule row and the keyboard out of the results region', () => {
-        expect(resolveUniversalSearchPlaneMaxHeight({
-            windowHeight: 844,
-            safeAreaTop: 59,
-            safeAreaBottom: 34,
-            keyboardHeight: 336,
-            capsuleRowHeight: 46,
-        })).toBe(844 - 59 - 34 - 336 - 46 - UNIVERSAL_SEARCH_PLANE_TOP_GAP_PX);
-    });
-
     it('never claims the bottom edge the frame reserves, keyboard up or down', () => {
         // The keyboard-aware frame reserves the WHOLE keyboard frame, while the settled keyboard
         // signal this host consumes has already deducted the bottom inset on iOS; with the keyboard

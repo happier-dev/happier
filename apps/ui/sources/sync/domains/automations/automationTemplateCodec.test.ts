@@ -66,25 +66,26 @@ describe('automationTemplateCodec', () => {
     });
 
     it('writes only the canonical selection when legacy model fields are also present', () => {
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: 'agent:happier.agent.codex/codex',
+                providerConnectionId: null,
+                modelId: 'gpt-5.5',
+            },
+        });
         const encoded = encodeAutomationTemplate({
             directory: '/tmp/project',
-            modelSelection: SessionModelSelectionV1Schema.parse({
-                v: 1,
-                updatedAt: 123,
-                ref: {
-                    agentTargetKey: 'agent:happier.agent.codex/codex',
-                    providerConnectionId: null,
-                    modelId: 'gpt-5.5',
-                },
-            }),
+            modelSelection,
             modelId: 'legacy-model',
             modelUpdatedAt: 10,
         });
 
-        expect(JSON.parse(encoded)).not.toEqual(expect.objectContaining({
-            modelId: expect.anything(),
-            modelUpdatedAt: expect.anything(),
-        }));
+        const payload: unknown = JSON.parse(encoded);
+        expect(payload).toMatchObject({ modelSelection });
+        expect(payload).not.toHaveProperty('modelId');
+        expect(payload).not.toHaveProperty('modelUpdatedAt');
     });
 
     it('maps legacy experimentalCodexAcp payloads onto runtimeDescriptorV1 on decode', () => {

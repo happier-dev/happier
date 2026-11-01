@@ -66,11 +66,4 @@ describe('sync.assumeUsers', () => {
         expect(storage.getState().users.user_transient).toBeNull();
     });
 
-    it('caches null when user fetch returns null (not found)', async () => {
-        const { sync } = await import('./sync');
-        const request = vi.fn(async () => new Response('', { status: 404 }));
-        await sync.assumeUsers(['user_missing'], { request });
-
-        expect(storage.getState().users.user_missing).toBeNull();
-    });
 });

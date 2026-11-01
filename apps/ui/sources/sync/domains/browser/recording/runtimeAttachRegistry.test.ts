@@ -87,7 +87,7 @@ describe('browser recording attach registry (UX-7 keyed map)', () => {
         expect(readRegisteredBrowserRecordingAttachAdapter()).toBeNull();
     });
 
-    it('unregister only clears its own slot (token-checked)', () => {
+    it('preserves a replacement on stale disposal and unregisters only its own slot', () => {
         const adapterA = makeAdapter();
         const adapterB = makeAdapter();
         const disposeA = registerBrowserRecordingAttachAdapter({
@@ -101,7 +101,19 @@ describe('browser recording attach registry (UX-7 keyed map)', () => {
             adapter: adapterB,
         });
 
+        const replacement = makeAdapter();
+        const disposeReplacement = registerBrowserRecordingAttachAdapter({
+            browserSessionId: 'session_1',
+            viewId: 'view_a',
+            adapter: replacement,
+        });
         disposeA();
+
+        expect(readRegisteredBrowserRecordingAttachAdapter({
+            browserSessionId: 'session_1',
+            viewId: 'view_a',
+        })).toBe(replacement);
+        disposeReplacement();
 
         expect(
             readRegisteredBrowserRecordingAttachAdapter({

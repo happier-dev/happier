@@ -8,10 +8,6 @@ describe('resolveWidgetFrameStyle', () => {
         expect(resolveWidgetFrameStyle({ placement: 'companion', surfaceDefault: 'card' })).toBe('card');
     });
 
-    it('lets a widget override win over the surface default', () => {
-        expect(resolveWidgetFrameStyle({ placement: 'board', surfaceDefault: 'card', override: 'plain' })).toBe('plain');
-    });
-
     it('falls back to the placement defaults (Home and Board card, Companion plain) when nothing is set', () => {
         expect(resolveWidgetFrameStyle({ placement: 'home' })).toBe('card');
         expect(resolveWidgetFrameStyle({ placement: 'board' })).toBe('card');

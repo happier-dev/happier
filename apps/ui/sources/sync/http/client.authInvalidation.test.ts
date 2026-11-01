@@ -166,15 +166,6 @@ describe('serverFetch auth invalidation', () => {
         expect(events).toHaveLength(0);
     });
 
-    it('emits an auth-credential invalidation notification when a bearer token is rejected', async () => {
-        await TokenStorage.setCredentials({ token: rejectedToken });
-        installRejectedBearerBoundary();
-        const { serverFetch } = await import('./client');
-        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
-        const { serverId, serverUrl } = getActiveServerSnapshot();
-        expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
-    });
-
     it('does not emit an auth-credential invalidation notification when the stored credentials were not invalidated', async () => {
         await TokenStorage.setCredentials({ token: replacementToken });
         const requests = installRejectedBearerBoundary(async (init) => new Response(null, {

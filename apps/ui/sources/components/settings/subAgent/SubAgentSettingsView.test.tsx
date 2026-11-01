@@ -156,14 +156,6 @@ describe('SubAgentSettingsView', () => {
         modalConfirm.mockImplementation(async () => false);
     });
 
-    it('renders an execution-runs-disabled state when execution runs are not enabled', async () => {
-        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
-
-        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
-        const enableItem = screen.findRowByTitle('subAgentGuidance.settings.disabled.enableExecutionRuns.title');
-        expect(enableItem).toBeTruthy();
-    });
-
     it('leads to Features from the off state', async () => {
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 

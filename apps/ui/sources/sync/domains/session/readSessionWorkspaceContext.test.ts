@@ -46,24 +46,4 @@ describe('readSessionWorkspaceContext', () => {
         });
     });
 
-    it('ignores legacy workspace identifiers when resolving the workspace path', () => {
-        const context = readSessionWorkspaceContext({
-            sessions: {
-                s1: {
-                    metadata: {
-                        path: '/repo',
-                        workspaceId: ' ',
-                        workspaceLocationId: '',
-                        workspaceCheckoutId: '   ',
-                    },
-                },
-            },
-        } as any, 's1');
-
-        expect(context).toEqual({
-            workspacePath: '/repo',
-            projectPath: null,
-            projectMachineId: null,
-        });
-    });
 });

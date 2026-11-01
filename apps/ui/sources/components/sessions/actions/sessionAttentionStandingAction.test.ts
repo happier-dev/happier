@@ -84,8 +84,11 @@ describe('session attention standing action availability', () => {
         const target = createTarget({ attentionStandingEnabled: true, attentionStanding: true });
 
         expect(resolveSessionAttentionStandingActionId(target)).toBe(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
-        expect(listVisibleSessionActionIds({ target, surface: 'rowMenu' }))
-            .not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+        for (const surface of ['rowMenu', 'sessionInfo', 'sessionHeader'] as const) {
+            const ids = listVisibleSessionActionIds({ target, surface });
+            expect(ids).toContain(SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID);
+            expect(ids).not.toContain(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
+        }
     });
 
     // Whether a real surface actually supplies these inputs is NOT provable here: a hand-built

@@ -1,8 +1,7 @@
-import { readFile } from 'node:fs/promises';
-
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@happier-dev/session-core/state';
+import { updateMetadataWithObservedExternalSessionProgress } from './externalSessionAttentionMetadata';
 
 import {
     readExternalSessionFollowPolicy,
@@ -25,13 +24,6 @@ function createExternalSessionMetadata(policy?: 'attached_only' | 'background_fo
 }
 
 describe('externalSessionFollowMetadata', () => {
-    it('delegates metadata merging to the protocol follow writer', async () => {
-        const source = await readFile(new URL('./externalSessionFollowMetadata.ts', import.meta.url), 'utf8');
-
-        expect(source).toContain('updateLinkedExternalSessionFollowMetadataV1');
-        expect(source).not.toContain('buildLinkedExternalSessionMetadataV1');
-    });
-
     it('defaults to attached_only when no follow policy is present', () => {
         expect(readExternalSessionFollowPolicy(createExternalSessionMetadata())).toBe('attached_only');
     });
@@ -41,7 +33,10 @@ describe('externalSessionFollowMetadata', () => {
     });
 
     it('updates the nested direct-session policy without disturbing attention metadata', () => {
-        const next = updateMetadataWithExternalSessionFollowPolicy(createExternalSessionMetadata(), {
+        const metadata = updateMetadataWithObservedExternalSessionProgress(createExternalSessionMetadata(), {
+            token: '20:msg-2', atMs: 20,
+        });
+        const next = updateMetadataWithExternalSessionFollowPolicy(metadata, {
             policy: 'background_follow',
             updatedAtMs: 42,
         });
@@ -53,6 +48,9 @@ describe('externalSessionFollowMetadata', () => {
                 updatedAtMs: 42,
             },
         }));
+        expect(next).toMatchObject({ externalSessionAttentionV1: {
+            v: 1, observedProgressToken: '20:msg-2', observedAtMs: 20,
+        } });
     });
 
     it('is a no-op when the requested policy already matches', () => {

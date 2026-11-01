@@ -38,6 +38,8 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
             ],
         });
         expect(presentation).not.toHaveProperty('bodyParams');
+        expect(JSON.stringify(presentation)).not.toContain('/private/runner/session');
+        expect(JSON.stringify(presentation)).not.toContain('never-render-this');
     });
 
     it('uses one presentation mapping for switch verification failures', () => {

@@ -16,13 +16,11 @@ import {
     discardPendingMessageV2 as discardPendingMessageV2Impl,
     enqueuePendingMessageV2 as enqueuePendingMessageV2Impl,
     fetchAndApplyPendingMessagesV2 as fetchAndApplyPendingMessagesV2Impl,
-    isReleasedServerV021PendingEnqueueResponse,
     markPendingDeliveryHandledV2 as markPendingDeliveryHandledV2Impl,
     reorderPendingMessagesV2 as reorderPendingMessagesV2Impl,
     replayPersistedPendingOutboxForSession,
     retryPendingOutboxOperationV2 as retryPendingOutboxOperationV2Impl,
     restoreDiscardedPendingMessageV2 as restoreDiscardedPendingMessageV2Impl,
-    serializePendingEnqueueBodyForServerWire,
     sendPendingDeliveryAsNewV2,
     updatePendingMessageV2 as updatePendingMessageV2Impl,
     updatePendingRequestedActionV2,
@@ -126,51 +124,6 @@ describe('pendingQueueV2 error handling', () => {
         expect(requested).toBe(false);
         expect((await loadPendingOutboxForSession(sessionId, outboxScope))).toEqual([]);
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
-    });
-
-    it('serializes only the released-server v0.2.1 enqueue wire shape', () => {
-        const canonicalBody = JSON.stringify({
-            localId: 'local-old-wire',
-            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
-            messageRole: 'user',
-            requestedAction: { v: 1, kind: 'enqueue' },
-        });
-
-        expect(JSON.parse(serializePendingEnqueueBodyForServerWire(
-            canonicalBody,
-            'released_server_v0_2_1',
-        )!)).toEqual({
-            localId: 'local-old-wire',
-            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
-        });
-        expect(serializePendingEnqueueBodyForServerWire(canonicalBody, 'indeterminate')).toBeNull();
-    });
-
-    it('accepts only an exact released-server v0.2.1 acknowledgement for the requested localId', () => {
-        const acknowledgement = {
-            didWrite: true,
-            pendingCount: 1,
-            pendingVersion: 2,
-            pending: {
-                localId: 'local-old-ack',
-                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
-                status: 'queued',
-                position: 0,
-                createdAt: 1,
-                updatedAt: 1,
-                discardedAt: null,
-                discardedReason: null,
-                authorAccountId: 'account-a',
-            },
-        };
-
-        expect(isReleasedServerV021PendingEnqueueResponse(acknowledgement, 'local-old-ack')).toBe(true);
-        expect(isReleasedServerV021PendingEnqueueResponse(acknowledgement, 'local-other')).toBe(false);
-        expect(isReleasedServerV021PendingEnqueueResponse({ ...acknowledgement, extra: true }, 'local-old-ack')).toBe(false);
-        expect(isReleasedServerV021PendingEnqueueResponse({
-            ...acknowledgement,
-            pending: { ...acknowledgement.pending, extra: true },
-        }, 'local-old-ack')).toBe(false);
     });
 
     it.each([

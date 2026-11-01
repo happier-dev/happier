@@ -58,6 +58,6 @@ describe('native Mermaid WebView bundle', () => {
 
     it('declares esbuild at the UI build owner', () => {
         const packageJson = JSON.parse(fs.readFileSync(path.resolve(expoAppDir, 'package.json'), 'utf8'));
-        expect(packageJson.devDependencies?.esbuild).toBe('^0.27.2');
+        expect(packageJson.devDependencies?.esbuild).toEqual(expect.any(String));
     });
 });

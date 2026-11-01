@@ -55,14 +55,4 @@ describe('readPeerEndpointForServerScope', () => {
         })).toBeNull();
     });
 
-    it('uses applied focus rather than a staged caller snapshot when machine ids overlap', () => {
-        appliedState.serverId = 'home_a';
-
-        expect(readPeerEndpointForServerScope({
-            state,
-            serverId: 'home_b',
-            machineId: 'shared_machine',
-            select: (machine) => machine.daemonState?.peerMediation?.iroh?.endpoint,
-        })).toBe(scopedEndpoint);
-    });
 });

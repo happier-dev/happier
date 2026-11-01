@@ -119,10 +119,16 @@ describe('SelectionTiles action variant on a page', () => {
         expect(onPress).toHaveBeenCalledWith('home');
     });
 
-    it('keeps the tiles on a wide page', async () => {
-        const screen = await renderActions(() => {});
+    it('keeps all action tiles mounted and usable on a wide page', async () => {
+        const onPress = vi.fn();
+        const screen = await renderActions(onPress);
         await layoutWidth(screen, 704);
         expect(pageRows(screen)).toHaveLength(0);
+        for (const option of OPTIONS) {
+            expect(screen.findAllHostsByTestId(option.testID).length).toBeGreaterThan(0);
+            await screen.pressByTestIdAsync(option.testID);
+        }
+        expect(onPress.mock.calls).toEqual([['phone'], ['home'], ['scan']]);
     });
 
     it.each(['grouped', 'footer'] as const)('keeps narrow action cards in the %s case', async (context) => {

@@ -1,4 +1,3 @@
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { createSplitCanvasState, splitCanvasReduce } from '../model/splitCanvasReducer';
@@ -21,10 +20,10 @@ describe('useSplitCanvasPersistence', () => {
             focusedLeafId: 'leaf-a',
         });
 
-        const hook = await renderHook(() => useSplitCanvasPersistence({
-            state: initialState,
+        const hook = await renderHook(({ state }) => useSplitCanvasPersistence({
+            state,
             onPersist,
-        }));
+        }), { initialProps: { state: initialState } });
 
         expect(onPersist).toHaveBeenCalledWith(expect.objectContaining({
             version: 1,
@@ -39,15 +38,8 @@ describe('useSplitCanvasPersistence', () => {
             newLeaf: createLeaf('leaf-b'),
         });
 
-        await act(async () => {
-            await hook.rerender(undefined);
-        });
-
-        const rerendered = await renderHook(() => useSplitCanvasPersistence({
-            state: nextState,
-            onPersist,
-        }));
-        await rerendered.rerender(undefined);
+        onPersist.mockClear();
+        await hook.rerender({ state: nextState });
 
         expect(onPersist).toHaveBeenLastCalledWith(expect.objectContaining({
             focusedLeafId: 'leaf-b',

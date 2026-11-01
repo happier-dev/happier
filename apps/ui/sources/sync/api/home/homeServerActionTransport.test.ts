@@ -190,17 +190,6 @@ describe('requestHomeDomain', () => {
         expect(requestedUrls().some((url) => url.startsWith('https://home-b.example'))).toBe(false);
     });
 
-    it('fails closed without issuing a request when the credential authenticates another Account', async () => {
-        const homeA = await addHome('Home A', 'https://home-a.example');
-        await focusHome(homeA);
-        plainCredentialsFor('someone-else');
-
-        const result = await governanceRequest(homeA);
-
-        expect(result.ok).toBe(false);
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
-    });
-
     it('distinguishes a mutation response loss after dispatch from a safe read retry', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);

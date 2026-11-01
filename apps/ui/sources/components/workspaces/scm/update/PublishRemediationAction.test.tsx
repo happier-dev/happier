@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runPublishRemediationAction } from './PublishRemediationAction';
 
 describe('runPublishRemediationAction', () => {
-    it('does not execute disabled remediation actions', async () => {
+    it('executes remediation only while its action is enabled', async () => {
         const onInstallGh = vi.fn();
 
         await runPublishRemediationAction({
@@ -13,5 +13,12 @@ describe('runPublishRemediationAction', () => {
         });
 
         expect(onInstallGh).not.toHaveBeenCalled();
+
+        await runPublishRemediationAction({
+            action: { kind: 'install-gh', disabled: false },
+            onInstallGh,
+            setErrorCode: vi.fn(),
+        });
+        expect(onInstallGh).toHaveBeenCalledOnce();
     });
 });

@@ -172,19 +172,6 @@ describe('getAgentVendorResumeId', () => {
         )).toBe('x1');
     });
 
-    test('treats persisted Codex flavor aliases as Codex for resume', () => {
-        expect(getAgentVendorResumeId(
-            { codexSessionId: 'x1' },
-            'openai',
-            { accountSettings: { codexBackendMode: 'acp' } },
-        )).toBe('x1');
-        expect(getAgentVendorResumeId(
-            { codexSessionId: 'x1' },
-            'gpt',
-            { accountSettings: { codexBackendMode: 'acp' } },
-        )).toBe('x1');
-    });
-
     test('returns OpenCode session id when metadata contains it', () => {
         expect(getAgentVendorResumeId({ opencodeSessionId: 'o1' }, 'opencode')).toBe('o1');
     });

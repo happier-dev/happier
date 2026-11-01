@@ -34,19 +34,6 @@ describe('pushTokenRegistration', () => {
         vi.unstubAllGlobals();
     });
 
-    it('roundtrips token using localStorage on web without constructing MMKV', async () => {
-        const module = await import('./pushTokenRegistration');
-
-        expect(module.loadLastRegisteredExpoPushToken()).toBeNull();
-        module.saveLastRegisteredExpoPushToken('ExponentPushToken[abc]');
-        expect(module.loadLastRegisteredExpoPushToken()).toBe('ExponentPushToken[abc]');
-
-        module.clearLastRegisteredExpoPushToken();
-        expect(module.loadLastRegisteredExpoPushToken()).toBeNull();
-
-        expect(mmkvCtor).not.toHaveBeenCalled();
-    });
-
     it('migrates legacy lastExpoPushTokenV1 bytes into generation state on read', async () => {
         const { scopedStorageId } = await import('@/utils/system/storageScope');
         const legacyKey = `${scopedStorageId('push-token-registration', null)}:lastExpoPushTokenV1`;

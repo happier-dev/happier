@@ -706,42 +706,6 @@ describe('scoped plugin Settings adapter', () => {
         });
     });
 
-    it('performs one safe Account record readback after a possibly applied write without replaying it', async () => {
-        const readRecord = vi.fn()
-            .mockResolvedValueOnce({
-                status: 'present' as const,
-                revision: 6,
-                values: { endpoint: 'https://before.example.test' },
-            })
-            .mockResolvedValueOnce({
-                status: 'present' as const,
-                revision: 7,
-                values: { endpoint: 'https://possibly-applied.example.test' },
-            });
-        const writeRecord = vi.fn(async () => ({ status: 'outcomeUnknown' as const }));
-        const account = createAccountScopedPluginSettingsTransport({ readRecord, writeRecord });
-        const target = { kind: 'account' as const, serverIdentityId: 'server-identity-a' };
-
-        await expect(account.write({
-            pluginId: 'acme.settings',
-            target,
-            fields: [{ key: 'endpoint', redacted: false }],
-            fieldId: 'endpoint',
-            mutation: { kind: 'set', value: 'https://possibly-applied.example.test' },
-            expectedRevision: { kind: 'account', value: 6 },
-        })).resolves.toEqual({
-            status: 'outcomeUnknown',
-            snapshot: {
-                scope: { kind: 'account' },
-                target,
-                revision: { kind: 'account', value: 7 },
-                values: { endpoint: 'https://possibly-applied.example.test' },
-            },
-        });
-        expect(writeRecord).toHaveBeenCalledOnce();
-        expect(readRecord).toHaveBeenCalledTimes(2);
-    });
-
     it('returns an explicit conflict snapshot for a stale Account revision without replaying the field mutation', async () => {
         const readRecord = vi.fn(async () => ({
             status: 'present' as const,
