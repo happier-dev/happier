@@ -31,7 +31,37 @@ describe('registry HTTP boundary',()=>{
     await http.getText(source.url,{source:{...source,token:{secretRef:'secret',header:{name:'X-Api-Key'}}}});
     expect(observed).toBe('value');
   });
-  it('passes tokens only to the admitted origin or exact GitHub repository paths, dropping on redirect',async()=>{
+  it('retains a credential-authenticated cached document on HTTP 304',async()=>{
+    let calls=0;
+    const http=createRegistryHttpV1({resolveToken:async()=> 'fixture',fetch:async()=>++calls===1
+      ?new Response('cached',{headers:{etag:'"fixture"'}}):new Response(null,{status:304})});
+    await expect(http.getText(source.url,{source})).resolves.toMatchObject({ok:true,value:'cached'});
+    await expect(http.getText(source.url,{source})).resolves.toMatchObject({ok:true,value:'cached'});
+  });
+  it('keeps a custom credential on a same-origin redirect',async()=>{
+    const observations:(string|null)[]=[];
+    const http=createRegistryHttpV1({resolveToken:async()=> 'value',fetch:async(url,init)=>{
+      observations.push(new Headers(init?.headers).get('x-api-key'));
+      return String(url).endsWith('/redirect')?new Response(null,{status:302,headers:{location:'/file'}}):new Response('ok');
+    }});
+    await expect(http.getText('https://github.com/redirect',{source:{...source,token:{secretRef:'secret',header:{name:'X-Api-Key'}}}}))
+      .resolves.toMatchObject({ok:true,value:'ok'});
+    expect(observations).toEqual(['value','value']);
+  });
+  it('never sends a custom credential to a redirected origin',async()=>{
+    const observations:{url:string;credential:string|null}[]=[];
+    const http=createRegistryHttpV1({resolveToken:async()=> 'value',fetch:async(url,init)=>{
+      observations.push({url:String(url),credential:new Headers(init?.headers).get('x-api-key')});
+      return String(url).endsWith('/redirect')?new Response(null,{status:302,headers:{location:'https://other.example/file'}}):new Response('ok');
+    }});
+    await expect(http.getText('https://github.com/redirect',{source:{...source,token:{secretRef:'secret',header:{name:'X-Api-Key'}}}}))
+      .resolves.toMatchObject({ok:true,value:'ok'});
+    expect(observations).toEqual([
+      {url:'https://github.com/redirect',credential:'value'},
+      {url:'https://other.example/file',credential:null},
+    ]);
+  });
+  it('passes tokens only to admitted paths and follows cross-origin redirects without credentials',async()=>{
     const observations:{url:string;authorization:string|null}[]=[];
     const transport:typeof fetch=async(url,init)=>{
       const target=String(url);observations.push({url:target,authorization:new Headers(init?.headers).get('authorization')});
@@ -44,8 +74,9 @@ describe('registry HTTP boundary',()=>{
     await http.getText('https://api.github.com/repos/a/b2/commits/HEAD',{source});
     await http.getText('http://api.github.com/repos/a/b/commits/HEAD',{source});
     await http.getText('https://api.github.com:8443/repos/a/b/commits/HEAD',{source});
-    await http.getText('https://github.com/redirect',{source});
+    await expect(http.getText('https://github.com/redirect',{source})).resolves.toMatchObject({ok:true,value:'ok'});
     expect(observations.map(item=>item.authorization)).toEqual(['Bearer value','Bearer value','Bearer value',null,null,null,'Bearer value',null]);
+    expect(observations.at(-1)).toEqual({url:'https://other.example/file',authorization:null});
   });
   it.each<{status:number;headers:Record<string,string>;state:string}>([{status:403,headers:{'x-ratelimit-remaining':'0','x-ratelimit-reset':'2000000000'},state:'rate_limited'},
     {status:403,headers:{},state:'auth_failed'},{status:429,headers:{'retry-after':'2'},state:'rate_limited'}])('classifies HTTP $status with $state without empty success',async({status,headers,state})=>{

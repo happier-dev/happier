@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./httpRedirects": {
+      "happier-source": "./src/httpRedirects.ts",
+      "types": "./dist/httpRedirects.d.ts",
+      "default": "./dist/httpRedirects.js"
+    },
     "./minisign": {
       "happier-source": "./src/minisign.ts",
       "types": "./dist/minisign.d.ts",
