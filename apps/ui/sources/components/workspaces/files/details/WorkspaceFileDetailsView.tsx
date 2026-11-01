@@ -11,6 +11,7 @@ import type { FileDisplayMode } from '@/components/workspaces/files/file/filePag
 import type { FileMenuContext } from '@/components/workspaces/files/file/fileMenus';
 import { useFilePageCodeIntelligence } from '@/components/workspaces/files/intelligence/useFilePageCodeIntelligence';
 import { useFilePageSharing } from '@/components/workspaces/files/file/useFilePageSharing';
+import { workspaceFileDetailsTabKey } from '@/components/appShell/panes/details/fileDetailsTab';
 import { useFilePageDetailsActions } from '@/components/workspaces/files/file/useFilePageDetailsActions';
 import { reconstructWorkspaceFileTextBytes } from '@/sync/ops/workspaceFileSystem/workspaceFileTextDecoding';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -651,7 +652,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     });
     const [copyContentBusy, setCopyContentBusy] = React.useState(false);
 
-    const tabKey = React.useMemo(() => `file:${filePath}`, [filePath]);
+    const tabKey = workspaceFileDetailsTabKey(filePath, props.initialView?.rootPath);
     const { view: fileView, initialChanges, patchView: patchFileView } = useWorkspaceFileView(pane, tabKey);
     const isActive = props.openableContentViewer?.details.active ?? (presentation === 'screen' || (pane.scopeState?.details?.isOpen === true && pane.scopeState.details.activeTabKey === tabKey));
     const rememberFind = React.useCallback((find: FileViewerFindMemory) => patchFileView({ findQuery: find.query, findOpen: find.open }), [patchFileView]);
@@ -1272,7 +1273,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         return bytes ? { bytes, fileName, mimeType: fileContent.binaryMime ?? fileViewer.mimeType ?? 'text/plain' } : null;
     }, [fileContent, fileName, fileViewer.mimeType, machineReachable]);
     const share = useFilePageSharing({
-        scope, filePath, accountScope: editorAccountScope, sessionId,
+        scope, filePath, accountScope: editorAccountScope, sessionId, fileRootPath: props.initialView?.rootPath,
         workspaceRefId: props.workspaceRefId, targetKind: props.targetKind ?? props.openableContentViewer?.targetKind,
         machineReachable,
         unavailableReason,

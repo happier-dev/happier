@@ -26,6 +26,8 @@ export const WorkspaceFileTargetSchema = lazyZodSchema(() => z.union([
 export const WorkspaceFileOpenInputSchema = lazyZodSchema(() => z.strictObject({
   target: WorkspaceFileTargetSchema,
   path: z.string().check(z.refine(isSafeWorkspaceFilePath, { message: 'A workspace-relative file path is required' })),
+  /** Exact file base when the producer's paths are not relative to the Session cwd. */
+  rootPath: z.optional(z.string().check(z.minLength(1))),
   anchor: z.optional(WorkspaceAnchorV1Schema),
   anchorSource: z.optional(z.enum(['file', 'diff'])),
   view: z.optional(z.enum(['view', 'changes', 'edit'])),

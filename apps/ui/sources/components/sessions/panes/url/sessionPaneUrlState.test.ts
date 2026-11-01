@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { applySessionPaneUrlState, buildActiveDetailsRouteParams, createSessionPaneDetailsTab, deriveSessionPaneUrlStateFromScopeState, parseSessionPaneUrlState, reconcileSessionPaneScopeFromUrlState, serializeSessionPaneUrlState } from './sessionPaneUrlState';
 
 describe('sessionPaneUrlState', () => {
+    it.each(['/repo', 'C:\\Users\\Zoë\\repo', '\\\\server\\share\\repo'])('retains captured base %s through View/Edit, scope changes and URL reload without merging cwd-relative tabs', (rootPath) => {
+        const target = { kind: 'file' as const, path: 'nested/a.ts', rootPath, view: 'changes' as const,
+            changes: { kind: 'turnCheckpoint' as const, turnId: 'turn-4' } };
+        const tab = createSessionPaneDetailsTab(target)!;
+        const cwdTab = createSessionPaneDetailsTab({ kind: 'file', path: target.path })!;
+        expect(tab.key).not.toBe(cwdTab.key);
+        const params = buildActiveDetailsRouteParams([tab], tab.key, {
+            [tab.key]: { view: { mode: 'edit', changesScope: { kind: 'workingTree' } } },
+        });
+        const restored = parseSessionPaneUrlState(params)?.details;
+        expect(restored).toMatchObject({ path: target.path, rootPath, view: 'edit', changes: { kind: 'workingTree' } });
+        expect(createSessionPaneDetailsTab(restored!)?.key).toBe(tab.key);
+    });
+    it('uses the canonical Windows root identity across equivalent separator and case spelling', () => {
+        const tab = createSessionPaneDetailsTab({ kind: 'file', path: 'nested/a.ts', rootPath: 'C:\\Users\\Zoë\\repo\\' });
+        const same = createSessionPaneDetailsTab({ kind: 'file', path: 'nested/a.ts', rootPath: 'c:/users/zoë/repo' });
+        expect(tab?.key).toBe(same?.key);
+    });
+
     it('preserves literal file path spelling through parsing, construction and outward links', () => {
         const path = ' leading /LICENSE ';
         const state = parseSessionPaneUrlState({ details: 'file', path });

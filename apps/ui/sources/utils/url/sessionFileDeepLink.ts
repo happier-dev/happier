@@ -12,6 +12,7 @@ export const FILE_TARGET_ANCHOR_PARAM_KEYS = ['source', 'anchor', 'line', 'start
 
 export type SearchFileTarget = Readonly<{
     path: string;
+    rootPath?: string;
     anchor?: FileTargetAnchor;
     anchorSource?: ReviewCommentSource;
     column?: number;
@@ -26,7 +27,7 @@ function firstString(value: unknown): string | null {
     return null;
 }
 
-export type WorkspaceFileLinkView = Readonly<Pick<WorkspaceFileOpenInput, 'view' | 'blame'> & { openAs?: 'preview' | 'pinned' }>;
+export type WorkspaceFileLinkView = Readonly<Pick<WorkspaceFileOpenInput, 'view' | 'blame' | 'rootPath'> & { openAs?: 'preview' | 'pinned' }>;
 
 /** URL launch fields share the Action's view validator; unknown intent stays absent. */
 export function readWorkspaceFileLinkView(params: unknown): WorkspaceFileLinkView {
@@ -35,7 +36,9 @@ export function readWorkspaceFileLinkView(params: unknown): WorkspaceFileLinkVie
     const mode = WorkspaceFileOpenInputSchema.shape.view.safeParse(firstString(record.fileView) ?? undefined);
     const blame = typeof record.blame === 'boolean' ? record.blame : firstString(record.blame);
     const openAs = firstString(record.fileOpenAs);
+    const rootPath = WorkspaceFileOpenInputSchema.shape.rootPath.safeParse(firstString(record.rootPath) ?? undefined);
     return {
+        ...(rootPath.success && rootPath.data ? { rootPath: rootPath.data } : {}),
         ...(mode.success && mode.data ? { view: mode.data } : {}),
         ...(typeof blame === 'boolean' ? { blame } : blame === '1' || blame === '0' ? { blame: blame === '1' } : {}),
         ...(openAs === 'preview' || openAs === 'pinned' ? { openAs } : {}),
@@ -70,6 +73,7 @@ export function buildSessionFileDeepLink(params: {
 /** Canonical file links address the retained File page in either workspace host. */
 export function buildWorkspaceFileLink(input: WorkspaceFileOpenInput): string {
     const extra: Record<string, string> = {
+        ...(input.rootPath ? { rootPath: input.rootPath } : {}),
         ...(input.changesScope ? serializeScmReviewTarget({ comparison: fileChangesComparisonOfScope(input.changesScope) }) : {}),
         ...(input.view ? { fileView: input.view } : {}),
         ...(input.blame === undefined ? {} : { blame: input.blame ? '1' : '0' }),
@@ -85,7 +89,7 @@ export function buildWorkspaceFileLink(input: WorkspaceFileOpenInput): string {
         return `/session/${encodeURIComponent(input.target.sessionId)}?${query}`;
     }
     return resolveProjectRoutePathForSurface({ workspaceRefId: input.target.workspaceRefId,
-        serverId: input.target.serverId, surface: 'code', rawActiveRootPath: input.target.rootPath,
+        serverId: input.target.serverId, surface: 'code', rawActiveRootPath: input.rootPath ?? input.target.rootPath,
         routeParams: { initialFile: input.path, ...(input.anchor ? serializeFileTargetAnchor(input.anchor, source) : {}), ...extra },
     });
 }
@@ -122,7 +126,9 @@ export function parseSearchFileTarget(query: string): SearchFileTarget | null {
         if (((session && (url.pathname.endsWith('/file') || url.searchParams.get('details') === 'file')) || project) && path) {
             const parsed = parseSessionFileDeepLinkAnchor({ ...Object.fromEntries(url.searchParams), path });
             const serverId = url.searchParams.get('serverId');
+            const { rootPath } = readWorkspaceFileLinkView(Object.fromEntries(url.searchParams));
             return { path, ...(parsed ? { anchor: parsed.anchor } : {}),
+                ...(rootPath ? { rootPath } : {}),
                 ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}),
                 ...(session ? { sessionId: decodeURIComponent(session[1]) } : {}),
                 ...(project ? { workspaceRefId: project.workspaceRefId } : {}),

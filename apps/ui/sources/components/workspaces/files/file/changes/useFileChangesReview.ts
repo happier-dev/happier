@@ -19,6 +19,8 @@ import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspa
 import { askAboutRanges, type AskSelectionTargetContext } from '@/components/ui/code/selection/askAboutRanges';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useAskSessionReveal } from '@/components/ui/code/selection/useAskSessionReveal';
+import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import {
   useFileChangesScope,
   type FileChangesScopeView,
@@ -44,7 +46,7 @@ export type FileChangesReviewParams = Readonly<{
   active: boolean;
   /** The Session's Agent display name, for copy that names it. */
   agentName?: string | null;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, rootPath?: string) => void;
   /** The project the page belongs to; without a Session, other files open in it. */
   workspaceRefId?: string | null;
   /** The File page's same destination context used by selection Ask without a Session. */
@@ -98,13 +100,21 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   });
   const current = changes.current;
   const captured = changes.comparison;
+  const live = current.kind === 'workingTree';
+  const capturedPath = captured ? resolvePathRelativeToRoot({
+    path: resolveMachineAbsolutePath({ ...scope, requestPath: filePath, pathKind: 'workspace_entry' }),
+    root: captured.repository.rootPath,
+    preservePathSpelling: true,
+  }) : null;
+  const reviewPath = live ? filePath : capturedPath ?? filePath;
+  const reviewScope = React.useMemo(() => captured && !live
+    ? { ...scope, rootPath: captured.repository.rootPath } : scope, [scope, captured?.repository.rootPath, live]);
   const capturedFile =
-    captured?.inventory.files.find((file) => file.path === filePath) ?? null;
+    captured?.inventory.files.find((file) => file.path === capturedPath) ?? null;
   const capturedDiff =
     capturedFile?.evidence.state === 'available'
       ? capturedFile.evidence.unifiedDiff
       : null;
-  const live = current.kind === 'workingTree';
   const unifiedDiff = live ? params.liveDiff : capturedDiff;
   const turnId = changes.turnId;
   const turnNumber = useSessionTurnNumber(sessionId, scope.serverId, turnId);
@@ -135,7 +145,8 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   });
   const { target, refresh, sessionTarget, remember, retireUndo, undo, undoAvailable, discardDisabledReason } = hunkDiscard;
   const messages = React.useMemo(() => hunkDiscard.messagesFor(filePath), [hunkDiscard.messagesFor, filePath]);
-  const readCurrentText = React.useMemo(() => hunkDiscard.readCurrentTextFor(filePath), [hunkDiscard.readCurrentTextFor, filePath]);
+  const readCurrentText = React.useMemo(() => hunkDiscard.readCurrentTextFor(reviewPath, { ...target, rootPath: reviewScope.rootPath }),
+    [hunkDiscard.readCurrentTextFor, reviewPath, target, reviewScope.rootPath]);
   React.useEffect(() => retireUndo, [retireUndo, target, filePath]);
   const onDiscard = hunkDiscard.discard;
 
@@ -145,14 +156,14 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     const range = rangeOfReviewUnit(hunkTarget);
     const deletion = !hunkTarget.unit.hunk.lines.some(line => line.kind === 'add');
     await askAboutRanges({
-      workspaceScope: scope,
+      workspaceScope: reviewScope,
       sessionTarget: sessionId ? { sessionId, revealSessionColumn } : null,
       targetContext: params.getAskTargetContext?.(),
       filePath: hunkTarget.path, source: 'diff', savedText: unifiedDiff,
       lines: buildCodeLinesFromUnifiedDiff({ unifiedDiff, hideFilePrelude: true }),
       ranges: [{ startLine: range.rangeStart, endLine: range.rangeEnd, side: deletion ? 'before' : 'after' }],
     });
-  }, [sessionId, unifiedDiff, scope, revealSessionColumn, params.getAskTargetContext]);
+  }, [sessionId, unifiedDiff, reviewScope, revealSessionColumn, params.getAskTargetContext]);
 
   const liveFiles = React.useMemo(
     () => live && params.changedPaths ? buildFileChangesLiveFiles(params.changedPaths, filePath, unifiedDiff ?? '') : undefined,
@@ -167,7 +178,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
       live || !captured
         ? { kind: 'live', root: scope.rootPath }
         : { kind: 'captured', comparison: captured },
-    path: filePath,
+    path: reviewPath,
     unifiedDiff: unifiedDiff ?? '',
     contentHash: params.contentHash ?? null,
     host,
@@ -179,12 +190,13 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     undo: undoAvailable ? undo : undefined,
     onReviewAction: retireUndo,
     onNavigate: (cursor) => {
-      if (cursor.path === filePath) return;
-      if (params.onOpenFile) { params.onOpenFile(cursor.path); return; }
+      if (cursor.path === reviewPath) return;
+      const rootPath = live ? undefined : captured?.repository.rootPath;
+      if (params.onOpenFile) { params.onOpenFile(cursor.path, rootPath); return; }
       if (sessionId) void opener.open({ kind: 'session', sessionId, serverId: scope.serverId, path: cursor.path },
-        { view: 'changes', changesScope: current, intent: 'preview' });
+        { ...(rootPath ? { rootPath } : {}), view: 'changes', changesScope: current, intent: 'preview' });
       else if (workspaceRefId) void opener.open({ kind: 'project', workspaceRefId, serverId: scope.serverId,
-        machineId: scope.machineId, rootPath: scope.rootPath, path: cursor.path },
+        machineId: scope.machineId, rootPath: reviewScope.rootPath, path: cursor.path },
         { view: 'changes', changesScope: current, intent: 'preview' });
     },
   });
@@ -202,7 +214,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     readCurrentText,
     refresh,
     sessionTarget,
-    filePath,
+    filePath: reviewPath,
     selector: changes.selector,
     comparison: captured,
     changed,

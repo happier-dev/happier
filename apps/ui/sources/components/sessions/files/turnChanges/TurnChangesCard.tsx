@@ -32,7 +32,7 @@ export type TurnChangesCardWorkspace = Readonly<{
     rootPath?: string | null;
 }>;
 
-export type TurnChangesFrontSession = Readonly<{ sessionId: string; serverId?: string | null }>;
+export type TurnChangesFrontSession = Readonly<{ sessionId: string; serverId?: string | null; rootPath?: string }>;
 
 export type TurnChangesCardProps = Readonly<{
     /** Every file the turn changed, from the turn's own evidence (never the later working copy). */
@@ -239,7 +239,7 @@ const TurnChangesList = React.memo(function TurnChangesList(props: Readonly<{
 /** One changed-file row; it alone subscribes to whether its file is the front tab (one boolean, per row). */
 function TurnChangesFileRow(props: React.ComponentProps<typeof ScmChangeRow> & Readonly<{ frontSession: TurnChangesFrontSession | null }>) {
     const { frontSession, ...row } = props;
-    const front = useSessionFileTabFront(frontSession?.sessionId, frontSession?.serverId, row.file.fullPath);
+    const front = useSessionFileTabFront(frontSession?.sessionId, frontSession?.serverId, row.file.fullPath, frontSession?.rootPath);
     return <ScmChangeRow {...row} selected={front} />;
 }
 

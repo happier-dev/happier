@@ -308,6 +308,7 @@ export function useFilePageCodeIntelligence(
         { ...target, path: location.path } as WorkspaceFileOpenTarget,
         {
           intent: 'preview',
+          ...(target.kind === 'session' && input.scope ? { rootPath: input.scope.rootPath } : {}),
           anchor: {
             kind: 'fileLine',
             startLine: location.range.start.line + 1,
@@ -315,7 +316,7 @@ export function useFilePageCodeIntelligence(
         },
       );
     },
-    [opener],
+    [opener, input.scope?.rootPath],
   );
 
   const showProblems = React.useCallback(() => {

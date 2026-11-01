@@ -14,6 +14,7 @@ export function useFilePageShareContext(input: Readonly<{
     scope: WorkspaceScopeBase;
     accountScope: ServerAccountScope | null;
     filePath: string;
+    fileRootPath?: string;
     sessionId?: string | null;
     workspaceRefId?: string | null;
     targetKind?: 'session' | 'project';
@@ -27,7 +28,8 @@ export function useFilePageShareContext(input: Readonly<{
     const sessionId = input.sessionId?.trim() || null;
     const sessionSource = input.targetKind === 'session' ? sessionId : null;
     const linkInput: WorkspaceFileOpenInput | undefined = sessionSource
-        ? { target: { kind: 'session', sessionId: sessionSource, serverId: input.scope.serverId }, path: input.filePath }
+        ? { target: { kind: 'session', sessionId: sessionSource, serverId: input.scope.serverId }, path: input.filePath,
+            ...(input.fileRootPath ? { rootPath: input.fileRootPath } : {}) }
         : projectId ? { target: { kind: 'project', workspaceRefId: projectId, ...input.scope }, path: input.filePath } : undefined;
     const ref = React.useMemo<ComposerRefV1 | null>(() => sessionId ? { kind: 'session', sessionId } : null, [sessionId]);
     const scope = input.accountScope;

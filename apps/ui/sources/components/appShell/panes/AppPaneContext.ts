@@ -7,6 +7,7 @@ import type { AppPaneAction, AppPaneState } from './model/appPaneReducer';
 import type { PaneOverlayFocusReturnOwner } from './paneOverlayFocusReturn';
 import type { FileFindSeedHandoff } from './fileFindSeedHandoff';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { workspaceFileDetailsTabKey } from './details/fileDetailsTab';
 
 export type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -39,7 +40,7 @@ export const AppPaneDriverContext = createContext<AppPaneContextValue['getDriver
 
 type FileTabFrontSubscription = Readonly<{
     subscribe: (listener: () => void) => () => void;
-    read: (scopeId: string, path: string) => boolean;
+    read: (scopeId: string, path: string, rootPath?: string) => boolean;
     /**
      * Whether the active pane scope is this resource's (any window instance of it) and its Details pane is
      * open; a phone presents that Details as the full page.
@@ -57,10 +58,10 @@ export function createFileTabFrontSubscription(readState: () => AppPaneState): F
             listeners.add(listener);
             return () => { listeners.delete(listener); };
         },
-        read(scopeId, path) {
+        read(scopeId, path, rootPath) {
             const details = readState().scopes[scopeId]?.details;
             return details?.isOpen === true && details.focusedGroupId !== null
-                && details.groupsById[details.focusedGroupId]?.activeTabKey === `file:${path}`;
+                && details.groupsById[details.focusedGroupId]?.activeTabKey === workspaceFileDetailsTabKey(path, rootPath);
         },
         readActiveDetailsOpen(resourceScopeId) {
             const state = readState();

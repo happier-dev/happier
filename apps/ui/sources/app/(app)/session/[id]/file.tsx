@@ -3,7 +3,8 @@ import * as React from 'react';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import { decodeSessionFilePathParam } from '@/scm/utils/filePathParam';
-import { parseSessionFileDeepLinkAnchor } from '@/utils/url/sessionFileDeepLink';
+import { parseSessionFileDeepLinkAnchor, readWorkspaceFileLinkView } from '@/utils/url/sessionFileDeepLink';
+import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
 import { SessionFileDetailsView } from '@/components/sessions/files/views/SessionFileDetailsView';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -39,6 +40,7 @@ export function FileScreen() {
         () => parseSessionFileDeepLinkAnchor(params as Record<string, string | string[] | undefined>),
         [params]
     );
+    const initialView = React.useMemo(() => readWorkspaceFileLinkView(params), [params]);
 
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled');
     const arrangement = useLocalSetting('paneArrangement');
@@ -68,15 +70,9 @@ export function FileScreen() {
 
     React.useEffect(() => {
         if (!shouldRedirect) return;
-        const fileName = filePath.split('/').at(-1) ?? filePath;
-        pane.openDetailsTab({
-            key: `file:${filePath}`,
-            kind: 'file',
-            title: fileName,
-            resource: { kind: 'file', path: filePath, deepLinkAnchor },
-        }, { intent: 'preview' });
+        pane.openDetailsTab(createWorkspaceFileDetailsTab(filePath, deepLinkAnchor?.anchor, deepLinkAnchor?.source, initialView), { intent: 'preview' });
         router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
-    }, [deepLinkAnchor, filePath, pane, routeScope, router, sessionId, shouldRedirect]);
+    }, [deepLinkAnchor, filePath, initialView, pane, routeScope, router, sessionId, shouldRedirect]);
 
     React.useEffect(() => {
         if (!shouldUseDetailsScreen) return;
@@ -87,24 +83,18 @@ export function FileScreen() {
         if (!sessionHydrated) return;
         if (shouldRedirect) return;
         hasRedirectedToDetailsRef.current = true;
-        const fileName = filePath.split('/').at(-1) ?? filePath;
         pane.openDetailsTab(
-            {
-                key: `file:${filePath}`,
-                kind: 'file',
-                title: fileName,
-                resource: { kind: 'file', path: filePath, deepLinkAnchor },
-            },
+            createWorkspaceFileDetailsTab(filePath, deepLinkAnchor?.anchor, deepLinkAnchor?.source, initialView),
             { intent: 'preview' },
         );
         router.replace({
             pathname: '/session/[id]/details',
             params: routeScope.withParams({
                 id: sessionId,
-                ...serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath } }),
+                ...serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath, ...initialView } }),
             }),
         } as any);
-    }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, routeScope, router, sessionHydrated, sessionId, shouldRedirect, shouldUseDetailsScreen]);
+    }, [deepLinkAnchor, filePath, initialView, isUnsafeFilePath, pane, routeScope, router, sessionHydrated, sessionId, shouldRedirect, shouldUseDetailsScreen]);
 
     if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState) || (!filePath && !isUnsafeFilePath)) {
         return <SessionInvalidLinkFallback />;
@@ -119,7 +109,7 @@ export function FileScreen() {
     }
     if (shouldRedirect) return null;
     if (shouldUseDetailsScreen) return null;
-    return <SessionFileDetailsView sessionId={sessionId} serverId={routeScope.serverId} scopeId={scopeId} filePath={filePath} deepLinkAnchor={deepLinkAnchor} />;
+    return <SessionFileDetailsView sessionId={sessionId} serverId={routeScope.serverId} scopeId={scopeId} filePath={filePath} deepLinkAnchor={deepLinkAnchor} initialView={initialView} />;
 }
 
 export { FileScreen as WorkspaceRouteBody };

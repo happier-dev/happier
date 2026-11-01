@@ -17,6 +17,7 @@ const snapshot = (pendingAdded: number) => fileViewSnapshot({ fetchedAt: pending
 
 // Load the shared runtime graph during collection, outside this file-refresh operation's budget.
 await prepareSessionFilesViewTestkit();
+const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 beforeEach(async () => {
     standardCleanup();
     diffVersion = 1;
@@ -36,6 +37,29 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('SessionFileDetailsView (SCM refresh)', () => {
+    it('opens a repository-relative captured file under its retained base when the Session cwd is nested', async () => {
+        const metadata = fixture.session.metadata;
+        if (!metadata) throw new Error('The nested Session fixture must have workspace metadata');
+        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: { ...metadata, path: '/repo/nested' } }]);
+        const { WorkspaceFileOpenInputSchema } = await import('@happier-dev/protocol/actions/workspaceActionFamily');
+        const { buildWorkspaceFileLink, readWorkspaceFileLinkView } = await import('@/utils/url/sessionFileDeepLink');
+        const { parseSessionPaneUrlState, createSessionPaneDetailsTab } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+        const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
+        const file = WorkspaceFileOpenInputSchema.parse({ target: { kind: 'session', sessionId: fixture.session.id, serverId: fixture.scope.serverId },
+            path: 'nested/a.ts', rootPath: '/repo', view: 'view' });
+        const url = new URL(buildWorkspaceFileLink(file), 'https://happier.test');
+        const target = parseSessionPaneUrlState(Object.fromEntries(url.searchParams))!.details!;
+        const tab = createSessionPaneDetailsTab(target)!;
+        const view = readWorkspaceFileLinkView(tab.resource);
+        const screen = await fixture.render(<SessionFileDetailsView sessionId={fixture.session.id} serverId={fixture.scope.serverId}
+            scopeId="session:nested-open" filePath={file.path} initialView={view} />);
+        expect(screen.tree.root.findByType(WorkspaceFileDetailsView).props.scope).toMatchObject({ rootPath: '/repo' });
+        await vi.waitFor(() => expect(fixture.requests.some(request => request.method === 'daemon.filesystem.readFile')).toBe(true));
+        const reads = fixture.requests.filter(request => request.method === 'daemon.filesystem.readFile');
+        expect(reads.map(request => request.payload)).toEqual(expect.arrayContaining([expect.objectContaining({ path: '/repo/nested/a.ts' })]));
+        expect(JSON.stringify(reads.map(request => request.payload))).not.toContain('/repo/nested/nested/a.ts');
+    });
+
     it('refreshes diff content in-place when SCM entry fingerprint changes', async () => {
         const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
         const { FileContentPanel } = await import('@/components/workspaces/files/file/FileContentPanel');

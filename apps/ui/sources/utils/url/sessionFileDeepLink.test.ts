@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { buildSessionFileDeepLink, buildWorkspaceFileLink, readWorkspaceFileLinkView, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
 
 describe('sessionFileDeepLink', () => {
+    it('retains a captured file base when a copied link is pasted into Search', () => {
+        const href = buildWorkspaceFileLink({ target: { kind: 'session', sessionId: 'nested-session' }, path: 'nested/a.ts', rootPath: '/repo' });
+        expect(parseSearchFileTarget(href)).toMatchObject({ path: 'nested/a.ts', rootPath: '/repo' });
+    });
     it('keeps Session identity characters out of file-link query parsing', () => {
         const href = buildWorkspaceFileLink({ target: { kind: 'session', sessionId: 's?branch/one' }, path: 'src/a.ts' });
         expect(parseSearchFileTarget(href)).toMatchObject({ sessionId: 's?branch/one', path: 'src/a.ts' });

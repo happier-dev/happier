@@ -56,7 +56,7 @@ export type SessionPaneUrlDetailsTarget =
 export const SESSION_PANE_URL_PARAM_KEYS = [
     'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId', 'machineId', 'boardItemId',
     'comparison', 'comparisonId', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
-    'fileView', 'blame', 'fileOpenAs',
+    'fileView', 'blame', 'fileOpenAs', 'rootPath',
     ...FILE_TARGET_ANCHOR_PARAM_KEYS,
 ] as const;
 export type SessionPaneUrlParamKey = (typeof SESSION_PANE_URL_PARAM_KEYS)[number];
@@ -222,6 +222,7 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     if (state.details?.kind === 'file') {
         out.details = 'file';
         out.path = state.details.path;
+        if (state.details.rootPath) out.rootPath = state.details.rootPath;
         if (state.details.anchor) Object.assign(out, serializeFileTargetAnchor(state.details.anchor, state.details.anchorSource));
         if (state.details.view) out.fileView = state.details.view;
         if (state.details.blame !== undefined) out.blame = state.details.blame ? '1' : '0';
@@ -386,6 +387,7 @@ export function createSessionPaneDetailsTab(
             const path = target.path;
             if (isSafeWorkspaceRelativePath(path)) {
                 const file = createWorkspaceFileDetailsTab(path, target.anchor, target.anchorSource, {
+                    ...(target.rootPath ? { rootPath: target.rootPath } : {}),
                     ...(target.view ? { view: target.view } : {}),
                     ...(target.blame === undefined ? {} : { blame: target.blame }),
                     ...(target.openAs ? { openAs: target.openAs } : {}),

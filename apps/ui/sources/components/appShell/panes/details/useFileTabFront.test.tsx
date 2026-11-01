@@ -8,12 +8,27 @@ import { AppPaneProvider } from '../AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '../hooks/useAppPaneScope';
 import { useFileTabFront, useSessionFileTabFront } from './useFileTabFront';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { createWorkspaceFileDetailsTab } from './fileDetailsTab';
 
 const initialState = storage.getState();
 beforeEach(() => storage.setState(initialState, true));
 afterEach(() => storage.setState(initialState, true));
 
 describe('file tab front subscription', () => {
+    it('distinguishes a repository-based tab from the same spelling under the Session cwd', async () => {
+        let pane: AppPaneScopeApi | undefined;
+        const selected = new Map<string, boolean>();
+        function Probe({ rootPath }: { rootPath?: string }) {
+            pane = useAppPaneScope('session:base');
+            selected.set(rootPath ?? 'cwd', useFileTabFront('session:base', 'nested/a.ts', rootPath));
+            return null;
+        }
+        const screen = await renderScreen(<AppPaneProvider><Probe /><Probe rootPath="/repo" /></AppPaneProvider>);
+        await act(async () => pane!.openDetailsTab(createWorkspaceFileDetailsTab('nested/a.ts', undefined, undefined, { rootPath: '/repo' }), { intent: 'pinned' }));
+        expect(selected.get('/repo')).toBe(true);
+        expect(selected.get('cwd')).toBe(false);
+        await screen.unmount();
+    });
     it('only renders chips whose selected answer changes, including closing Details', async () => {
         const renders = new Map<string, number>();
         const selected = new Map<string, boolean>();

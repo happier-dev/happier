@@ -26,8 +26,9 @@ export function useTranscriptFileLinks(params: Readonly<{
     const sessionAddress = React.useMemo(() => normalizeSessionAddress(serverId, params.sessionId), [serverId, params.sessionId]);
     const openPath = React.useCallback((path: string, options?: WorkspaceFileOpenOptions & Readonly<{ event?: unknown }>): boolean => {
         if (!enabled) return false;
+        const rootPath = options?.rootPath ?? params.workspacePath;
         const filePath = isAbsoluteLocalPath(path.replace(/\\/g, '/'))
-            ? params.workspacePath ? resolvePathRelativeToRoot({ path, root: params.workspacePath, preservePathSpelling: true }) : null
+            ? rootPath ? resolvePathRelativeToRoot({ path, root: rootPath, preservePathSpelling: true }) : null
             : normalizeRelativeLocalPath(path);
         if (filePath === null || !isSafeWorkspaceRelativePath(filePath)) return false;
         const { event, ...openOptions } = options ?? {};

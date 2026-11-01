@@ -5,7 +5,7 @@ import {
     type WorkspaceFileOpenableContentViewerHost,
 } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
 
-import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import { useSessionFileScope } from './useSessionFileScope';
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import type { WorkspaceFileLinkView } from '@/utils/url/sessionFileDeepLink';
 
@@ -30,7 +30,7 @@ export type SessionFileDetailsViewProps = Readonly<{
 
 export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const sessionId = props.sessionId;
-    const scope = useWorkspaceScopeForSession(sessionId, props.serverId);
+    const scope = useSessionFileScope(sessionId, props.serverId, props.initialView?.rootPath);
     const navigation = useSessionFilePaneNavigation({ scopeId: props.scopeId, sessionId, serverId: scope?.serverId ?? props.serverId });
 
     return (
