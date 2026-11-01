@@ -2,7 +2,7 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema } from '@happier-dev/protocol';
+import { AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
@@ -52,8 +52,11 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
     const { create } = await import('zustand');
     const { createAutomationsDomain } = await import('@/sync/store/domains/automations');
     const { createWorkflowRunsDomain } = await import('@/sync/store/domains/workflowRuns');
+    const { scopeStorageSubscriptions } = await import('@/sync/domains/state/scopedStorage');
     type DomainArgs = Parameters<typeof createAutomationsDomain>[0];
-    const store = create<Record<string, unknown>>()((set, get) => {
+    type ScopedStoreApi = Parameters<typeof scopeStorageSubscriptions>[0];
+    // The app store's own key-scoped hook (selector, scope, equality) over this store's state.
+    const store = scopeStorageSubscriptions(create<Record<string, unknown>>()((set, get) => {
         const args = { set, get } as unknown as DomainArgs;
         return {
             isDataReady: true,
@@ -62,7 +65,7 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
             ...createWorkflowRunsDomain(args as never),
             ...createAutomationsDomain(args),
         };
-    });
+    }) as unknown as ScopedStoreApi);
     return { storage: store, getStorage: () => store };
 });
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -102,6 +105,9 @@ vi.mock('@/sync/sync', async () => {
         },
     };
 });
+
+// Load the section's page graph outside a test deadline; each test still mounts the real section.
+const { AutomationsLatestRunsSection } = await import('./AutomationsLatestRunsSection');
 
 function automation(id: string, name: string, lastRunAt: number | null): AutomationDefinition {
     return createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
@@ -173,13 +179,21 @@ afterEach(() => {
 });
 
 async function renderSection() {
-    const { AutomationsLatestRunsSection } = await import('./AutomationsLatestRunsSection');
     const screen = await renderScreen(<AutomationsLatestRunsSection menu="menu:here" />);
     await flushHookEffects({ cycles: 4 });
     return screen;
 }
 
 describe('Automations · Latest runs on Home', () => {
+    it('honors Plain through the exported Home section while retaining its runs', async () => {
+        serveTwoAutomations();
+        const screen = await renderScreen(<AutomationsLatestRunsSection frameStyle="plain" />);
+        await flushHookEffects({ cycles: 4 });
+        const surface = screen.tree.root.findAll(node => node.props.testID === 'home-automations' && 'materialRole' in node.props)[0];
+        expect(surface).toBeTruthy();
+        expect(surface?.props.materialRole).toBeUndefined();
+        expect(screen.findByTestId('home-automations.run.t2')).toBeTruthy();
+    });
     it('draws a done Run quietly in the ink, a failed one (glyph and line) in rose, one to look at in attention amber', async () => {
         const { LatestRunRow } = await import('./AutomationsLatestRunsSection');
         const { automationRunTone } = await import('./latestAutomationRuns');

@@ -64,7 +64,7 @@ function readMissingRunPages(ids: readonly string[], inFlight: Map<string, Promi
 export const AutomationsLatestRunsSection = React.memo(function AutomationsLatestRunsSection(props: HubSectionProps) {
     const support = useAutomationsSupport();
     if (!support.enabled) return null;
-    return <AutomationsLatestRunsWidget menu={props.menu} />;
+    return <AutomationsLatestRunsWidget {...props} />;
 });
 
 function AutomationsLatestRunsWidget(props: HubSectionProps) {

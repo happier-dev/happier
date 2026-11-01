@@ -38,6 +38,7 @@ export type ItemGroupColumnsProps = Readonly<{
 export type ItemGroupColumnProps = Readonly<{
     children: React.ReactNode;
     span?: 1 | 2 | 3 | 4;
+    columns?: HappierColumnProps['columns'];
     style?: StyleProp<ViewStyle>;
 }>;
 

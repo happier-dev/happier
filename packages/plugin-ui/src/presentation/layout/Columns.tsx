@@ -46,6 +46,8 @@ export type HappierColumnsProps = Readonly<{
 export type HappierColumnProps = Readonly<{
     children?: React.ReactNode;
     span?: 1 | 2 | 3 | 4;
+    /** This cell's row capacity, capped by the container's resolved count (mixed half/third card rows). */
+    columns?: 1 | 2 | 3 | 4;
     style?: HappierStyleProp;
     testID?: string;
 }>;
@@ -162,7 +164,8 @@ export const HappierColumns = React.memo<HappierColumnsProps>((props) => {
 export const HappierColumn = React.memo<HappierColumnProps>((props) => {
     const styles = stylesheet;
     const { activeColumns, cellGutter } = React.useContext(HappierColumnsContext);
-    const resolvedSpan = Math.max(1, Math.min(props.span ?? 1, activeColumns));
+    const columns = Math.min(props.columns ?? activeColumns, activeColumns);
+    const resolvedSpan = Math.max(1, Math.min(props.span ?? 1, columns));
 
     return (
         <View
@@ -173,7 +176,7 @@ export const HappierColumn = React.memo<HappierColumnProps>((props) => {
                     // gutter is padding, since a percentage basis plus a flex
                     // gap would wrap before the requested cells fit. The row's
                     // matching negative margin keeps both outside edges flush.
-                    width: `${100 * resolvedSpan / activeColumns}%`,
+                    width: `${100 * resolvedSpan / columns}%`,
                     paddingHorizontal: cellGutter,
                 },
             ]}

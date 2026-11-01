@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import { act } from 'react-test-renderer';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +39,53 @@ function cellSpans(screen: Awaited<ReturnType<typeof renderList>>, gridTestID: s
     return grid!.findAll((node) => 'span' in (node.props ?? {})).map((node) => node.props.span);
 }
 
+async function cardWidths(screen: Awaited<ReturnType<typeof renderList>>, gridTestID: string) {
+    const measured = screen.findAll(node => node.props?.testID === gridTestID && typeof node.props.onLayout === 'function')[0]!;
+    await act(async () => measured.props.onLayout({ nativeEvent: { layout: { width: 1440, height: 800 } } }));
+    return screen.findByTestId(gridTestID)!.findAll(node => 'span' in node.props && typeof node.props.children === 'string')
+        .map(cell => [cell.props.children, StyleSheet.flatten(cell.parent?.parent?.props.style)?.width]);
+}
+
 describe('HomeHubSectionList (the column contract)', () => {
+    it.each([1440, 500, 390])('retains small-card state and subscriptions through trio, pair and size edits at width %s', async width => {
+        let reads = 0;
+        let releases = 0;
+        function Survivor() {
+            const [value, setValue] = React.useState(0);
+            React.useEffect(() => {
+                reads++;
+                return () => { releases++; };
+            }, []);
+            return <Pressable testID="survivor" onPress={() => setValue(current => current + 1)}><Text>{`retained:${value}`}</Text></Pressable>;
+        }
+        const render = (first: ReturnType<typeof widget>, leadCardId: string | null = null) => <HomeHubSectionList
+            sections={[widget('medium-a'), widget('medium-b'), first, widget('survivor', 'small'), widget('small-c', 'small')]}
+            leadCardId={leadCardId}
+            renderSection={section => section.id === 'survivor' ? <Survivor /> : section.id}
+        />;
+        const first = widget('small-a', 'small');
+        const screen = await renderScreen(render(first));
+        const measure = async () => {
+            for (const grid of screen.findAll(node => typeof node.props?.onLayout === 'function'
+                && String(node.props.testID).startsWith('home-hub.cards:'))) {
+                await act(async () => grid.props.onLayout({ nativeEvent: { layout: { width, height: 800 } } }));
+            }
+        };
+        await measure();
+        await act(async () => screen.findByTestId('survivor')!.props.onPress());
+        for (const next of [{ ...first, hidden: true }, first, widget('small-a', 'medium'), first]) {
+            await act(async () => { screen.update(render(next)); });
+            await measure();
+            expect(screen.getTextContent()).toContain('retained:1');
+            expect(reads).toBe(1);
+            expect(releases).toBe(0);
+        }
+        await act(async () => { screen.update(render(first, first.id)); });
+        await act(async () => { screen.update(render(first)); });
+        expect(screen.getTextContent()).toContain('retained:1');
+        expect(reads).toBe(1);
+        expect(releases).toBe(0);
+    });
     it.each(['hide/show', 'remove', 'reorder', 'span', 'setup'] as const)(
         'preserves a sibling card mount and local state when its first neighbour changes (%s)', async change => {
         let mounts = 0;
@@ -97,10 +143,59 @@ describe('HomeHubSectionList (the column contract)', () => {
     it('lays two consecutive cards out as one two-up row, and every other block on its own', async () => {
         const screen = await renderList([builtin('start'), widget('widget:a/latest'), builtin('automations'), builtin('usage')]);
         expect(screen.getTextContent()).toBe('block:start block:widget:a/latest block:automations block:usage');
-        // The card row asks its grid for two columns (the grid measures how many fit).
-        const requested = screen.findAll((node) => node.props?.testID === 'home-hub.cards:after:start' && 'columns' in node.props);
-        expect(requested.map((node) => node.props.columns)).toEqual([2]);
+        expect(await cardWidths(screen, 'home-hub.cards:after:start')).toEqual([
+            ['block:widget:a/latest', '50%'], ['block:automations', '50%'],
+        ]);
         expect(cellSpans(screen, 'home-hub.cards:after:start').every((span) => span === undefined)).toBe(true);
+    });
+
+    it('sets three consecutive small cards three across (Latest runs among them) and keeps the mediums two-up', async () => {
+        // The first-run showcase (owner 10-31): Capacity | New in PRs & Issues, then Machines | Local services | Latest runs.
+        const screen = await renderList([builtin('start'), widget('capacity'), widget('triage'), widget('machines', 'small'),
+            widget('services', 'small'), builtin('automations')]);
+        expect(screen.getTextContent()).toBe('block:start block:capacity block:triage block:machines block:services block:automations');
+        expect(await cardWidths(screen, 'home-hub.cards:after:start')).toEqual([
+            ['block:capacity', '50%'], ['block:triage', '50%'],
+            ...['machines', 'services', 'automations'].map(id => [`block:${id}`, `${100 / 3}%`]),
+        ]);
+        // Two smalls are not a row of three: they stay two-up.
+        const pair = await renderList([widget('machines', 'small'), builtin('automations')]);
+        expect(await cardWidths(pair, 'home-hub.cards:root')).toEqual([
+            ['block:machines', '50%'], ['block:automations', '50%'],
+        ]);
+    });
+
+    it('lets the lead card (Machines with no machine yet, 58d AF1) lead the cards on its own row, Get set up after them; the rest keep their order', async () => {
+        const sections = [builtin('start'), builtin('setup'), widget('capacity'), widget('triage'), widget('machines', 'small'),
+            widget('services', 'small'), builtin('automations')];
+        const saved = JSON.stringify(sections);
+        const screen = await renderScreen(
+            <HomeHubSectionList
+                sections={sections}
+                leadCardId="machines"
+                renderSection={(section, _index, placement) => `block:${section.id}${placement.leads ? ':leads' : ''}${placement.inRowOfThree ? ':regular' : ''}`}
+            />,
+        );
+        // The small it left behind (Local services) keeps the regular height a row of smalls takes.
+        // Composer, then where agents run, then the cards; what Get set up still asks waits below them.
+        expect(screen.getTextContent()).toBe('block:start block:machines:leads block:capacity block:triage block:services:regular block:automations:regular block:setup');
+        // Machines owns its row; the two smalls left behind are no row of three, so everything after pairs up two-up.
+        expect(await cardWidths(screen, 'home-hub.cards:after:start')).toEqual([
+            ['block:machines:leads', '100%'],
+            ...['capacity', 'triage', 'services:regular', 'automations:regular'].map(id => [`block:${id}`, '50%']),
+        ]);
+        expect(JSON.stringify(sections)).toBe(saved);
+        // Without a lead (a machine exists) the saved order and rows return unchanged.
+        const plain = await renderList(sections);
+        expect(plain.getTextContent()).toBe('block:start block:setup block:capacity block:triage block:machines block:services block:automations');
+    });
+
+    it('names the shown Machines widget as the first-run lead, and nothing when it is hidden', async () => {
+        const { resolveHomeHubFirstRunLeadId } = await import('./HomeHubSectionList');
+        const machines = { ...widget('default:builtin:machine_fleet', 'small'),
+            instance: { v: 1 as const, id: 'default:builtin:machine_fleet', definition: { kind: 'builtin' as const, id: 'machine_fleet' }, bindings: {} } };
+        expect(resolveHomeHubFirstRunLeadId([builtin('start'), widget('capacity'), machines])).toBe('default:builtin:machine_fleet');
+        expect(resolveHomeHubFirstRunLeadId([builtin('start'), widget('capacity'), { ...machines, hidden: true }])).toBeNull();
     });
 
     it('lets a card that is alone in its row take the whole row instead of leaving a hole', async () => {
@@ -141,18 +236,36 @@ describe('HomeHubSectionList (the column contract)', () => {
         expect(screen.getTextContent()).toBe('block:medium block:wide');
         expect(JSON.stringify(sections)).toBe(before);
     });
-    it('puts every block on the dashboard column except the composer, which keeps the reading column', async () => {
+    it('puts the composer, Needs your attention and Get set up on the reading column and everything else on the dashboard column', async () => {
         function ColumnProbe(props: Readonly<{ id: string }>) {
             return <>{`${props.id}@${usePageColumn()}`}</>;
         }
         const screen = await renderScreen(
             <PageColumnProvider value="dashboard">
                 <HomeHubSectionList
-                    sections={[builtin('attention'), builtin('start'), widget('w1'), widget('w2')]}
+                    sections={[builtin('attention'), builtin('start'), builtin('setup'), widget('w1'), widget('w2')]}
                     renderSection={(section) => <ColumnProbe id={section.id} />}
                 />
             </PageColumnProvider>,
         );
-        expect(screen.getTextContent()).toBe('attention@dashboard start@reading w1@dashboard w2@dashboard');
+        expect(screen.getTextContent()).toBe('attention@reading start@reading setup@reading w1@dashboard w2@dashboard');
+    });
+
+    it('lets Get set up take the cards\' dashboard column when it follows them (no machine yet, D1 C4)', async () => {
+        function ColumnProbe(props: Readonly<{ id: string }>) {
+            return <>{`${props.id}@${usePageColumn()}`}</>;
+        }
+        const sections = [builtin('attention'), builtin('start'), builtin('setup'), widget('w1'), widget('w2')];
+        const render = (leadCardId: string | null) => (
+            <PageColumnProvider value="dashboard">
+                <HomeHubSectionList sections={sections} leadCardId={leadCardId} renderSection={(section) => <ColumnProbe id={section.id} />} />
+            </PageColumnProvider>
+        );
+        // Below the band it reads at the band's width rather than stepping back to the composer's.
+        const firstRun = await renderScreen(render('w2'));
+        expect(firstRun.getTextContent()).toBe('attention@reading start@reading w2@dashboard w1@dashboard setup@dashboard');
+        // Once a machine exists it returns to its saved place on the reading column.
+        const withMachine = await renderScreen(render(null));
+        expect(withMachine.getTextContent()).toBe('attention@reading start@reading setup@reading w1@dashboard w2@dashboard');
     });
 });

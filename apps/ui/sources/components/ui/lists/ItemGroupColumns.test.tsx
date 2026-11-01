@@ -216,6 +216,20 @@ describe('ItemGroupColumns explicit count', () => {
 });
 
 describe('ItemGroupColumn spans', () => {
+    it('shares one stable parent between half and third-width cells while stacking in a narrow pane', async () => {
+        const { ItemGroupColumns, ItemGroupColumn } = await import('./ItemGroupColumns');
+        const render = (activeColumns: number) => <ItemGroupColumns activeColumns={activeColumns}>
+            <ItemGroupColumn columns={2}><View testID="half" /></ItemGroupColumn>
+            <ItemGroupColumn columns={3}><View testID="third" /></ItemGroupColumn>
+        </ItemGroupColumns>;
+        const screen = await renderScreen(render(3));
+        const width = (id: string) => flattenStyle(screen.findByTestId(id)?.parent?.parent?.props.style).width;
+        expect(width('half')).toBe('50%');
+        expect(width('third')).toBe(`${100 / 3}%`);
+        await act(async () => { screen.update(render(1)); });
+        expect(width('half')).toBe('100%');
+        expect(width('third')).toBe('100%');
+    });
     it('gives a full-span cell the whole row', async () => {
         const { ItemGroupColumns, ItemGroupColumn } = await import('./ItemGroupColumns');
         const screen = await renderScreen(

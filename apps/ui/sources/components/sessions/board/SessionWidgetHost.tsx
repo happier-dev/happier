@@ -12,6 +12,7 @@ import { getSessionBoardWidgetFootprintV1, resolveSessionBoardWidgetSizeV1 } fro
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
@@ -300,6 +301,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const testID = props.testID ?? `session-board-item-${props.item.itemId}`;
+    const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
+    const [bodyMeta, setBodyMeta] = React.useState<React.ReactNode>(null);
     const [hostedFrameReportedHeight, setHostedFrameReportedHeight] = React.useState<number | null>(props.reportedHeight ?? null);
     const measuredHeightRef = React.useRef<number | null>(null);
     const onReportIntrinsicHeight = React.useCallback((height: number) => {
@@ -858,16 +861,16 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
             testID={`${testID}-provenance`}
             style={styles.provenanceStack}
             accessible
-            accessibilityLabel={asOfLabel ? `${provenance.accessibilityLabel} · ${asOfLabel}` : provenance.accessibilityLabel}
+            accessibilityLabel={[provenance.accessibilityLabel, bodyCaption, asOfLabel].filter(Boolean).join(' · ')}
         >
             {asOfLabel && narrow ? (
                 <>
-                    <Text style={styles.provenance} numberOfLines={1}>{provenance.label}</Text>
+                    <Text style={styles.provenance} numberOfLines={1}>{bodyCaption ?? provenance.label}</Text>
                     <Text style={styles.provenance} numberOfLines={1}>{asOfLabel}</Text>
                 </>
             ) : (
                 <Text style={styles.provenance} numberOfLines={1}>
-                    {asOfLabel ? `${provenance.label} · ${asOfLabel}` : provenance.label}
+                    {asOfLabel ? `${bodyCaption ?? provenance.label} · ${asOfLabel}` : bodyCaption ?? provenance.label}
                 </Text>
             )}
         </View>
@@ -944,7 +947,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 // A narrow card (the Board in a pane) reads its source whole, on its own line beneath the title; "Snapshot
                 // by you · as of 10:42" and a plugin's name are never squeezed out beside a long title.
                 {...(source && narrow ? { sourcePlacement: 'below' as const } : {})}
-                meta={meta}
+                meta={bodyMeta ? <>{meta}{bodyMeta}</> : meta}
                 menu={controls}
                 {...(moveHandle ? { grip: moveHandle } : {})}
                 fresh={props.fresh === true}
@@ -955,7 +958,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 body={{
                     kind: 'content',
                     children: (
-                        <>
+                        <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
+                        <WidgetFrameBodyMetaContext.Provider value={setBodyMeta}>
                             <View
                                 testID={`${testID}-body`}
                                 style={[styles.body, resolvedHeight ? { height: resolvedHeight.height } : null]}
@@ -964,7 +968,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                                     <SurfaceStateSizeProvider size={props.expanded ? 'pane' : 'line'}>{body}</SurfaceStateSizeProvider>
                                 ) : body}
                             </View>
-                        </>
+                        </WidgetFrameBodyMetaContext.Provider>
+                        </WidgetFrameBodyCaptionContext.Provider>
                     ),
                 }}
             />
