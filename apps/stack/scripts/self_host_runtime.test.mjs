@@ -175,6 +175,10 @@ for (const { action, registrationFails = false } of [
     });
     const commandLog = fixture.path('commands.jsonl');
     const serviceName = 'happier-self-host-single-start';
+    if (action === 'update') {
+      await mkdir(fixture.path('config'), { recursive: true });
+      await writeFile(fixture.path('config', 'server.env'), 'PORT=42347\n');
+    }
     if (action === 'rollback') {
       await mkdir(fixture.path('install', 'bin'), { recursive: true });
       await writeFile(fixture.path('install', 'bin', 'happier-server.previous'), 'previous-runtime\n');
