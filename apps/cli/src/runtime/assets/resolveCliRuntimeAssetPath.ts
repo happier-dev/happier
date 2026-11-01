@@ -1,6 +1,7 @@
 import { basename, dirname, join } from 'node:path';
 
 import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
+import { resolveManagedCliShimInstall } from '@/runtime/managedCliShimInstall';
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
@@ -11,14 +12,6 @@ function isRuntimeExecutablePath(pathLike: string): boolean {
   return base === 'node' || base === 'node.exe' || base === 'bun' || base === 'bun.exe';
 }
 
-function resolveCliInstallRootNameFromShim(executableBase: string): string | null {
-  const normalizedBase = executableBase.toLowerCase().replace(/\.exe$/u, '');
-  if (normalizedBase === 'happier') return 'cli';
-  if (normalizedBase === 'hprev') return 'cli-preview';
-  if (normalizedBase === 'hdev') return 'cli-dev';
-  return null;
-}
-
 export function isSelfContainedCliBinary(execPath: string = process.execPath): boolean {
   const normalized = normalizePathLike(execPath);
   if (!normalized) return false;
@@ -26,22 +19,16 @@ export function isSelfContainedCliBinary(execPath: string = process.execPath): b
 }
 
 function resolveInstalledCliRuntimeRootPath(execPath: string): string | null {
-  const normalized = normalizePathLike(execPath);
-  if (!normalized || !isSelfContainedCliBinary(normalized)) {
+  if (!isSelfContainedCliBinary(execPath)) {
     return null;
   }
 
-  const installRootName = resolveCliInstallRootNameFromShim(basename(normalized));
-  if (!installRootName) {
+  const shimInstall = resolveManagedCliShimInstall(execPath);
+  if (!shimInstall) {
     return null;
   }
 
-  const binaryDir = dirname(normalized);
-  if (basename(binaryDir).toLowerCase() !== 'bin') {
-    return null;
-  }
-
-  return join(dirname(binaryDir), installRootName, 'current');
+  return join(shimInstall.happierHomeDir, shimInstall.installRootName, 'current');
 }
 
 export function resolveCliRuntimeRootPathFromModuleUrl(moduleUrl: string): string | null {

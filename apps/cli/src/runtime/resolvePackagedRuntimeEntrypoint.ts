@@ -4,34 +4,14 @@ import { basename, dirname, join } from 'node:path';
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
-  resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
+import { resolveManagedCliShimInstall } from '@/runtime/managedCliShimInstall';
 import {
   isRunnerSnapshotRuntimeRoot,
   resolveRuntimeRootsFromLaunchedProcess,
 } from '@/runtime/resolveRuntimeEntrypointArgv';
-
-const MANAGED_CLI_SHIM_INSTALLS = new Map(
-  (['stable', 'preview', 'publicdev'] as const).flatMap((channel) => {
-    const variant = resolveFirstPartyComponentPublicReleaseVariant({
-      componentId: 'happier-cli',
-      channel,
-    });
-    const legacyShimAliases =
-      channel === 'preview'
-        ? ['happier-preview']
-        : channel === 'publicdev'
-          ? ['happier-dev']
-          : [];
-    const shimNames = [...variant.installShims, ...legacyShimAliases];
-    return shimNames.map((shimName) => [
-      normalizeExecutableBase(shimName),
-      { channel, installRootName: variant.installRootName },
-    ] as const);
-  }),
-);
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
@@ -84,18 +64,13 @@ function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | nul
     return null;
   }
 
-  const shimInstall = MANAGED_CLI_SHIM_INSTALLS.get(normalizeExecutableBase(normalized));
+  const shimInstall = resolveManagedCliShimInstall(normalized);
   if (!shimInstall) {
     return null;
   }
 
-  const binaryDir = dirname(normalized);
-  if (basename(binaryDir).toLowerCase() !== 'bin') {
-    return null;
-  }
-
   return resolveManagedInstalledCliProjectRootForChannel(shimInstall.channel)
-    ?? join(dirname(binaryDir), shimInstall.installRootName, 'current');
+    ?? join(shimInstall.happierHomeDir, shimInstall.installRootName, 'current');
 }
 
 function resolveManagedInstalledCliProjectRoot(): string | null {

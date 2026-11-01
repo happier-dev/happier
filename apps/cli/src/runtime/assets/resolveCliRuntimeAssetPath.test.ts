@@ -76,6 +76,34 @@ describe('resolveCliRuntimeAssetPath', () => {
     );
   });
 
+  it('follows the default release channel when launched from the default happier shim path', async () => {
+    await withTempDir('happier-runtime-assets-default-shim-', async (root) => {
+      const happierHomeDir = join(root, '.happier');
+      mkdirSync(join(happierHomeDir, 'bin'), { recursive: true });
+      writeFileSync(
+        join(happierHomeDir, 'default-cli-release-channel.json'),
+        `${JSON.stringify({ releaseChannel: 'preview' })}\n`,
+        'utf8',
+      );
+      vi.doMock('@/projectPath', () => ({
+        projectPath: () => '/repo/apps/cli',
+        projectPathFromModuleUrl: () => '/repo/apps/cli',
+      }));
+      if (originalExecPathDescriptor) {
+        Object.defineProperty(process, 'execPath', {
+          ...originalExecPathDescriptor,
+          value: join(happierHomeDir, 'bin', 'happier.exe'),
+        });
+      }
+
+      const { resolveCliRuntimeAssetPath } = await import('./resolveCliRuntimeAssetPath');
+
+      expect(resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs')).toBe(
+        join(happierHomeDir, 'cli-preview', 'current', 'scripts', 'session_hook_forwarder.cjs'),
+      );
+    });
+  });
+
   it('uses the installed preview cli current payload when launched from the preview shim path', async () => {
     vi.doMock('@/projectPath', () => ({
       projectPath: () => '/repo/apps/cli',
