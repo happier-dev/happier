@@ -70,7 +70,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
                 try {
                     if (!scope) throw new WorkspaceFileSearchUnavailableError();
                     const page = await searchWorkspaceFiles({
-                        scope, query, limit: requestedLimit, threshold: input.threshold, resultType: input.resultType,
+                        scope, query, limit: requestedLimit, resultType: input.resultType,
                         mode: input.mode, includeHidden: input.includeHidden, accountLifetime,
                         signal: controller.signal, includeCoverage: true,
                     });
@@ -86,7 +86,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
             })();
         }, input.mode === 'glob' ? 200 : 120);
         return () => { controller.abort(); clearTimeout(handle); retirement?.dispose(); };
-    }, [scope, query, enabled, accountLifetime, credentialsResolving, requestedLimit, input.threshold, input.resultType, input.mode,
+    }, [scope, query, enabled, accountLifetime, credentialsResolving, requestedLimit, input.resultType, input.mode,
         input.includeHidden, input.reloadToken, retryToken]);
 
     const current = enabled && state?.scope === scope && state.lifetime === accountLifetime ? state : null;

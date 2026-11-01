@@ -127,6 +127,94 @@ describe('workspaceFileSearch', () => {
             .toBe('packages/b/promptInput.ts');
     });
 
+    it.each(['rel', 'releaseCliDryRunTestkit.mjq', 'packages/quicksearchcost/releaseCliDryRunTestkit.mjq'])(
+        'matches each path in one forward pass at fixture scale: %s', async (query) => {
+            // QUICKSEARCH3: bitap repeated each path for every allowed error and 32-character pattern block.
+            const { createWorkspaceFileSearchIndex } = await import('./workspaceFileSearchMatcher');
+            const files = Array.from({ length: 55_000 }, (_, index) => {
+                const fileName = `releaseCliDryRunTestkit${index}.mjs`;
+                const filePath = 'packages/quicksearchcost/';
+                return { fileName, filePath, fullPath: `${filePath}${fileName}`, fileType: 'file' as const };
+            });
+            const index = createWorkspaceFileSearchIndex(files);
+            const corpusCharacters = files.reduce((sum, file) => sum + file.fullPath.length, 0);
+            const charAt = String.prototype.charAt;
+            let scannedCharacters = 0;
+            // Count primitive character reads without retaining millions of spy call records or replacing internal logic.
+            String.prototype.charAt = function (this: string, position: number) {
+                if (this.startsWith('packages/quicksearchcost/')) scannedCharacters += 1;
+                return charAt.call(this, position);
+            };
+            try {
+                index.search(query);
+            } finally {
+                String.prototype.charAt = charAt;
+            }
+            expect(scannedCharacters, query).toBeLessThanOrEqual(corpusCharacters);
+            expect(index.search('rCDRT').map(result => result.item)).toHaveLength(files.length);
+            expect(index.search('releaseCliDryRunTestkitz')).toEqual([]);
+        });
+
+    it('matches subsequences and whitespace-separated path fragments without accepting substitutions', async () => {
+        // WAVE48-B #52: these actual offered rows hid the camelCase abbreviation target.
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: [
+            'scripts/release/releaseCliDryRunTestkit.mjs', 'scripts/release/notes.md', 'apps/cli/src/dryRun.ts',
+            'packages/plugin-sdk/src/testing/registrationScope.dynamicResources.test.ts',
+            'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.dynamicResources.test.ts',
+            'apps/cli/src/session/actions/createCliActionDeps.readiness.composed.test.ts',
+            'scripts/release/publish_run_contracts_auto_defaults.contract.test.mjs',
+            'apps/ui/sources/components/ui/code/view/readCodeViewReadingLine.ts',
+            'apps/cli/src/transfers/rpc/registerComposerMediaStageLifecycleRpcHandlers.ts',
+            'packages/tests/suites/contracts/releasedV021.clientReaders.test.ts',
+            'packages/cli-common/src/firstPartyRuntime/personalHome/relocationTransfer.durableCleanup.test.ts',
+            'apps/server/sources/app/teams/replayLogo.contention.postgres.dbcontract.spec.ts',
+            'apps/stack/scripts/repo_local_effective_db_provider.test.mjs',
+            'apps/ui/sources/components/sessions/composer/repositoryComposerDocumentOwner.test.ts',
+            'apps/ui/sources/components/sessions/composer/repositoryComposerDocumentOwner.ts',
+            'apps/cli/src/api/session/messageRole/resolveClaudeSessionMessageRole.ts',
+            'apps/cli/src/configuration/resolveCliHappyHomeDir.ts',
+            'apps/cli/src/api/session/messageRole/resolveCodexSessionMessageRole.ts',
+            'apps/ui/sources/components/sessions/transcript/messageActions/resolveCommittedMessageRef.ts',
+            'apps/ui/sources/sync/domains/session/resolveMachineTargetForSessionFromState.displayIdentityWork.test.ts',
+            'apps/ui/tools/migrations/rewrite-renderer-create-to-renderScreen.test.ts',
+            'apps/ui/tools/migrations/rewrite-renderer-create-to-renderScreen.ts',
+            'packages/tests/suites/stress/rpc.duplicateListenerPolicy.test.ts',
+        ], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const search = async (query: string) => (await searchWorkspaceFiles({ scope: SCOPE_A, query, resultType: 'file', limit: 10 })).map(file => file.fullPath);
+        expect(await search('relaseCliDryRunTestkit')).toEqual(['scripts/release/releaseCliDryRunTestkit.mjs']);
+        expect(await search('release notes')).toContain('scripts/release/notes.md');
+        expect((await search('rCDRT'))[0]).toBe('scripts/release/releaseCliDryRunTestkit.mjs');
+        expect((await search('rcdrt'))[0]).toBe('scripts/release/releaseCliDryRunTestkit.mjs');
+        expect(await search('releaseCliDryRunTestkitz')).toEqual([]);
+    });
+
+    it('uses path-segment and camelCase bonuses inside the existing relevance ranking', async () => {
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: [
+            'src/aaaFractalMoon.ts', 'src/fileMatcher.ts', 'src/abc/fm.ts', 'src/abc/folder/main.ts', 'src/abc/foalMode.ts',
+        ], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const search = async (query: string) => (await searchWorkspaceFiles({ scope: SCOPE_A, query, resultType: 'file', limit: 10 })).map(file => file.fullPath);
+        // Literal stem still beats boundary abbreviations; among subsequences, boundaries beat incidental letters.
+        expect((await search('fm'))[0]).toBe('src/abc/fm.ts');
+        const names = await search('fM');
+        expect(names).toEqual(expect.arrayContaining(['src/fileMatcher.ts', 'src/aaaFractalMoon.ts']));
+        expect(names.indexOf('src/fileMatcher.ts')).toBeLessThan(names.indexOf('src/aaaFractalMoon.ts'));
+        const paths = await search('abc/fm');
+        expect(paths).toEqual(expect.arrayContaining(['src/abc/folder/main.ts', 'src/abc/foalMode.ts']));
+        expect(paths.indexOf('src/abc/folder/main.ts')).toBeLessThan(paths.indexOf('src/abc/foalMode.ts'));
+    });
+
+    it('prefers a filename subsequence to incidental directory-letter matches', async () => {
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: [
+            'apps/ui/sources/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal.ts',
+            'apps/ui/sources/sync/domains/workspaces/files/workspaceFileSearch.ts',
+        ], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const results = await searchWorkspaceFiles({ scope: SCOPE_A, query: 'wrkspaceFileSerch', resultType: 'file' });
+        expect(results[0]?.fullPath).toBe('apps/ui/sources/sync/domains/workspaces/files/workspaceFileSearch.ts');
+    });
+
     it('does not reuse the same server, machine, and root cache across Account lifetimes', async () => {
         activeAccountLifetime = createAccountLifetimeFixture('account-a');
         machineRipgrepMock.mockResolvedValueOnce({ success: true, stdout: 'src/account-a.ts\n' });

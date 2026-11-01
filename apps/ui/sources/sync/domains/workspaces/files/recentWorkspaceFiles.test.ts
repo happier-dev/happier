@@ -26,4 +26,12 @@ describe('recentWorkspaceFiles', () => {
         expect(recordRecentWorkspaceFile({ a: ['a.ts', 'b.ts', 'b.ts'] }, 'a', 'new.ts').a)
             .toEqual(['new.ts', 'a.ts', 'b.ts']);
     });
+
+    it('uses the same subsequence membership for Recent names without matching their parent paths', () => {
+        const paths = ['src/fileMatcher.ts', 'fileMatcher/unrelated.ts', 'src/fooMatzher.ts'];
+        expect(matchWorkspaceFileNames(paths.map(workspacePathToFileSearchItem), 'fM').map(file => file.fullPath))
+            .toEqual(['src/fileMatcher.ts', 'src/fooMatzher.ts']);
+        expect(matchWorkspaceFileNames(paths.map(workspacePathToFileSearchItem), 'fileMatzher').map(file => file.fullPath))
+            .toEqual([]);
+    });
 });

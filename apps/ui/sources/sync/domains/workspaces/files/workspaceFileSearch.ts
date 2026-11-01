@@ -1,4 +1,3 @@
-import type Fuse from 'fuse.js';
 import { WORKSPACE_FILE_LIST_MAX_RESULTS } from '@happier-dev/protocol/machines/workspaceFiles';
 
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
@@ -9,12 +8,12 @@ import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domai
 import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
 import { machineWorkspaceFileList, type MachineWorkspaceFileListErrorCode } from '@/sync/ops/machineWorkspaceFileList';
 import { AsyncLock } from '@/utils/system/lock';
-import { createWorkspaceFileSearchIndex as createFuse, normalizeFileSearchText, rankFileSearchResults } from './workspaceFileSearchMatcher';
+import { createWorkspaceFileSearchIndex, rankFileSearchResults, type WorkspaceFileSearchIndex } from './workspaceFileSearchMatcher';
 
 type WorkspaceCache = {
     files: FileSearchItem[];
-    fuse: Fuse<FileSearchItem> | null;
-    fileFuse: Fuse<FileSearchItem> | null;
+    index: WorkspaceFileSearchIndex | null;
+    fileIndex: WorkspaceFileSearchIndex | null;
     truncated: boolean;
     initialized: boolean;
     lastRefresh: number;
@@ -214,8 +213,8 @@ function getOrCreateWorkspaceCache(
     if (existing) return existing;
     const created: WorkspaceCache = {
         files: [],
-        fuse: null,
-        fileFuse: null,
+        index: null,
+        fileIndex: null,
         truncated: false,
         initialized: false,
         lastRefresh: 0,
@@ -433,9 +432,9 @@ async function ensureCacheValid(input: Readonly<{
         cache.truncated = result.truncated;
         cache.initialized = true;
         cache.lastRefresh = now;
-        cache.fuse = result.files.length > 0 ? createFuse(result.files) : null;
+        cache.index = result.files.length > 0 ? createWorkspaceFileSearchIndex(result.files) : null;
         const onlyFiles = result.files.filter((item) => item.fileType === 'file');
-        cache.fileFuse = onlyFiles.length > 0 ? createFuse(onlyFiles) : null;
+        cache.fileIndex = onlyFiles.length > 0 ? createWorkspaceFileSearchIndex(onlyFiles) : null;
     });
     await awaitWorkspaceFileSearchWork(refresh, input.signal);
 }
@@ -490,7 +489,6 @@ export type WorkspaceFileSearchInput = Readonly<{
     scope: WorkspaceScopeBase;
     query: string;
     limit?: number;
-    threshold?: number;
     resultType?: FileSearchItem['fileType'];
     /** Explicit captured lifetime; otherwise the addressed Home's credentials own the search. */
     accountLifetime?: WorkspaceFileSearchAccountLifetime;
@@ -558,7 +556,7 @@ export async function searchWorkspaceFiles(
 
     const cache = getOrCreateWorkspaceCache(partition, workspaceCacheKey);
 
-    if ((!cache.fuse || cache.files.length === 0) && !cache.truncated) {
+    if ((!cache.index || cache.files.length === 0) && !cache.truncated) {
         return project([], false);
     }
     const searchableFiles = input.resultType
@@ -572,19 +570,15 @@ export async function searchWorkspaceFiles(
         return project(searchableFiles, cache.truncated);
     }
 
-    const threshold = typeof input.threshold === 'number' && Number.isFinite(input.threshold)
-        ? Math.max(0, Math.min(1, input.threshold))
-        : 0.3;
-
-    const fuse = input.resultType === 'file' && threshold === 0.3
-        ? cache.fileFuse
+    const index = input.resultType === 'file'
+        ? cache.fileIndex
         : input.resultType
-        ? createFuse(searchableFiles, threshold)
-        : threshold === 0.3 ? cache.fuse : createFuse(cache.files, threshold);
-    const cachedResults = fuse?.search(normalizeFileSearchText(query)) ?? [];
+        ? createWorkspaceFileSearchIndex(searchableFiles)
+        : cache.index;
+    const cachedResults = index?.search(query) ?? [];
     if (cachedResults.length > 0 && !cache.truncated) {
         throwIfWorkspaceFileSearchAborted(input.signal);
-        return project(rankFileSearchResults(cachedResults.map((r) => r.item), query), false);
+        return project(rankFileSearchResults(cachedResults, query), false);
     }
 
     const globResult = await buildFileItemsFromRipgrepGlob(
@@ -597,7 +591,7 @@ export async function searchWorkspaceFiles(
     throwIfWorkspaceFileSearchAborted(input.signal);
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
     if (!globResult) {
-        return project(rankFileSearchResults(cachedResults.map((result) => result.item), query), cache.truncated);
+        return project(rankFileSearchResults(cachedResults, query), cache.truncated);
     }
 
     const known = new Set(cache.files.map((f) => f.fullPath));
@@ -611,9 +605,9 @@ export async function searchWorkspaceFiles(
     }
     if (changed) {
         throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
-        cache.fuse = createFuse(cache.files);
+        cache.index = createWorkspaceFileSearchIndex(cache.files);
         const onlyFiles = cache.files.filter((item) => item.fileType === 'file');
-        cache.fileFuse = onlyFiles.length > 0 ? createFuse(onlyFiles) : null;
+        cache.fileIndex = onlyFiles.length > 0 ? createWorkspaceFileSearchIndex(onlyFiles) : null;
     }
     // A targeted query can discover that the canonical workspace corpus is still
     // incomplete. Retain that fact on the lifetime-scoped cache so an identical
@@ -625,7 +619,7 @@ export async function searchWorkspaceFiles(
     const mergedSearchable = input.resultType
         ? cache.files.filter((item) => item.fileType === input.resultType)
         : cache.files;
-    const mergedFuse = createFuse(mergedSearchable, threshold);
-    const merged = rankFileSearchResults(mergedFuse.search(normalizeFileSearchText(query)).map((result) => result.item), query);
+    const mergedIndex = createWorkspaceFileSearchIndex(mergedSearchable);
+    const merged = rankFileSearchResults(mergedIndex.search(query), query);
     return project(merged, cache.truncated || globResult.truncated);
 }

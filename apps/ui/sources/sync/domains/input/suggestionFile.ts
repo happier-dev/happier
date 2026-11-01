@@ -35,7 +35,6 @@ export type FileSuggestionScope = WorkspaceScopeBase;
 
 export type SearchOptions = Readonly<{
     limit?: number;
-    threshold?: number;
     signal?: AbortSignal;
 }>;
 
@@ -79,7 +78,6 @@ export async function searchFiles(
         scope: normalized,
         query,
         limit: options.limit,
-        threshold: options.threshold,
         ...(options.signal ? { signal: options.signal } : {}),
     });
 }

@@ -721,7 +721,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                     // Nothing recent or changed to fall back on: the line says only that the machine isn't answering.
                     if (candidates.length === 0) return { results: [], emptyHint: workspaceUnavailableHint };
                     const literalFile = candidates.find(file => file.fullPath === value);
-                    const matches = rankFileSearchResults(createWorkspaceFileSearchIndex(candidates).search(normalizeFileSearchText(searchQuery)).map(result => result.item), searchQuery);
+                    const matches = rankFileSearchResults(createWorkspaceFileSearchIndex(candidates).search(normalizeFileSearchText(searchQuery)), searchQuery);
                     const matchingRecent = new Set(matchWorkspaceFileNames(quickOpenSources.recent, searchQuery).map(file => file.fullPath));
                     const recent = quickOpenSources.recent.filter(file => matchingRecent.has(file.fullPath));
                     const ordered = [...recent, ...matches.filter(file => !matchingRecent.has(file.fullPath))];
