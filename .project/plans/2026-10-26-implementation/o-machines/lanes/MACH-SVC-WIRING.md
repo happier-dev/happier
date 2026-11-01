@@ -1,6 +1,6 @@
 STATUS: DONE
 
-Workspace wiring, canonical publication and minimal producer closure committed by the admitted CAS finalizer. No Stack lifecycle or push. Reload is required.
+Workspace wiring, canonical publication and minimal producer closure committed by the admitted CAS finalizer. Commit `a56514eb3bb32a3c58b1560c334dae1a090da8a5`. No Stack lifecycle or push. Reload is required.
 
 | Unit | Status | Evidence under `.project/tmp/MACH-SVC-WIRING/` |
 | --- | --- | --- |
@@ -12,8 +12,9 @@ Workspace wiring, canonical publication and minimal producer closure committed b
 | Entry loads | PASS | `entry-loads-post-runner.log`: exit 0, all seven graphs after canonical publication and runner facade correction. |
 | Native-log consumers | PASS | `native-log-consumers.log`: 31 passed, 1 platform skip across Compose lifecycle and captured adapter tests. |
 | Expanded runtime tests | PARTIAL | `closure-tests.log`: supervisor 142/142; combined 195 passed, 2 runner failures (Codex Goal unavailable and authorizePreparedLaunch binding assertion). Both involve independent current-source paths; no whole-run success claimed. Focused new regression is GREEN. |
-| Commit closure | PASS | 59 paths: own wiring plus minimal named producer/direct-consumer closure. `coherence-finalize.log` records admitted checker and CAS commit; this report is in that commit. Private index only; shared index synchronized only for committed paths. |
-| Declaration build | ROUTED | Seven TS2883 diagnostics in `package-build-green.log`: Systemic `sdk-facade-declaration-portability-1101` owns SDK facade portability, per O-MACH 18:24Z. No per-plugin Protocol dependency or annotations. Local dependency preparation also fails on 12 upstream clientPresenter TS2353 locations (`package-build-local.log`). No build success claimed. |
+| Project native composed scope | PARTIAL | `project-native-consumers.log`: 20 passed, 8 failed, 75 skipped. Worker admission/approval and portable Move/schema failures are unattributed; detached native failure-output/custody cases passed. |
+| Commit closure | PASS | 59 paths: own wiring plus minimal named producer/direct-consumer closure. `coherence-finalize2.log` records initial new=0/unowned=0, recheck on newer HEAD, and successful admitted CAS; a report snapshot is in that commit; final evidence is recorded here. Private index only; shared index synchronized only for committed paths. |
+| Declaration build | ROUTED | Requested post-Systemic rerun `package-build-systemic-rerun.log` exited 1 in Protocol publication prerequisites: managedConfigurationV1.ts:90/91 TS2339 (`choices`). Machine-services emission was not reached. Systemic reports the SDK TS2883 fix at 19:11Z. No per-plugin dependency/annotation workaround; finish on deciding checks per O-MACH. |
 
 Canonical owners: bundledPluginMembership discovers package manifests; generateBundledPluginEntries publishes normalized assets and locators; existing machine-services manifest owns native adapters/health setup. No parallel registration path added.
 Consumers: CLI and daemon package resolver, health Event setup, systemd/Compose native discovery. UI/provider projections remain their existing consumers.
