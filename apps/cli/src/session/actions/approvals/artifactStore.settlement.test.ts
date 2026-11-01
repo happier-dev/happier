@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import {
   API_TOKEN_FULL_GRANT_V1,
@@ -144,7 +145,10 @@ const uiContext = {
   surface: 'ui' as const,
   authority: 'present_user' as const,
   serverId: 'home-1',
+  serverIdentityId: 'srv_approval_settlement',
   runtimeAccountId: 'account-1',
+  defaultSessionMachineId: 'machine-a',
+  actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {} }),
   actionRequestId: 'settlement-1',
   actionCaller: { kind: 'host' as const },
 };
