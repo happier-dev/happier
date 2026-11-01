@@ -52,6 +52,16 @@ For unexplained growth after a controlled warmed repeat, the next investigation 
 
 **Network work counts what was sent and to whom.** Split a transfer total by phase (cold/warm bootstrap, idle, foreground, open), by HTTP route class and by Socket.IO event type, and keep decoded and encoded bytes separate: compression can shrink the wire while the decoded documents still regress. Mark missing evidence `unavailable`, never zero. Then ask, per class, who consumed it: the 2026-10 audit found 3.26 MB of message bodies per 72 s of idle Home going to a device that displayed none of them, and a list refresh replayed in full for every row change. Prove reductions as work avoided (frames or requests not sent, rows not re-read) on the same workload, not as a percentage across different account states.
 
+**Steady-state and idle work starts with a quiet window, then attributes each burst.** On a shared or busy Account, most "idle" work is a real reaction to another client's write or a reconnect after a dev-server restart. The 2026-11 web pass first read 100k–250k renders and 170–490 requests per minute as idle loops. In a true quiet window it was 0 renders and one `auth/ping` per minute. Prove the quiet floor first. Then tie each burst to its trigger (a `/v2/changes` entry, a reconnect) and judge the reaction by whether its size matches what changed. Compare per producer, never by app-wide totals: totals swung ±30% between identical runs here. Read heap only after the post-load settle; here it went from 1.4–3 GB right after load to ~650 MB ten minutes later.
+
+**Live web attribution names the producer, not just the hot component.** Render counts say what rendered; fixing needs to know who started it and which input changed:
+- Install a React DevTools hook stub before the bundle loads, through the canonical in-page capture probe where the line has one.
+- On each commit, find the **update roots**: components that rendered while their nearest component ancestor did not. A parent that skipped its render must cut attribution, or top-level providers absorb every unrelated render.
+- For each root, record **why**: changed props, or which hook with an update queue changed. For a store subscription, record the source of its `getSnapshot`. For context, compare each read context value with the previous commit's value and name the changed keys. Never record prop or state values.
+- For requests, use CDP `Network.requestWillBeSent` initiator stacks. Turn on async stack depth only after the app settles, because turning it on during cold load stops the load from finishing.
+- To find which input changes, put conditional-breakpoint logpoints on the producing effect or publisher. Locate the line with `Debugger.searchInContent`. Never call `Debugger.getScriptSource` on the multi-MB dev bundle, because it drops the CDP connection.
+- Navigate by URL on shared Accounts: clicking synced workspace tabs moves them for every other client signed in to that Account.
+
 **Locate in time, then in code.** Block timing (e.g. a 16 ms drift sampler armed over the phase) tells you *when* the thread was stolen; a CPU profile with call paths tells you *what* stole it. Never fix something located only in time — a time window plus a plausible suspect is a hypothesis, not an attribution.
 
 ## 3. Label the waste, then write the hypothesis
