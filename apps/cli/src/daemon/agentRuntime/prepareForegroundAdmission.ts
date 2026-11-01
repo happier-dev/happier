@@ -1281,45 +1281,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 return result;
               },
             } : undefined;
-            const assertExpectedConnectedAccountsCurrent = async (): Promise<void> => {
-              await assertSessionAccountCurrent(canonicalSessionId);
-              if (!connectedAccountLaunchCurrent) {
-                throw new Error(
-                  'Foreground Connected Account binding changed during preparation',
-                );
-              }
-              if (
-                !sessionPurposeBindingSnapshot?.authorizedPurposes?.length
-                || expectedConnectedAccountByPurposeKey.size === 0
-              ) return;
-              if (!connectedAccountsOwner) {
-                throw new Error(
-                  'Foreground Connected Account invalidation authority is unavailable',
-                );
-              }
-              for (const authorized of sessionPurposeBindingSnapshot.authorizedPurposes) {
-                const expectedAccount = expectedConnectedAccountByPurposeKey.get(
-                  qualifiedPurposeKey(authorized.purpose),
-                );
-                if (!expectedAccount) continue;
-                const currentBinding = await connectedAccountsOwner.getBinding({
-                  purpose: authorized.purpose,
-                  serviceRefs: authorized.serviceRefs,
-                  signal: registration.retirementSignal,
-                });
-                if (
-                  !currentBinding
-                  || !sameQualifiedConnectedAccountRef(
-                    expectedAccount,
-                    currentBinding.account,
-                  )
-                ) {
-                  throw new Error(
-                    'Foreground Connected Account binding changed during preparation',
-                  );
-                }
-              }
-            };
             if (
               sessionPurposeBindingLease
               && sessionPurposeBindingSnapshot?.authorizedPurposes?.length
@@ -1331,31 +1292,18 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     'Foreground Connected Account invalidation authority is unavailable',
                   );
                 }
-                const [exactBinding, currentBinding] = await Promise.all([
-                  connectedAccountsOwner.getBinding({
-                    purpose: authorized.purpose,
-                    serviceRefs: authorized.serviceRefs,
-                    exactPurposeBindingSubjectId:
-                      sessionPurposeBindingLease.subjectId,
-                    sessionId: canonicalSessionId,
-                    signal: registration.retirementSignal,
-                  }),
-                  connectedAccountsOwner.getBinding({
-                    purpose: authorized.purpose,
-                    serviceRefs: authorized.serviceRefs,
-                    signal: registration.retirementSignal,
-                  }),
-                ]);
-                if (
-                  !exactBinding
-                  || !currentBinding
-                  || !sameQualifiedConnectedAccountRef(
-                    exactBinding.account,
-                    currentBinding.account,
-                  )
-                ) {
+                // Admission owns this start's selection; the saved default only
+                // chooses future starts and may be absent or select another account.
+                const exactBinding = await connectedAccountsOwner.getBinding({
+                  purpose: authorized.purpose,
+                  serviceRefs: authorized.serviceRefs,
+                  exactPurposeBindingSubjectId: sessionPurposeBindingLease.subjectId,
+                  sessionId: canonicalSessionId,
+                  signal: registration.retirementSignal,
+                });
+                if (!exactBinding) {
                   throw new Error(
-                    'Foreground Connected Account binding changed before materialization',
+                    'Foreground Connected Account binding is unavailable before materialization',
                   );
                 }
                 expectedConnectedAccountByPurposeKey.set(
@@ -1828,7 +1776,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               );
             }
             publishedAuthority = authority;
-            await assertExpectedConnectedAccountsCurrent();
+            await assertSessionAccountCurrent(canonicalSessionId);
             if (ownsConnectedServiceLaunchScope) {
               connectedServiceCleanupOnExit =
                 connectedServiceLaunchScope.transfer();

@@ -23,8 +23,17 @@ import { createForegroundPurposeOwnerFixture } from './prepareForegroundAdmissio
 
 /** Real Codex codecs, revision parsing and launch materialization over Account HTTP. */
 export async function createCodexForegroundConnectedAccountFixture(accountIds: readonly string[] = ['work']) {
+  return await createForegroundConnectedAccountFixture(accountIds, 'codex');
+}
+
+export async function createClaudeForegroundConnectedAccountFixture(accountIds: readonly string[] = ['work']) {
+  return await createForegroundConnectedAccountFixture(accountIds, 'claude');
+}
+
+async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude') {
   const accountId = accountIds[0]!;
-  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+  const pluginId = `happier.agent.${agentId}`;
+  const service = { pluginId, localId: agentId === 'claude' ? 'claude-subscription' : 'openai-codex' };
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
     payload: { v: 1, values: { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
@@ -44,8 +53,8 @@ export async function createCodexForegroundConnectedAccountFixture(accountIds: r
     requestPaths.push(path);
     const data = path === '/v4/connect/qualified/accounts' ? accounts
       : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
-        : path === '/v2/connect/openai-codex/profiles'
-          ? { serviceId: 'openai-codex', profiles: accountIds.map(id => ({ profileId: id, status: 'connected', kind: 'oauth' })) }
+        : path === `/v2/connect/${service.localId}/profiles`
+          ? { serviceId: service.localId, profiles: accountIds.map(id => ({ profileId: id, status: 'connected', kind: 'oauth' })) }
           : path === '/v4/connect/qualified/credential'
             ? {
                 ref: parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, parsedUrl.searchParams.get('ref')),
@@ -67,7 +76,8 @@ export async function createCodexForegroundConnectedAccountFixture(accountIds: r
   };
   let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
   const account = createForegroundPurposeOwnerFixture({
-    consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, service, accountId,
+    consumer: { pluginId, localId: agentId }, service, accountId,
+    ...(agentId === 'claude' ? { purpose: 'model_upstream' } : {}),
     resolveTarget: async (target) => {
       if (target.kind !== 'account') return null;
       const found = (await readAccounts()).accounts.find(candidate => candidate.ref.accountId === target.account.accountId);
@@ -83,7 +93,7 @@ export async function createCodexForegroundConnectedAccountFixture(accountIds: r
       const credentialRevision = credential.credentialRevision;
       credentialRevisionBasis?.captureCredentialRevision(credentialRevision);
       const invoker = registry?.connectedAccountRuntimeInvoker;
-      if (!invoker) throw new Error('Applied Codex materializer unavailable');
+      if (!invoker) throw new Error('Applied Agent materializer unavailable');
       const plaintext = openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain', envelope: credential.content });
       const values = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: credential.ref,
         authenticationModeId: credential.authenticationModeId, plaintext, metadata: credential.metadata }).values;
@@ -106,10 +116,10 @@ export async function createCodexForegroundConnectedAccountFixture(accountIds: r
   return {
     ...account, service, revision, requestPaths, requestAuthRegistry, api, credentials,
     connectedServices: ConnectedServiceBindingsV2IngressSchema.parse({ v: 2, bindingsByServiceId: {
-      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: accountId },
+      [`${pluginId}/${service.localId}`]: { source: 'connected', selection: 'profile', profileId: accountId },
     } }),
     runtimeOptions: {
-      pluginIds: ['happier.agent.codex'], connectedAccounts: account.owner,
+      pluginIds: [pluginId], connectedAccounts: account.owner,
       networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },
     },
     materializations,
