@@ -8899,7 +8899,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       const coordinator = new ConnectedServiceQuotasCoordinator({
         api: {
           getAccountEncryptionMode: async () => 'plain',
-          getAccountEncryptionModeUncached: ({ signal } = {}) => new Promise((_, reject) => {
+          getAccountEncryptionModeUncached: ({ signal }: Readonly<{ signal?: AbortSignal }> = {}) => new Promise((_, reject) => {
             if (reason === 'probe_unavailable') reject(new Error('synthetic transport failure'));
             else signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
           }),
