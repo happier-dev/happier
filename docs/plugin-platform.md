@@ -1703,6 +1703,11 @@ optional and lazy wrappers. This is not a second parser or a public
 SDK flavor change. The private neutral-to-Zod Action bridge uses Zod's native
 lazy combinator because its contract is the base `ZodType`, including recursive
 JSON Schema projection, rather than a concrete fluent schema type.
+The internal JSON Schema validator reuses compiled validators by admitted schema
+identity, separately for draft-07 and draft-2020-12. Each new identity owns a
+disposable AJV engine, so retiring that schema and its validator also releases
+its generated-code scope. AJV's `removeSchema()` alone does not release that
+scope. Unrelated schemas can reuse local identifiers without sharing them.
 Persistence-only projections use the same internal definition lifetime at
 [`json/storedReadSchema.ts`](../packages/protocol/src/json/storedReadSchema.ts).
 Recursive derivation waits for the first read or schema inspection, retains

@@ -128,9 +128,9 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
   return ajv;
 }
 
-// Both dialect owners supply admitted immutable snapshots. Keep generated code
-// with that schema identity, without a process-lifetime AJV/schema registry that
-// would retain retired installed-plugin generations.
+// Reuse validators for admitted immutable schema identities. Each new identity
+// owns its AJV scope: removeSchema() clears AJV's cache, but its generated-code
+// scope still retains schemas and validators until the entire engine retires.
 const compiledSchemas = {
   'draft-07': new WeakMap<object, PluginJsonSchemaValidator>(),
   'draft-2020-12': new WeakMap<object, PluginJsonSchemaValidator>(),
