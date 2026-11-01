@@ -197,6 +197,7 @@ export default defineConfig({
             { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
+            { find: /^expo-file-system$/, replacement: resolve('./sources/dev/testkit/mocks/expoFileSystemModule.ts') },
             // Plugin UI's nested SVG peer must reach the same native drawing boundary as UI leaves.
             // Keep the XML parser real: safe native previews validate its AST before drawing.
             { find: /^react-native-svg\/lib\/commonjs\/xml$/, replacement: requireUiDependency.resolve('react-native-svg/lib/module/xml.js') },

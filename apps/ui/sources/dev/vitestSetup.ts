@@ -443,10 +443,7 @@ vi.mock('expo-modules-core', async () => await import('./expoModulesCoreStub'));
 // Modern Expo File/Directory constructors depend on native classes unavailable
 // in Node. Keep filesystem behavior at the shared platform boundary; suites
 // exercising picked/exported bytes can override it with the same factory.
-vi.mock('expo-file-system', async () => {
-    const { createExpoFileSystemFileMock } = await import('./testkit/mocks/expoFileSystem');
-    return createExpoFileSystemFileMock().module;
-});
+vi.mock('expo-file-system', async () => await import('./testkit/mocks/expoFileSystemModule'));
 
 // `expo-updates` is native-oriented and pulls in platform-specific modules that Node/Vitest can't parse.
 vi.mock('expo-updates', async () => {
