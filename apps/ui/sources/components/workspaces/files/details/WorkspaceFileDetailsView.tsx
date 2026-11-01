@@ -1321,6 +1321,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     // P7: one controller per File page; regions handed to this page (header fact, note, card, ⋯ commands).
     const codeIntelligence = useFilePageCodeIntelligence({
         scopeId: props.scopeId, scope, filePath, language,
+        fileRootPath: props.initialView?.rootPath,
         enabled: fileViewer.kind === 'code' && !fileContent?.isBinary && !fileContent?.partial && fileEntry?.kind !== 'deleted' && Boolean(fileContent),
         outlineEnabled: (fileViewer.kind === 'code' || fileViewer.kind === 'markdown') && !fileContent?.isBinary
             && !fileContent?.partial && fileEntry?.kind !== 'deleted' && Boolean(fileContent),

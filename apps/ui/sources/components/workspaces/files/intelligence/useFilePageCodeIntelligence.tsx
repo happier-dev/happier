@@ -183,6 +183,7 @@ export type UseFilePageCodeIntelligenceInput = Readonly<{
   scopeId: string;
   scope: WorkspaceScopeBase | null;
   filePath: string;
+  fileRootPath?: string;
   language: string | null;
   /** Text files that a person reads or edits; binary, partial and deleted files have no language features. */
   enabled: boolean;
@@ -308,7 +309,7 @@ export function useFilePageCodeIntelligence(
         { ...target, path: location.path } as WorkspaceFileOpenTarget,
         {
           intent: 'preview',
-          ...(target.kind === 'session' && input.scope ? { rootPath: input.scope.rootPath } : {}),
+          ...(target.kind === 'session' && input.fileRootPath ? { rootPath: input.fileRootPath } : {}),
           anchor: {
             kind: 'fileLine',
             startLine: location.range.start.line + 1,
@@ -316,7 +317,7 @@ export function useFilePageCodeIntelligence(
         },
       );
     },
-    [opener, input.scope?.rootPath],
+    [opener, input.fileRootPath],
   );
 
   const showProblems = React.useCallback(() => {

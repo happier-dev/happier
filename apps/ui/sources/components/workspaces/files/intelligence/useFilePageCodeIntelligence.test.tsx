@@ -13,6 +13,7 @@ import type { EditorDecoration, TextEditorHandle } from '@/components/ui/code/ed
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { applyWorkspaceFileTextEdits } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import type { CodeLinesViewProps } from '@/components/ui/code/view/CodeLinesView';
+import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 installWorkspaceFileDetailsCommonModuleMocks();
 installWorkspaceFileDetailsActionBoundary();
@@ -35,6 +36,9 @@ vi.mock('@/sync/ops/machineLanguageIntelligence', () => ({
 }));
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+const { resolveCompactAppDestinations, hrefForDestinationRef } =
+  await import('@/components/appShell/destinations/compactAppDestinationCatalog');
 const { useFilePageCodeIntelligence } = await import('./useFilePageCodeIntelligence');
 const { CodeIntelligenceCard } = await import('./CodeIntelligenceCard');
 const { createWorkspaceSymbolSearchSource } = await import('@/components/appShell/search/workspaceSymbolSearchSource');
@@ -255,6 +259,45 @@ describe('File-page intelligence composition', () => {
         expect(machine.sync).not.toHaveBeenCalled();
         expect(machine.query).not.toHaveBeenCalled();
     });
+
+  it.each([undefined, '/repo'])('retains the optional Session file base when opening a definition (%s)', async (fileRootPath) => {
+    const path = fileRootPath ? 'nested/b.ts' : 'b.ts';
+    machine.query.mockResolvedValue({
+      status: 'ok', kind: 'definition', hasMore: false,
+      locations: [{ serverId: 'ts', path, outsideWorkspace: false,
+        range: { start: { line: 2, character: 0 }, end: { line: 2, character: 7 } } }],
+    });
+    storage.setState({ isDataReady: true });
+    const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+      externalSessions: false, inbox: true, workflows: false, friends: false,
+    } });
+    let workspace: WorkspaceNavigationContextValue | undefined;
+    function DefinitionWrapper({ children }: React.PropsWithChildren) {
+      return <AppPaneProvider><WorkspaceProvider enabled catalog={catalog}>{owner => {
+        workspace = owner;
+        return children;
+      }}</WorkspaceProvider></AppPaneProvider>;
+    }
+    const pageInput = {
+      ...input({ sessionId: 'session-nested', scope: { ...scope, rootPath: fileRootPath ?? '/repo/nested' },
+        filePath: fileRootPath ? 'nested/a.ts' : 'a.ts',
+        editorHandleRef: { current: {
+          getValue: defaultLiveValue.get, flushPendingChange: async () => {},
+          getCursorPosition: () => ({ line: 1, character: 16 }),
+        } },
+      }),
+      fileRootPath,
+    };
+    const hook = await renderHook(() => useFilePageCodeIntelligence(pageInput), { wrapper: DefinitionWrapper });
+    await act(async () => { hook.getCurrent().menuCommands?.['code.goToDefinition'](); });
+    await vi.waitFor(() => {
+      const hrefs = Object.values(workspace!.state.tabs).map(tab => hrefForDestinationRef(catalog, tab.target));
+      const definition = hrefs.find(href => href && new URL(href, 'https://happier.test').searchParams.get('path') === path);
+      expect(definition).toBeDefined();
+      const query = new URL(definition!, 'https://happier.test').searchParams;
+      expect(query.get('rootPath')).toBe(fileRootPath ?? null);
+    });
+  });
 
     it.each(['modifier', 'cursor', 'card'] as const)('opens the existing explanation only when an outside-only definition settles (%s)', async (entry) => {
         let settle!: (result: LanguageIntelligenceQueryResult) => void;
