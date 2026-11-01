@@ -869,6 +869,9 @@ it.each(['runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_ter
         }
         expect(replay.longText.split('\n')).toHaveLength(400);
         expect(replay.longText).toHaveLength(33281);
+        await vi.waitFor(() => expect(replayStages.durableAck).toBeGreaterThan(0), { timeout: 10000 });
+        const firstCursor = events.filter(event => event.kind === 'data').at(-1)?.nextCursor;
+        expect(firstCursor).toEqual(expect.any(String));
         await enqueueFollowup?.();
         await replayNativeHook!({ hook_event_name: 'UserPromptSubmit', prompt: followupNativePrompt });
         const userEcho = pendingFollowup ? JSON.stringify({ ...JSON.parse(replay.user),
@@ -887,6 +890,7 @@ it.each(['runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_ter
         if (!pendingFollowup) expect(replayStages.identityAck).toBeGreaterThan(0);
         expect(replayStages.readAfter).toBeGreaterThan(0);
         expect(replayStages.cursor).toBeGreaterThan(1);
+        expect(events.filter(event => event.kind === 'data').at(-1)?.nextCursor).not.toBe(firstCursor);
         expect(replayStages.sourceItems).toBeGreaterThan(2);
         expect(manager.countActiveLeases(sessionId)).toBe(1);
         await interruptAndRecover?.();
