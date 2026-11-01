@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import {
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  resolveInstalledWindowsServiceLauncherPaths,
+  resolveServiceDefinitionPath,
+  resolveWindowsServiceLauncherInstallSpec,
+  splitQualifiedWindowsScheduledTaskName,
+} from '@happier-dev/cli-common/service';
 
 const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
 const SELF_HOST_TEST_TIMEOUT_MS = 45 * 60_000;
@@ -20,7 +27,7 @@ function readTail(path) {
   const escaped = String(path ?? '').replaceAll("'", "''");
   return run(
     'powershell',
-    ['-NoProfile', '-Command', `Get-Content -LiteralPath '${escaped}' -Tail 200 -ErrorAction SilentlyContinue`],
+    ['-NoProfile', '-Command', `Get-Content -LiteralPath '${escaped}' -Tail 200 -ErrorAction Continue`],
     { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 }
   );
 }
@@ -199,18 +206,52 @@ test(
     const statusPayload = JSON.parse(String(status.stdout ?? '').trim());
     if (statusPayload?.service?.active !== true || statusPayload?.healthy !== true) {
       const schtasksVerbose = run('schtasks', ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'], { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 });
+      const schtasksXml = run('schtasks', ['/Query', '/TN', taskName, '/XML'], { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 });
       const scheduledTask = run(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', `Get-ScheduledTask -TaskName '${taskName}' | Select-Object TaskName,State | ConvertTo-Json; Get-ScheduledTaskInfo -TaskName '${taskName}' | Select-Object LastRunTime,LastTaskResult | ConvertTo-Json; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*happier*' -or $_.CommandLine -like '*hstack*' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json`],
+        ['-NoProfile', '-NonInteractive', '-Command', buildReadWindowsScheduledTaskStatusPowerShellCommand(splitQualifiedWindowsScheduledTaskName(taskName))],
         { label: 'self-host-schtasks', allowFail: true, timeoutMs: 30_000 }
       );
+      const processes = run(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', [
+          'Write-Output ("observed_at=" + [DateTime]::UtcNow.ToString("o"))',
+          `$listeners = @(Get-NetTCPConnection -LocalPort ${serverPort} -State Listen -ErrorAction Continue)`,
+          'Write-Output "TCP listeners"',
+          '$listeners | Select-Object LocalAddress,LocalPort,State,OwningProcess | ConvertTo-Json -Compress',
+          '$processes = @(Get-CimInstance Win32_Process)',
+          '$ownerIds = @($listeners | Select-Object -ExpandProperty OwningProcess)',
+          'Write-Output "Listener owners"',
+          '$processes | Where-Object { $ownerIds -contains $_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,CreationDate | ConvertTo-Json -Compress',
+          // An executable-name filter missed the listener in the preceding Windows run.
+          // Inventory every PID, but limit command-line disclosure to the listener itself.
+          'Write-Output "All processes"',
+          '$processes | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CreationDate | ConvertTo-Json -Compress',
+        ].join('; ')],
+        { label: 'self-host-schtasks', allowFail: true, timeoutMs: 30_000 }
+      );
+      const definitionPath = resolveServiceDefinitionPath({ platform: 'win32', mode: 'user', homeDir: homedir(), label: serviceName });
+      const { diagnosticLogPath } = resolveInstalledWindowsServiceLauncherPaths({
+        definitionPath,
+        label: serviceName,
+        version: resolveWindowsServiceLauncherInstallSpec(join(binDir, 'happier-service-launcher.exe')).version,
+      });
+      const launcherTail = readTail(diagnosticLogPath);
+      const outTail = readTail(serverOutLog);
+      const errTail = readTail(serverErrLog);
       console.error(
         [
           '[self-host-schtasks] status after healthy install is not active/healthy',
           `self-host status stdout:\n${String(status.stdout ?? '').trim()}`,
           `self-host status stderr:\n${String(status.stderr ?? '').trim()}`,
+          `install status: ${String(installResult.status ?? 'null')}\n${String(installResult.stdout ?? '').trim()}\n${String(installResult.stderr ?? '').trim()}`,
           `schtasks /V (${taskName}):\n${String(schtasksVerbose.stdout ?? '').trim()}\n${String(schtasksVerbose.stderr ?? '').trim()}`,
-          `scheduled task + processes:\n${String(scheduledTask.stdout ?? '').trim()}\n${String(scheduledTask.stderr ?? '').trim()}`,
+          `schtasks /XML (${taskName}):\n${String(schtasksXml.stdout ?? '').trim()}\n${String(schtasksXml.stderr ?? '').trim()}`,
+          `scheduled task (status ${String(scheduledTask.status ?? 'null')}):\n${String(scheduledTask.stdout ?? '').trim()}\n${String(scheduledTask.stderr ?? '').trim()}`,
+          `listener + processes (status ${String(processes.status ?? 'null')}):\n${String(processes.stdout ?? '').trim()}\n${String(processes.stderr ?? '').trim()}`,
+          `launcher log (${diagnosticLogPath}, status ${String(launcherTail.status ?? 'null')}):\n${String(launcherTail.stdout ?? '').trim()}\n${String(launcherTail.stderr ?? '').trim()}`,
+          `server out tail (${serverOutLog}):\n${String(outTail.stdout ?? '').trim()}\n${String(outTail.stderr ?? '').trim()}`,
+          `server err tail (${serverErrLog}):\n${String(errTail.stdout ?? '').trim()}\n${String(errTail.stderr ?? '').trim()}`,
         ].join('\n\n')
       );
     }
