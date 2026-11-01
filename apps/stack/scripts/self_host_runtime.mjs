@@ -1142,8 +1142,7 @@ async function uninstallAutoUpdateJob({ config }) {
   return { uninstalled: true, backend, label: updaterLabel };
 }
 
-async function restartAndCheckHealth({ config, serviceSpec, port }) {
-  await restartManagedService({ platform: config.platform, mode: config.mode, homeDir: homedir(), spec: serviceSpec }).catch(() => {});
+async function waitForHealth({ config, port }) {
   const timeoutMs = resolveSelfHostHealthTimeoutMs();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1918,7 +1917,7 @@ async function performSelfHostPostPromoteSteps({
     persistent: true,
   });
 
-  const healthy = await restartAndCheckHealth({ config, serviceSpec, port: healthPort });
+  const healthy = await waitForHealth({ config, port: healthPort });
   if (!healthy) {
     throw new Error('[self-host] service failed health checks after install');
   }
@@ -2318,8 +2317,10 @@ async function cmdRollback({ channel, mode, argv, json }) {
     homeDir: homedir(),
     spec: serviceSpec,
     persistent: true,
-  }).catch(() => {});
-  const healthy = await restartAndCheckHealth({ config: configWithPort, serviceSpec });
+  }).catch(async () => {
+    await restartManagedService({ platform: configWithPort.platform, mode: configWithPort.mode, homeDir: homedir(), spec: serviceSpec }).catch(() => {});
+  });
+  const healthy = await waitForHealth({ config: configWithPort });
   if (!healthy) {
     throw new Error('[self-host] rollback completed binary swap but health checks failed');
   }

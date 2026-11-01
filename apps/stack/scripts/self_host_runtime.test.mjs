@@ -161,6 +161,78 @@ async function createLocalSelfHostRuntimePayloadRoot({ rootDir, binaryName, bina
   return binaryPath;
 }
 
+for (const { action, registrationFails = false } of [
+  { action: 'install' },
+  { action: 'update' },
+  { action: 'rollback' },
+  { action: 'rollback', registrationFails: true },
+]) {
+  test(`self-host ${action}${registrationFails ? ' after registration failure' : ''} checks health without starting the installed service a second time`, { skip: process.platform !== 'linux' }, async (t) => {
+    const fixture = await createTempFixture(t, { prefix: 'happier-self-host-single-start-' });
+    const sourceBinaryPath = await createLocalSelfHostRuntimePayloadRoot({
+      rootDir: fixture.path('payload'),
+      binaryName: 'happier-server',
+    });
+    const commandLog = fixture.path('commands.jsonl');
+    const serviceName = 'happier-self-host-single-start';
+    if (action === 'rollback') {
+      await mkdir(fixture.path('install', 'bin'), { recursive: true });
+      await writeFile(fixture.path('install', 'bin', 'happier-server.previous'), 'previous-runtime\n');
+    }
+    const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
+    const result = runNodeCaptureSync(['--input-type=module', '--eval', [
+      'import childProcess from "node:child_process";',
+      'import os from "node:os";',
+      'import { appendFileSync } from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      // Replace OS commands, home discovery and HTTP only; execute the real install
+      // dispatcher, payload promotion, service planner and health orchestration.
+      'os.homedir = () => process.env.HAPPIER_TEST_SELF_HOST_HOME;',
+      'childProcess.spawnSync = (command, args) => {',
+      '  appendFileSync(process.env.HAPPIER_TEST_COMMAND_LOG, JSON.stringify({ command, args }) + "\\n");',
+      '  if (command === "sh" && args[0] === "-lc" && args[1]?.startsWith("command -v ")) return { status: 0, stdout: "/fixture/bin", stderr: "" };',
+      '  if (command !== "systemctl" && !args.includes("--migrate-only")) throw new Error("Unexpected OS command: " + command);',
+      `  if (${registrationFails} && command === "systemctl" && args.includes("daemon-reload")) return { status: 1, stdout: "", stderr: "registration failure sentinel" };`,
+      '  return { status: 0, stdout: "", stderr: "" };',
+      '};',
+      'globalThis.fetch = async (url) => {',
+      '  appendFileSync(process.env.HAPPIER_TEST_COMMAND_LOG, JSON.stringify({ url }) + "\\n");',
+      '  return { ok: true, json: async () => ({ ok: true }) };',
+      '};',
+      'syncBuiltinESMExports();',
+      `const { runSelfHostCli } = await import(${JSON.stringify(moduleUrl)});`,
+      `await runSelfHostCli([${JSON.stringify(action)}, "--mode=user", "--non-interactive", "--without-cli", "--without-ui", "--json"]);`,
+    ].join('\n')], {
+      env: buildStackHarnessEnv({
+        extraEnv: {
+          HAPPIER_TEST_SELF_HOST_HOME: fixture.path('home'),
+          HAPPIER_TEST_COMMAND_LOG: commandLog,
+          HAPPIER_STACK_SELF_HOST_FORWARD: '0',
+          HAPPIER_SELF_HOST_INSTALL_ROOT: fixture.path('install'),
+          HAPPIER_SELF_HOST_BIN_DIR: fixture.path('exposed-bin'),
+          HAPPIER_SELF_HOST_CONFIG_DIR: fixture.path('config'),
+          HAPPIER_SELF_HOST_DATA_DIR: fixture.path('data'),
+          HAPPIER_SELF_HOST_LOG_DIR: fixture.path('logs'),
+          HAPPIER_SELF_HOST_SERVICE_NAME: serviceName,
+          HAPPIER_SELF_HOST_SERVER_BINARY: sourceBinaryPath,
+          HAPPIER_SELF_HOST_AUTO_UPDATE: '0',
+          HAPPIER_WITH_UI: '0',
+          HAPPIER_SERVER_PORT: '42347',
+        },
+      }),
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(JSON.parse(result.stdout).ok, true);
+    const commands = (await readFile(commandLog, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    const serverStarts = commands.filter(({ command, args }) => command === 'systemctl'
+      && args.includes(`${serviceName}.service`)
+      && (args.includes('start') || args.includes('restart')));
+    assert.equal(serverStarts.length, 1, 'installation owns the only service start before health verification');
+    assert.ok(commands.indexOf(serverStarts[0]) < commands.findIndex(({ url }) => url === 'http://127.0.0.1:42347/v1/version'), 'health is verified after service installation starts it');
+  });
+}
+
 test('local self-host runtime promotion exposes the server-embedded UI to the post-promote owner', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-embedded-ui-test-'));
   t.after(async () => {
