@@ -19,6 +19,10 @@ import {
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
 import { MachineEnvironmentV1Schema, type MachineEnvironmentV1 } from './machineEnvironmentV1.js';
 
+export { resolveManagedConfigurationCost, formatProviderAmount, formatPriceUnit, presentManagedCost, presentManagedAcquireStep,
+  formatRetentionDuration, describeRetention, formatManagedSizeBytes, managedSizeDimensions, describeManagedSize,
+  type ManagedCost, type ManagedPriceLabels, type ManagedDurationLabels, type ManagedRetentionLabels } from './configurationPresentation.js';
+
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
 export const ManagedPresetSelectionV1Schema = lazyZodSchema(() => z.strictObject({
