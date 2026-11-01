@@ -370,8 +370,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (!accountId || !authentication.success
     || !((kind === 'account' && provenance?.provenance.authority === 'present_user')
       || (kind === 'terminal' && provenance?.provenance.authority === 'account_automation'))) return fail('admission_unavailable');
+  const invocationAuthority = resolveInvocationAuthority({ credential: kind, surface: 'rpc' });
   const headers = { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json',
-    ...(kind === 'terminal' || input.authority === 'account_automation'
+    ...(invocationAuthority === 'account_automation' || input.authority === 'account_automation'
       ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
   const readInstalledPublication = (machineId: string) => phase('installed_machine', () => readExternalActionInstalledMachine({
     serverHttpBaseUrl: homeUrl, machineId, headers, ...(input.signal ? { signal: input.signal } : {}),
