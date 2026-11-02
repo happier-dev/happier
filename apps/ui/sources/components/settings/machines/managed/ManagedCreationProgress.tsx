@@ -61,9 +61,12 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const needsRecovery = Boolean(machine.recovery) || machine.creationState !== 'active' || machine.allocation === 'may-exist' || Boolean(machine.cleanup);
     const installationRetryOnly = !(operation && status) && canRetryInstallation && Boolean(props.handlers?.reinstall);
     const observation = machine.observation;
-    const operationTime = operation?.snapshot.settledAt ?? operation?.snapshot.startedAt ?? operation?.snapshot.createdAt ?? 0;
-    // A newer check supersedes the old error even when it reports no diagnostic.
-    const newerObservation = !prompt && !heldAsk && observation
+    const bootstrapRunning = operation?.snapshot.state === 'running' && observation?.reason === 'bootstrap.incomplete';
+    // Bootstrap evidence is written during the attempt, before its operation settles.
+    const operationTime = (observation?.reason?.startsWith('bootstrap.') ? operation?.snapshot.startedAt : operation?.snapshot.settledAt)
+        ?? operation?.snapshot.startedAt ?? operation?.snapshot.createdAt ?? 0;
+    // A newer check supersedes the old error; the pre-IO bootstrap marker is not a completed check.
+    const newerObservation = !prompt && !heldAsk && !bootstrapRunning && observation
         && (!operation || observation.observedAt > operationTime) ? observation : null;
     const error = !prompt && !heldAsk && !newerObservation ? operation?.snapshot.error : undefined;
     const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause) ? newerObservation : null;
@@ -77,7 +80,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const operationCard = Boolean(observationDiagnostic) || Boolean(operation && status && status.tone !== 'success' && !(newerObservation && operation.snapshot.error)) || installationRetryOnly && !(showStateRow && !lifecycle.banner);
     // While the install task tells the story, a quiet creation state would be a second, contradicting card:
     // the task's stage is the state, and the resource's freshness joins its card.
-    const operationTells = operationCard && !lifecycle.banner && QUIET_UNDER_OPERATION.has(state.kind);
+    const operationTells = operationCard && !lifecycle.banner && (QUIET_UNDER_OPERATION.has(state.kind)
+        || bootstrapRunning && state.kind === 'observationUnavailable');
     const stateRow = showStateRow && !operationTells;
     const stateRowChecks = stateRow && lifecycle.actions.includes('checkNow') && Boolean(props.handlers?.checkNow);
     // Freshness qualifies the state it dates: on the state row's own sheet, or standing alone with Check now.

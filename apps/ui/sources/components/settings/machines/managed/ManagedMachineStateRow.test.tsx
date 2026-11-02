@@ -233,6 +233,44 @@ describe('created machine resource rows (UIR5)', () => {
   const testIds = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
     screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === id);
 
+  it.each([
+    ['running', 'bootstrap.incomplete'],
+    ['failed', 'bootstrap.incomplete'],
+    ['failed', 'bootstrap.native_command_failed'],
+  ] as const)('presents %s bootstrap evidence (%s) through the operation lifecycle', async (state, reason) => {
+    const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    const machine = await boundMachine({ enrolledMachineId: undefined, desired: 'start', observation: {
+      observedAt: 30, availability: 'unavailable', reason,
+      ...(reason === 'bootstrap.native_command_failed' ? { nativeCause: {
+        localCause: 'native_command_failed', command: 'run', exitCode: 1, stderr: 'guest installation failed',
+      } } : {}),
+    } });
+    const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
+      snapshot: ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'bootstrap', revision: 1,
+        actionId: 'machines.managed.acquire', state, scope: { accountId: 'owner', machineId: 'controller' },
+        title: 'Create', createdAt: 10, startedAt: 20, cancellation: 'supported',
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+        progress: { kind: 'phase', phase: 'managed.bootstrap.install', label: 'Installing Happier' },
+        ...(state === 'failed' ? { settledAt: 40, error: { errorCode: 'action_failed', error: 'bootstrap failed' } } : {}),
+      }) };
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} operation={operation} />);
+    if (state === 'running') {
+      expect(screen.findByTestId('managed-machine.installation-error')).toBeNull();
+      expect(screen.findByTestId('managed-machine.installation')).not.toBeNull();
+      expect(screen.getTextContent()).toContain('Installing Happier');
+      expect(screen.findByTestId('managed-machine.progress')).toBeNull();
+      return;
+    }
+    expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
+    expect(screen.getTextContent()).not.toContain(reason);
+    expect(screen.getTextContent()).not.toContain('guest installation failed');
+    await screen.pressByTestIdAsync('managed-machine.installation-error-details-toggle');
+    expect(screen.getTextContent()).toContain(reason);
+    if (reason === 'bootstrap.native_command_failed') {
+      expect(screen.getTextContent()).toContain('run · exit 1 · guest installation failed');
+    }
+  });
+
   it('keeps native identity out of a healthy created machine and names the row after the machine', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const machine = await boundMachine();
