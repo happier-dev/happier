@@ -52,11 +52,13 @@ Regression and validation (.project/tmp/voice-local-actions-1102/):
 - followup-action-owners-green.log: 24 PASS including setting/approval/OFF/refusal;
   1 unrelated send-error failure: expected dispatch_ambiguous, got send_failed.
 - followup-agents-typecheck.log: public package check PASS, zero diagnostics.
-- followup-cli-typecheck.log: public package check launched; no green verdict
-  at candidate assembly. Its terminal result remains in the log/final handoff.
+- followup-cli-typecheck.log: stopped own client PID3501454 per Coordination
+  RULING2026-11-02 18:27Z; exit1 after cancellation, no package-green claim.
+  1265 observed diagnostics are unattributed; complete file:line:code list:
+  followup-cli-unattributed-diagnostics.json (none in the changed files).
 - followup-entry-loads.log: requested current-source entry-load command7/7 PASS.
-- followup-coherence.log: single wrapped private-index check/CAS; terminal output
-  is authoritative. Earlier wrong-filter invocations selected no tests, not PASS.
+- followup-coherence.log: single wrapped check PASS, new0/unowned0; CAS commit
+  05f840ce9214. Earlier wrong-filter invocations selected no tests, not PASS.
 - Owner execution tests do not prove real Codex chooses actions; RUN62H refuted
   that claim. No prompt-only assertion is reported as a successful spoken replay.
 
