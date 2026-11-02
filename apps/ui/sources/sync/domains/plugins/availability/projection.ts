@@ -140,7 +140,14 @@ export function retirePluginAccountAvailabilityProjection(pluginIds: readonly st
  */
 export function useActivePluginAccountAvailabilityReader(pluginId?: string,
     options?: Readonly<{ enabled?: boolean }>): PluginAccountAvailabilityReader | null {
-    const scope = useActiveServerAccountScope();
+    return usePluginAccountAvailabilityReader(undefined, pluginId, options);
+}
+
+/** Explicit readers retain native scope-mismatch admission instead of borrowing the focused Account. */
+export function usePluginAccountAvailabilityReader(requestedScope: ServerAccountScope | null | undefined, pluginId?: string,
+    options?: Readonly<{ enabled?: boolean }>): PluginAccountAvailabilityReader | null {
+    const activeScope = useActiveServerAccountScope();
+    const scope = requestedScope === undefined ? activeScope : requestedScope;
     const readSnapshot = React.useCallback(() => readerStore.getObservationSnapshot(pluginId), [pluginId]);
     const subscribe = options?.enabled === false ? noAvailabilitySubscription : subscribeToReactProjection;
     const snapshot = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);

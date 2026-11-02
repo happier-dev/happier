@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { useActivePluginAccountAvailabilityReader, usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 
 import {
     getMachineCapabilitiesCacheState,
@@ -291,6 +291,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     // differ from the Account currently supplying Discover's registry reads.
     const installedExecution = useMountedActionExecution(executionTarget?.serverId, { openOnRequest: true });
     const selectedServerIdentityId = administration.selectedServerIdentityId;
+    const installedAvailabilityReader = usePluginAccountAvailabilityReader(installedExecution.binding?.scope ?? null);
     const executionMachineId = executionTarget?.machine.id ?? null;
     const executionMachineHomeDir = executionTarget?.machine.metadata?.homeDir ?? null;
     const executionServerId = executionTarget?.serverId ?? null;
@@ -394,10 +395,15 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const administeredInstalledPlugins = hasCapabilitySnapshot
         ? currentInstalledPlugins
         : lastKnownInstalledPluginsRef.current.installedPlugins;
-    const installedPlugins = React.useMemo(() => projectAccountInstalledPlugins(administeredInstalledPlugins, accountInstalledAdmission), [accountInstalledAdmission, administeredInstalledPlugins]);
+    const scopedInstalledPlugins = React.useMemo(() => administeredInstalledPlugins.map(entry => {
+        if (entry.machineEnabled === undefined) return entry;
+        const accountEnabled = installedAvailabilityReader?.readCurrentAccountEnablement(entry.pluginId) ?? undefined;
+        return accountEnabled === entry.accountEnabled ? entry : { ...entry, accountEnabled };
+    }), [administeredInstalledPlugins, installedAvailabilityReader]);
+    const installedPlugins = React.useMemo(() => projectAccountInstalledPlugins(scopedInstalledPlugins, accountInstalledAdmission), [accountInstalledAdmission, scopedInstalledPlugins]);
     const installedPluginById = React.useMemo(
-        () => new Map(administeredInstalledPlugins.map((entry) => [entry.pluginId, entry] as const)),
-        [administeredInstalledPlugins],
+        () => new Map(scopedInstalledPlugins.map((entry) => [entry.pluginId, entry] as const)),
+        [scopedInstalledPlugins],
     );
     const installedPluginByIdRef = React.useRef(installedPluginById);
     installedPluginByIdRef.current = installedPluginById;

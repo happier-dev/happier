@@ -16,6 +16,8 @@ import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invoc
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
+import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
+import type { DaemonState } from '@/api/types';
 import { PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, retirePluginAccountCollectionWatchScope } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
 
@@ -50,6 +52,18 @@ describe('daemon release-less declaration publication', () => {
         const diagnostics = vi.spyOn(logger, 'debug');
         const controller = createPluginReloadController({ happyHomeDir });
         let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | undefined;
+        let publishedState: DaemonState | null = null;
+        let publishedCatalog: Awaited<ReturnType<NonNullable<typeof owner>['readCatalog']>> = [];
+        const projectionPublication = createDaemonPluginRegistryProjectionInvalidation({
+            // Daemon-state transport is the boundary. Its catalog consumer only
+            // reads when the production invalidation owner publishes a change.
+            getApiMachine: () => ({ updateDaemonState: async update => {
+                publishedState = update(publishedState);
+                if (owner) publishedCatalog = await owner.readCatalog();
+            } }),
+            isDaemonQuiescing: () => false,
+            onPublicationFailure: error => { throw error; },
+        });
         try {
             // Substitute only the Availability HTTP boundary; the real reporter,
             // registry, source admission and Account claim owner remain composed.
@@ -90,7 +104,9 @@ describe('daemon release-less declaration publication', () => {
                 },
             };
             owner = createDaemonPluginRuntimeOwner({ happyHomeDir, startupMode, staleCandidateCleanup: 'disabled', reloadController: controller,
-                connectedAccounts, availabilityReporter: reporter, accountStorageDependencies });
+                connectedAccounts, availabilityReporter: reporter, accountStorageDependencies,
+                onDurableRegistryApplied: projectionPublication.invalidateProjection,
+                onRuntimeProjectionInvalidated: projectionPublication.invalidateProjection });
             await owner.initialize();
             const runtime = controller.getState().activeRegistry;
             expect(runtime).not.toBeNull();
@@ -133,15 +149,10 @@ describe('daemon release-less declaration publication', () => {
                 else expect(entries).toEqual([]);
             };
             await assertServingAvailability();
-            // Availability/materialization hints reach this same finite refresh
-            // owner; unchanged intent must not publish another serving registry.
-            const refreshStore = createPluginRegistryStateStore({ happyHomeDir,
-                runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, startupMode,
-                    reloadController: controller, connectedAccounts, accountStorageDependencies }) });
-            const beforeUnchangedRefresh = controller.getState();
-            await refreshStore.refreshRuntime([manifest.id]);
-            expect(controller.getState().generation).toBe(beforeUnchangedRefresh.generation);
-            expect(controller.getState().activeRegistry).toBe(beforeUnchangedRefresh.activeRegistry);
+            await vi.waitFor(() => expect(publishedCatalog.find(entry => entry.pluginId === manifest.id)?.enabled).toBe(accountPluginEnabled));
+            const publishedBeforeChange = projectionPublication.readRevision();
+            // The first Account change must replace the cold serving snapshot;
+            // no unchanged refresh or Machine mutation primes this path.
             const beforeRefresh = controller.getState();
             const change = { cursor: 17, kind: 'pluginDomain' as const, entityId: `pluginDomain/${manifest.id}/availability`, changedAt: 1,
                 hint: { pluginDomain: 'availability' as const, pluginId: manifest.id } };
@@ -155,6 +166,19 @@ describe('daemon release-less declaration publication', () => {
                 .toEqual({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled });
             expect(controller.getState().activeRegistry?.contributes.pluginDeclarations?.some(plugin => plugin.pluginId === manifest.id)).toBe(accountPluginEnabled);
             await assertServingAvailability();
+            expect(projectionPublication.readRevision()).toBeGreaterThan(publishedBeforeChange);
+            await vi.waitFor(() => expect(publishedCatalog.find(entry => entry.pluginId === manifest.id))
+                .toMatchObject({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled }));
+            const refreshStore = createPluginRegistryStateStore({ happyHomeDir,
+                runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, startupMode,
+                    reloadController: controller, connectedAccounts, accountStorageDependencies,
+                    onRuntimeProjectionInvalidated: projectionPublication.invalidateProjection }) });
+            const beforeUnchangedRefresh = controller.getState();
+            const beforeUnchangedPublication = projectionPublication.readRevision();
+            await refreshStore.refreshRuntime([manifest.id]);
+            expect(controller.getState().generation).toBe(beforeUnchangedRefresh.generation);
+            expect(controller.getState().activeRegistry).toBe(beforeUnchangedRefresh.activeRegistry);
+            expect(projectionPublication.readRevision()).toBe(beforeUnchangedPublication);
             const changedGeneration = controller.getState().generation;
             accountPluginEnabled = !accountPluginEnabled;
             // A cursor-gone reconnect has no exact plugin hints, so its existing

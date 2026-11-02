@@ -120,6 +120,25 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it('reads desired Account enablement without requiring a release, declaration or Machine materialization', () => {
+        const store = createPluginAccountAvailabilityReaderStore();
+        const reader = store.bind(scope);
+        const pluginId = 'com.acme.fixture';
+        expect(reader.readCurrentAccountEnablement(pluginId)).toBeNull();
+        store.replace({ scope, snapshot: snapshot({ intentReads: [] }), intentCensusIncomplete: true });
+        expect(reader.readCurrentAccountEnablement(pluginId)).toBeNull();
+        const incompleteObservation = reader.getObservationSnapshot();
+        store.replace({ scope, snapshot: snapshot({ intentReads: [] }) });
+        expect(reader.readCurrentAccountEnablement(pluginId)).toBe(true);
+        expect(reader.getObservationSnapshot()).not.toBe(incompleteObservation);
+        const disabled = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...intentRead(), availabilityCursor: 44,
+            intent: { ...intentRead().intent!, desiredVersion: null, enabled: false }, release: null, uiArtifacts: [], packageAssets: [] });
+        store.replace({ scope, snapshot: snapshot({ availabilityCursor: 44, intentReads: [{ pluginId, response: disabled }],
+            materializations: [], snapshots: [] }) });
+        expect(reader.readCurrentAccountEnablement(pluginId)).toBe(false);
+        expect(store.bind({ ...scope, accountId: 'another-account' }).readCurrentAccountEnablement(pluginId)).toBeNull();
+    });
+
     it('publishes stable semantic UI inputs while observations advance and real declaration/lifecycle changes remain visible', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         const reader = store.bind(scope);

@@ -76,7 +76,7 @@ function PluginDetailCurrentContent(props: Readonly<{
     const actionsDisabled = !state.canRefreshInstalledPlugins
         || (installed ? state.isPluginActionInFlight(installed.pluginId) : true);
     const machineEnabled = installed?.machineEnabled ?? installed?.enabled;
-    const scopedEnablement = installed?.accountEnabled !== undefined && installed.machineEnabled !== undefined;
+    const scopedEnablement = installed?.machineEnabled !== undefined;
     const toggleAction = machineEnabled ? 'disable' : 'enable';
     const canToggle = machineEnabled ? capabilities?.canDisable === true : capabilities?.canEnable === true;
     const runAction = (action: InstalledPluginActionId) => {

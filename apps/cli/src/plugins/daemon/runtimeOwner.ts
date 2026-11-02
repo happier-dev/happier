@@ -310,6 +310,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
       : {}),
     reloadController: params.reloadController,
+    ...(params.onRuntimeProjectionInvalidated
+      ? { onRuntimeProjectionInvalidated: params.onRuntimeProjectionInvalidated }
+      : {}),
     resolveDevelopmentSourceAuthority,
     isDevelopmentSourceRegistered: (registeredRootId) => (
       developmentRoots?.isDevelopmentSourceRegistered(registeredRootId) === true

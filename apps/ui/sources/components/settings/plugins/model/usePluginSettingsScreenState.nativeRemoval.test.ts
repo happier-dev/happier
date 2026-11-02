@@ -17,6 +17,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 
 const boundary = vi.hoisted(() => ({
     rpc: vi.fn<(request: Readonly<{ machineId: string; serverId?: string | null; method: string; payload: unknown }>) => Promise<unknown>>(),
@@ -49,7 +51,7 @@ async function renderRemovalOwner(
     options: Readonly<{ initiallyEnabled?: boolean; readbackEnabled?: boolean; development?: boolean;
         developmentRoot?: string; actionFailure?: boolean;
         beforeActionResponse?: (signal: AbortSignal | null | undefined) => Promise<void>;
-        actionError?: string; bundled?: boolean }> = {},
+        actionError?: string; bundled?: boolean; bundledAccountEnabled?: boolean }> = {},
 ) {
     boundary.rpc.mockReset();
     boundary.confirm.mockReset().mockResolvedValue(true);
@@ -78,7 +80,8 @@ async function renderRemovalOwner(
     const installed = {
         pluginId, title: 'Example compute', description: null, version: '1.0.0', enabled: options.initiallyEnabled ?? true,
         source: { kind: options.bundled ? 'bundled' : 'localPath', locator: sourceRootPath, trustPolicy: 'trusted' },
-        ...(options.bundled ? { accountEnabled: false, machineEnabled: true, enabled: false } : {}),
+        ...(options.bundled ? { accountEnabled: options.bundledAccountEnabled ?? false, machineEnabled: true,
+            enabled: options.bundledAccountEnabled ?? false } : {}),
         install: { mode: 'managed', manifestVersion: '2' },
         compatibility: { status: 'compatible', diagnostics: [] }, diagnostics: [],
     };
@@ -153,7 +156,7 @@ async function renderRemovalOwner(
         },
     });
     const { storage } = await import('@/sync/domains/state/storage');
-    const scope = { serverId: connection.home.id, accountId: 'account-owner' };
+    const scope = { serverId: connection.home.serverIdentityId!, accountId: 'account-owner' };
     storage.getState().activateProfileScope(scope);
     await storage.getState().activateSettingsScope(scope);
     storage.getState().applySettings({ ...storage.getState().settings,
@@ -163,8 +166,19 @@ async function renderRemovalOwner(
     const machine = createMachineFixture({ id: 'controller-1', installationId: 'installation-1', activeAt: Date.now() });
     storage.getState().applyMachines([machine], true, { sourceServerId: scope.serverId });
     storage.setState({ isDataReady: true,
-        machineListStatusByServerId: { [connection.home.id]: 'idle' },
+        machineListStatusByServerId: { [scope.serverId]: 'idle' },
     });
+    let availabilityCursor = 1;
+    const publishAccountEnabled = (enabled: boolean) => {
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: ++availabilityCursor,
+            materializations: [], snapshots: [], intentReads: [{ pluginId,
+                response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
+                    hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
+                    intent: { pluginId, enabled, desiredVersion: null, offlineUiHosting: 'disabled',
+                        writableCollections: [], revision: String(availabilityCursor) } }),
+            }] } });
+    };
+    if (options.bundled) publishAccountEnabled(options.bundledAccountEnabled ?? false);
     const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     clearDaemonMergedProjectionCacheForTests();
     const { usePluginSettingsScreenState } = await import('./usePluginSettingsScreenState');
@@ -179,7 +193,7 @@ async function renderRemovalOwner(
         };
         storage.getState().applyMachines([next], true, { sourceServerId: scope.serverId });
     };
-    return { hook, requests, actionRequests, storage, scope, machine, publishMachine };
+    return { hook, requests, actionRequests, storage, scope, machine, publishMachine, publishAccountEnabled };
 }
 
 describe('development Settings through the real UI Action wiring', () => {
@@ -309,6 +323,21 @@ describe('development Settings through the real UI Action wiring', () => {
 const committed = { kind: 'committed', pluginId: 'example.compute', desiredGeneration: null, appliedGeneration: null, pendingSurfaces: [] };
 
 describe('local plugin removal at the actual settings hook and machine RPC boundary', () => {
+    it('updates the first Account switch change from Account push while the Machine catalog retains its initial snapshot', async () => {
+        const { hook, publishAccountEnabled, actionRequests, requests } = await renderRemovalOwner('disable', [committed], {
+            bundled: true, bundledAccountEnabled: true,
+        });
+        expect(hook.getCurrent().installedPlugins[0]).toMatchObject({ accountEnabled: true, machineEnabled: true });
+        const initialCatalogReads = requests.length;
+        await act(async () => { publishAccountEnabled(false); });
+        await vi.waitFor(() => expect(hook.getCurrent().installedPlugins[0])
+            .toMatchObject({ accountEnabled: false, machineEnabled: true }));
+        expect(requests).toHaveLength(initialCatalogReads);
+        await act(async () => { hook.getCurrent().runInstalledPluginAction('enable', 'example.compute', 'account'); });
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        expect(actionRequests[0]?.actionId).toBe('plugins.enable');
+    });
+
     it.each(['account', 'machine'] as const)('dispatches bundled %s enablement through its semantic Action', async scope => {
         const { hook, requests, actionRequests } = await renderRemovalOwner('disable', [committed], { bundled: true });
         const action = scope === 'account' ? 'enable' : 'disable';

@@ -5,7 +5,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
 
-/** Desired scope facts come from the catalog; effective enablement remains its decision. */
+/** Account intent and Machine catalog supply their own desired scope facts. */
 export function PluginEnablementSection(props: Readonly<{
     installed: InstalledPluginEntry;
     disabled: boolean;
@@ -24,7 +24,7 @@ export function PluginEnablementSection(props: Readonly<{
                         rightElement={<Switch
                             testID={`settings.plugins.detail.${installed.pluginId}.enablement.${scope}`}
                             value={value === true}
-                            disabled={props.disabled}
+                            disabled={props.disabled || value === undefined}
                             onValueChange={next => props.onChange(next ? 'enable' : 'disable', scope)}
                         />}
                     />

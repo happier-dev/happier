@@ -224,6 +224,8 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
   reloadController: PluginReloadController;
   onTerminalActivationFailure?: (pluginId: string) => void;
+  /** Publishes currentness after a runtime-only registry adoption. */
+  onRuntimeProjectionInvalidated?: () => void;
   connectedAccounts?: StablePluginConnectedAccountsOwner;
   actionFormConnectedAccounts?: Pick<
     ConnectedAccountPurposeBindingOwner,
@@ -818,6 +820,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               throw new Error('Prepared plugin runtime registry adoption did not publish');
             }
             adopted = true;
+            // Account intent changes do not commit Machine state, so their
+            // adopted projection publishes through the existing runtime push.
+            if (durableCandidate.admissionRefresh) params.onRuntimeProjectionInvalidated?.();
             await releasePreparedCustody().catch((error) => {
               logger.warn('[PLUGIN RUNTIME] Adopted plugin activation custody release failed', {
                 error: projectPluginFailureText(error),

@@ -412,6 +412,8 @@ export type PluginAccountAvailabilityReader = Readonly<{
     readUiProjectionInputs: () => PluginAccountUiProjectionInputs | null;
     /** Account custody projects into the existing executable registration owner. */
     readAccountUiProjection: () => PluginUiProjectionModel | null;
+    /** Desired Account intent, independent of release/activation. Null is not loaded or incomplete. */
+    readCurrentAccountEnablement: (pluginId: string) => boolean | null;
     readCurrentAccountExecution: (pluginId: string) => PluginAccountExecutionAdmission;
     /** Acquires immutable code facts, then re-reads current Account admission. */
     ensureCurrentAccountExecution: (pluginId: string) => Promise<PluginAccountExecutionAdmission>;
@@ -559,6 +561,8 @@ export type PluginAccountAvailabilityReaderStore = Readonly<{
 export type PluginAccountAvailabilityStoredProjection = Readonly<{
     scope: ServerAccountScope;
     snapshot: PluginAccountAvailabilitySnapshot;
+    /** No complete intent census has yet established omitted plugin identities. */
+    intentCensusIncomplete?: boolean;
     /**
      * Plugins whose last refresh failed. Their last-confirmed facts remain
      * readable and current (AVD-07); this is refresh status only.
@@ -1668,6 +1672,7 @@ type AvailabilityObservation = Readonly<{
     value: Readonly<{
         scope: ServerAccountScope;
         inventoryComplete: boolean;
+        intentCensusIncomplete: boolean;
         retired: boolean;
         intentReads: readonly PluginAccountAvailabilityIntentReadProjection[];
         materializations: readonly PluginMachineMaterializationV1[];
@@ -1693,6 +1698,7 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState, prev
     const observe = (value: AvailabilityObservation['value'], prior?: AvailabilityObservation): AvailabilityObservation =>
         prior && sameStrictJsonValue(prior.value, value) ? prior : Object.freeze({ value, token: Object.freeze({}) });
     const empty = observe(Object.freeze({ scope: state.scope, inventoryComplete: snapshot.inventoryComplete !== false,
+        intentCensusIncomplete: state.intentCensusIncomplete === true,
         retired: false, intentReads: Object.freeze([]), materializations: Object.freeze([]),
         releases: Object.freeze([]), snapshots: snapshot.snapshots }), previous?.empty);
     const byPluginId = new Map<string, AvailabilityObservation>();
@@ -1841,6 +1847,13 @@ function createBoundReader(input: Readonly<{
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
         readUiProjectionInputs: () => input.readDerivedProjection()?.uiInputs ?? null,
+        readCurrentAccountEnablement: (pluginId: string) => {
+            const state = input.readState();
+            if (!readProjectionForScope(state, input.scope) || state?.retiredPluginIds?.includes(pluginId)) return null;
+            const reads = state!.intentReadsByPluginId.get(pluginId) ?? [];
+            if (reads.length > 1 || (reads.length === 0 && state!.intentCensusIncomplete)) return null;
+            return reads[0]?.response.intent?.enabled ?? true;
+        },
         readCurrentAccountExecution: (pluginId: string) => readAccountExecutionSelection(input.readState(), input.scope, pluginId),
         ensureCurrentAccountExecution: async (pluginId: string) => {
             const current = readAccountExecutionSelection(input.readState(), input.scope, pluginId);
@@ -1983,6 +1996,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
         }
         const sameScope = state !== null && areServerAccountScopesEqual(state.scope, next.scope);
         if (!declarationsChanged && sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
+            && state!.intentCensusIncomplete === next.intentCensusIncomplete
             && state!.snapshot.inventoryComplete === next.snapshot.inventoryComplete
             && state!.snapshot.intentReads === next.snapshot.intentReads
             && state!.snapshot.materializations === next.snapshot.materializations
@@ -2098,6 +2112,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             }
             const changed = publish(Object.freeze({
                 scope: Object.freeze({ ...input.scope }),
+                intentCensusIncomplete: input.intentCensusIncomplete === true && (!canMerge || previous.intentCensusIncomplete === true),
                 retiredPluginIds: canMerge ? previous.retiredPluginIds?.filter(pluginId => !replacedPluginIds.has(pluginId)) : [],
                 stalePluginIds: Object.freeze([...stalePluginIds].sort((left, right) => left.localeCompare(right))),
                 snapshot: Object.freeze({
@@ -2135,6 +2150,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             const intentReads = state.snapshot.intentReads.filter((entry) => !retired.has(entry.pluginId));
             publish(Object.freeze({
                 scope: state.scope,
+                intentCensusIncomplete: state.intentCensusIncomplete,
                 snapshot: Object.freeze({ ...state.snapshot, intentReads: Object.freeze(intentReads) }),
                 stalePluginIds: Object.freeze(state.stalePluginIds.filter((pluginId) => !retired.has(pluginId))),
                 retiredPluginIds: Object.freeze([...new Set([...(state.retiredPluginIds ?? []), ...pluginIds])]),
