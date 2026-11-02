@@ -1,3 +1,4 @@
+import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
 import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
 import type { StoreKindContributionV1 } from './storeKinds.js';
@@ -599,6 +600,7 @@ export interface PluginManifest {
     machineRecipes?: readonly MachineRecipeV1[];
     machineSetupPresets?: readonly MachineSetupPresetContributionV1[];
     projectNativeAdapters?: readonly Readonly<PluginProjectNativeAdapterContributionV1>[];
+    secretSources?: readonly Readonly<PluginSecretSourceContributionV1>[];
     /**
      * Agent contributions. `ui` is typed by the ONE public Agent UI grammar, so
      * a malformed declaration is refused where it is written rather than
@@ -746,6 +748,7 @@ export type PluginContributes = Readonly<{
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
   projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;
+  secretSources: NonNullable<NonNullable<PluginManifest['contributes']>['secretSources']>;
   agents: NonNullable<NonNullable<PluginManifest['contributes']>['agents']>;
   providers: NonNullable<NonNullable<PluginManifest['contributes']>['providers']>;
   actions: readonly (Readonly<{

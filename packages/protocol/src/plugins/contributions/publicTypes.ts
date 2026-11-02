@@ -1,4 +1,10 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+export { PluginSecretSourceContributionV1Schema, PluginSecretSourceFailureV1Schema,
+  PluginSecretSourceOperationFailureV1Schema, PluginSecretSourceFieldV1Schema, PluginSecretSourceListRequestV1Schema,
+  PluginSecretSourceListResultV1Schema, PluginSecretSourceStoreRequestV1Schema, PluginSecretSourceStoreResultV1Schema,
+  type PluginSecretSourceContributionV1, type PluginSecretSourceFailureV1, type PluginSecretSourceOperationFailureV1,
+  type PluginSecretSourceFieldV1, type PluginSecretSourceListRequestV1, type PluginSecretSourceListResultV1,
+  type PluginSecretSourceStoreRequestV1, type PluginSecretSourceStoreResultV1 } from './secretSources.js';
 import { z } from 'zod/mini';
 import type { PluginPolicyExpressionV2 } from './policyEvaluation.js';
 export {
