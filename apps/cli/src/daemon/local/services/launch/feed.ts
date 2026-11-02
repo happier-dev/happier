@@ -132,7 +132,8 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         // Machine control path still owns Stop/retry for that exact occurrence.
         // The private-preview owner admits Workspace occurrences. Opening one does
         // not depend on a scanner listener or a pre-existing registration.
-        actions: snapshot.state !== 'stopped' ? ['manage'] : [],
+        actions: active ? ['manage', ...(handle.kind === 'workspace' && readProjectManagedServicePreviewEndpoint(handle)
+            ? ['register_preview' as const] : [])] : [],
     };
 }
 

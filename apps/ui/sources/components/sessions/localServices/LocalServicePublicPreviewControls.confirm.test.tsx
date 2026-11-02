@@ -203,12 +203,6 @@ function findCreatePressable(result: Awaited<ReturnType<typeof renderWithAppProv
         && typeof node.props?.onPress === 'function')[0];
 }
 
-function findRevokePressable(result: Awaited<ReturnType<typeof renderWithAppProviders>>) {
-    return result.tree.root.findAll((node) =>
-        node.props?.testID === 'local-service-public-preview-controls-exposure:public_preview_1-revoke'
-        && typeof node.props?.onPress === 'function')[0];
-}
-
 describe('LocalServicePublicPreviewControls (consequence sheet before create)', () => {
     beforeEach(() => {
         modalSpies.confirm.mockReset();
@@ -299,51 +293,6 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         } finally { await result.unmount(); }
     });
 
-    it('only revokes an active public preview after confirmation is accepted', async () => {
-        modalSpies.confirm.mockResolvedValueOnce(true);
-        const revoke = vi.fn(async () => undefined);
-
-        const result = await renderWithAppProviders(
-            <LocalServicePublicPreviewControls
-                launchTargets={[target]}
-                state={activePreviewState}
-                actions={{ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke }}
-            />,
-        );
-
-        const pressable = findRevokePressable(result);
-        expect(pressable).toBeTruthy();
-        await pressable.props.onPress();
-        await flushCreateChain();
-
-        expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
-        const confirmationCall = modalSpies.confirm.mock.calls[0] as Parameters<IModal['confirm']> | undefined;
-        // The confirm quotes the MASKED link, never the secret one: a revoke prompt is often read
-        // aloud or shown on a shared screen, and the whole point of revoking is that the secret has
-        // travelled far enough already.
-        expect(confirmationCall?.[1]).toContain('https://preview.example.test/');
-        expect(confirmationCall?.[1]).not.toContain('public_preview_1');
-        expect(revoke).toHaveBeenCalledExactlyOnceWith(activeCurrentPreviewExposure);
-        await result.unmount();
-    });
-
-    it('honours the UI revoke waiver without a second confirmation', async () => {
-        storage.setState({ settings: { ...originalSettings, actionsSettingsV1: {
-            v: 1, actions: {}, approvalWaivedSurfaces: { 'localServices.publicPreview.revoke': ['ui'] },
-        } } });
-        modalSpies.confirm.mockResolvedValue(false);
-        const revoke = vi.fn(async () => undefined);
-        const result = await renderWithAppProviders(
-            <LocalServicePublicPreviewControls launchTargets={[target]} state={activePreviewState}
-                actions={{ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke }} />,
-        );
-        await findRevokePressable(result).props.onPress();
-        await flushCreateChain();
-        expect(modalSpies.confirm).not.toHaveBeenCalled();
-        expect(revoke).toHaveBeenCalledWith(activeCurrentPreviewExposure);
-        await result.unmount();
-    });
-
     it('honours the UI create waiver with the current policy-admitted link choices', async () => {
         storage.setState({ settings: { ...originalSettings, actionsSettingsV1: {
             v: 1, actions: {}, approvalWaivedSurfaces: { 'localServices.publicPreview.create': ['ui'] },
@@ -357,48 +306,6 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         await flushCreateChain();
         expect(modalSpies.show).not.toHaveBeenCalled();
         expect(create).toHaveBeenCalledWith(target, { mode: 'secret_link', ttlMs: 600_000 });
-        await result.unmount();
-    });
-
-    it('honours the target Home public-link waiver rather than a foreign focused Account policy', async () => {
-        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
-        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
-        const { settingsParse } = await import('@/sync/domains/settings/settings');
-        const home = await createPlainArtifactHomeFixture('https://public-link-approval.test');
-        try {
-            saveAccountSettings({ serverId: home.home.id, accountId: 'artifact-account' }, settingsParse({
-                actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'localServices.publicPreview.revoke': ['ui'] } },
-            }), 1);
-            storage.setState({ settingsScope: { serverId: 'foreign-home', accountId: 'foreign-account' }, settings: settingsParse({}) });
-            const revoke = vi.fn(async () => undefined);
-            const result = await renderWithAppProviders(
-                <LocalServicePublicPreviewControls launchTargets={[target]} state={activePreviewState}
-                    actions={{ serverId: home.home.id, create: vi.fn(), copyUrl: vi.fn(async () => true), revoke }} />,
-            );
-            await findRevokePressable(result).props.onPress();
-            await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith(activeCurrentPreviewExposure));
-            expect(modalSpies.confirm).not.toHaveBeenCalled();
-            await result.unmount();
-        } finally { await home.dispose(); }
-    });
-
-    it('does not revoke an active public preview when confirmation is declined', async () => {
-        modalSpies.confirm.mockResolvedValueOnce(false);
-        const revoke = vi.fn(async () => undefined);
-
-        const result = await renderWithAppProviders(
-            <LocalServicePublicPreviewControls
-                launchTargets={[target]}
-                state={activePreviewState}
-                actions={{ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke }}
-            />,
-        );
-
-        await findRevokePressable(result).props.onPress();
-
-        await flushCreateChain();
-        expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
-        expect(revoke).not.toHaveBeenCalled();
         await result.unmount();
     });
 

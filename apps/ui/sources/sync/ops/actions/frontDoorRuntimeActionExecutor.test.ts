@@ -16,16 +16,35 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
+import * as React from 'react';
+import { act, renderWithAppProviders } from '@/dev/testkit';
+import type { IModal } from '@/modal/types';
+import { LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+
 const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<boolean>>());
+const publicLinkModal = vi.hoisted(() => ({ confirm: vi.fn<IModal['confirm']>(), show: vi.fn<IModal['show']>() }));
 const daemonRpc = vi.hoisted(() => vi.fn<(request: Readonly<{
     serverId?: string; machineId: string; method: string; payload: unknown;
 }>) => Promise<unknown>>());
 // Clipboard, Machine RPC and Home network/credential ports are genuine system boundaries.
 vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    confirmResult: false, spies: { confirm: publicLinkModal.confirm, show: publicLinkModal.show },
+}).module);
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // The daemon RPC transport is the external Machine boundary; its request/response codec and runtime Action owner stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: daemonRpc }));
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+const { LocalServicePublicPreviewControls } = await import('@/components/sessions/localServices/LocalServicePublicPreviewControls');
+const { createLocalServicePublicPreviewActions } = await import('@/components/sessions/localServices/publicPreviewActions');
+const { applyLocalServicePublicPreviewSnapshot, createLocalServicePublicPreviewState } = await import('@/sync/domains/local/services/publicPreview/store');
 const {
     createFrontDoorActionExecute,
     createFrontDoorRuntimeActionExecutor,
@@ -34,7 +53,12 @@ const {
 const { runTeamAction } = await import('@/sync/ops/teams/teamActionClient');
 
 describe('composed UI Action front-door adapters', () => {
-    beforeEach(async () => { await homes.reset(); clipboard.mockReset(); daemonRpc.mockReset(); });
+    beforeEach(async () => {
+        await homes.reset(); clipboard.mockReset(); daemonRpc.mockReset();
+        publicLinkModal.confirm.mockReset().mockResolvedValue(false);
+        publicLinkModal.show.mockReset();
+        vi.stubGlobal('navigator', { clipboard: { writeText: clipboard } });
+    });
     afterEach(() => standardCleanup());
 
     it('keeps the prepared Voice target through the full-context confirmed handoff when the primary Session changes', async () => {
@@ -154,6 +178,85 @@ describe('composed UI Action front-door adapters', () => {
         const uiResult = await action('clipboard.write', { text: '' });
         expect(ClipboardWriteResultSchema.parse(uiResult)).toEqual({ status: 'copied' });
         expect(copied).toEqual([text, '']);
+    });
+
+    it.each([
+        { operation: 'create', explicitAsk: false, waived: false, accepted: true },
+        { operation: 'revoke', explicitAsk: false, waived: false, accepted: true },
+        { operation: 'revoke', explicitAsk: true, waived: false, accepted: true },
+        { operation: 'revoke', explicitAsk: false, waived: false, accepted: false },
+        { operation: 'revoke', explicitAsk: false, waived: true, accepted: false },
+    ] as const)('consumes the public-link $operation confirmation once (Ask: $explicitAsk, waived: $waived, accepted: $accepted)', async ({ operation, explicitAsk, waived, accepted }) => {
+        const serverId = await homes.addHome({ name: 'Public links', serverUrl: `https://public-link-${operation}.test`, accountId: 'alice' });
+        if (explicitAsk) await homes.requireUiApproval(serverId, ['localServices.publicPreview.revoke']);
+        if (waived) {
+            homes.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+                actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'localServices.publicPreview.revoke': ['ui'] } },
+            } } } });
+            const focusedHome = await homes.addHome({ name: 'Foreign focused Home', serverUrl: 'https://foreign-public-link.test',
+                accountId: 'bob', currentAccount: true });
+            await homes.requireUiApproval(focusedHome, ['localServices.publicPreview.revoke']);
+        }
+        const features = createRootLayoutFeaturesResponse();
+        expect(tryWriteServerEnabledBitInPlace(features, 'localServices.publicPreview', true)).toBe(true);
+        homes.answer(serverId, '/v1/features', { body: features });
+        const exposure = { exposureId: 'exposure-1', previewId: 'preview-1', machineId: 'machine-1', sessionId: 'session-1',
+            mode: 'secret_link' as const, state: 'active' as const, publicUrl: 'https://preview.test/s/exposure-1',
+            issuedAt: Date.now(), expiresAt: Date.now() + 600_000, auditEventIds: ['audit-1'], rateLimitProfileId: 'default' };
+        const snapshot = LocalServicePublicPreviewSnapshotV1Schema.parse({ v: 1, machineId: 'machine-1', sessionId: 'session-1',
+            previewId: 'preview-1', generatedAt: Date.now(), refreshState: 'idle',
+            policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 600_000, maxConcurrentExposures: 1,
+                dnsTlsRequired: true, auditRequired: true, rateLimitProfileIds: ['default'] },
+            exposures: operation === 'revoke' ? [exposure] : [], diagnostics: [] });
+        daemonRpc.mockResolvedValue(operation === 'create' ? { protocolVersion: 1, exposure, snapshot: { ...snapshot, exposures: [exposure] } }
+            : { protocolVersion: 1, exposureId: exposure.exposureId, revokedAt: Date.now(), snapshot: { ...snapshot, exposures: [] } });
+        publicLinkModal.confirm.mockResolvedValue(accepted);
+        publicLinkModal.show.mockImplementation(config => {
+            // Native modal is the system boundary; select only options the real sheet offered.
+            const props = (config as unknown as { props: {
+                modeChoices: readonly { mode: string }[]; ttlChoices: readonly { ttlMs: number }[];
+                onResolve(value: { mode: string; ttlMs: number }): void;
+            } }).props;
+            props.onResolve({ mode: props.modeChoices[0]!.mode, ttlMs: props.ttlChoices[0]!.ttlMs });
+            return 'public-link-sheet';
+        });
+        const outcomes: unknown[] = [];
+        const execute = createFrontDoorRuntimeActionExecutor();
+        const rendered = await renderWithAppProviders(React.createElement(LocalServicePublicPreviewControls, {
+            launchTargets: [], browserTarget: { kind: 'localServicePreview', machineId: 'machine-1', sessionId: 'session-1', targetId: 'preview-1' },
+            serviceTitle: 'Dashboard', state: applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), snapshot),
+            actions: createLocalServicePublicPreviewActions({ runtimeActionExecute: async (request, options) => {
+                const outcome = await execute(request, options); outcomes.push(outcome); return outcome;
+            }, serverId,
+                expectedAccountId: 'alice', copyToClipboard: async () => true }),
+        }));
+        try {
+            const testID = operation === 'create' ? 'local-service-public-preview-controls-target:preview-1-create'
+                : 'local-service-public-preview-controls-exposure:exposure-1-revoke';
+            await act(async () => {
+                rendered.tree.root.findAll(node => node.props.testID === testID && typeof node.props.onPress === 'function')[0]!.props.onPress();
+                await vi.waitFor(() => expect(outcomes).toHaveLength(1));
+            });
+            if (explicitAsk) {
+                expect(outcomes[0]).toMatchObject({ kind: 'approval_request_created', actionId: 'localServices.publicPreview.revoke' });
+                expect(daemonRpc).not.toHaveBeenCalled();
+            } else if (!accepted && !waived) {
+                expect(outcomes[0]).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                expect(daemonRpc).not.toHaveBeenCalled();
+            } else {
+                expect(outcomes[0]).toMatchObject({ protocolVersion: 1 });
+                expect(daemonRpc).toHaveBeenCalledTimes(1);
+                expect(daemonRpc.mock.calls[0]?.[0].method).toBe(operation === 'create'
+                    ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE : RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE);
+            }
+            expect(publicLinkModal.show).toHaveBeenCalledTimes(operation === 'create' ? 1 : 0);
+            expect(publicLinkModal.confirm).toHaveBeenCalledTimes(operation === 'revoke' && !explicitAsk && !waived ? 1 : 0);
+            if (operation === 'revoke' && !explicitAsk && !waived) {
+                expect(publicLinkModal.confirm.mock.calls[0]?.[1]).toContain('https://preview.test/');
+                expect(publicLinkModal.confirm.mock.calls[0]?.[1]).not.toContain(exposure.exposureId);
+            }
+            expect(homes.artifacts(serverId).list()).toHaveLength(explicitAsk ? 1 : 0);
+        } finally { await rendered.unmount(); }
     });
 
     it('unwraps the runtime inventory result from the default registration after the Machine codec validates it', async () => {

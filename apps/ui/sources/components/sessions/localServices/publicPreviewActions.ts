@@ -13,7 +13,7 @@ import {
 } from '@/sync/domains/local/services/publicPreview/api';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission } from './localServiceActionAdmission';
+import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission, type LocalServiceActionInvocationOptions } from './localServiceActionAdmission';
 
 type CopyToClipboard = (value: string) => Promise<boolean>;
 export type LocalServicePublicPreviewActionTarget = LocalServiceLaunchTargetV1 | Extract<BrowserViewTargetV1, { kind: 'localServicePreview' }>;
@@ -38,7 +38,7 @@ export type LocalServicePublicPreviewActions = Readonly<{
         options?: LocalServicePublicPreviewCreateOptions,
     ) => Promise<unknown>;
     copyUrl: (exposure: LocalServicePublicExposureV1) => Promise<boolean>;
-    revoke: (exposure: LocalServicePublicExposureV1) => Promise<unknown>;
+    revoke: (exposure: LocalServicePublicExposureV1, options?: LocalServiceActionInvocationOptions) => Promise<unknown>;
 }>;
 
 /** Fallback lifetime when neither the caller nor the policy names one. */
@@ -133,8 +133,10 @@ function exposureRequest(
 export function createLocalServicePublicPreviewActions(
     input: CreateLocalServicePublicPreviewActionsInput,
 ): LocalServicePublicPreviewActions {
-    const runtimeActionExecute: RuntimeActionExecute | undefined = input.runtimeActionExecute
-        ? request => executeLocalServiceActionWithAdmission({ execute: input.runtimeActionExecute!, request, admission: input })
+    const runtimeActionExecute = input.runtimeActionExecute
+        ? (request: Parameters<RuntimeActionExecute>[0], options?: LocalServiceActionInvocationOptions) =>
+            executeLocalServiceActionWithAdmission({ execute: input.runtimeActionExecute!, request, admission: input,
+                confirmation: options?.confirmation })
         : undefined;
     const copyToClipboard = input.copyToClipboard ?? setClipboardStringSafe;
 
@@ -174,16 +176,17 @@ export function createLocalServicePublicPreviewActions(
             }
             return await copyToClipboard(parsed.data.publicUrl);
         },
-        async revoke(exposure) {
+        async revoke(exposure, options) {
             if (!runtimeActionExecute) {
                 return undefined;
             }
             const request = exposureRequest(exposure);
-            const result = await runtimeActionExecute({
+            const invocation = {
                 actionId: 'localServices.publicPreview.revoke',
                 input: request,
                 context: context(input),
-            });
+            } as const;
+            const result = await runtimeActionExecute(invocation, options);
             const parsed = DaemonLocalServicePublicPreviewRevokeResponseV1Schema.safeParse(result);
             if (!parsed.success || !isPublicPreviewRevokeResponseForRequest(parsed.data, request)) {
                 return result;

@@ -519,24 +519,16 @@ function ExposureRow(props: Readonly<{
 
     const onRevoke = React.useCallback(() => {
         void (async () => {
-            let confirmationRequired: boolean;
-            try {
-                confirmationRequired = await isActionApprovalRequiredForHome('localServices.publicPreview.revoke', { surface: 'ui' }, props.actions.serverId);
-            } catch (error) {
-                await props.runAction({ id: `exposure:${exposure.exposureId}`, failureTitle: t('localServices.actions.failureTitle.revokeExposure'),
-                    action: async () => { throw error; } });
-                return;
-            }
-            const confirmed = !confirmationRequired || await Modal.confirm(
-                t('localServices.publicPreview.revokeConfirmTitle'),
-                t('localServices.publicPreview.revokeConfirmMessage', { url: maskPublicUrl(exposure.publicUrl) }),
-                { confirmText: t('localServices.publicPreview.revokeConfirmCta'), destructive: true },
-            );
-            if (!confirmed) return;
             await props.runAction({
                 id: `exposure:${exposure.exposureId}`,
                 failureTitle: t('localServices.actions.failureTitle.revokeExposure'),
-                action: () => props.actions.revoke(exposure),
+                action: () => props.actions.revoke(exposure, {
+                    confirmation: () => Modal.confirm(
+                        t('localServices.publicPreview.revokeConfirmTitle'),
+                        t('localServices.publicPreview.revokeConfirmMessage', { url: maskPublicUrl(exposure.publicUrl) }),
+                        { confirmText: t('localServices.publicPreview.revokeConfirmCta'), destructive: true },
+                    ),
+                }),
             });
         })();
     }, [exposure, props]);

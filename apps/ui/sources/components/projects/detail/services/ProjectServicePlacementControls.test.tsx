@@ -5,6 +5,7 @@ import type { ProjectExecutionChoiceV1, WorkspaceExecutionSettingsV1 } from '@ha
 import { buildLocalServiceRows } from '@/sync/domains/local/services/serviceRow';
 
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { renderScreen, findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -130,6 +131,7 @@ async function setup(options: Readonly<{
   startResponse?: () => unknown;
   beforeRender?: (serverId: string) => void;
   artifactBodyReads?: string[];
+  onMove?: (input: unknown) => void;
 }>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
   const poolReads: unknown[] = [];
@@ -142,17 +144,28 @@ async function setup(options: Readonly<{
       status,
       headers: { 'Content-Type': 'application/json' },
     });
+  const moveBoundary = options.onMove ? await createExternalActionAccountHttpBoundary({
+    serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
+    accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.service.relocate', tokenEpoch: 0,
+    requesterInvocation: 'none', execute: input => {
+      options.onMove!(input);
+      return { status: 'refused', reasonCode: 'native_boundary_observed' };
+    },
+  }) : null;
   fixture = await createPlainArtifactHomeFixture(
     'https://service-placement-ui.test',
     {
+      currentAccount: Boolean(moveBoundary),
       handleRequest: async (path, init) => {
+        const moveResponse = await moveBoundary?.handle(new URL(path, 'https://service-placement-ui.test'), init);
+        if (moveResponse) return moveResponse;
         if (path === '/v1/artifacts/read') {
           const request = JSON.parse(String(init?.body)) as { artifactIds: string[]; projection?: string };
           if (request.projection !== 'headers') options.artifactBodyReads?.push(...request.artifactIds);
         } else if (/^\/v1\/artifacts\/[^/]+$/.test(path) && (!init?.method || init.method === 'GET')) {
           options.artifactBodyReads?.push(decodeURIComponent(path.slice('/v1/artifacts/'.length)));
         }
-        if (options.serviceRuntime && path === '/v2/account/settings') return json({
+        if ((options.serviceRuntime || moveBoundary) && path === '/v2/account/settings') return json({
           content: { t: 'plain', v: storage.getState().settings }, version: storage.getState().settingsVersion ?? 0,
         });
         // Binding observation now reads the real Machine inventory to qualify child
@@ -199,7 +212,7 @@ async function setup(options: Readonly<{
       })(),
     },
   );
-  if (options.serviceRuntime) {
+  if (options.serviceRuntime || moveBoundary) {
     await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_service_creation');
     await fixture.hydrateAccountSettings();
   }
@@ -472,6 +485,31 @@ async function setup(options: Readonly<{
 }
 
 describe('Service Runs on through the placement and relocation Actions', () => {
+  it('does not add a shared confirmation after the authored Move review under default host policy', async () => {
+    const moves: unknown[] = [];
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.confirm).mockClear();
+    const { screen, choose, writes } = await setup({ running: true, waiveMoveApproval: false,
+      onMove: input => moves.push(input) });
+    try {
+      await choose('hz-build-1');
+      await vi.waitFor(() => expect(screen.findAllHostsByTestId('placement.move.confirm')).toHaveLength(1));
+      expect(Modal.confirm).not.toHaveBeenCalled();
+      expect(moves).toEqual([]);
+      expect(fixture!.boundary.list()).toEqual([]);
+      await screen.pressByTestIdAsync('placement.move.confirm');
+      await vi.waitFor(() => expect(screen.findByTestId('placement.move.refused')).toBeTruthy());
+      expect(Modal.confirm).not.toHaveBeenCalled();
+      expect(moves).toHaveLength(1);
+      expect(moves[0]).toMatchObject({
+        currentTarget: { managedServiceId: 'instance', machineId: 'devbox' },
+        selectedTarget: { machineId: 'hz-build-1' },
+        destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } },
+      });
+      expect(fixture!.boundary.list()).toEqual([]);
+      expect(writes).toEqual([]);
+    } finally { await screen.unmount(); }
+  });
   it('opens only this Project pending approval bodies across unrelated Starts, Back and reconnect', async () => {
     const bodyReads: string[] = [];
     const h = await setup({ running: false, actualFails: true, liveFeeds: true, sharedObservation: true, waitEnabled: false,

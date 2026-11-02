@@ -72,7 +72,7 @@ function inventoryEntry(
 describe('createLocalServiceLauncherFeed', () => {
     it.each([
         ['Start', 'source'], ['Start', 'worker'], ['Move', 'source'], ['Move', 'worker'],
-    ] as const)('keeps a complete binding read pending through %s settlement on %s', async (operation, destination) => {
+    ] as const)('keeps a complete binding read pending through %s settlement on %s, then offers Open without prior registration', async (operation, destination) => {
         const createOwner = () => createManagedServicesOwner({
             processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
             // Literal Project launches never install plugin dependencies.
@@ -87,6 +87,7 @@ describe('createLocalServiceLauncherFeed', () => {
         const launchGate = new Promise<void>(resolve => { release = resolve; });
         let launchEntered = false;
         const supervise = async (custodian: typeof owner, target: typeof workspace, pending: boolean) => custodian.superviseProject({
+            kind: 'workspace',
             workspace: target, declaration: { workspaceRefId: target.id, selection: { kind: 'manifest', name: 'httpPort' } },
             cwd: target.rootPath, serviceId: 'project-service:httpPort', specIdentity: 'httpPort', execution: 'portable', isCurrent: () => true,
             requester: { serverId: 'home', accountId: 'owner', machineId: target.machineId, installationId: 'installation' },
@@ -152,7 +153,8 @@ describe('createLocalServiceLauncherFeed', () => {
             expect(snapshot.targets).toEqual([expect.objectContaining({ machineId: destination,
                 sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId }, serviceState: 'healthy' })]);
             expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'workspace' }))
-                .toEqual([expect.objectContaining({ status: 'running' })]);
+                .toEqual([expect.objectContaining({ status: 'running',
+                    primaryAction: expect.objectContaining({ kind: 'open', openTarget: snapshot.targets[0] }) })]);
         } finally { release(); await completion?.catch(() => {}); await owner.dispose(); await oldOwner.dispose(); }
     });
 
@@ -165,6 +167,7 @@ describe('createLocalServiceLauncherFeed', () => {
         const gate = new Promise<void>(resolve => { release = resolve; });
         let launchEntered = false;
         const start = owner.superviseProject({
+            kind: 'workspace',
             workspace: { id: 'checkout', serverId: 'home', machineId: 'source', rootPath: process.cwd(), createdAtMs: 1 },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'httpPort' } },
             cwd: process.cwd(), serviceId: 'httpPort', specIdentity: 'httpPort', isCurrent: () => true,
@@ -200,6 +203,7 @@ describe('createLocalServiceLauncherFeed', () => {
         const previewRegistry = createLocalServicePreviewRegistry();
         try {
             const handle = await owner.superviseProject({
+                kind: 'workspace',
                 workspace: { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 },
                 declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'httpPort' } },
                 cwd: process.cwd(), serviceId: 'project-service:httpPort', specIdentity: 'httpPort', isCurrent: () => current,
@@ -249,7 +253,7 @@ describe('createLocalServiceLauncherFeed', () => {
             const feed = createFeed();
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot());
             expect(snapshot.targets.map(target => target.id)).toEqual([handle.serviceId, 'inventory:unrelated']);
-            expect(snapshot.targets[0]).toMatchObject({ title: 'httpPort', actions: ['manage', 'open_preview', 'register_preview'],
+            expect(snapshot.targets[0]).toMatchObject({ title: 'httpPort', actions: ['manage', 'register_preview', 'open_preview'],
                 sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId, inventoryEntryId: direct.id },
                 browserTarget: { kind: 'localServicePreview', targetId: 'owned-preview' } });
             expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'machine' })
@@ -266,7 +270,7 @@ describe('createLocalServiceLauncherFeed', () => {
             inventoryRegistry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 4_000,
                 refreshState: 'idle', entries: [], diagnostics: [] });
             expect((await feed.getSnapshot({ projection: 'managed_bindings' })).targets).toEqual([
-                expect.objectContaining({ id: handle.serviceId, actions: ['manage', 'open_preview'] }),
+                expect.objectContaining({ id: handle.serviceId, actions: ['manage', 'register_preview', 'open_preview'] }),
             ]);
             inventoryRegistry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 5_000,
                 refreshState: 'idle', entries: [direct, child, unrelated], diagnostics: [] });
@@ -310,14 +314,15 @@ describe('createLocalServiceLauncherFeed', () => {
         } finally { await owner.dispose(); }
     });
 
-    it.each(['running', 'unknown', 'stopped'] as const)('projects %s plugin-native custody with its exact preview and manage rights', async nativePhase => {
-        let phase: 'running' | 'stopped' | 'unknown' = nativePhase;
+    it.each(['running', 'no-endpoint', 'unknown', 'stopped'] as const)('projects %s plugin-native custody with its exact preview and manage rights', async nativePhase => {
+        let phase: 'running' | 'stopped' | 'unknown' = nativePhase === 'no-endpoint' ? 'running' : nativePhase;
         const owner = createManagedServicesOwner({
             processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
             // This Project launch never reaches plugin dependency installation.
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const handle = await owner.superviseProject({
+            kind: 'workspace',
             workspace: { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'native-service' } },
             cwd: process.cwd(), serviceId: 'native-service', specIdentity: 'native-service', isCurrent: () => true,
@@ -326,7 +331,7 @@ describe('createLocalServiceLauncherFeed', () => {
             processSpec: { mode: { kind: 'native',
                 instance: { adapter: { pluginId: 'fixture.plugin', localId: 'native-service' }, nativeResourceId: 'exact-instance' },
                 lifecycle: { inspect: async () => ({ phase, readiness: phase === 'running' ? 'ready' : 'not_reported',
-                    endpoint: phase === 'running' ? ['http:', '//127.0.0.1:4312'].join('') : null }),
+                    endpoint: phase === 'running' && nativePhase !== 'no-endpoint' ? ['http:', '//127.0.0.1:4312'].join('') : null }),
                     stop: async () => { phase = 'stopped'; return { status: 'stopped' }; } } } },
             authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
                 env: {}, release: async () => undefined }),
@@ -345,11 +350,17 @@ describe('createLocalServiceLauncherFeed', () => {
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot());
             if (nativePhase === 'running') {
                 expect(owner.readProcessRoots()).toEqual([]);
-                expect(snapshot.targets).toEqual([expect.objectContaining({ serviceState: 'healthy', actions: ['manage', 'open_preview'],
+                expect(snapshot.targets).toEqual([expect.objectContaining({ serviceState: 'healthy', actions: ['manage', 'register_preview', 'open_preview'],
                     browserTarget: expect.objectContaining({ targetId: 'plugin-native-preview',
                         serviceTarget: expect.objectContaining({ managedServiceId: handle.instanceId }) }) })]);
                 await handle.stop();
                 expect((await feed.getSnapshot()).targets).toEqual([]);
+                return;
+            }
+            if (nativePhase === 'no-endpoint') {
+                expect(snapshot.targets).toEqual([expect.objectContaining({ serviceState: 'healthy', endpointKind: 'native', actions: ['manage'] })]);
+                expect(snapshot.targets[0]).not.toHaveProperty('endpointUrl');
+                expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'workspace' })[0]?.primaryAction).toBeNull();
                 return;
             }
             expect(snapshot.targets).toEqual([expect.objectContaining({
@@ -361,6 +372,33 @@ describe('createLocalServiceLauncherFeed', () => {
             if (nativePhase === 'unknown') expect(snapshot.targets[0]).toHaveProperty('execution', 'portable');
             else expect(snapshot.targets[0]).not.toHaveProperty('execution');
         } finally { await handle.stop(); await owner.dispose(); }
+    });
+
+    it('does not offer private-preview registration for an Environment endpoint outside that owner scope', async () => {
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        try {
+            await owner.superviseProject({ kind: 'environment', serverId: 'home', machineId: 'machine-a',
+                environmentId: 'production', environmentInstanceId: 'production-machine', deploymentId: 'deployment-a',
+                composeService: 'web', serviceId: 'production-machine/web', specIdentity: 'deployment-a', isCurrent: () => true,
+                release: { rootPath: process.cwd(), environmentId: 'production', environmentInstanceId: 'production-machine',
+                    deploymentId: 'deployment-a', machineId: 'machine-a', installationId: 'installation-a',
+                    manifestFingerprint: 'exact-a', assertCurrent: async () => {}, commit: async () => {}, abort: async () => {} },
+                releaseObservation: async () => {}, nativeEffects: { keys: [] },
+                processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                    inspect: async () => ({ phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:4312' }),
+                    stop: async () => ({ status: 'stopped' }),
+                } } },
+            });
+            const feed = createLocalServiceLauncherFeed({ machineId: 'machine-a', projectManagedServices: owner,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry() });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot());
+            expect(snapshot.targets).toEqual([expect.objectContaining({ serviceState: 'healthy',
+                endpointUrl: 'http://127.0.0.1:4312', actions: ['manage'] })]);
+            expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'machine' })[0]?.primaryAction).toBeNull();
+        } finally { await owner.dispose(); }
     });
 
     it('refuses an unmounted managed binding owner instead of reporting authoritative absence', async () => {
