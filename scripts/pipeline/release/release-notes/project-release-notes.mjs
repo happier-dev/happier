@@ -7,7 +7,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
-const DEFAULT_CHANGELOG_PATH = resolve(REPO_ROOT, 'apps/ui/CHANGELOG.md');
+export const RELEASE_NOTES_SOURCE_PATH = 'apps/ui/CHANGELOG.md';
+const DEFAULT_CHANGELOG_PATH = resolve(REPO_ROOT, RELEASE_NOTES_SOURCE_PATH);
 
 export const RELEASE_NOTES_BUNDLE_KIND = 'happier.release-notes.projection.v2';
 

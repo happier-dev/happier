@@ -7,6 +7,26 @@ This repo uses a simple three-branch model:
 - `main` is the stable/production release branch.
 - `deploy/**` branches are managed by automation for deployments (do not push to these manually).
 
+Source-suite reuse is additive metadata in the existing CI lane summary: the successful suite must match the exact source SHA, validation profile, and embedded policy. Shared source validation consumes that proof and runs each missing selected policy once before publishers consume its result. A standalone publisher without admitted proof runs its source contracts even when `--run-contracts=false`. `HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT=success` is the trusted same-host/reusable-workflow admission result, not a cryptographic proof token; only controlled callers project the validator’s result, and manual dispatch exposes no proof override. Local candidate batches pass the result to later products only after the first immutable publisher succeeds for that same fixed source and channel. Source Binary Smoke currently proves preview policy only; production and missing/mismatched evidence retain Binary Smoke. Signed candidate checks, artifact verification, and publication approvals remain required.
+
+
+## Release-only source checks
+
+Development CI selects Windows schtasks self-host E2E, native packaged CLI builds
+and runtime smoke for every published target (including Linux ARM64), and local
+Android/iOS native compilation when their owning source paths change. The existing
+`tests.yml` workflow also selects all three checks nightly. Selection belongs to
+`resolve-source-validation-plan.mjs`, consumed by `ci_plan`; selected failures or
+skips fail the CI verdict. Explicit reusable release-verification inputs retain
+their existing scope.
+
+The mobile checks compile Android Debug and an unsigned iOS simulator app through
+the canonical preview profile and native patch hooks; signing, store credentials,
+and distribution checks remain with release automation. Scheduled checks use the
+line's development branch (`dev` for 0.2, `v0.3` for 0.3). GitHub runs schedules
+only when the workflow is present on the repository's default branch, so landing
+these edits on another branch alone does not activate its nightly schedule.
+
 ## Contributing flow (recommended)
 
 1. Create a feature branch from `dev`.
@@ -38,7 +58,8 @@ and three profiles:
   relay persistence/startup. Candidate existence alone does not select every
   heavy scenario.
 - `stable` additionally selects the full source-check profile and requires the
-  private release agent to review preview candidate equivalence and soak,
+  private release agent to review preview candidate equivalence when promoting
+  an existing preview and any available preview observations,
   breaking changes, reachable version-skew directions, persistence, and
   accidental lockstep requirements.
 - `deep` is manual comprehensive source certification. The manual `deep`
@@ -93,8 +114,11 @@ hmaint release bootstrap --repo <absolute checkout> --json
 
 Use the returned private skill rather than copying a private release policy
 into this repository. A human go-ahead is required before any non-dry release
-dispatch. Qualified V4 activation is not implemented in this release line; its
-separate approval input must remain false. That go-ahead must name the selected profile and the exact SHA of the
+dispatch. One approval covers the reviewed source, notes, versions, profile,
+scope, materialization and ordinary publication. Materializing unchanged
+approved inputs does not require another approval. Qualified V4 activation is
+not implemented or offered in this release line; historical callers requesting
+it are refused. The go-ahead must name the selected profile and the exact SHA of the
 candidate whose evidence was reviewed. Do not substitute a branch name or a
 moving channel pointer for the exact SHA.
 
@@ -129,11 +153,45 @@ cd <absolute-0.3-checkout>
 ```
 
 The launcher's owning checkout and `hmaint --repo` target are independent.
-`--repo` may name a 0.2 checkout, but must use its independently verified absolute
-path on the Mac execution host, not an inferred translation of a VM path.
-If the launcher, configured `mac-host`, Mac wrapper, or Mac-visible target path
+`--repo` names an independently verified Git root available to the conductor.
+The existing synchronized source mirror can supply that root; a separately
+maintained product checkout on the Mac is unnecessary. Keep authoritative source
+work in its owning checkout and verify the synchronized path rather than
+inferring a translation from a VM path.
+If the launcher, configured `mac-host`, Mac wrapper, or synchronized target Git root
 cannot be proved, fail closed; do not translate paths by inspection or fall back
 to a VM-local conductor.
+
+For preview/production, the public `happier.release-dispatch-plan.v3` dry-run
+response includes
+`hostedDispatch`: the repository, workflow, control ref, and complete string
+inputs for the approved source/control SHAs, operation/attempt, modes, profile,
+policy, and approvals. The private conductor submits that transport directly;
+local `gh` dispatch uses the same serialization. Planning needs no GitHub token,
+including when explicit source/control SHAs and a CI run ID are supplied. Hosted
+admission still checks trusted workflow refs, the approved control/source SHAs,
+and the release actor before privileged work.
+
+Approved-packet runs negotiate `approved-release-packet-v1` through the public
+release contract. The packet has kind `happier.approved-release-packet.v1`, the
+analyzed `baseSha`, `releaseId`, the complete approved canonical changelog in
+`notes.content`, an exact component `versions` map, and the reviewed public
+dispatch-plan v3 in `intent`. The public materializer owns the approved child;
+the final planner replays and compares the complete approved intent before
+private admission and dispatch, including nondefault policy and SDK approvals.
+Packets start at `attempt_1` without a resume origin. Existing failed-run resume
+preserves that grant and changes only the origin, next attempt, current control
+SHA and CI binding through the existing resume checks.
+Materialization refuses a `preview` source: production promotes that already
+validated candidate through its prepared operation and never writes a new
+notes/version child onto `preview`.
+`run --operation-id <id>` remains available for an already prepared operation.
+
+The `v0.3` control ref is admitted by workflow code but cannot publish yet.
+Before enabling publication, the release owner must first add a `v0.3` branch
+ruleset matching `dev`, then add `v0.3` to the `release-shared` environment's
+deployment branch policy. Preserve that order so an unprotected control ref
+never gains access to the release environment.
 
 Before changelog/version materialization, the release agent runs
 `node scripts/pipeline/run.mjs release-analyze ...` over the actual source
@@ -141,21 +199,29 @@ range and completes the semantic compatibility review while inspecting that
 same diff for notes and version recommendations. After commit/push, only an
 unexpected runtime-reachable delta invalidates the affected analysis.
 
-Materialize the approved notes and versions for the selected products once on
-that source, commit them, and require completed CI for the resulting exact SHA.
-Prepare the pinned operation from that final SHA; another dev merge does not
-require another editorial or version pass. Version files, manifests, lockfiles,
-native configuration and generated runtime inputs still receive full source CI.
+Run `hmaint release run --repo <absolute checkout> --packet <absolute JSON path>`
+with the approved packet. The public materialization owner writes the approved
+canonical notes and exact component versions and commits only those paths.
+The private conductor pushes the child, waits for its exact-SHA canonical CI,
+then admits once and dispatches. The final plan must preserve the approved
+scope; another dev merge does not
+require another editorial or version pass or a second ordinary publication
+approval. Unexpected runtime-reachable or scope changes require a refreshed
+decision. Dependency, script, native-content, runtime-version and generated
+runtime input changes still receive full source CI.
 
 The release-control speed follow-up adds a narrow exception in the existing
-`tests.yml` CI planner: a push changing only `apps/ui/CHANGELOG.md` can select
-note projection checks instead of runtime suites. It proves that the previous
+`tests.yml` CI planner: a push changing only canonical notes and supported
+materializer JSON version fields can select note projection checks and child
+packaging instead of broad runtime suites. The classifier compares JSON content,
+not just filenames. It proves that the previous
 push SHA is an ancestor with successful canonical full-source CI, downloads and
 validates that run's lane summary, and validates the final commit's canonical
-note projections plus the projection contract suite. The new completed run and
+note projections plus the projection contract suite and build-smoke packaging.
+The new completed run and
 summary identify the final child SHA; a parent run ID is never accepted as child
 evidence. Missing, expired or insufficient baseline evidence selects full source
-CI with an explicit diagnostic. An earlier notes-only run is not a full-source
+CI with an explicit diagnostic. An earlier metadata-only run is not a full-source
 baseline, so repeated editorial pushes can fall back to full CI. This follow-up
 must be integrated before relying on the shortcut; it changes no waiver policy.
 
@@ -219,8 +285,8 @@ already ahead of, or divergent from, that candidate still fails the existing
 fast-forward guard. Synchronizing a published candidate back into development
 is different: it preserves newer dev commits when dev already contains the
 candidate, but still rejects divergent history. Only this synchronization caller
-opts in; preview/main destinations remain exact. Post-promotion candidate
-binding and immutable publication keep their exact-equality checks.
+opts in; preview/main destinations remain exact. Candidate binding and immutable
+publication keep their exact-equality checks before channel promotion.
 
 Normal release issue snapshots intersect the open stage queue with correction
 references in the exact candidate's cumulative commit ancestry. Use a
@@ -240,8 +306,8 @@ When you want to publish/deploy a new preview build:
 1. Run **RELEASE — Publish (preview + production)** with:
    - `environment=preview`
    - `confirm=release dev to preview`
-2. The workflow runs the configured checks against already materialized release-note/version source, then promotes `dev` → `preview` (fast-forward).
-3. Deploy/publish steps for the preview environment build from `preview` (not `dev`).
+2. The workflow runs the configured checks against already materialized release-note/version source.
+3. Deploy/publish steps use that exact admitted SHA, then the workflow promotes `dev` → `preview` only after every selected product has succeeded.
 4. After post-promotion verification, the workflow advances its pre-promotion snapshots of open `stage:source` and `stage:dev` issues to `stage:preview`.
 
 ### Production release (preview → main)
@@ -251,7 +317,7 @@ When you want to ship what’s currently in `preview` to production:
 1. Run **RELEASE — Publish (preview + production)** with:
    - `environment=production`
    - `confirm=release preview to main`
-2. The workflow promotes `preview` → `main` (fast-forward by default; guarded reset is available), then deploys/publishes from `main`.
+2. The workflow deploys/publishes from the exact admitted preview SHA, then promotes `preview` → `main` only after every selected product has succeeded (fast-forward by default; guarded reset is available).
 3. After post-promotion verification, the workflow advances its pre-promotion snapshot of `stage:preview` issues to `stage:stable`.
 
 Notes:
@@ -262,13 +328,15 @@ Notes:
 
 When the same approved source must ship to preview and production without a
 second operator cycle, use the private conductor target
-`preview-and-production`. The target dispatches
-`release-preview-and-production.yml`, which snapshots source/dev/preview issue
-eligibility once and invokes the canonical `release.yml` for both channels in
-parallel.
+`preview-and-production`. The target dispatches the canonical `release.yml`,
+which snapshots source/dev/preview issue eligibility once, validates one source
+risk union, and invokes `release-channel.yml` for both channels in parallel.
+The retired `release-preview-and-production.yml` remains a supported historical
+resume origin; new operations use `release.yml`.
 
 The two calls share the exact authorized source, release notes, and successful
-CI run. Source-only MySQL, platform-service, and installer/updater trust-root
+CI run. Both channels publish concurrently from the reviewed source; this
+does not establish preview soak before production. Source-only MySQL, platform-service, and installer/updater trust-root
 checks are selected from the union of both release ranges and execute once in
 the combined parent. Each channel retains its own planning and final admission,
 which verifies that the shared evidence covers that channel's selected risks.
@@ -372,7 +440,46 @@ surface, and recovery evidence. The combined preview-and-production mode
 combines channels; it forwards the selected target set to both channels and
 does not couple website and docs publication.
 
+Each immutable product consumes its own artifact and applicable upgrade
+verification before promoting its rolling release. A failed sibling does not
+hold a verified product's promotion or an unrelated deployment. Products that
+consume CLI or server artifacts still wait for those inputs, and required
+platforms remain a single product's verification cohort. The channel summary
+retains every selected failure or pending result; one published product does
+not make the selected release complete. Resume reuses completed products
+through the existing resolver. Issue availability advances only after the
+whole required channel outcome is verified.
+Selected web deployment also waits for its own candidate's signature and source
+identity verification before promoting the UI deploy branch.
+
+Channel branches move last: a failed selected publication or deployment prevents
+`main`/`preview` promotion without rolling back successful sibling products.
+Immutable and rolling component releases explicitly suppress GitHub Latest during
+publication. After production channel promotion, the workflow marks the selected
+immutable component candidates Latest; GitHub has one repository-wide Latest pointer. Preview
+prereleases remain ineligible. Terminal status records channel and Latest failures
+separately while preserving each product's published, pending, or failed outcome.
+These workflow changes apply to the next release dispatch; they do not alter
+already-published releases.
+A configured Homebrew tap is a selected CLI distribution: it waits for the CLI
+verifier and rolling publication, contributes its own status, and must finish
+before the channel branch moves. An unconfigured tap remains unselected.
+
+Linux Tauri jobs acquire prerequisites through
+`.github/actions/install-tauri-linux-dependencies`. Bundled WebKit restores only
+the exact SDK cache key. A valid hit skips the LLVM repository/toolchain setup
+and SDK compilation; the job still installs the native, packaging, and runtime
+libraries needed to build and execute its packages. A miss builds the pinned SDK
+before installing and validating it. Keep those runtime dependencies on warm
+jobs; restoring the SDK does not install its system dependencies.
+
 ### Release authority and binary integrity
+
+Hosted workflows pin operating-system image versions, including runner labels
+provided by matrices, expressions, and output mappings. Image upgrades are
+deliberate workflow changes; run
+`node --test scripts/release/workflow_runner_images.contract.test.mjs` to check
+that floating runner labels have not returned.
 
 The default privileged conductor dispatches the hosted workflow, but the
 semantic release phases remain script-owned. `release-analyze` performs
@@ -419,12 +526,12 @@ required by release policy.
 
 npm validates the top-level calling workflow identity for an OIDC publication
 through a reusable workflow. Every npm package published by this release graph
-must therefore trust both supported callers in `happier-dev/happier`:
-
-- `release.yml` for an individual preview or production operation;
-- `release-preview-and-production.yml` for the coordinated combined operation.
-
-Both use the `release-shared` GitHub environment. Register the workflow filename
+must therefore trust `release.yml` in `happier-dev/happier` for individual and
+combined operations, with the `release-shared` GitHub environment. The reusable
+`release-channel.yml` is not the top-level OIDC caller. Historical combined run
+status remains resumable after the old wrapper is retired. Registry-side trusted
+publisher configuration must be verified by the release owner before publishing;
+local workflow tests do not verify npm's configuration. Register the workflow filename
 without `.github/workflows/`; do not add a long-lived `NPM_TOKEN` fallback.
 `ENEEDAUTH` in all npm publisher jobs while the release actor and OIDC steps are
 otherwise healthy usually means the top-level caller is absent or mismatched in
@@ -449,8 +556,10 @@ For CLI, stack, server-runtime, and UI-web binary releases:
    complete unversioned rolling asset set, and audits that draft by Release id.
    Older staging drafts for the same rolling tag are removed.
 6. If a predecessor exists, promotion preserves it under one bounded backup tag,
-   moves the audited staging Release onto the real rolling tag, verifies the
-   public Release and tag, then removes staging and backup refs. Recovery restores
+   moves the audited staging Release onto the real rolling tag, requires the
+   publication acknowledgement to name that same audited Release id, and then
+   removes staging and backup refs. It does not download the complete bytes a
+   third time after that acknowledgement. Recovery restores
    the predecessor when an interrupted attempt left only the backup visible.
 
 The immutable version-tagged Release remains available throughout. Re-running

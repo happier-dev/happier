@@ -46,6 +46,7 @@ export function resolvePublicReleaseContract() {
         'ci-run-id',
         'production-promotion-mode-v1',
         'combined-preview-production-v1',
+        'approved-release-packet-v1',
       ],
     },
     targets: Object.values(versionedComponents).map(({ id, baselineTagPrefix, changedWhen }) => ({

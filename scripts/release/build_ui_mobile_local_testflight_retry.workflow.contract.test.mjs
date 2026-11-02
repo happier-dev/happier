@@ -19,7 +19,7 @@ test('build-ui-mobile-local can resume TestFlight distribution without rebuildin
   const retryJob = src.slice(src.indexOf('  retry_testflight_distribution:'), src.indexOf('  ota_update:'));
   assert.notEqual(retryJob.trim(), '', 'expected a dedicated TestFlight distribution retry job');
   assert.match(retryJob, /if:.*inputs\.action == 'retry_testflight_distribution'/);
-  assert.match(retryJob, /runs-on: ubuntu-latest/);
+  assert.match(retryJob, /runs-on: ubuntu-24.04/);
   assert.match(retryJob, /repository: \$\{\{ job\.workflow_repository \}\}/);
   assert.match(retryJob, /ref: \$\{\{ job\.workflow_sha \}\}/);
   assert.match(retryJob, /scripts\/pipeline\/expo\/testflight-distribute\.mjs/);

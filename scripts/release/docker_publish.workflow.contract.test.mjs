@@ -84,7 +84,7 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     'publish-docker should use repo README file for dev-box',
   );
 
-  const release = await loadWorkflow('release.yml');
+  const release = await loadWorkflow('release-channel.yml');
   const releaseWorkflow = YAML.parse(release);
   assert.match(release, /publish_docker:/);
   assert.match(release, /publish_cli_binaries:/);
@@ -93,11 +93,14 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.bump_plan\.outputs\.publish_ui_web == 'true'/);
   assert.match(releaseWorkflow.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
-  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'promote_preview', 'promote_main', 'prepare_release_candidate', 'verify_release_candidates', 'publish_cli_binaries', 'publish_server_runtime']);
+  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'prepare_release_candidate', 'publish_cli_binaries', 'publish_server_runtime', 'verify_cli_candidate', 'verify_server_candidate']);
   assert.match(release, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(release, /server_version:\s*\${{\s*needs\.publish_server_runtime\.outputs\.version\s*}}/);
   assert.match(release, /cli_version:\s*\${{\s*needs\.publish_cli_binaries\.outputs\.version\s*}}/);
-  assert.match(releaseWorkflow.jobs.publish_docker.if, /needs\.verify_release_candidates\.result == 'success'/);
+  assert.match(
+    releaseWorkflow.jobs.publish_docker.if,
+    /\(needs\.plan\.outputs\.publish_cli_binaries_needed != 'true' \|\| needs\.verify_cli_candidate\.result == 'success'\) && \(needs\.plan\.outputs\.publish_server_runtime_needed != 'true' \|\| needs\.verify_server_candidate\.result == 'success'\)/,
+  );
   assert.match(release, /build_relay:/);
   assert.match(release, /build_dev_box:/);
   assert.doesNotMatch(release, /build_dev_box:\s*\$\{\{[^\n]*changed_stack/);

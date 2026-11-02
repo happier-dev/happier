@@ -73,7 +73,7 @@ test('build-ui-mobile-local exposes immutable APK retry recovery as a workflow i
 test('build-ui-mobile-local passes approved release notes and projects exact retry-candidate notes', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
   assert.match(src, /release_message:/);
-  assert.match(src, /--release-message\s+"\$\{\{\s*inputs\.release_message\s*\}\}"/);
+  assert.match(src, /--release-message(?:=|\s+)"\$\{\{\s*inputs\.release_message\s*\}\}"/);
   assert.match(src, /Project approved release notes from exact immutable candidate/);
   assert.match(src, /release-notes\.md/);
   assert.match(src, /ref: \$\{\{ steps\.source\.outputs\.authorized_sha \}\}[\s\S]*?path: candidate/);
@@ -116,7 +116,7 @@ test('APK build stays on candidate bytes while trusted workflow control owns sig
   assert.match(publishStep?.run ?? '', /scripts\/pipeline\/expo\/publish-apk-release\.mjs/);
   assert.match(publishStep?.run ?? '', /--version "\$APP_VERSION"/);
   assert.match(publishStep?.run ?? '', /--target-sha "\$AUTHORIZED_SHA"/);
-  assert.match(publishStep?.run ?? '', /--release-message "\$RELEASE_MESSAGE"/);
+  assert.match(publishStep?.run ?? '', /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
 
   const install = publish.steps.find((step) => step.uses === './.github/actions/install-yarn-dependencies');
   assert.equal(install?.env?.HAPPIER_INSTALL_SCOPE, 'release-runtime');

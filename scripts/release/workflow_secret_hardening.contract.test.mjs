@@ -176,7 +176,7 @@ test('release workflow keeps provider checks outside the compact manual release 
   assert.equal(inputs?.providers_preset, undefined, 'compact manual release workflow should not expose provider presets');
   assert.equal(inputs?.providers_tier, undefined, 'compact manual release workflow should not expose provider tiers');
 
-  const ciJob = parsed?.jobs?.ci;
+  const ciJob = parsed?.jobs?.source_validation;
   assert.ok(ciJob, 'ci job should exist');
   assert.equal(ciJob.secrets, undefined, 'ci should not inherit secrets');
   assert.equal(ciJob.with?.run_providers, undefined, 'exact-SHA CI evidence should not dispatch provider checks');
@@ -298,7 +298,7 @@ test('secret-bearing workflows require release-admin actor guard before privileg
 
   const guardJob = 'release_actor_guard';
   const expectedWiring = [
-    ['release.yml', 'ci'],
+    ['release.yml', 'source_validation'],
     ['release-npm.yml', 'release'],
     ['promote-ui.yml', 'promote'],
     ['promote-server.yml', 'promote_deploy_ref'],

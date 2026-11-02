@@ -136,7 +136,15 @@ test('rejects a path-selected docs-only summary as whole-source release evidence
 
   const notesSummary = structuredClone(summary);
   Object.assign(notesSummary.lanes[0].outputs, { notes_only: 'true', notes_base_sha: 'b'.repeat(40), notes_base_run_id: '41' });
+  assert.throws(() => validateCiLaneSummary(notesSummary, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES] }), /build-smoke/);
+  notesSummary.lanes.push({ id: 'build-smoke', result: 'success', conclusion: null, outputs: {} });
+  Object.assign(notesSummary.lanes[0].outputs, { run_build_smoke: 'true' });
   assert.doesNotThrow(() => validateCiLaneSummary(notesSummary, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES] }));
+  for (const result of ['skipped', 'failure']) {
+    const invalid = structuredClone(notesSummary);
+    invalid.lanes.find((lane) => lane.id === 'build-smoke').result = result;
+    assert.throws(() => validateCiLaneSummary(invalid, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES] }), /build-smoke/);
+  }
   assert.throws(() => validateCiLaneSummary(notesSummary, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES], allowNotesOnly: false }), /required lane ui-unit/);
   assert.throws(() => validateCiLaneSummary(notesSummary, { runId: '42', sourceSha: sha, requiredLanes: ['cli'] }), /required lane cli/);
   for (const invalid of [{ notes_base_sha: sha }, { notes_base_sha: '' }, { notes_base_run_id: '0' }, { notes_base_run_id: '42' }, { run_cli: 'true' }]) {

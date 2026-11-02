@@ -43,7 +43,7 @@ jobs:
     name: Snapshot source-stage issues for this nightly
     needs: [resolve_resume]
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -88,7 +88,7 @@ jobs:
   prepare_release_candidate:
     name: Prepare exact nightly candidate
     needs: [resolve_resume, snapshot_source_issues]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read
@@ -234,11 +234,14 @@ jobs:
     name: Verify exact nightly source CI
     needs: [prepare_release_candidate]
     if: ${{ needs.prepare_release_candidate.outputs.waiting_for_ci != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read
       contents: read
+    outputs:
+      source_contracts_preview: ${{ steps.source_evidence.outputs.source_contracts_preview }}
+      binary_smoke_preview: ${{ steps.source_evidence.outputs.binary_smoke_preview }}
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -251,6 +254,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: Require successful canonical push CI for the exact source
+        id: source_evidence
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -263,13 +267,13 @@ jobs:
             --source-branch dev
             --run-id "$CI_RUN_ID"
           )
-          node scripts/pipeline/release/verify-existing-ci.mjs "${args[@]}"
+          node scripts/pipeline/release/verify-existing-ci.mjs "${args[@]}" --source-profile integrated --github-output "$GITHUB_OUTPUT"
 
   nightly_waiting_for_ci:
     name: Nightly waiting for exact-source CI
     needs: [prepare_release_candidate]
     if: ${{ needs.prepare_release_candidate.outputs.waiting_for_ci == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Record non-releasable scheduled source
@@ -283,7 +287,7 @@ jobs:
     name: Skip already completed nightly
     needs: [prepare_release_candidate, verify_source_ci]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'false' && needs.prepare_release_candidate.outputs.waiting_for_ci != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Record no-op
@@ -298,6 +302,7 @@ jobs:
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -313,6 +318,7 @@ jobs:
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -328,6 +334,7 @@ jobs:
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -343,6 +350,7 @@ jobs:
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -355,7 +363,7 @@ jobs:
     name: Resolve changed-seam validation risk
     needs: [prepare_release_candidate, verify_source_ci]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -405,7 +413,7 @@ jobs:
 
   release_verify:
     name: Verify exact immutable nightly candidates
-    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk, verify_source_ci]
     permissions:
       contents: read
       actions: read
@@ -413,6 +421,7 @@ jobs:
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
+      source_binary_smoke_validated: ${{ needs.verify_source_ci.outputs.binary_smoke_preview == 'success' }}
       channel: dev
       candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       candidate_cli_version: ${{ needs.cli.outputs.version }}
@@ -439,10 +448,11 @@ jobs:
 
   promote_server:
     name: Promote verified server candidate
-    needs: [prepare_release_candidate, server_runtime, release_verify]
+    needs: [prepare_release_candidate, server_runtime, release_verify, verify_source_ci]
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       retry_version: ${{ needs.server_runtime.outputs.version }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -451,10 +461,11 @@ jobs:
 
   promote_hstack:
     name: Promote verified HStack candidate
-    needs: [prepare_release_candidate, hstack, release_verify]
+    needs: [prepare_release_candidate, hstack, release_verify, verify_source_ci]
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       retry_version: ${{ needs.hstack.outputs.version }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -463,10 +474,11 @@ jobs:
 
   promote_cli:
     name: Promote verified CLI candidate
-    needs: [prepare_release_candidate, cli, release_verify]
+    needs: [prepare_release_candidate, cli, release_verify, verify_source_ci]
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       retry_version: ${{ needs.cli.outputs.version }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -475,10 +487,11 @@ jobs:
 
   promote_ui_web:
     name: Promote verified UI web candidate
-    needs: [prepare_release_candidate, ui_web, release_verify]
+    needs: [prepare_release_candidate, ui_web, release_verify, verify_source_ci]
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
+      source_contracts_result: ${{ needs.verify_source_ci.outputs.source_contracts_preview }}
       channel: dev
       retry_version: ${{ needs.ui_web.outputs.version }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -566,7 +579,7 @@ jobs:
   verify_promoted:
     name: Verify promoted nightly references
     needs: [prepare_release_candidate, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -603,7 +616,7 @@ jobs:
     if: ${{ needs.verify_promoted.result == 'success' && needs.prepare_release_candidate.outputs.source_sha == needs.prepare_release_candidate.outputs.head_sha && needs.snapshot_source_issues.outputs.eligible == 'true' && needs.snapshot_source_issues.outputs.issue_count != '0' }}
     needs: [snapshot_source_issues, prepare_release_candidate, verify_promoted]
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -636,7 +649,7 @@ jobs:
     name: Project terminal nightly release status
     if: ${{ always() }}
     needs: [prepare_release_candidate, nightly_waiting_for_ci, nightly_noop, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

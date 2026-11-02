@@ -9,18 +9,25 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
 async function loadTapJob() {
-  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-channel.yml'), 'utf8');
   return YAML.parse(raw).jobs.publish_homebrew_tap;
 }
 
-test('the Homebrew tap job is a no-op until the tap is configured and runs only after verified stable promotion', async () => {
-  const job = await loadTapJob();
-  const condition = String(job.if);
-  assert.match(condition, /inputs\.environment == 'production'/);
-  assert.match(condition, /inputs\.dry_run != true/);
-  assert.match(condition, /vars\.HOMEBREW_TAP_REPO_NAME != ''/);
-  assert.match(condition, /needs\.release_verify\.result == 'success'/);
-  assert.ok(job.needs.includes('release_verify'));
+test('the configured stable Homebrew publication follows its own verified CLI and precedes final channel verification', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-channel.yml'), 'utf8');
+  const { jobs } = YAML.parse(raw);
+  const job = jobs.publish_homebrew_tap;
+  assert.match(jobs.plan.outputs.publish_homebrew_tap_needed, /inputs\.environment == 'production'/);
+  assert.match(jobs.plan.outputs.publish_homebrew_tap_needed, /vars\.HOMEBREW_TAP_REPO_NAME != ''/);
+  assert.match(job.if, /inputs\.dry_run != true/);
+  assert.match(job.if, /needs\.plan\.outputs\.publish_homebrew_tap_needed == 'true'/);
+  assert.match(job.if, /needs\.verify_cli_candidate\.result == 'success'/);
+  assert.ok(job.needs.includes('verify_cli_candidate'));
+  assert.ok(!job.needs.includes('release_verify'));
+  assert.ok(jobs.release_verify.needs.includes('publish_homebrew_tap'));
+  const projection = jobs.release_status.steps.find((step) => step.name === 'Project release status facts');
+  assert.equal(projection.env.REQUEST_HOMEBREW, "${{ needs.plan.outputs.publish_homebrew_tap_needed == 'true' }}");
+  assert.equal(projection.env.HOMEBREW_RESULT, '${{ needs.publish_homebrew_tap.result }}');
 });
 
 test('a resumed release whose CLI promotion already completed still publishes the formula, for the resumed version', async () => {

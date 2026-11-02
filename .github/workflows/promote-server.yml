@@ -94,7 +94,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
@@ -118,7 +118,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -136,7 +136,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
@@ -246,7 +246,7 @@ jobs:
 
   apply_bump:
     needs: [release_actor_guard, resolve_source, validate_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
     outputs:
@@ -310,7 +310,7 @@ jobs:
 
   validate_candidate:
     needs: [release_actor_guard, resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -372,7 +372,7 @@ jobs:
 
   finalize_source:
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       authorized_sha: ${{ steps.bind.outputs.authorized_sha }}
@@ -423,7 +423,7 @@ jobs:
   promote_deploy_ref:
     if: always() && needs.finalize_source.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, finalize_source, publish_runtime_release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
     env:

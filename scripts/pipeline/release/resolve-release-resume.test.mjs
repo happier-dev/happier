@@ -259,6 +259,8 @@ test('resume inspection binds one unexpired status artifact to the exact origin 
     artifactDigest: DIGEST,
     artifactId: 1234,
     workflowSha: SOURCE_SHA,
+    workflowPath: expected.workflowPath,
+    statusArtifactName: 'happier-release-status',
   });
 });
 
@@ -765,4 +767,36 @@ test('release resume binds the conductor operation and authorized source when su
     status: releaseStatus,
     expected: { ...releaseExpected, operationId: '' },
   }), /operation/, 'an emergency manual resume must not silently adopt a conductor-owned run');
+});
+
+
+test('canonical combined resume selects its channel status while accepting the historical combined origin', () => {
+  for (const channel of ['preview', 'production']) {
+    const inspected = inspectReleaseResumeOrigin({
+      originRun: originRun({ path: '.github/workflows/release.yml' }),
+      artifacts: [statusArtifact({ name: 'happier-release-status-preview' }), statusArtifact({ id: 5678, name: 'happier-release-status-production' })],
+      expected: { repository: REPOSITORY, workflowPath: '.github/workflows/release.yml', channel },
+    });
+    assert.equal(inspected.artifactId, channel === 'preview' ? statusArtifact().id : 5678);
+  }
+  assert.equal(inspectReleaseResumeOrigin({
+    originRun: originRun({ path: '.github/workflows/release-preview-and-production.yml' }),
+    artifacts: [statusArtifact(), statusArtifact({ id: 5678, name: 'happier-release-status-preview' })],
+    expected: { repository: REPOSITORY, workflowPath: '.github/workflows/release.yml', channel: 'preview' },
+  }).artifactId, 5678);
+});
+
+test('canonical combined resume binds successful OTA evidence to the selected channel prefix', () => {
+  const surfaces = [previewCliCandidate(), ...standardOptionalSurfaces(true)];
+  surfaces.find(surface => surface.id === 'deploy_ui').identity.expoAction = 'ota';
+  const input = {
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact({ name: 'happier-release-status-preview' })], downloadedDigest: DIGEST,
+    status: status({ channel: 'preview', operationId: 'current-release', surfaces }),
+    expected: { repository: REPOSITORY, workflowPath: '.github/workflows/release.yml', channel: 'preview', sourceSha: SOURCE_SHA, operationId: 'current-release' },
+    jobs: [{ id: 2000, run_id: RUN_ID, head_sha: SOURCE_SHA, name: 'Release preview channel / deploy_ui / promote', status: 'completed', conclusion: 'success',
+      steps: ['Publish Android OTA from validated bytes', 'Publish iOS OTA from validated bytes'].map(name => ({ name, status: 'completed', conclusion: 'success' })) }],
+  };
+  assert.equal(resolveReleaseResume(input).uiCompleted.ota, true);
+  assert.equal(resolveReleaseResume({ ...input, jobs: [{ ...input.jobs[0], name: 'Release production channel / deploy_ui / promote' }] }).uiCompleted.ota, false);
 });

@@ -211,7 +211,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
@@ -235,7 +235,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -254,7 +254,7 @@ jobs:
   validate_expo_token:
     name: Validate EXPO_TOKEN
     if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release-shared
     steps:
@@ -270,7 +270,7 @@ jobs:
   validate_apple_api_private_key:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
     if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution' || (inputs.action == 'retry_store_publication' && inputs.platform == 'ios')) && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release-shared
     steps:
@@ -424,7 +424,7 @@ jobs:
     name: Sign and publish Android APK
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') && needs.build_android.outputs.has_apk == 'true' }}
     needs: [release_actor_guard, build_android]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: write
@@ -617,7 +617,7 @@ jobs:
     name: Resume Android store submission (preserved AAB)
     if: ${{ inputs.action == 'retry_android_store_submit' }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       actions: read
@@ -765,7 +765,7 @@ jobs:
     name: Resume production store publication (existing binary)
     if: ${{ inputs.action == 'retry_store_publication' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
       contents: read
@@ -838,7 +838,7 @@ jobs:
     name: Resume TestFlight distribution (existing build)
     if: ${{ inputs.action == 'retry_testflight_distribution' }}
     needs: [release_actor_guard, validate_apple_api_private_key]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
       contents: read
@@ -945,7 +945,7 @@ jobs:
     name: OTA update
     if: ${{ inputs.retry_version == '' && inputs.action == 'ota' }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     environment: release-shared
     env:
@@ -991,7 +991,7 @@ jobs:
     name: Recover rolling APK projection
     if: ${{ inputs.retry_version != '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: release-shared
     permissions:

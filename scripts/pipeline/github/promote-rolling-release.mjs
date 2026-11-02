@@ -721,6 +721,7 @@ async function main() {
           '-f', `name=${stagingName}`,
           '-f', 'body=',
           '-F', 'draft=true',
+          '-f', 'make_latest=false',
           '-F', `prerelease=${prerelease}`,
         ], { env: ghEnv });
       } catch (error) {
@@ -840,6 +841,7 @@ async function main() {
           name: title,
           body,
           draft: false,
+          make_latest: 'false',
           prerelease,
         },
         env: ghEnv,
@@ -853,21 +855,6 @@ async function main() {
       });
       if (!dryRun && readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun: false }) !== targetSha) {
         fail(`Published rolling tag ${rollingTag} did not resolve to audited target ${targetSha}.`);
-      }
-      if (!dryRun) {
-        await auditReleaseById({
-          repo,
-          releaseId: draftReleaseId,
-          expectedTag: rollingTag,
-          expectedDraft: false,
-          expectedDir: sourceDir,
-          assetPlan,
-          sourceTag,
-          expectedProduct,
-          expectedVersion,
-          publicKey,
-          env: ghEnv,
-        });
       }
     } catch (switchError) {
       if (!dryRun) {

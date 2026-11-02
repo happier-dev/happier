@@ -38,6 +38,7 @@ test('release-contract exposes canonical release targets and suite capabilities 
       'ci-run-id',
       'production-promotion-mode-v1',
       'combined-preview-production-v1',
+      'approved-release-packet-v1',
     ],
   });
   assert.deepEqual(

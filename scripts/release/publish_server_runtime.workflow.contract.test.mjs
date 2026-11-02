@@ -186,7 +186,7 @@ test('first secret-free guard rejects every noncanonical workflow channel alias 
 });
 
 test('all repository callers supply canonical workflow channel labels', async () => {
-  for (const name of ['release.yml', 'promote-server.yml', 'nightly-dev.yml']) {
+  for (const name of ['release-channel.yml', 'promote-server.yml', 'nightly-dev.yml']) {
     const raw = await loadWorkflow(name);
     const calls = raw.split(/\n(?=\s{2}[a-zA-Z0-9_]+:)/).filter((block) => /uses:\s*\.\/\.github\/workflows\/publish-server-runtime\.yml/.test(block));
     assert.ok(calls.length > 0, `${name} has no server-runtime publisher caller`);

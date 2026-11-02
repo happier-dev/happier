@@ -142,14 +142,14 @@ exit 0
   // `force` must be a JSON boolean, not the string "true" (GitHub API rejects `-f force=true` with HTTP 422).
   assert.match(log, /\s-F\s+force=true\b/);
   assert.doesNotMatch(log, /\s-f\s+force=true\b/);
-  assert.match(log, /gh release create dev-test --prerelease --title Dev Test --notes Approved exact candidate notes\./);
+  assert.match(log, /gh release create dev-test --latest=false --prerelease --title Dev Test --notes Approved exact candidate notes\./);
   assert.match(
     log,
     /gh api -X PATCH repos\/test\/test\/releases\/123 -f target_commitish=0123456789abcdef0123456789abcdef01234567/,
     'the rolling GitHub Release object must bind the same exact SHA as its tag ref',
   );
   assert.match(log, /gh api repos\/test\/test\/releases\/123 --jq \.target_commitish/);
-  assert.match(log, /gh release edit dev-test --title Dev Test --notes Approved exact candidate notes\./);
+  assert.match(log, /gh release edit dev-test --latest=false --title Dev Test --notes Approved exact candidate notes\./);
   assert.doesNotMatch(log, /--generate-notes/);
   assert.doesNotMatch(log, /Rolling dev build\.|Full diff:|### Commits/);
 

@@ -15,7 +15,7 @@ on:
 
 jobs:
   smoke-test-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -41,7 +41,7 @@ jobs:
       run: node scripts/pipeline/run.mjs smoke-cli
 
   smoke-test-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 60
 
     steps:

@@ -95,7 +95,7 @@ function flattenArtifacts(value) {
  * Candidate-bound status and exact-origin successful job steps prove these flows
  * independently of the control SHA. They do not prove store public availability or a chained origin.
  * @param {unknown} value
- * @param {{ runId: number; workflowSha: string; sourceSha: string; expectedSourceSha?: string; operationId?: string; workflowPath: string; channel: string; requested: boolean; expoAction: string }} identity
+ * @param {{ runId: number; workflowSha: string; sourceSha: string; expectedSourceSha?: string; operationId?: string; workflowPath: string; channel: string; statusArtifactName?: string; requested: boolean; expoAction: string }} identity
  */
 function resolveUiFlowCompletion(value, identity) {
   const completed = { ota: false, nativeIos: false, nativeAndroid: false, apk: false };
@@ -107,11 +107,14 @@ function resolveUiFlowCompletion(value, identity) {
     const entry = asRecord(page, 'resume jobs response');
     return Array.isArray(entry.jobs) ? entry.jobs : [entry];
   }).map((job) => asRecord(job, 'resume job'));
-  const prefix = identity.workflowPath === '.github/workflows/release-preview-and-production.yml'
-    ? `Publish ${identity.channel} channel / deploy_ui / ` : 'deploy_ui / ';
+  const prefixes = identity.workflowPath === '.github/workflows/release-preview-and-production.yml'
+    ? [`Publish ${identity.channel} channel / deploy_ui / `]
+    : identity.statusArtifactName === `happier-release-status-${identity.channel}`
+      ? [`Release ${identity.channel} channel / deploy_ui / `]
+      : ['deploy_ui / ', 'Release single channel / deploy_ui / '];
   /** @param {string} name @param {string[]} stepNames */
   const accepted = (name, stepNames) => {
-    const matches = jobs.filter((job) => job.name === `${prefix}${name}`);
+    const matches = jobs.filter((job) => prefixes.some(prefix => job.name === `${prefix}${name}`));
     if (matches.length !== 1) return false;
     const job = matches[0];
     if (!Number.isSafeInteger(job.id) || Number(job.id) < 1 || job.run_id !== identity.runId || job.head_sha !== identity.workflowSha
@@ -215,18 +218,18 @@ export function inspectReleaseResumeOrigin(input) {
   const run = asRecord(input.originRun, 'origin run');
   const expectedRepository = requiredString(input.expected.repository, 'expected repository');
   const expectedWorkflowPath = requiredString(input.expected.workflowPath, 'expected workflow path');
-  const statusArtifactName = input.expected.statusArtifactName
-    ? requiredString(input.expected.statusArtifactName, 'expected status artifact name')
-    : 'happier-release-status';
+  const workflowPath = requiredString(run.path, 'origin workflow path');
   const repository = asRecord(run.repository, 'origin run repository');
   const headRepository = asRecord(run.head_repository, 'origin run head repository');
   if (repository.full_name !== expectedRepository || headRepository.full_name !== expectedRepository) {
     throw new Error('[release] resume origin must belong to the expected repository and head repository');
   }
-  if (run.path !== expectedWorkflowPath) {
+  // Canonical release recovery also reads completed origins from the retired wrapper.
+  if (workflowPath !== expectedWorkflowPath && !(expectedWorkflowPath === '.github/workflows/release.yml'
+    && workflowPath === '.github/workflows/release-preview-and-production.yml')) {
     throw new Error(`[release] resume origin workflow path does not match ${expectedWorkflowPath}`);
   }
-  const allowedEvents = RESUMABLE_WORKFLOW_EVENTS.get(expectedWorkflowPath);
+  const allowedEvents = RESUMABLE_WORKFLOW_EVENTS.get(workflowPath);
   if (!allowedEvents || !allowedEvents.has(requiredString(run.event, 'resume origin event'))) {
     throw new Error('[release] resume origin event is not supported for the expected workflow');
   }
@@ -246,16 +249,35 @@ export function inspectReleaseResumeOrigin(input) {
     throw new Error('[release] resume origin URL does not bind the expected repository and run ID');
   }
 
-  const matches = flattenArtifacts(input.artifacts)
-    .map((entry) => asRecord(entry, 'artifact'))
-    .filter((artifact) => artifact.name === statusArtifactName);
+  const artifacts = flattenArtifacts(input.artifacts).map((entry) => asRecord(entry, 'artifact'));
+  let statusArtifactName = input.expected.statusArtifactName
+    ? requiredString(input.expected.statusArtifactName, 'expected status artifact name') : '';
+  if (!statusArtifactName) {
+    if (workflowPath === '.github/workflows/release-preview-and-production.yml') {
+      statusArtifactName = input.expected.channel === 'preview' && artifacts.some(artifact => artifact.name === 'happier-release-status-preview')
+        ? 'happier-release-status-preview' : 'happier-release-status';
+    } else {
+      const scoped = workflowPath === '.github/workflows/release.yml'
+        && artifacts.some(artifact => ['happier-release-status-preview', 'happier-release-status-production'].includes(String(artifact.name)));
+      if (scoped && artifacts.some(artifact => artifact.name === 'happier-release-status')) {
+        throw new Error('[release] resume status artifact topology is ambiguous');
+      }
+      statusArtifactName = scoped ? `happier-release-status-${input.expected.channel}` : 'happier-release-status';
+    }
+  }
+  if (statusArtifactName !== 'happier-release-status'
+    && (!['preview', 'production'].includes(input.expected.channel)
+      || statusArtifactName !== `happier-release-status-${input.expected.channel}`)) {
+    throw new Error('[release] resume status artifact name must match the requested channel');
+  }
+  const matches = artifacts.filter(artifact => artifact.name === statusArtifactName);
   if (matches.length !== 1) {
     throw new Error(`[release] resume origin must contain exactly one ${statusArtifactName} artifact`);
   }
   const artifact = matches[0];
   if (artifact.expired !== false) throw new Error('[release] resume status artifact is expired');
   const admitted = inspectReleaseResumeArtifact(artifact, runId, workflowSha);
-  return { artifactDigest: admitted.digest, artifactId: admitted.id, workflowSha };
+  return { artifactDigest: admitted.digest, artifactId: admitted.id, workflowSha, workflowPath, statusArtifactName };
 }
 
 /**
@@ -439,8 +461,8 @@ export function resolveReleaseResume(input) {
     sourceSha: statusSourceSha,
     uiCompleted: resolveUiFlowCompletion(input.jobs, {
       runId: Number(originRun.id), workflowSha: inspected.workflowSha, sourceSha: statusSourceSha,
-      expectedSourceSha: input.expected.sourceSha, operationId: expectedOperationId, workflowPath: input.expected.workflowPath,
-      channel: input.expected.channel, requested: requested.deployUi, expoAction: resumeInputs.deployUi.expoAction,
+      expectedSourceSha: input.expected.sourceSha, operationId: expectedOperationId, workflowPath: inspected.workflowPath,
+      channel: input.expected.channel, statusArtifactName: inspected.statusArtifactName, requested: requested.deployUi, expoAction: resumeInputs.deployUi.expoAction,
     }),
     ...(input.expected.workflowPath === '.github/workflows/nightly-dev.yml' || (requested.deployUi && resumeInputs.deployUi.desktopMode !== 'none')
       ? { desktop: resolveDesktopArtifacts(input.artifacts, originRun, inspected.workflowSha, input.expected.channel,
@@ -482,7 +504,7 @@ export async function main(argv = process.argv.slice(2)) {
       'expected-channel': { type: 'string' },
       'expected-source-sha': { type: 'string', default: '' },
       'expected-operation-id': { type: 'string', default: '' },
-      'status-artifact-name': { type: 'string', default: 'happier-release-status' },
+      'status-artifact-name': { type: 'string', default: '' },
       'github-output': { type: 'string' },
     },
     allowPositionals: false,
@@ -505,7 +527,7 @@ export async function main(argv = process.argv.slice(2)) {
     channel: String(values['expected-channel'] ?? ''),
     sourceSha: String(values['expected-source-sha'] ?? ''),
     operationId: String(values['expected-operation-id'] ?? ''),
-    statusArtifactName: String(values['status-artifact-name'] ?? 'happier-release-status'),
+    statusArtifactName: String(values['status-artifact-name'] ?? ''),
   };
   const outputPath = String(values['github-output'] ?? '');
   if (!outputPath) throw new Error('[release] --github-output is required');

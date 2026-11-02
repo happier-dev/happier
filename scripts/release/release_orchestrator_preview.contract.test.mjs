@@ -19,7 +19,7 @@ async function loadFile(rel) {
 }
 
 test('release workflow only promotes and publishes the exact prepared candidate source', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
 
   // If CI gate fails, checks is skipped; downstream must not treat that as OK to promote/deploy.
   assert.doesNotMatch(
@@ -47,7 +47,7 @@ test('release workflow only promotes and publishes the exact prepared candidate 
   assert.equal(validateReleaseDispatch({ ...previewDispatch, confirm: 'release dev to preview' }).mode, 'preview_release');
   assert.throws(
     () => validateReleaseDispatch({ ...previewDispatch, confirm: 'release dev to main' }),
-    /Confirmation mismatch for preview releases/u,
+    /Confirmation mismatch/u,
   );
 
   assert.match(raw, /source_ref:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
@@ -64,7 +64,7 @@ test('release workflow only promotes and publishes the exact prepared candidate 
 });
 
 test('release workflow publishes server runner only when explicitly requested', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
 
   // Server runner publishing must be an explicit target so server deploy remains independent.
   // The logic lives in the shared pipeline script (not inline bash).
@@ -99,10 +99,10 @@ test('release workflow publishes server runner only when explicitly requested', 
 });
 
 test('release workflow accepts the public validation profile and routes its automatic suites', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
   const workflow = parse(raw);
-  const validationProfile = workflow?.on?.workflow_dispatch?.inputs?.validation_profile;
-  const candidateVerifier = workflow?.jobs?.verify_release_candidates;
+  const validationProfile = parse(await loadWorkflow('release.yml')).on.workflow_dispatch.inputs.validation_profile;
+  const candidateVerifier = workflow?.jobs?.verify_cli_candidate;
 
   assert.equal(validationProfile?.type, 'choice');
   assert.equal(validationProfile?.default, 'integrated');
@@ -118,12 +118,12 @@ test('release workflow accepts the public validation profile and routes its auto
 
 test('release workflow fans a versioned Stack target through immutable publication, grouped verification, promotion, npm, and core signoff', async () => {
   const [raw, verifierRaw] = await Promise.all([
-    loadWorkflow('release.yml'),
+    loadWorkflow('release-channel.yml'),
     loadWorkflow('release-verify.yml'),
   ]);
   const jobs = parse(raw)?.jobs ?? {};
   const publisher = jobs.publish_hstack_binaries;
-  const candidateVerifier = jobs.verify_release_candidates;
+  const candidateVerifier = jobs.verify_stack_candidate;
   const promoter = jobs.promote_hstack_binaries;
   const npm = jobs.publish_npm;
   const finalVerifier = jobs.release_verify;
@@ -136,12 +136,13 @@ test('release workflow fans a versioned Stack target through immutable publicati
 
   assert.ok(candidateVerifier?.needs?.includes('publish_hstack_binaries'));
   assert.match(String(candidateVerifier?.with?.candidate_stack_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
-  assert.match(String(candidateVerifier?.with?.verify_stack_release ?? ''), /needs\.publish_hstack_binaries\.result == 'success'/);
+  assert.equal(candidateVerifier?.with?.verify_stack_release, true);
+  assert.match(String(candidateVerifier?.if ?? ''), /needs\.publish_hstack_binaries\.result == 'success'/);
 
   assert.equal(promoter?.uses, './.github/workflows/publish-hstack-binaries.yml');
-  assert.ok(promoter?.needs?.includes('verify_release_candidates'));
+  assert.ok(promoter?.needs?.includes('verify_stack_candidate'));
   assert.ok(promoter?.needs?.includes('publish_hstack_binaries'));
-  assert.match(String(promoter?.if ?? ''), /needs\.verify_release_candidates\.result == 'success'/);
+  assert.match(String(promoter?.if ?? ''), /needs\.verify_stack_candidate\.result == 'success'/);
   assert.match(String(promoter?.with?.retry_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
 
   assert.match(String(npm?.if ?? ''), /needs\.plan\.outputs\.publish_npm_needed == 'true'/);
@@ -153,7 +154,7 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.equal(npm?.with?.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
   assert.equal(npm?.with?.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
 
-  assert.equal(finalVerifier?.needs?.includes('publish_hstack_binaries'), false);
+  assert.ok(finalVerifier?.needs?.includes('publish_hstack_binaries'));
   assert.ok(finalVerifier?.needs?.includes('verify_release_candidates'));
   assert.ok(finalVerifier?.needs?.includes('promote_hstack_binaries'));
   assert.match(String(finalVerifier?.if ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
@@ -168,7 +169,7 @@ test('release workflow fans a versioned Stack target through immutable publicati
 });
 
 test('release workflow can publish self-host UI web bundle via a dedicated workflow', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
   assert.match(
     raw,
     /publish_ui_web:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-ui-web\.yml/,
@@ -192,7 +193,7 @@ test('release workflow can publish self-host UI web bundle via a dedicated workf
 });
 
 test('release workflow routes docker publishing through stable for production and preview for preview', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
   assert.match(
     raw,
     /publish_docker:[\s\S]*?channel:\s*\$\{\{\s*inputs\.environment == 'production' && 'stable' \|\| 'preview'\s*\}\}/,
@@ -206,7 +207,7 @@ test('release workflow routes docker publishing through stable for production an
 });
 
 test('release workflow delegates deploy plan computation to pipeline script', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
 
   assert.match(
     raw,
@@ -222,7 +223,7 @@ test('release workflow delegates deploy plan computation to pipeline script', as
 });
 
 test('release workflows do not embed invalid JS escaping in node -p/-e snippets', async () => {
-  const release = await loadWorkflow('release.yml');
+  const release = await loadWorkflow('release-channel.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
   const promoteServer = await loadWorkflow('promote-server.yml');
 
@@ -326,9 +327,14 @@ test('release-npm reuses caller-bound candidate versions instead of allocating r
 });
 
 test('final release workflows only consume already-materialized version bumps', async () => {
-  const orchestrator = await loadWorkflow('release.yml');
+  const orchestrator = await loadWorkflow('release-channel.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
   const workflow = parse(orchestrator);
+
+  for (const event of ['workflow_dispatch', 'workflow_call']) {
+    assert.equal(workflow.on[event]?.inputs.qualified_v4_activation_approval, undefined,
+      '0.2 release ingress must not advertise an unsupported activation');
+  }
 
   assert.equal(
     workflow?.on?.workflow_dispatch?.inputs?.bump,
@@ -430,7 +436,7 @@ test('promote-ui prepares OTA bytes without secrets and publishes the exact boun
 });
 
 test('release workflow lets promote-ui derive exact-candidate Expo notes from the approved release ID', async () => {
-  const raw = await loadWorkflow('release.yml');
+  const raw = await loadWorkflow('release-channel.yml');
   const workflow = parse(raw);
   assert.equal(workflow?.on?.workflow_dispatch?.inputs?.release_message, undefined, 'release.yml must not accept operator-authored release notes');
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);

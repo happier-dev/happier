@@ -16,5 +16,5 @@ export function buildRollingReleaseEditArgs(input) {
   if (!tag) throw new Error('tag is required');
   if (!title) throw new Error('title is required');
 
-  return ['release', 'edit', tag, '--title', title, '--notes', notes];
+  return ['release', 'edit', tag, '--latest=false', '--title', title, '--notes', notes];
 }

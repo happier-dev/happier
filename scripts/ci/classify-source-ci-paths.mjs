@@ -4,16 +4,42 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 import { collectInternalWorkspaceDependencyNames } from '../../apps/stack/scripts/utils/proc/workspace_dependencies.mjs';
 import { buildReleaseNotesBundle } from '../pipeline/release/release-notes/project-release-notes.mjs';
 import { DEFAULT_RELEASE_CI_LANES, verifyCanonicalCiEvidence } from '../pipeline/release/verify-existing-ci.mjs';
 
+// Narrow outputs of bump-version.mjs and npm/set-preview-versions.mjs, not a
+// package.json exemption. Dependency, script, native and runtime fields stay source.
+const MATERIALIZED_VERSION_FILES = new Set([
+  'apps/ui/package.json', 'apps/cli/package.json', 'apps/server/package.json',
+  'apps/website/package.json', 'apps/stack/package.json', 'packages/relay-server/package.json',
+  'apps/ui/src-tauri/tauri.conf.json',
+]);
+
+/** @param {{path: string; before: string; after: string}} input */
+export function isReleaseMetadataOnlyChange({ path, before, after }) {
+  if (path === 'apps/ui/CHANGELOG.md') return true;
+  if (!MATERIALIZED_VERSION_FILES.has(path)) return false;
+  try {
+    const previous = JSON.parse(before);
+    const next = JSON.parse(after);
+    if (!previous || !next || Array.isArray(previous) || Array.isArray(next)
+      || typeof previous.version !== 'string' || !previous.version.trim()
+      || typeof next.version !== 'string' || !next.version.trim()) return false;
+    const { version: previousVersion, ...previousSource } = previous;
+    const { version: nextVersion, ...nextSource } = next;
+    return isDeepStrictEqual(previousSource, nextSource);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The shortcut covers editorial source only, never version/generated runtime inputs.
- * A new exact-head CI run validates projections and an unchanged, fully checked source.
+ * The shortcut covers approved notes and materialized version fields only.
+ * Exact-head CI still owns projections and versioned production build validation.
  * Missing baseline evidence leaves the ordinary complete push lane selection in force.
  * @param {{repoRoot: string; repository: string; sourceBranch: string; baseSha: string; sourceSha: string}} input
  */
@@ -32,7 +58,25 @@ export async function resolveNotesOnlySourceCi(input) {
     return broad;
   }
   const paths = git('diff', '--name-only', '-z', input.baseSha, input.sourceSha).split('\0').filter(Boolean);
-  if (paths.length === 0 || paths.some((path) => path !== 'apps/ui/CHANGELOG.md')) return broad;
+  if (paths.length === 0) return broad;
+  try {
+    for (const path of paths) {
+      if (path === 'apps/ui/CHANGELOG.md') continue;
+      if (!isReleaseMetadataOnlyChange({
+        path,
+        before: git('show', `${input.baseSha}:${path}`),
+        after: git('show', `${input.sourceSha}:${path}`),
+      })) return broad;
+    }
+    if (paths.includes('apps/ui/src-tauri/tauri.conf.json')) {
+      const tauri = JSON.parse(git('show', `${input.sourceSha}:apps/ui/src-tauri/tauri.conf.json`));
+      const ui = JSON.parse(git('show', `${input.sourceSha}:apps/ui/package.json`));
+      if (tauri.version !== ui.version) return broad;
+    }
+  } catch {
+    // Missing/removed manifests cannot establish unchanged executable source.
+    return broad;
+  }
   const changelog = git('show', `${input.sourceSha}:apps/ui/CHANGELOG.md`);
   const releaseIds = [...changelog.matchAll(/^## Release ([a-z0-9][a-z0-9._-]*) - \d{4}-\d{2}-\d{2}$/gmu)].map((match) => match[1]);
   if (releaseIds.length === 0) throw new Error('Notes-only source has no canonical release-note section');

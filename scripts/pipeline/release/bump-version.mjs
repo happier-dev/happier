@@ -1,217 +1,82 @@
 #!/usr/bin/env node
 // @ts-check
-/**
- * Bump versions for independent components.
- *
- * CI-oriented behavior:
- * - Updates versions on the currently checked-out branch (typically main),
- * - so workflows can then promote that commit to deploy branches.
- *
- * Supported:
- * - --component app|cli|server|website|stack (required)
- * - --bump none|patch|minor|major (required)
- *
- * For "app", this updates:
- * - apps/ui/package.json version
- * - apps/ui/app.config.js expo.version only when the config still uses a legacy string literal
- * - apps/ui/src-tauri/*.json (if present) top-level "version"
- */
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
-function parseArgs(argv) {
-  const out = new Map();
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith('--')) continue;
-    const v = argv[i + 1];
-    if (v && !v.startsWith('--')) {
-      out.set(a, v);
-      i++;
-    } else {
-      out.set(a, 'true');
+// This writer owns component version paths, including lockstep packages.
+export const componentVersionDirectories = Object.freeze({
+  app: 'apps/ui', cli: 'apps/cli', server: 'apps/server',
+  website: 'apps/website', stack: 'apps/stack',
+});
+
+export function validateExactVersion(version) {
+  if (typeof version !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.test(version)) {
+    throw new Error(`Invalid exact semver "${version}"`);
+  }
+  return version;
+}
+
+/** Plan before writing so batch callers can reject conflicting source/index changes first.
+ * @param {{repoRoot: string, component: string, version?: string, bump?: string, source?: {readFile: (name: string) => string, exists: (name: string) => boolean, listDirectory: (name: string) => string[]}}} input
+ */
+export function planComponentVersion({ repoRoot, component, version, bump, source = {
+  readFile: (name) => fs.readFileSync(path.join(repoRoot, name), 'utf8'),
+  exists: (name) => fs.existsSync(path.join(repoRoot, name)),
+  listDirectory: (name) => fs.readdirSync(path.join(repoRoot, name)),
+} }) {
+  if (!Object.hasOwn(componentVersionDirectories, component)) throw new Error(`--component must be one of: ${Object.keys(componentVersionDirectories).join(', ')}`);
+  if ((version === undefined) === (bump === undefined)) throw new Error('Specify exactly one of --version or --bump.');
+  if (bump !== undefined && !['none', 'patch', 'minor', 'major'].includes(bump)) throw new Error('--bump must be one of: none, patch, minor, major');
+  const dir = componentVersionDirectories[component];
+  if (!source.exists(dir)) throw new Error(`Missing component directory: ${dir}`);
+  if (bump === 'none') return { version: 'SKIP', changes: [] };
+  const read = source.readFile;
+  const packagePaths = [`${dir}/package.json`];
+  if (component === 'server') packagePaths.push('packages/relay-server/package.json');
+  if (component === 'plugin_sdk') packagePaths.push('packages/plugin-ui/package.json');
+  const packages = packagePaths.map((name) => ({ name, value: JSON.parse(read(name)) }));
+  const currentVersion = String(packages[0].value.version ?? '').trim();
+  if (!currentVersion) throw new Error(`Unable to determine current version for ${component}`);
+  if (packages.some(({ value }) => value.version !== currentVersion)) {
+    throw new Error(component === 'server' ? 'Server app and server runner versions must match.' : 'plugin-sdk and plugin-ui versions must match.');
+  }
+  let nextVersion = version;
+  if (version !== undefined) validateExactVersion(version);
+  else {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/u.exec(currentVersion);
+    if (!match) throw new Error(`Invalid semver "${currentVersion}"`);
+    const parts = match.slice(1).map(Number);
+    const index = { major: 0, minor: 1, patch: 2 }[bump];
+    parts[index] += 1;
+    for (let i = index + 1; i < parts.length; i++) parts[i] = 0;
+    nextVersion = parts.join('.');
+  }
+  const changes = packages.map(({ name, value }) => ({ path: name, content: `${JSON.stringify({ ...value, version: nextVersion }, null, 2)}\n` }));
+  if (component === 'app') {
+    const configPath = `${dir}/app.config.js`;
+    if (source.exists(configPath)) {
+      const config = read(configPath);
+      const pattern = /(\bversion\s*:\s*["'])([^"']+)(["'])/u;
+      if (pattern.test(config)) changes.push({ path: configPath, content: config.replace(pattern, `$1${nextVersion}$3`) });
+    }
+    const tauriDir = `${dir}/src-tauri`;
+    if (source.exists(tauriDir)) for (const name of source.listDirectory(tauriDir).filter((name) => name.endsWith('.json'))) {
+      const file = `${tauriDir}/${name}`;
+      const value = JSON.parse(read(file));
+      if (typeof value.version === 'string') changes.push({ path: file, content: `${JSON.stringify({ ...value, version: nextVersion }, null, 2)}\n` });
     }
   }
-  return out;
+  return { version: nextVersion, changes };
 }
 
-function fail(msg) {
-  process.stderr.write(`[bump-version] ${msg}\n`);
-  process.exit(1);
+function main() {
+  const { values } = parseArgs({ options: { component: { type: 'string' }, bump: { type: 'string' }, version: { type: 'string' } }, allowPositionals: false });
+  const plan = planComponentVersion({ repoRoot: process.cwd(), component: values.component ?? '', bump: values.bump, version: values.version });
+  for (const change of plan.changes) fs.writeFileSync(path.join(process.cwd(), change.path), change.content);
+  process.stdout.write(`${plan.version}\n`);
 }
-
-function normalizeSemverBase(raw) {
-  const s = String(raw ?? '').trim();
-  const m = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/.exec(s);
-  if (!m) return null;
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  try { main(); } catch (error) { process.stderr.write(`[bump-version] ${error.message}\n`); process.exitCode = 1; }
 }
-
-function bumpSemver(raw, bump) {
-  const base = normalizeSemverBase(raw);
-  if (!base) fail(`Invalid semver "${raw}"`);
-  const next = { ...base };
-  if (bump === 'major') {
-    next.major += 1;
-    next.minor = 0;
-    next.patch = 0;
-  } else if (bump === 'minor') {
-    next.minor += 1;
-    next.patch = 0;
-  } else if (bump === 'patch') {
-    next.patch += 1;
-  } else {
-    fail(`Unknown bump "${bump}"`);
-  }
-  return `${next.major}.${next.minor}.${next.patch}`;
-}
-
-function readJson(filePath) {
-  const raw = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(raw);
-}
-
-function writeJson(filePath, obj) {
-  fs.writeFileSync(filePath, `${JSON.stringify(obj, null, 2)}\n`);
-}
-
-function updatePackageJsonVersion(pkgDir, nextVersion) {
-  const pkgPath = path.join(pkgDir, 'package.json');
-  const pkg = readJson(pkgPath);
-  pkg.version = nextVersion;
-  writeJson(pkgPath, pkg);
-}
-
-function updateExpoAppConfigVersion(appDir, nextVersion) {
-  const filePath = path.join(appDir, 'app.config.js');
-  if (!fs.existsSync(filePath)) return;
-  const raw = fs.readFileSync(filePath, 'utf8');
-
-  const re = /(\bversion\s*:\s*["'])([^"']+)(["'])/;
-  const m = re.exec(raw);
-  if (!m) return;
-
-  const updated = raw.replace(re, `$1${nextVersion}$3`);
-  fs.writeFileSync(filePath, updated);
-}
-
-function updateTauriVersions(appDir, nextVersion) {
-  const tauriDir = path.join(appDir, 'src-tauri');
-  if (!fs.existsSync(tauriDir)) return;
-  const files = fs.readdirSync(tauriDir).filter((f) => f.endsWith('.json'));
-  for (const f of files) {
-    const p = path.join(tauriDir, f);
-    const obj = readJson(p);
-    if (typeof obj?.version === 'string') {
-      obj.version = nextVersion;
-      writeJson(p, obj);
-    }
-  }
-}
-
-function getAppCurrentVersion(appDir) {
-  const pkgPath = path.join(appDir, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    const pkg = readJson(pkgPath);
-    if (typeof pkg.version === 'string' && pkg.version.trim()) return pkg.version.trim();
-  }
-  const configPath = path.join(appDir, 'app.config.js');
-  if (fs.existsSync(configPath)) {
-    const raw = fs.readFileSync(configPath, 'utf8');
-    const re = /(\bversion\s*:\s*["'])([^"']+)(["'])/;
-    const m = re.exec(raw);
-    if (m) return m[2];
-  }
-  return null;
-}
-
-function resolveServerRunnerDir(repoRoot) {
-  const dir = path.join(repoRoot, 'packages', 'relay-server');
-  if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
-  return null;
-}
-
-  function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const component = String(args.get('--component') ?? '').trim();
-  const bump = String(args.get('--bump') ?? '').trim();
-
-    const repoRoot = process.cwd();
-    const componentDirByName = {
-      app: path.join(repoRoot, 'apps', 'ui'),
-      cli: path.join(repoRoot, 'apps', 'cli'),
-      server: path.join(repoRoot, 'apps', 'server'),
-      website: path.join(repoRoot, 'apps', 'website'),
-      stack: path.join(repoRoot, 'apps', 'stack'),
-    };
-
-  if (!component || !(component in componentDirByName)) {
-    fail(`--component must be one of: ${Object.keys(componentDirByName).join(', ')}`);
-  }
-  if (!bump || !['none', 'patch', 'minor', 'major'].includes(bump)) {
-    fail(`--bump must be one of: none, patch, minor, major`);
-  }
-
-    const dir = componentDirByName[component];
-    if (!fs.existsSync(dir)) fail(`Missing component directory: ${dir}`);
-
-    if (bump === 'none') {
-      process.stdout.write(`SKIP\n`);
-      return;
-    }
-
-    let currentVersion = null;
-    let serverRunnerDir = null;
-		    if (component === 'app') {
-		      currentVersion = getAppCurrentVersion(dir);
-		      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
-			    } else if (component === 'server') {
-			      const appPkgPath = path.join(dir, 'package.json');
-			      const appPkg = readJson(appPkgPath);
-			      const appVersion = String(appPkg.version ?? '').trim();
-			      if (!appVersion) fail(`Unable to determine current version for ${component}`);
-
-						      // "Server runner" is the user-facing installable that downloads/verifies the
-						      // correct server binary for the platform.
-						      serverRunnerDir = resolveServerRunnerDir(repoRoot);
-			      if (!serverRunnerDir) {
-				        fail(`Missing server runner package.json (expected packages/relay-server/package.json).`);
-			      }
-              const runnerRel = path.relative(repoRoot, serverRunnerDir);
-				      const runnerPkg = readJson(path.join(serverRunnerDir, 'package.json'));
-				      const runnerVersion = String(runnerPkg.version ?? '').trim();
-				      if (!runnerVersion) fail(`Unable to determine server runner version for ${runnerRel}`);
-
-					      if (appVersion !== runnerVersion) {
-					        fail(`Server app and server runner versions must match (apps/server=${appVersion}, ${runnerRel}=${runnerVersion}).`);
-					      }
-					      currentVersion = appVersion;
-				    } else {
-		      const pkg = readJson(path.join(dir, 'package.json'));
-		      currentVersion = String(pkg.version ?? '').trim() || null;
-		      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
-	    }
-
-    const nextVersion = bumpSemver(currentVersion, bump);
-
-			    if (component === 'app') {
-			      updatePackageJsonVersion(dir, nextVersion);
-			      updateExpoAppConfigVersion(dir, nextVersion);
-			      updateTauriVersions(dir, nextVersion);
-				    } else if (component === 'server') {
-						      updatePackageJsonVersion(path.join(repoRoot, 'apps', 'server'), nextVersion);
-						      if (!serverRunnerDir) {
-						        serverRunnerDir = resolveServerRunnerDir(repoRoot);
-						      }
-							      if (!serverRunnerDir) {
-							        fail(`Missing server runner package.json (expected packages/relay-server/package.json).`);
-							      }
-						      updatePackageJsonVersion(serverRunnerDir, nextVersion);
-				    } else {
-				      updatePackageJsonVersion(dir, nextVersion);
-				    }
-
-  process.stdout.write(`${nextVersion}\n`);
-}
-
-main();

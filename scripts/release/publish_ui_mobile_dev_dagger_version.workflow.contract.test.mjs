@@ -32,5 +32,5 @@ test('dev APK publishing uses a fresh write-scoped App token after the native bu
   assert.equal(publish.env.GH_TOKEN, '${{ steps.apk_token.outputs.token }}');
   assert.match(publish.run, /scripts\/pipeline\/expo\/publish-apk-release\.mjs/);
   assert.match(publish.run, /--target-sha "\$AUTHORIZED_SHA"/);
-  assert.match(publish.run, /--release-message "\$RELEASE_MESSAGE"/);
+  assert.match(publish.run, /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
 });

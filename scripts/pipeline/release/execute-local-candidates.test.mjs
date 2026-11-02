@@ -41,7 +41,7 @@ test('local candidate execution uses the same immutable, verification, and rolli
   assert.ok(commands.every((command) => command.args.includes(SHA)));
   assert.deepEqual(
     commands.slice(0, 2).map((command) => command.args.slice(command.args.indexOf('--run-contracts') + 1)[0]),
-    ['true', 'false'],
+    ['auto', 'auto'],
     'shared release contracts should run once per local batch rather than once per product',
   );
 });
@@ -81,4 +81,26 @@ test('local candidate execution rejects ambiguous or unsupported candidate input
     phase: 'all',
     releaseMessage: '',
   }), /full lowercase commit/);
+});
+
+
+test('local batch projects source-contract success only after its first immutable publisher succeeds', async (t) => {
+  const cp = await import('node:child_process');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { main } = await import('./execute-local-candidates.mjs');
+  const admitted = [];
+  t.mock.method(cp.default, 'execFileSync', (_exe, _args, options) => {
+    admitted.push(options.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  t.mock.method(console, 'log', () => {});
+  const previous = process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT;
+  delete process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT;
+  t.after(() => { if (previous === undefined) delete process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT; else process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT = previous; });
+  main(['--channel', 'preview', '--source-sha', SHA, '--repository', 'happier-dev/happier',
+    '--candidates', 'cli=1.2.3-preview.4,server=2.3.4-preview.5', '--phase', 'publish-immutable',
+    '--confirm', 'execute local release candidates']);
+  assert.deepEqual(admitted, [undefined, 'success']);
+  assert.equal(process.env.HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT, undefined);
 });

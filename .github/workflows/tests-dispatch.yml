@@ -95,7 +95,7 @@ permissions:
 jobs:
   resolve:
     name: Resolve flags
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}
@@ -152,7 +152,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -169,7 +169,7 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   trusted_ref_guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref

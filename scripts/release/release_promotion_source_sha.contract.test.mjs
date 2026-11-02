@@ -14,6 +14,22 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const pipelineCli = resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs');
 
+test('legacy 0.2 callers cannot activate Qualified V4 through the local release command', () => {
+  const stub = createReleaseCliDryRunEnv();
+  try {
+    const result = spawnSync(process.execPath, [
+      pipelineCli, 'release', '--confirm', 'release dev to preview',
+      '--repository', 'happier-dev/happier', '--deploy-environment', 'preview',
+      '--qualified-v4-activation-approval', 'true', '--dry-run', '--json',
+    ], { cwd: repoRoot, env: stub.env, encoding: 'utf8', timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /not supported by this release line/);
+    assert.equal(result.stdout, '');
+  } finally {
+    stub.cleanup();
+  }
+});
+
 test('release dry-run JSON resolves the actual promotion source independently of workflow-control HEAD', () => {
   const stub = createReleaseCliDryRunEnv();
   try {
@@ -46,7 +62,9 @@ test('release dry-run JSON resolves the actual promotion source independently of
       },
     );
 
-    assert.deepEqual(JSON.parse(raw), {
+    const { hostedDispatch, ...semanticPlan } = JSON.parse(raw);
+    assert.equal(hostedDispatch.ref, 'dev');
+    assert.deepEqual(semanticPlan, {
       kind: 'happier.release-dispatch-plan.v3',
       schemaVersion: 3,
       sourceBranch: 'preview',
@@ -100,7 +118,9 @@ test('release dry-run JSON records an explicit production reset without changing
         timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
       },
     );
-    assert.deepEqual(JSON.parse(raw), {
+    const { hostedDispatch, ...semanticPlan } = JSON.parse(raw);
+    assert.equal(hostedDispatch.ref, 'dev');
+    assert.deepEqual(semanticPlan, {
       kind: 'happier.release-dispatch-plan.v3',
       schemaVersion: 3,
       sourceBranch: 'preview',
@@ -260,8 +280,8 @@ test('new combined release plans stay at an explicitly selected candidate after 
 });
 
 test('both release snapshot paths bind issue eligibility to the cumulative candidate before promotion', async () => {
-  const single = parse(await readFile(resolve(repoRoot, '.github/workflows/release.yml'), 'utf8'));
-  const combined = parse(await readFile(resolve(repoRoot, '.github/workflows/release-preview-and-production.yml'), 'utf8'));
+  const single = parse(await readFile(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
+  const combined = parse(await readFile(resolve(repoRoot, '.github/workflows/release.yml'), 'utf8'));
   const snapshot = single.jobs.snapshot_release_issues;
   assert.ok(snapshot.needs.includes('release_preflight'));
   const step = snapshot.steps.find((item) => item.id === 'snapshot');
@@ -277,7 +297,7 @@ test('both release snapshot paths bind issue eligibility to the cumulative candi
 });
 
 test('only development synchronization may retain a target already containing the release candidate', async () => {
-  const release = parse(await readFile(resolve(repoRoot, '.github/workflows/release.yml'), 'utf8'));
+  const release = parse(await readFile(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
   const promote = parse(await readFile(resolve(repoRoot, '.github/workflows/promote-branch.yml'), 'utf8'));
   assert.equal(release.jobs.sync_dev.with.preserve_target_descendant, true);
   for (const job of [release.jobs.promote_main, release.jobs.promote_preview]) {
@@ -300,11 +320,12 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /RELEASE_NOTES_ID:\s*\$\{\{ inputs\.release_notes_id \}\}/);
   assert.match(raw, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
   assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
+  const channelRaw = await readFile(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8');
   assert.match(
-    raw,
+    channelRaw,
     /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ needs\.release_preflight\.outputs\.source_sha \}\}/,
   );
-  assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
-  assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
-  assert.match(raw, /sync_dev:[\s\S]*?source_sha: \$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
+  assert.match(channelRaw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
+  assert.match(channelRaw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
+  assert.match(channelRaw, /sync_dev:[\s\S]*?source_sha: \$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/);
 });

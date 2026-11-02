@@ -245,7 +245,7 @@ test('standalone publishers pass all workflow and malicious free-form payloads t
     assert.ok(releaseMessageSteps.length > 0);
     for (const step of releaseMessageSteps) {
       assert.equal(step.env?.RELEASE_MESSAGE, '${{ inputs.release_message }}');
-      assert.match(String(step.run), /--release-message \"\$RELEASE_MESSAGE\"/);
+      assert.match(String(step.run), /--release-message(?:=|\s+)"\$RELEASE_MESSAGE"/);
     }
     assert.ok(sourceRefSteps.some((step) => step.env?.SOURCE_REF), `${workflowName} must bind source_ref through env`);
   }

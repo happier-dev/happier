@@ -11,4 +11,5 @@ test('rolling release edit args do not set target commitish', () => {
   });
   assert.deepEqual(args.slice(0, 3), ['release', 'edit', 'cli-preview']);
   assert.doesNotMatch(args.join(' '), /\s--target\s/);
+  assert.ok(args.includes('--latest=false'), 'rolling edits cannot select Latest before channel promotion');
 });

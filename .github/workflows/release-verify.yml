@@ -47,6 +47,10 @@ on:
         type: string
   workflow_call:
     inputs:
+      source_binary_smoke_validated:
+        required: false
+        default: false
+        type: boolean
       channel:
         required: true
         type: string
@@ -111,15 +115,11 @@ permissions:
   contents: read
   actions: read
 
-concurrency:
-  group: release-verify-${{ inputs.channel }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   verify_candidate:
     name: Verify exact immutable candidate artifacts
     if: ${{ inputs.candidate_source_sha != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout trusted workflow control bytes
@@ -213,7 +213,7 @@ jobs:
 
   resolve_validation_profile:
     name: Resolve bounded validation profile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -244,6 +244,7 @@ jobs:
       - name: Resolve candidate-applicable validation suites
         id: profile
         env:
+          SOURCE_BINARY_SMOKE_VALIDATED: ${{ inputs.source_binary_smoke_validated }}
           VALIDATION_PROFILE: ${{ inputs.validation_profile }}
           INCLUDE_VALIDATION_SUITES: ${{ inputs.include_validation_suites }}
           WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
@@ -257,6 +258,7 @@ jobs:
           set -euo pipefail
           node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release-validation/resolve-validation-plan.mjs" \
             --profile "$VALIDATION_PROFILE" \
+            --source-binary-smoke-validated "$SOURCE_BINARY_SMOKE_VALIDATED" \
             --has-cli-candidate "$([[ -n "$CANDIDATE_CLI_VERSION" ]] && echo true || echo false)" \
             --has-server-candidate "$([[ -n "$CANDIDATE_SERVER_VERSION" ]] && echo true || echo false)" \
             --has-published-relay-predecessor "$([[ "$RELEASE_CHANNEL" == preview || "$RELEASE_CHANNEL" == production ]] && echo true || echo false)" \

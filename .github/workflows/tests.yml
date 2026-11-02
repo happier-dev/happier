@@ -9,6 +9,8 @@ on:
       - dev
       - preview
       - main
+  schedule:
+    - cron: "43 1 * * *"
   workflow_call:
     inputs:
       select_jobs_explicitly:
@@ -221,11 +223,14 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      # Pushes cover the complete head. The canonical planner alone admits an editorial-only
-      # delta after checking its exact full-source baseline and the final note projections.
+      run_self_host_schtasks: ${{ steps.pre_release.outputs.run_self_host_schtasks }}
+      run_packaged_cli: ${{ steps.pre_release.outputs.run_packaged_cli }}
+      run_mobile_native: ${{ steps.pre_release.outputs.run_mobile_native }}
+      # The planner alone admits notes/version deltas against an exact full-source
+      # baseline. The child still validates note projections and production builds.
       notes_only: ${{ steps.notes.outputs.notes_only }}
       notes_base_sha: ${{ steps.notes.outputs.notes_base_sha }}
       notes_base_run_id: ${{ steps.notes.outputs.notes_base_run_id }}
@@ -234,7 +239,7 @@ jobs:
       run_cli: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' || steps.unmatched.outputs.cli == 'true' ) }}
       run_stack: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' || steps.unmatched.outputs.stack == 'true' ) }}
       run_shared_packages: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' ) }}
-      run_build_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' ) }}
+      run_build_smoke: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' }}
       run_ui_e2e: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' ) }}
       run_network_transfer: ${{ steps.notes.outputs.notes_only != 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.network_transfer == 'true'))) }}
       run_server_db_contract: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' ) }}
@@ -249,8 +254,15 @@ jobs:
         if: ${{ !inputs.select_jobs_explicitly }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Setup Node
+        if: ${{ !inputs.select_jobs_explicitly }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
 
       - name: Classify affected source-CI lanes once
         id: changes
@@ -400,7 +412,7 @@ jobs:
           CLASSIFIED_PATHS_TYPECHECK: ${{ steps.changes.outputs.typecheck_files }}
         run: node scripts/ci/classify-source-ci-paths.mjs --github-output "$GITHUB_OUTPUT"
 
-      - name: Validate editorial-only source against its exact checked baseline
+      - name: Validate notes and version metadata against the exact checked baseline
         id: notes
         if: ${{ !inputs.select_jobs_explicitly && github.event_name == 'push' }}
         env:
@@ -413,6 +425,14 @@ jobs:
           if grep -q '^notes_only=true$' "$GITHUB_OUTPUT"; then
             node --test scripts/release/release_notes_projection.contract.test.mjs
           fi
+
+      - name: Select release-only checks before publication
+        id: pre_release
+        if: ${{ !inputs.select_jobs_explicitly }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_PATHS_JSON: ${{ steps.changes.outputs.changed_files || '[]' }}
+        run: node scripts/pipeline/release/resolve-source-validation-plan.mjs --pre-release-checks
 
   build-windows-service-launcher:
     # Windows x64 CLI payloads carry the native service launcher, which only an MSVC host can
@@ -708,7 +728,7 @@ jobs:
     # Native E2E is intentionally opt-in for now (not a PR check).
     if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_android }}
     name: Mobile E2E (Maestro) (android) (opt-in)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -753,7 +773,7 @@ jobs:
     # Native E2E is intentionally opt-in for now (not a PR check).
     if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_ios }}
     name: Mobile E2E (Maestro) (ios) (opt-in)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -1345,6 +1365,14 @@ jobs:
     name: Release Contracts
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 20
+    outputs:
+      source_suite: release-contracts
+      source_profile: ${{ github.ref_name == 'main' && 'stable' || 'integrated' }}
+      source_policy: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+      source_sha: ${{ github.sha }}
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.select_jobs_explicitly && inputs.installers_channel == 'stable' || !inputs.select_jobs_explicitly && github.ref_name == 'main') && 'production' || 'preview' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1391,7 +1419,7 @@ jobs:
     if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
     needs: [ci_plan, build-cli]
     name: Installer Smoke (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
@@ -1453,7 +1481,7 @@ jobs:
     if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
     needs: [ci_plan, build-cli]
     name: Installer Smoke (macOS)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 25
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
@@ -1515,7 +1543,7 @@ jobs:
     if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
     needs: [ci_plan, build-cli]
     name: Installer Smoke (Windows)
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     env:
       INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
@@ -1590,7 +1618,14 @@ jobs:
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
     env:
+      HAPPIER_EMBEDDED_POLICY_ENV: preview
       HAPPIER_CLI_TEST_SKIP_BUILD: "1"
+    outputs:
+      source_suite: binary-smoke
+      source_profile: ${{ github.ref_name == 'main' && 'stable' || 'integrated' }}
+      source_policy: preview
+      source_sha: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1736,7 +1771,7 @@ jobs:
     name: Release Validation — CLI Update Continuity (Linux)
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       CLI_UPDATE_FROM_CHANNEL: ${{ inputs.installers_channel }}
@@ -1807,7 +1842,7 @@ jobs:
     if: ${{ inputs.run_daemon_continuity }}
     needs: [trusted_ref_guard]
     name: Release Validation — Daemon Continuity (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1867,7 +1902,7 @@ jobs:
     if: ${{ inputs.run_session_continuity }}
     needs: [trusted_ref_guard]
     name: Release Validation — Session Continuity (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1926,7 +1961,7 @@ jobs:
   release-assets-docker:
     if: ${{ inputs.select_jobs_explicitly && inputs.run_release_assets_docker }}
     name: Release Assets Docker (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1983,7 +2018,7 @@ jobs:
     if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_systemd }}
     needs: [trusted_ref_guard]
     name: Self-Host E2E (Linux systemd)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2031,7 +2066,7 @@ jobs:
     if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_launchd }}
     needs: [trusted_ref_guard]
     name: Self-Host E2E (macOS launchd)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2076,8 +2111,8 @@ jobs:
           node --test apps/stack/scripts/self_host_launchd.real.integration.test.mjs
 
   self-host-schtasks-e2e:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_schtasks }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_self_host_schtasks == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Self-Host E2E (Windows schtasks)
     runs-on: windows-2022
     timeout-minutes: 120
@@ -2085,7 +2120,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || (github.event_name == 'schedule' && 'dev' || github.sha) }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -2137,7 +2172,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -2274,7 +2309,7 @@ jobs:
     if: ${{ !cancelled() && needs.ci_plan.result == 'success' && needs.build-cli.result == 'success' && ((inputs.select_jobs_explicitly && inputs.run_cli_daemon_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli_daemon_e2e == 'true')) }}
     needs: [ci_plan, build-cli]
     name: CLI + Server (light/sqlite) E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       HAPPIER_CLI_TEST_SKIP_BUILD: "1"
@@ -2618,7 +2653,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
@@ -2678,7 +2713,7 @@ jobs:
           case "$RUNNER_POOL" in
             github)
               ubuntu_2204=ubuntu-22.04
-              ubuntu_2404=ubuntu-latest
+              ubuntu_2404=ubuntu-24.04
               ;;
             blacksmith-linux-4vcpu)
               ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
@@ -2704,7 +2739,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -2724,7 +2759,7 @@ jobs:
     needs: [release_actor_guard]
     if: ${{ inputs.select_jobs_explicitly && inputs.run_providers }}
     name: Providers (contract matrix)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: providers-ci
     timeout-minutes: 120
     steps:
@@ -2887,7 +2922,7 @@ jobs:
   stress:
     if: ${{ inputs.run_stress }}
     name: Stress (repeat/chaos)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2928,7 +2963,7 @@ jobs:
     name: ${{ matrix.name }}
     if: always()
     needs: [ci_plan, trusted_ref_guard, cli, ui-unit]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -2960,11 +2995,179 @@ jobs:
             exit 1
           fi
 
+  pre-release-packaged-cli:
+    name: Packaged CLI build and runtime smoke (${{ matrix.target }})
+    if: ${{ !inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_packaged_cli == 'true' }}
+    needs: [ci_plan]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          - target: windows-x64
+            runner: windows-2022
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+      HAPPIER_EMBEDDED_POLICY_ENV: preview
+      MINISIGN_SECRET_KEY: ""
+      MINISIGN_PASSPHRASE: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install dependencies
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-platform
+      - name: Compile Windows service launcher
+        if: matrix.target == 'windows-x64'
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Build packaged CLI for the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: node scripts/pipeline/release/build-cli-binaries.mjs --channel preview --targets "$CLI_TARGET"
+      - name: Execute every packaged CLI component on the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { smokeTestArchive } from './scripts/pipeline/release/verify-artifacts.mjs';
+          const root = 'dist/release-assets/cli';
+          const archives = (await readdir(root)).filter((name) => name.endsWith(`-${process.env.CLI_TARGET}.tar.gz`));
+          if (archives.length === 0) throw new Error('CLI build produced no archives for its native target');
+          for (const archive of archives) await smokeTestArchive({ archivePath: join(root, archive) });
+          NODE
+
+  pre-release-mobile-native:
+    name: Pre-release native compile (${{ matrix.platform }})
+    needs: [ci_plan]
+    if: ${{ !inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_mobile_native == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-24.04
+          - platform: ios
+            runner: macos-26
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+
+      - name: Load canonical native build environment
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { resolveEasBuildProfileEnv } from './scripts/pipeline/expo/resolve-eas-build-profile-env.mjs';
+          const env = resolveEasBuildProfileEnv({ easJsonPath: 'apps/ui/eas.json', profileId: 'preview' });
+          for (const [key, value] of Object.entries(env)) appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
+          NODE
+
+      - name: Select hosted Android Java toolchain
+        if: ${{ matrix.platform == 'android' }}
+        run: |
+          test -d "$JAVA_HOME_17_X64"
+          test -d "$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Xcode (pin)
+        if: ${{ matrix.platform == 'ios' }}
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
+
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Prepare UI workspaces
+        working-directory: apps/ui
+        run: node scripts/ensureWorkspacePackagesBuilt.mjs
+
+      - name: Generate native project
+        working-directory: apps/ui
+        run: yarn -s expo prebuild --platform ${{ matrix.platform }} --no-install
+
+      - name: Apply canonical native patches
+        working-directory: apps/ui
+        run: yarn -s eas-build-post-install
+
+      - name: Compile Android Debug
+        if: ${{ matrix.platform == 'android' }}
+        working-directory: apps/ui/android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Install iOS pods
+        if: ${{ matrix.platform == 'ios' }}
+        working-directory: apps/ui/ios
+        run: pod install
+
+      - name: Compile unsigned iOS simulator app
+        if: ${{ matrix.platform == 'ios' }}
+        working-directory: apps/ui
+        run: |
+          set -euo pipefail
+          workspaces=(ios/*.xcworkspace)
+          workspace="${workspaces[0]}"
+          scheme="$(basename "$workspace" .xcworkspace)"
+          xcodebuild -workspace "$workspace" -scheme "$scheme" \
+            -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/native-derived-data" \
+            build CODE_SIGNING_ALLOWED=NO
+
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
-    runs-on: ubuntu-latest
+    needs: [pre-release-packaged-cli, pre-release-mobile-native, ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -3047,6 +3250,9 @@ jobs:
             REQUEST_RUN_STRESS: ['stress'],
           };
           const classifierLaneGroups = {
+            run_self_host_schtasks: ['self-host-schtasks-e2e'],
+            run_packaged_cli: ['pre-release-packaged-cli'],
+            run_mobile_native: ['pre-release-mobile-native'],
             run_ui: ['ui-unit', 'ui-integration', 'ui'],
             run_shared_packages: ['shared-packages-unit'],
             run_server: ['server'],

@@ -128,7 +128,7 @@ for (const [name, buildJobs] of [
 
 test('nightly resume pins the prior source, reuses completed immutable candidates, and records future resume identities', () => {
   const parsed = workflow('nightly-dev.yml');
-  assert.ok(parsed.on.workflow_dispatch.inputs.resume_run_id);
+  assert.ok(workflow('release.yml').on.workflow_dispatch.inputs.resume_run_id);
   assert.equal(parsed.jobs.resolve_resume.uses, './.github/workflows/resolve-release-resume.yml');
   assert.equal(parsed.jobs.resolve_resume.with.expected_workflow, '.github/workflows/nightly-dev.yml');
   assert.equal(parsed.jobs.ui_desktop.with.resume_run_id, '${{ inputs.resume_run_id }}');
@@ -155,12 +155,10 @@ test('nightly resume pins the prior source, reuses completed immutable candidate
 });
 
 test('full release resume binds the prior run to the same operation and authorized source', () => {
-  const parsed = workflow('release.yml');
-  assert.ok(parsed.on.workflow_dispatch.inputs.resume_run_id);
+  const parsed = workflow('release-channel.yml');
+  assert.ok(workflow('release.yml').on.workflow_dispatch.inputs.resume_run_id);
   assert.equal(parsed.jobs.resolve_resume.uses, './.github/workflows/resolve-release-resume.yml');
   assert.equal(parsed.on.workflow_call.inputs.combined_preview_production.default, false);
-  assert.match(parsed.jobs.resolve_resume.with.expected_workflow, /combined_preview_production/);
-  assert.match(parsed.jobs.resolve_resume.with.expected_workflow, /release-preview-and-production\.yml/);
   assert.match(parsed.jobs.resolve_resume.with.expected_workflow, /release\.yml/);
   assert.equal(parsed.jobs.resolve_resume.with.expected_source_sha, '${{ inputs.authorized_promotion_source_sha }}');
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');
@@ -189,7 +187,7 @@ test('full release resume binds the prior run to the same operation and authoriz
   const statusProjection = parsed.jobs.release_status.steps.find((step) => String(step.name).includes('Project release status'));
   assert.match(statusProjection.run, /project-release-status\.mjs/);
   assert.equal(statusProjection.env.CLI_VERSION, '${{ needs.publish_cli_binaries.outputs.version }}');
-  assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
+  assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, "${{ needs.verify_cli_candidate.result == 'success' }}");
   assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.verify_release_candidates.result }}');
   assert.match(String(parsed.jobs.plan.outputs.publish_docker_needed), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
   assert.match(String(parsed.jobs.plan.outputs.publish_docker_relay_needed), /docker_requested == 'true' && needs\.resolve_resume\.outputs\.server_requested == 'true'/);
@@ -260,7 +258,7 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.match(String(statusProjection.env.DEPLOY_UI_RESUME_COMPLETE), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete/);
 });
 
-test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {
+test('nightly grouped verification independently certifies each successful immutable sibling for resume', () => {
   const verifier = workflow('verify-release-resume-candidates.yml');
   for (const output of ['cli_verified', 'stack_verified', 'server_verified', 'ui_web_verified']) {
     assert.ok(verifier.on.workflow_call.outputs[output], `missing per-product output ${output}`);
@@ -302,7 +300,6 @@ test('failed grouped verification independently certifies each successful immuta
 
   for (const [name, groupedJob, candidates] of [
     ['nightly-dev.yml', 'release_verify', ['cli', 'hstack', 'server_runtime', 'ui_web']],
-    ['release.yml', 'verify_release_candidates', ['publish_cli_binaries', 'publish_hstack_binaries', 'publish_server_runtime', 'publish_ui_web']],
   ]) {
     const parsed = workflow(name);
     const independent = parsed.jobs.verify_resume_candidates;
@@ -326,10 +323,10 @@ test('nightly-dev replaces its singleton status artifact safely on a GitHub reru
 });
 
 test('release.yml defaults its replaceable status artifact to the canonical name', () => {
-  const parsed = workflow('release.yml');
+  const parsed = workflow('release-channel.yml');
   assert.equal(parsed.on.workflow_call.inputs.combined_preview_production.default, false);
   const upload = parsed.jobs.release_status.steps.find(
-    (step) => String(step.with?.name).includes('happier-release-status-preview'),
+    (step) => String(step.with?.name).includes('happier-release-status-{0}'),
   );
   assert.ok(upload, 'release.yml must upload the selected release status artifact');
   assert.equal(upload.with.overwrite, true);

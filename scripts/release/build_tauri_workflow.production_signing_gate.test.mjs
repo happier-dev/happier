@@ -529,10 +529,10 @@ test('candidate code is isolated from Tauri and Apple private signing authority'
   ]));
   const source = 'a'.repeat(40);
   for (const [workflow, environment, operation, artifact] of [
-    ['release-preview-and-production.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['nightly-dev.yml', 'dev', '', 'happier-release-status'],
-    ['release.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['release-preview-and-production.yml', 'preview', 'rel_exact', 'happier-release-status-preview'],
+    ['release-preview-and-production.yml', 'production', 'rel_exact', ''],
+    ['nightly-dev.yml', 'dev', '', ''],
+    ['release.yml', 'production', 'rel_exact', ''],
+    ['release-preview-and-production.yml', 'preview', 'rel_exact', ''],
   ]) {
     assert.deepEqual(resolveInputs({ resume_run_id: '123', resume_workflow: workflow, resume_operation_id: operation, environment, source_ref: source }), {
       origin_run_id: '123', expected_workflow: `.github/workflows/${workflow}`, expected_channel: environment,

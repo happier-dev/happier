@@ -10,8 +10,8 @@ import { parse } from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-async function loadReleaseWorkflow() {
-  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+async function loadReleaseWorkflow(name = 'release.yml') {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
   return parse(raw);
 }
 
@@ -49,7 +49,7 @@ test('release actor guard loads its local action from trusted workflow control',
 });
 
 test('deploy planning keeps release source inert and executes trusted workflow control', async () => {
-  const workflow = await loadReleaseWorkflow();
+  const workflow = await loadReleaseWorkflow('release-channel.yml');
   const job = workflow.jobs.deploy_plan;
 
   assert.equal(job.environment, undefined, 'deploy planning must not request release-shared secrets');

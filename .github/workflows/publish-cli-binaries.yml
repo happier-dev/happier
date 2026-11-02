@@ -49,6 +49,10 @@ on:
         type: boolean
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         required: true
         type: string
@@ -92,10 +96,13 @@ concurrency:
   group: publish-cli-binaries-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -136,7 +143,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
       resume_version: ${{ steps.resume.outputs.resume_version }}
@@ -703,7 +710,7 @@ jobs:
     name: Recover rolling CLI projection
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: release-shared
     permissions:

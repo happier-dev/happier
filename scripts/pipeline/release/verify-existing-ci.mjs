@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { projectSourceSuiteReuse } from './source-suite-evidence.mjs';
 import { getPublicReleaseRingEntry } from './lib/public-release-rings.mjs';
 
 const CANONICAL_RELEASE_CI_WORKFLOW = 'tests.yml';
@@ -112,6 +113,9 @@ export function validateCiLaneSummary(summaryValue, expected) {
       || Object.keys(CLASSIFIED_CI_LANE_GROUPS).some((selection) => outputs[selection] !== 'false')) {
       throw new Error('CI notes-only source basis is invalid');
     }
+    if (outputs.run_build_smoke !== 'true' || lanes.get('build-smoke')?.result !== 'success') {
+      throw new Error('CI metadata child requires successful versioned build-smoke');
+    }
   }
   for (const laneId of notesOnly ? ['ci_plan', 'trusted_ref_guard'] : expected.requiredLanes) {
     if (lanes.get(laneId)?.result !== 'success') throw new Error(`CI lane summary required lane ${laneId} did not succeed`);
@@ -138,20 +142,22 @@ function runGh(args) {
 }
 
 /** Verify the existing exact-run artifact, without selecting a different source.
- * @param {{repository: string; sourceSha: string; sourceBranch: string; runId: string; requiredLanes: string[]; allowNotesOnly?: boolean}} expected
+ * @param {{repository: string; sourceSha: string; sourceBranch: string; runId: string; requiredLanes: string[]; allowNotesOnly?: boolean; sourceProfile?: string}} expected
  */
 export async function verifyCanonicalCiEvidence(expected) {
   const run = JSON.parse(runGh(['api', `repos/${expected.repository}/actions/runs/${expected.runId}`]));
   validateCanonicalCiRun(run, expected);
+  let sourceSuiteReuse = {};
   const evidenceRoot = await mkdtemp(join(tmpdir(), 'happier-ci-evidence-'));
   try {
     runGh(['run', 'download', expected.runId, '--repo', expected.repository, '--name', 'ci-lane-summary', '--dir', evidenceRoot]);
     const summary = JSON.parse(await readFile(join(evidenceRoot, 'ci-summary.json'), 'utf8'));
     validateCiLaneSummary(summary, expected);
+    if (expected.sourceProfile) sourceSuiteReuse = projectSourceSuiteReuse(summary, { ...expected, profile: expected.sourceProfile });
   } finally {
     await rm(evidenceRoot, { recursive: true, force: true });
   }
-  return run;
+  return expected.sourceProfile ? { ...run, sourceSuiteReuse } : run;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -164,9 +170,12 @@ export async function main(argv = process.argv.slice(2)) {
       'run-id': { type: 'string' },
       'required-lanes': { type: 'string', default: '' },
       'github-output': { type: 'string', default: '' },
+      'source-profile': { type: 'string', default: '' },
     },
     allowPositionals: false,
   });
+  const sourceProfile = String(values['source-profile'] ?? '').trim();
+  if (sourceProfile && !['integrated', 'stable'].includes(sourceProfile)) throw new Error('Unsupported source validation profile');
   const repository = String(values.repository ?? '').trim();
   const sourceSha = String(values['source-sha'] ?? '').trim();
   const sourceBranch = String(values['source-branch'] ?? '').trim();
@@ -180,11 +189,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (!/^[1-9][0-9]*$/u.test(runId)) throw new Error('--run-id must be a positive integer');
   if (new Set(requiredLanes).size !== requiredLanes.length) throw new Error('--required-lanes must not contain duplicates');
 
-  const run = await verifyCanonicalCiEvidence({ repository, sourceSha, sourceBranch, runId, requiredLanes });
+  const run = await verifyCanonicalCiEvidence({ repository, sourceSha, sourceBranch, runId, requiredLanes, sourceProfile });
 
+  const sourceSuiteReuse = sourceProfile ? requireRecord(run).sourceSuiteReuse : {};
   const output = { runId: Number(runId), runUrl: String(requireRecord(run).html_url ?? ''), sourceSha, sourceBranch };
   const githubOutput = String(values['github-output'] ?? '').trim();
-  if (githubOutput) await appendFile(githubOutput, `ci_run_id=${output.runId}\nci_run_url=${output.runUrl}\n`, 'utf8');
+  if (githubOutput) await appendFile(githubOutput, `ci_run_id=${output.runId}\nci_run_url=${output.runUrl}\n${Object.entries(sourceSuiteReuse).map(([key, value]) => `${key}=${value}\n`).join('')}`, 'utf8');
   else process.stdout.write(`${JSON.stringify(output)}\n`);
   return output;
 }

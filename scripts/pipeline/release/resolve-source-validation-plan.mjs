@@ -75,7 +75,10 @@ export function resolveSourceValidationPlanFromEnvironment(env) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     const result = resolveSourceValidationPlanFromEnvironment(process.env);
-    const output = {
+    const output = process.argv.includes('--pre-release-checks') ? resolvePreReleaseCheckPlan({
+      eventName: process.env.EVENT_NAME ?? '',
+      changedPaths: JSON.parse(process.env.CHANGED_PATHS_JSON || '[]'),
+    }) : {
       run_mysql: String(result.runMysql),
       run_platform: String(result.runPlatform),
       run_trust_roots: String(result.runTrustRoots),
@@ -93,4 +96,22 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
+}
+
+/** Source CI owns selection; release callers keep their explicit selectors.
+ * @param {{eventName: string; changedPaths: string[]}} input
+ */
+export function resolvePreReleaseCheckPlan({ eventName, changedPaths }) {
+  const common = eventName === 'schedule' || changedPaths.some((path) =>
+    /^(?:package\.json|(?:pnpm-lock|pnpm-workspace)\.yaml|yarn\.lock|\.node-version|\.github\/workflows\/tests\.yml)$/.test(path)
+    || /^(?:\.github\/actions\/|scripts\/ci\/|scripts\/workspaces\/)/.test(path)
+    || path === 'scripts/pipeline/release/resolve-source-validation-plan.mjs');
+  return {
+    run_self_host_schtasks: common || changedPaths.some((path) =>
+      /^(?:apps\/stack\/|scripts\/install\/|packages\/cli-common\/(?:native\/windows\/|src\/(?:service|process)\/))/.test(path)),
+    run_packaged_cli: common || changedPaths.some((path) =>
+      /^(?:apps\/cli\/|packages\/|scripts\/pipeline\/release\/|scripts\/install\/)/.test(path)),
+    run_mobile_native: common || changedPaths.some((path) =>
+      /^(?:apps\/ui\/|packages\/|scripts\/pipeline\/expo\/|scripts\/mobile\/)/.test(path)),
+  };
 }

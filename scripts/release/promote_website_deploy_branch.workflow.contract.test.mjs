@@ -23,7 +23,7 @@ test('promote-website delegates deploy branch promotion to pipeline script', asy
 
 test('release grants reusable promote-website the contents permission it requests', async () => {
   const { parse } = await import('yaml');
-  const release = parse(await loadWorkflow('release.yml'));
+  const release = parse(await loadWorkflow('release-channel.yml'));
   const deployWebsite = release?.jobs?.deploy_website;
 
   assert.equal(

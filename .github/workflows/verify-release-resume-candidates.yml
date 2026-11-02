@@ -41,7 +41,7 @@ permissions:
 jobs:
   verify:
     name: Verify each published sibling independently
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
       cli_verified: ${{ steps.outputs.outputs.cli_verified }}

@@ -230,7 +230,7 @@ jobs:
   db-contract-postgres:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_db_contract_postgres }}
     name: DB Contract (Postgres)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     services:
       postgres:
@@ -282,7 +282,7 @@ jobs:
   db-contract-mysql:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_db_contract_mysql }}
     name: DB Contract (MySQL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     services:
       mysql:

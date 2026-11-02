@@ -10,9 +10,16 @@ const enabled = (value) => value === true || value === 'true';
  * @param {{ checksProfile: string; environment: string; publishServerRuntimeNeeded: boolean;
  * publishCliBinariesNeeded: boolean; publishStack: boolean; sourceChecksWaived: boolean;
  * risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
- * gates: { mysql: string; platform: string; trustRoots: string } }} input
+ * gates: { mysql: string; platform: string; trustRoots: string };
+ * sourceSha: string; validatedSourceSha: string; ciGateResult: string }} input
  */
 export function admitRelease(input) {
+  if (!/^[0-9a-f]{40}$/u.test(input.sourceSha) || input.sourceSha !== input.validatedSourceSha) {
+    throw new Error('shared source validation must match the exact planned source SHA');
+  }
+  if (!input.sourceChecksWaived && input.ciGateResult !== 'success') {
+    throw new Error('shared exact-source CI gate must succeed');
+  }
   if (input.environment === 'production' && input.checksProfile !== 'full') {
     throw new Error('production releases require checks_profile=full');
   }
@@ -31,6 +38,9 @@ export function admitRelease(input) {
 /** @param {Record<string, string | undefined>} env */
 export function admitReleaseFromEnvironment(env) {
   return admitRelease({
+    sourceSha: String(env.PLANNED_SOURCE_SHA ?? ''),
+    validatedSourceSha: String(env.VALIDATED_SOURCE_SHA ?? ''),
+    ciGateResult: String(env.CI_GATE_RESULT ?? ''),
     checksProfile: String(env.CHECKS_PROFILE ?? ''),
     environment: String(env.DEPLOY_ENVIRONMENT ?? ''),
     publishServerRuntimeNeeded: enabled(env.PUBLISH_SERVER_RUNTIME_NEEDED),

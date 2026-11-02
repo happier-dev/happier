@@ -145,7 +145,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.equal(dispatch.jobs.tests.with.runner_pool, '${{ inputs.runner_pool }}');
 
   const guard = tests.jobs.trusted_ref_guard;
-  assert.equal(guard['runs-on'], 'ubuntu-latest');
+  assert.equal(guard['runs-on'], 'ubuntu-24.04');
   assert.deepEqual(guard.outputs, {
     ubuntu_2204: '${{ steps.runner_pool.outputs.ubuntu_2204 }}',
     ubuntu_2404: '${{ steps.runner_pool.outputs.ubuntu_2404 }}',
@@ -157,7 +157,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
 
   const github = resolveRunnerPool(resolver, 'github');
   assert.equal(github.status, 0, github.stderr);
-  assert.deepEqual(github.outputs, { ubuntu_2204: 'ubuntu-22.04', ubuntu_2404: 'ubuntu-latest' });
+  assert.deepEqual(github.outputs, { ubuntu_2204: 'ubuntu-22.04', ubuntu_2404: 'ubuntu-24.04' });
 
   const blacksmith = resolveRunnerPool(resolver, 'blacksmith-linux-4vcpu');
   assert.equal(blacksmith.status, 0, blacksmith.stderr);
@@ -210,12 +210,12 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     'self-host-systemd-e2e',
     'stress',
   ]) {
-    assert.equal(tests.jobs[jobName]['runs-on'], 'ubuntu-latest', `${jobName} should remain on GitHub initially`);
+    assert.equal(tests.jobs[jobName]['runs-on'], 'ubuntu-24.04', `${jobName} should remain on GitHub initially`);
   }
-  assert.equal(tests.jobs.release_actor_guard['runs-on'], 'ubuntu-latest');
-  assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-latest');
-  assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-latest');
-  assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-latest');
+  assert.equal(tests.jobs.release_actor_guard['runs-on'], 'ubuntu-24.04');
+  assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-24.04');
+  assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-26');
+  assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-2022');
   assert.equal(tests.on.workflow_call.inputs.run_wsrepl_lima, undefined, 'arbitrary reusable callers must not select a persistent runner');
   assert.equal(tests.jobs['ui-e2e-wsrepl-lima'], undefined, 'persistent WSREPL execution belongs to the actor-authorized manual dispatcher');
   const wsreplLima = dispatch.jobs['ui-e2e-wsrepl-lima'];

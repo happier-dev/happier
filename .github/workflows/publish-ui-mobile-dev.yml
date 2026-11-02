@@ -89,7 +89,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
@@ -113,7 +113,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -146,7 +146,7 @@ jobs:
     name: Prepare exact dev OTA bytes without credentials
     needs: [release_actor_guard]
     if: ${{ inputs.publish_ota && !inputs.use_prepared }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
@@ -212,7 +212,7 @@ jobs:
     name: Publish prepared dev OTA bytes from trusted control
     needs: [release_actor_guard, prepare_ota]
     if: ${{ !cancelled() && !inputs.preparation_only && inputs.publish_ota && needs.release_actor_guard.result == 'success' && (needs.prepare_ota.result == 'success' || (inputs.use_prepared && needs.prepare_ota.result == 'skipped')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     environment: release-shared
     permissions:
@@ -271,7 +271,7 @@ jobs:
   publish:
     if: ${{ !inputs.preparation_only }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: release-shared
     steps:
@@ -411,7 +411,7 @@ jobs:
     name: iOS TestFlight submit (dev lane) (cloud, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       actions: write

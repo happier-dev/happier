@@ -187,7 +187,7 @@ test('production immutable APK publication disables generated notes when approve
     { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
   );
 
-  assert.match(out, /--release-message\s+"Approved exact candidate notes"/);
+  assert.ok(out.includes(JSON.stringify('--release-message=Approved exact candidate notes')));
   assert.match(out, /--generate-notes\s+false/);
   assert.doesNotMatch(out, /--tag ui-mobile-v[^\n]*--generate-notes\s+true/);
 });
@@ -258,5 +258,5 @@ test('APK publication accepts release notes from a file without multiline GitHub
     { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
   );
 
-  assert.match(out, /--release-message\s+"First line\\n\\n- second line"/);
+  assert.ok(out.includes(JSON.stringify('--release-message=First line\n\n- second line')));
 });

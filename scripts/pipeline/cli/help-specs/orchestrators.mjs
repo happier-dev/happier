@@ -54,7 +54,6 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--operation-id <id>               Optional conductor correlation ID; required for --dry-run --json.',
       '--attempt-id <attempt_n>           Hosted execution-attempt identity for exact resume correlation (default: attempt_1).',
       '--release-notes-id <id>           Required approved release-note entry for preview/production dispatches.',
-      '--qualified-v4-activation-approval <bool>  Separate explicit approval for irreversible Qualified V4 activation (default: false).',
       '--allow-dirty <bool>              true|false (default: false).',
       '--dry-run                          Print release facts and hosted inputs without mutating.',
       '--json                            With --dry-run, emit the exact promotion-source dispatch plan as JSON.',

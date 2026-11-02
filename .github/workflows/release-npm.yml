@@ -55,6 +55,10 @@ on:
         type: string
   workflow_call:
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel:
         description: "Target — Release channel"
         required: true
@@ -118,12 +122,15 @@ concurrency:
   group: release-npm-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref

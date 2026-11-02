@@ -144,7 +144,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
@@ -168,7 +168,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control bytes
@@ -195,11 +195,11 @@ jobs:
       expected_channel: ${{ inputs.environment }}
       expected_source_sha: ${{ inputs.source_ref }}
       expected_operation_id: ${{ inputs.resume_operation_id || '' }}
-      status_artifact_name: ${{ inputs.resume_workflow == 'release-preview-and-production.yml' && inputs.environment == 'preview' && 'happier-release-status-preview' || 'happier-release-status' }}
+      status_artifact_name: ""
 
   resolve_source:
     name: Resolve source ref to SHA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: [release_actor_guard, resolve_resume]
     if: ${{ !cancelled() && needs.release_actor_guard.result == 'success' && (needs.resolve_resume.result == 'success' || needs.resolve_resume.result == 'skipped') }}
@@ -809,7 +809,7 @@ jobs:
     name: Restore finalized desktop artifacts (${{ matrix.platform_key }})
     if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.reuse_needed == 'true' }}
     needs: [resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Reuse the desktop artifact-consumer budget; download retries alone can exceed 30 minutes.
     timeout-minutes: 45
     permissions:
@@ -858,7 +858,7 @@ jobs:
   prepare_assets:
     name: Prepare latest.json + publish assets
     if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: [resolve_source, finalize, reuse_finalized]
     permissions:
@@ -934,7 +934,7 @@ jobs:
     if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
     needs: [resolve_source, finalize, reuse_finalized]
     # Linux desktop bundles ship for x86_64 only; hosted ubuntu runners are x86_64 with Docker.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Setup (checkout, install, bundle download) plus the suite's registry-derived hard stop.
     timeout-minutes: 45
     permissions:
@@ -1089,7 +1089,7 @@ jobs:
     name: Promote immutable desktop release to stable feed
     if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
     needs: [resolve_source, publish_stable_release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: write
@@ -1150,7 +1150,7 @@ jobs:
             --title "Happier UI Desktop Stable" \
             --target-sha "$TARGET_SHA" \
             --prerelease false \
-            --notes "$RELEASE_MESSAGE" \
+            --notes="$RELEASE_MESSAGE" \
             --release-message="$RELEASE_MESSAGE" \
             --repo "$GH_REPO" \
             --public-key scripts/release/installers/happier-release.pub

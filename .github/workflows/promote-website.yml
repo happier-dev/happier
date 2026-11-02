@@ -84,7 +84,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
@@ -108,7 +108,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control
@@ -126,7 +126,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -195,7 +195,7 @@ jobs:
 
   apply_bump:
     needs: [release_actor_guard, resolve_source]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
     permissions:
@@ -282,7 +282,7 @@ jobs:
 
   validate_candidate:
     needs: [apply_bump]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -334,7 +334,7 @@ jobs:
 
   promote:
     needs: [release_actor_guard, apply_bump, validate_candidate]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
     steps:
@@ -384,7 +384,7 @@ jobs:
   # would bypass release_actor_guard and trusted_ref_guard entirely.
   deploy_cloudflare:
     needs: [release_actor_guard, apply_bump, validate_candidate, promote]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: cloudflare-deploy
     permissions:

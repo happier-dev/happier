@@ -23,7 +23,7 @@ on:
         type: string
       status_artifact_name:
         required: false
-        default: happier-release-status
+        default: ""
         type: string
     outputs:
       desktop_run_number:
@@ -110,7 +110,7 @@ permissions:
 jobs:
   resolve:
     name: Bind prior run and reusable immutable candidates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

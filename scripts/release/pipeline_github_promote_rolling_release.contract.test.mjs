@@ -205,6 +205,9 @@ if [ "$1" = "api" ]; then
       if [ "\${HAPPIER_TEST_CORRUPT_ALIAS:-0}" = "1" ] && [ "$name" = ${JSON.stringify(aliasName)} ]; then
         printf 'corrupt\n' >> ${JSON.stringify(staging)}/"$name"
       fi
+      if [ "\${HAPPIER_TEST_CORRUPT_SIGNATURE:-0}" = "1" ] && [ "$name" = ${JSON.stringify(`${checksumsName}.minisig`)} ]; then
+        printf 'corrupt\n' > ${JSON.stringify(staging)}/"$name"
+      fi
       exit 0
       ;;
   esac
@@ -243,7 +246,7 @@ if [ "$1" = "api" ]; then
       if [ -f ${JSON.stringify(release1Tag)} ] && [ "$(cat ${JSON.stringify(release1Tag)})" = "server-preview" ]; then
         printf '{"id":1,"tag_name":"server-preview","name":"%s","body":"previous notes","prerelease":true,"draft":false}\\n' "$(cat ${JSON.stringify(release1Name)})"
       elif [ -f ${JSON.stringify(release77Tag)} ] && [ "$(cat ${JSON.stringify(release77Tag)})" = "server-preview" ] && [ ! -f ${JSON.stringify(draftState)} ]; then
-        printf '{"id":77,"tag_name":"server-preview","name":"Happier Server Preview","body":"Current version: 1.2.3-preview.4","prerelease":true,"draft":false}\\n'
+        printf '{"id":%s,"tag_name":"server-preview","name":"Happier Server Preview","body":"Current version: 1.2.3-preview.4","prerelease":true,"draft":false}\\n' "\${HAPPIER_TEST_PUBLISHED_RELEASE_ID:-77}"
       else
         not_found
       fi
@@ -478,6 +481,7 @@ test('rolling promotion removes an abandoned staging draft from an older target 
       },
       encoding: 'utf8',
     });
+    assert.match(readFileSync(testFixture.log, 'utf8'), /make_latest=false/, 'rolling publication cannot claim Latest before channel promotion');
     assert.equal(existsSync(testFixture.staleOtherDraftState), false);
     assert.match(readFileSync(testFixture.log, 'utf8'), /-X DELETE repos\/test\/test\/releases\/88/);
   } finally {
@@ -558,7 +562,37 @@ test('rolling promotion audits release assets without buffering their bytes in t
   }
 });
 
-test('rolling promotion rejects a channel alias whose downloaded bytes differ from its immutable source', () => {
+for (const [tamper, failure] of [
+  ['ALIAS', /differs from immutable source bytes:/],
+  ['SIGNATURE', /signature verification failed/],
+]) {
+  test(`rolling promotion rejects staged ${tamper.toLowerCase()} tampering before changing the predecessor`, () => {
+    const testFixture = fixture();
+    try {
+      const result = spawnSync(process.execPath, args(), {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+          [`HAPPIER_TEST_CORRUPT_${tamper}`]: '1',
+          HAPPIER_TEST_DOWNLOAD_FAILURE_PHASE: 'staged',
+          HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRY_DELAY_MS: '10',
+        },
+        encoding: 'utf8',
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(String(result.stderr), failure);
+      assert.equal(readFileSync(testFixture.release1Tag, 'utf8'), 'server-preview');
+      assert.equal(readFileSync(testFixture.channelRef, 'utf8'), oldSha);
+      assert.deepEqual(readdirSync(testFixture.rolling), ['old-asset']);
+    } finally {
+      rmSync(testFixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('rolling promotion settles the audited draft identity without downloading published assets again', () => {
   const testFixture = fixture();
   try {
     const result = spawnSync(process.execPath, args(), {
@@ -566,24 +600,55 @@ test('rolling promotion rejects a channel alias whose downloaded bytes differ fr
       env: {
         ...process.env,
         PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
-        HAPPIER_TEST_CORRUPT_ALIAS: '1',
-        HAPPIER_TEST_DOWNLOAD_FAILURE_PHASE: 'staged',
-        HAPPIER_PIPELINE_GH_RELEASE_UPLOAD_RETRY_DELAY_MS: '10',
+        HAPPIER_TEST_DOWNLOAD_FAILURE_PHASE: 'published',
+        HAPPIER_TEST_DOWNLOAD_ERROR: 'gh: permanent download failure',
       },
       encoding: 'utf8',
     });
 
-    assert.notEqual(result.status, 0);
-    assert.match(String(result.stderr), new RegExp(`differs from immutable source bytes: ${testFixture.aliasName}`));
-    assert.equal(readFileSync(testFixture.release1Tag, 'utf8'), 'server-preview');
-    assert.equal(readFileSync(testFixture.channelRef, 'utf8'), oldSha);
-    assert.deepEqual(readdirSync(testFixture.rolling), ['old-asset']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(Number(readFileSync(testFixture.downloadFailureCounter, 'utf8')), 0);
+    assert.equal(readFileSync(testFixture.release77Tag, 'utf8'), 'server-preview');
+    assert.equal(existsSync(testFixture.draftState), false);
+    assert.equal(readFileSync(testFixture.channelRef, 'utf8'), targetSha);
+    const log = readFileSync(testFixture.log, 'utf8');
+    const publish = log.lastIndexOf('PATCH repos/test/test/releases/77');
+    const afterPublish = log.slice(publish);
+    assert.match(afterPublish, /gh api repos\/test\/test\/releases\/77\n/);
+    assert.match(afterPublish, /gh api repos\/test\/test\/releases\/tags\/server-preview\n/);
+    assert.doesNotMatch(afterPublish, /repos\/test\/test\/releases\/assets\//);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
 });
 
-for (const phase of ['immutable', 'staged', 'published']) {
+test('rolling promotion refuses a changed publication identity and restores the predecessor', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_PUBLISHED_RELEASE_ID: '78',
+        HAPPIER_PIPELINE_GH_MUTATION_CONFIRM_ATTEMPTS: '1',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /did not publish audited replacement release 77/);
+    assert.equal(readFileSync(testFixture.release1Tag, 'utf8'), 'server-preview');
+    assert.equal(readFileSync(testFixture.channelRef, 'utf8'), oldSha);
+    assert.equal(existsSync(testFixture.draftState), true);
+    assert.deepEqual(readdirSync(testFixture.rolling), ['old-asset']);
+    assert.doesNotMatch(readFileSync(testFixture.log, 'utf8'), /-X DELETE repos\/test\/test\/releases\/1/);
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+for (const phase of ['immutable', 'staged']) {
   test(`rolling promotion retries a truncated ${phase} asset read with a complete fresh download`, () => {
     const testFixture = fixture();
     try {
@@ -700,13 +765,13 @@ test('existing rolling replacement stages privately, restores after publish fail
     const stagedAudit = successLog.indexOf('repos/test/test/releases/assets/77-');
     const moveTag = successLog.lastIndexOf('gh api -X PATCH repos/test/test/git/refs/tags/server-preview');
     const publishReplacement = successLog.lastIndexOf('PATCH repos/test/test/releases/77');
-    const visibleAudit = successLog.lastIndexOf('repos/test/test/releases/assets/77-');
+    const lastStagedAssetDownload = successLog.lastIndexOf('repos/test/test/releases/assets/77-');
     const deleteBackup = successLog.lastIndexOf('DELETE repos/test/test/releases/1');
     assert.ok(stagedAudit >= 0);
     assert.ok(moveTag > stagedAudit, 'moving tag must follow the private draft byte/signature audit');
     assert.ok(publishReplacement > moveTag);
-    assert.ok(visibleAudit > publishReplacement);
-    assert.ok(deleteBackup > visibleAudit, 'predecessor deletion must follow visible replacement audit');
+    assert.ok(lastStagedAssetDownload < publishReplacement, 'all replacement bytes must be audited before publication');
+    assert.ok(deleteBackup > publishReplacement, 'predecessor deletion must follow acknowledged replacement publication');
     assert.doesNotMatch(successLog, /DELETE repos\/test\/test\/releases\/assets\/1-/);
     assert.deepEqual(
       readdirSync(testFixture.staging).sort(),

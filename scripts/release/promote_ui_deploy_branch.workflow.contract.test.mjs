@@ -44,7 +44,7 @@ test('promote-ui keeps workflow_dispatch inputs under GitHub limit with compact 
 });
 
 test('release passes only declared inputs to reusable promote-ui', async () => {
-  const release = parse(await loadWorkflow('release.yml'));
+  const release = parse(await loadWorkflow('release-channel.yml'));
   const promoteUi = parse(await loadWorkflow('promote-ui.yml'));
   const declaredInputs = promoteUi?.on?.workflow_call?.inputs ?? {};
   const passedInputs = release?.jobs?.deploy_ui?.with ?? {};

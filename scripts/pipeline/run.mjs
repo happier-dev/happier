@@ -1,5 +1,7 @@
 // @ts-check
 
+import { resolveReleasePromotionIntent } from './release/validate-release-dispatch.mjs';
+import { assertApprovedReleaseIntent, readApprovedReleaseIntent } from './release/approved-release-intent.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -119,13 +121,6 @@ function isReleaseDeployEnvironment(v) {
   return v === 'dev' || v === 'production' || v === 'preview' || v === 'preview-and-production';
 }
 
-/**
- * @param {string} action
- * @returns {'dev' | 'preview'}
- */
-function resolveReleasePromotionSourceBranch(action) {
-  return action === 'release preview to main' || action === 'reset main from preview' ? 'preview' : 'dev';
-}
 
 /**
  * @param {'dev' | 'preview' | 'production'} environment
@@ -1622,8 +1617,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         channelArg,
         '--allow-stable',
         allowStable || 'false',
-        '--release-message',
-        releaseMessage,
+        `--release-message=${releaseMessage}`,
         '--run-contracts',
         runContracts || 'auto',
         '--check-installers',
@@ -1705,8 +1699,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           channelArg,
           '--allow-stable',
           allowStable || 'false',
-          '--release-message',
-          releaseMessage,
+          `--release-message=${releaseMessage}`,
           '--run-contracts',
           runContracts || 'auto',
           '--check-installers',
@@ -1789,8 +1782,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           channelArg,
           '--allow-stable',
           allowStable || 'false',
-          '--release-message',
-          releaseMessage,
+          `--release-message=${releaseMessage}`,
           '--run-contracts',
           runContracts || 'auto',
           '--check-installers',
@@ -1873,8 +1865,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         channelArg,
         '--allow-stable',
         allowStable || 'false',
-        '--release-message',
-        releaseMessage,
+        `--release-message=${releaseMessage}`,
         '--run-contracts',
         runContracts || 'auto',
         '--check-installers',
@@ -2678,7 +2669,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(retryVersion ? ['--retry-version', retryVersion] : []),
         '--target-sha',
         targetSha,
-        ...(releaseMessage ? ['--release-message', releaseMessage] : []),
+        ...(releaseMessage ? [`--release-message=${releaseMessage}`] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });
@@ -3263,7 +3254,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           apkPath,
           '--target-sha',
           sha,
-          ...(releaseMessage ? ['--release-message', releaseMessage] : []),
+          ...(releaseMessage ? [`--release-message=${releaseMessage}`] : []),
           ...(dryRun ? ['--dry-run'] : []),
           ],
         });
@@ -4229,8 +4220,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values.clobber ?? ''),
         '--prune-assets',
         String(values['prune-assets'] ?? ''),
-        '--release-message',
-        String(values['release-message'] ?? ''),
+        `--release-message=${String(values['release-message'] ?? '')}`,
         '--max-commits',
         String(values['max-commits'] ?? ''),
         ...(dryRun ? ['--dry-run'] : []),
@@ -4414,8 +4404,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
   }
 
         if (subcommand === 'release') {
-          const { values } = parseArgs({
+          const { values, tokens } = parseArgs({
             args: rest,
+            tokens: true,
             options: {
               confirm: { type: 'string' },
               repository: { type: 'string' },
@@ -4433,6 +4424,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'workflow-control-sha': { type: 'string', default: '' },
               'resume-run-id': { type: 'string', default: '' },
               'ci-run-id': { type: 'string', default: '' },
+              'approved-intent': { type: 'string' },
               'operation-id': { type: 'string', default: '' },
               'attempt-id': { type: 'string', default: 'attempt_1' },
               'release-notes-id': { type: 'string', default: '' },
@@ -4444,48 +4436,36 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             allowPositionals: false,
           });
 
-          const action = String(values.confirm ?? '').trim();
-          if (!action) fail('--confirm is required (e.g. "release dev to preview")');
-          if (
-            action !== 'release dev to dev' &&
-            action !== 'release dev to preview' &&
-            action !== 'release preview to main' &&
-            action !== 'reset main from preview' &&
-            action !== 'release dev to main' &&
-            action !== 'reset main from dev' &&
-            action !== 'release dev to preview and main'
-          ) {
-            fail(`Unsupported --confirm action: ${action}`);
+          const approvedIntentPath = values['approved-intent'];
+          if (approvedIntentPath !== undefined && (!path.isAbsolute(approvedIntentPath) || values['dry-run'] !== true || values.json !== true || !values['ci-run-id'])) {
+            fail('--approved-intent requires an absolute JSON path, --dry-run --json, and --ci-run-id.');
           }
+          const approvedIntent = approvedIntentPath === undefined
+            ? undefined
+            : readApprovedReleaseIntent(JSON.parse(fs.readFileSync(approvedIntentPath, 'utf8')));
+          const approvedInputs = approvedIntent?.hostedDispatch.inputs ?? {};
+          const explicitOptions = new Set(tokens.filter((token) => token.kind === 'option').map((token) => token.name));
+          // Approved public values supply defaults; explicit flags still pass through
+          // the normal planner and the complete grant comparison below.
+          /** @param {keyof typeof values} name @param {unknown} approvedValue */
+          const releaseValue = (name, approvedValue) => explicitOptions.has(name) || approvedValue === undefined
+            ? values[name]
+            : String(approvedValue);
 
-          const repository = String(values.repository ?? '').trim();
+          const action = String(releaseValue('confirm', approvedInputs.confirm) ?? '').trim();
+          if (!action) fail('--confirm is required (e.g. "release dev to preview")');
+
+
+          const repository = String(releaseValue('repository', approvedIntent?.hostedDispatch.repository) ?? '').trim();
           if (!repository) fail('--repository is required (e.g. happier-dev/happier)');
 
-          const deployEnvironment = String(values['deploy-environment'] ?? '').trim();
+          const deployEnvironment = String(releaseValue('deploy-environment', approvedInputs.environment) ?? '').trim();
           if (!isReleaseDeployEnvironment(deployEnvironment)) {
             fail(`--deploy-environment must be 'dev', 'preview', 'production', or 'preview-and-production' (got: ${deployEnvironment || '<empty>'})`);
           }
-          if (deployEnvironment === 'dev' && action !== 'release dev to dev') {
-            fail('Confirmation mismatch for dev releases. Expected: "release dev to dev"');
-          }
-          if (deployEnvironment === 'preview' && action !== 'release dev to preview') {
-            fail('Confirmation mismatch for preview releases. Expected: "release dev to preview"');
-          }
-          if (deployEnvironment === 'preview-and-production' && action !== 'release dev to preview and main') {
-            fail('Confirmation mismatch for combined releases. Expected: "release dev to preview and main"');
-          }
-          if (deployEnvironment === 'production' && ![
-            'release preview to main',
-            'reset main from preview',
-            'release dev to main',
-            'reset main from dev',
-          ].includes(action)) {
-            fail(
-              'Confirmation mismatch for production releases. Expected: "release preview to main", "reset main from preview", "release dev to main", or "reset main from dev"',
-            );
-          }
+          const { sourceBranch: promotionSourceBranch } = resolveReleasePromotionIntent({ environment: deployEnvironment, confirm: action });
 
-          const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
+          const deployTargets = parseCsvList(String(releaseValue('deploy-targets', approvedInputs.deploy_targets) ?? ''));
           if (deployTargets.length === 0) {
             fail('--deploy-targets must not be empty');
           }
@@ -4499,39 +4479,38 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
           const dryRun = values['dry-run'] === true;
           const jsonOutput = values.json === true;
-          const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
+          const forceDeploy = parseBoolString(releaseValue('force-deploy', approvedInputs.force_deploy), '--force-deploy');
           const bumpPreset = 'none';
-          const waiveCi = parseBoolString(values['waive-ci'], '--waive-ci');
-          const includeValidationSuites = parseCsvList(String(values['include-validation-suites'] ?? ''));
-          const waiveValidationSuites = parseCsvList(String(values['waive-validation-suites'] ?? ''));
-          const overrideReason = String(values['override-reason'] ?? '').trim();
+          const waiveCi = parseBoolString(releaseValue('waive-ci', approvedInputs.waive_ci), '--waive-ci');
+          const includeValidationSuites = parseCsvList(String(releaseValue('include-validation-suites', approvedInputs.include_validation_suites) ?? ''));
+          const waiveValidationSuites = parseCsvList(String(releaseValue('waive-validation-suites', approvedInputs.waive_validation_suites) ?? ''));
+          const overrideReason = String(releaseValue('override-reason', approvedInputs.override_reason) ?? '').trim();
           if ((waiveCi || waiveValidationSuites.length > 0) && !overrideReason) {
             fail('--override-reason is required when CI or validation evidence is waived.');
           }
           if (overrideReason.length > 500 || /[\r\n]/u.test(overrideReason)) {
             fail('--override-reason must be a single line of at most 500 characters.');
           }
-          const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim().toLowerCase();
-          const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
-          const resumeRunId = String(values['resume-run-id'] ?? '');
+          const authorizedPromotionSourceSha = String(releaseValue('source-sha', approvedInputs.authorized_promotion_source_sha) ?? '').trim().toLowerCase();
+          const workflowControlSha = String(releaseValue('workflow-control-sha', approvedInputs.workflow_control_sha) ?? '').trim();
+          const resumeRunId = String(releaseValue('resume-run-id', approvedInputs.resume_run_id) ?? '');
           const ciRunId = String(values['ci-run-id'] ?? '');
-          const operationId = String(values['operation-id'] ?? '').trim();
-          const attemptId = String(values['attempt-id'] ?? '').trim();
-          const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
+          const operationId = String(releaseValue('operation-id', approvedInputs.hmaint_operation_id) ?? '').trim();
+          const attemptId = String(releaseValue('attempt-id', approvedInputs.hmaint_attempt_id) ?? '').trim();
+          const releaseNotesId = String(releaseValue('release-notes-id', approvedInputs.release_notes_id) ?? '').trim();
           const qualifiedV4ActivationApproval = parseBoolString(
-            values['qualified-v4-activation-approval'],
+            releaseValue('qualified-v4-activation-approval', approvedInputs.qualified_v4_activation_approval),
             '--qualified-v4-activation-approval',
           );
           if (qualifiedV4ActivationApproval) {
             fail('--qualified-v4-activation-approval is not supported by this release line because it has no Qualified V4 activation path.');
           }
-          const promotionSourceBranch = resolveReleasePromotionSourceBranch(action);
           const productionPromotionMode = action === 'reset main from preview' || action === 'reset main from dev'
             ? 'reset'
             : 'fast-forward';
 
-          const uiExpoAction = String(values['ui-expo-action'] ?? '').trim() || 'none';
-          const desktopMode = String(values['desktop-mode'] ?? '').trim() || 'none';
+          const uiExpoAction = String(releaseValue('ui-expo-action', approvedInputs.ui_expo_action) ?? '').trim() || 'none';
+          const desktopMode = String(releaseValue('desktop-mode', approvedInputs.desktop_mode) ?? '').trim() || 'none';
 
           if (jsonOutput && !dryRun) {
             fail('--json is supported only with --dry-run.');
@@ -4576,7 +4555,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             fail('--desktop-mode requires --deploy-targets to include ui.');
           }
 
-          const requestedReleaseProfileId = String(values['release-profile'] ?? '').trim();
+          const requestedReleaseProfileId = String(releaseValue('release-profile', approvedInputs.validation_profile) ?? '').trim();
           const releaseProfileId = requestedReleaseProfileId || (
             deployEnvironment === 'production' || deployEnvironment === 'preview-and-production'
               ? 'stable'
@@ -4603,11 +4582,41 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               allowSourceAncestor: true,
             });
 
+          /** @param {string} sourceSha */
+          const createHostedDispatch = (sourceSha) => {
+            return {
+              repository,
+              workflow: 'release.yml',
+              ref: 'dev',
+              inputs: {
+                validation_profile: releaseProfile.id,
+                dry_run: 'false',
+                deploy_targets: deployTargets.join(','),
+                force_deploy: String(forceDeploy),
+                ui_expo_action: uiExpoAction,
+                desktop_mode: desktopMode,
+                waive_ci: String(waiveCi),
+                include_validation_suites: includeValidationSuites.join(','),
+                waive_validation_suites: waiveValidationSuites.join(','),
+                override_reason: overrideReason,
+                authorized_promotion_source_sha: sourceSha,
+                release_notes_id: releaseNotesId,
+                ...(workflowControlSha ? { workflow_control_sha: workflowControlSha } : {}),
+                ...(resumeRunId ? { resume_run_id: resumeRunId } : {}),
+                ...(ciRunId ? { ci_run_id: ciRunId } : {}),
+                ...(operationId ? { hmaint_operation_id: operationId } : {}),
+                ...(operationId ? { hmaint_attempt_id: attemptId } : {}),
+                environment: deployEnvironment,
+                confirm: action,
+              },
+            };
+          };
+
           if (jsonOutput) {
             const authorizedPromotionSource = await resolvePromotionSource();
-            process.stdout.write(
-              `${JSON.stringify({
+            const dispatchPlan = {
                 kind: 'happier.release-dispatch-plan.v3',
+                ...(deployEnvironment === 'dev' ? {} : { hostedDispatch: createHostedDispatch(authorizedPromotionSource.sha) }),
                 schemaVersion: 3,
                 sourceBranch: promotionSourceBranch,
                 productionPromotionMode,
@@ -4626,8 +4635,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                   waiveValidationSuiteIds: waiveValidationSuites,
                   reason: overrideReason,
                 },
-              })}\n`,
-            );
+            };
+            if (approvedIntent !== undefined) {
+              // Existing resume admission owns origin/status/provenance. Only its
+              // explicit resume bindings may change the approved grant here.
+              const resumeBindings = explicitOptions.has('resume-run-id') && explicitOptions.has('attempt-id')
+                && explicitOptions.has('workflow-control-sha') && resumeRunId && attemptId && workflowControlSha
+                ? { resumeRunId, attemptId, workflowControlSha }
+                : undefined;
+              assertApprovedReleaseIntent(dispatchPlan, approvedIntent, ciRunId, resumeBindings);
+            }
+            process.stdout.write(`${JSON.stringify(dispatchPlan)}\n`);
             return;
           }
 
@@ -4638,41 +4656,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             if (!authorizedPromotionSourceSha) {
               fail('--source-sha is required for a hosted release dispatch.');
             }
-            const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-              cwd: repoRoot,
-              env: process.env,
-              encoding: 'utf8',
-              stdio: ['ignore', 'pipe', 'pipe'],
-              timeout: 10_000,
-            }).trim();
-            if (!/(^|\/)(dev|upstream-dev)$/.test(currentBranch)) {
-              fail(`Local release dispatch expects branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
-            }
             const authorizedPromotionSource = await resolvePromotionSource();
-            const combinedRelease = deployEnvironment === 'preview-and-production';
+            const { repository: dispatchRepository, workflow, ref, inputs } = createHostedDispatch(authorizedPromotionSource.sha);
             const workflowArgs = [
-              'workflow', 'run', combinedRelease ? 'release-preview-and-production.yml' : 'release.yml',
-              '--repo', repository,
-              '--ref', 'dev',
-              '-f', `validation_profile=${releaseProfile.id}`,
-              '-f', 'dry_run=false',
-              '-f', `deploy_targets=${deployTargets.join(',')}`,
-              '-f', `force_deploy=${forceDeploy}`,
-              '-f', `ui_expo_action=${uiExpoAction}`,
-              '-f', `desktop_mode=${desktopMode}`,
-              '-f', `waive_ci=${waiveCi}`,
-              '-f', `include_validation_suites=${includeValidationSuites.join(',')}`,
-              '-f', `waive_validation_suites=${waiveValidationSuites.join(',')}`,
-              '-f', `override_reason=${overrideReason}`,
-              '-f', `authorized_promotion_source_sha=${authorizedPromotionSource.sha}`,
-              '-f', `release_notes_id=${releaseNotesId}`,
-              '-f', `qualified_v4_activation_approval=${qualifiedV4ActivationApproval}`,
-              ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
-              ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
-              ...(ciRunId ? ['-f', `ci_run_id=${ciRunId}`] : []),
-              ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
-              ...(operationId ? ['-f', `hmaint_attempt_id=${attemptId}`] : []),
-              ...(combinedRelease ? [] : ['-f', `environment=${deployEnvironment}`, '-f', `confirm=${action}`]),
+              'workflow', 'run', workflow, '--repo', dispatchRepository, '--ref', ref,
+              ...Object.entries(inputs).flatMap(([key, value]) => ['-f', `${key}=${value}`]),
             ];
             execFileSync('gh', workflowArgs, {
               cwd: repoRoot,
@@ -4714,18 +4702,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               branchNames: ['main', 'dev', 'preview'],
               tagPrefixes: ['cli-v', 'stack-v', 'server-v', 'ui-web-v'],
             });
-
-            const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-              cwd: repoRoot,
-              env: process.env,
-              encoding: 'utf8',
-              stdio: ['ignore', 'pipe', 'pipe'],
-              timeout: 10_000,
-            }).trim();
-            const isDevLikeLocalBranch = /(^|\/)(dev|upstream-dev)$/.test(currentBranch);
-            if (!isDevLikeLocalBranch) {
-              fail(`Local release expects to run from branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
-            }
 
           const authorizedPromotionSource = await resolvePromotionSource();
           const mainSha = remotePlanningRefs.branches.main;

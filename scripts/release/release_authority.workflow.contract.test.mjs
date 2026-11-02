@@ -40,7 +40,7 @@ function renderConcurrencyGroup(template, { repository, channel, ref }) {
 }
 
 test('the full hosted release binds one exact candidate SHA and publishes runtime before deploying that exact SHA', () => {
-  const release = workflow('release.yml');
+  const release = workflow('release-channel.yml');
   const candidate = release.jobs.prepare_release_candidate;
   assert.ok(candidate, 'release workflow must bind the post-promotion candidate source once');
   assert.ok(candidate.outputs.source_sha);
@@ -307,7 +307,7 @@ test('rolling recovery remains bound to the caller-authorized source SHA across 
       `${jobName} must pass the already-authorized nightly source into recovery`,
     );
   }
-  const release = workflow('release.yml');
+  const release = workflow('release-channel.yml');
   for (const jobName of [
     'promote_server_runtime',
     'promote_hstack_binaries',

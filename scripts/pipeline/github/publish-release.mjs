@@ -469,7 +469,7 @@ async function main() {
     if (generateNotes && !approvedReleaseBody) {
       run(
         'gh',
-        ['release', 'create', tag, ...prereleaseFlag, ...(!rollingTag ? ['--draft'] : []), '--title', title, '--generate-notes'],
+        ['release', 'create', tag, '--latest=false', ...prereleaseFlag, ...(!rollingTag ? ['--draft'] : []), '--title', title, '--generate-notes'],
         { env: ghEnv, dryRun },
       );
     } else {
@@ -477,7 +477,7 @@ async function main() {
       if (!body) fail('notes or release_message is required when generate_notes=false');
       run(
         'gh',
-        ['release', 'create', tag, ...prereleaseFlag, ...(!rollingTag ? ['--draft'] : []), '--title', title, '--notes', body],
+        ['release', 'create', tag, '--latest=false', ...prereleaseFlag, ...(!rollingTag ? ['--draft'] : []), '--title', title, '--notes', body],
         { env: ghEnv, dryRun },
       );
     }
@@ -637,7 +637,7 @@ async function main() {
     }
     // The complete asset set stays private until every remote byte has passed the audit.
     if (immutableDraft) {
-      run('gh', ['release', 'edit', tag, '--repo', repo, '--draft=false'], { env: ghEnv, dryRun });
+      run('gh', ['release', 'edit', tag, '--repo', repo, '--draft=false', '--latest=false'], { env: ghEnv, dryRun });
     }
     return;
   }

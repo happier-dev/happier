@@ -65,21 +65,22 @@ test('release workflow resolves the public profile internally before CI and plan
   assert.match(resolverStep?.run ?? '', /release-validation\/resolve-profile\.mjs/);
   assert.doesNotMatch(resolverStep?.run ?? '', /CHECKS_PROFILE/);
 
-  assert.deepEqual(parsed.jobs.ci.needs, ['release_preflight', 'release_actor_guard']);
-  assert.match(parsed.jobs.ci.if, /needs\.release_preflight\.result == 'success'/);
-  assert.equal(parsed.jobs.ci.permissions.actions, 'read');
-  assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
-  assert.match(raw, /node scripts\/pipeline\/release\/verify-existing-ci\.mjs/);
-  assert.equal(parsed.jobs.ci.with, undefined, 'release admission must reuse exact-SHA push CI instead of rerunning a second suite');
+  assert.equal(parsed.jobs.source_validation.uses, './.github/workflows/release-source-validation.yml');
+  assert.equal(parsed.jobs.source_validation.with.ci_run_id, '${{ inputs.ci_run_id }}');
+  const sourceValidation = parse(await readFile(join(repoRoot, '.github/workflows/release-source-validation.yml'), 'utf8'));
+  const ci = sourceValidation.jobs.ci;
+  assert.equal(ci.permissions.actions, 'read');
+  assert.equal(ci.with, undefined, 'release admission consumes exact-SHA push CI');
+  const channel = parse(await readFile(join(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
   assert.equal(parsed.jobs.supported_old_relay_compatibility, undefined);
-  assert.ok(parsed.jobs.plan.needs.includes('release_preflight'));
-  assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.release_preflight.outputs.validation_profile }}');
-  assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.release_preflight.outputs.checks_profile }}');
+  assert.ok(channel.jobs.plan.needs.includes('release_preflight'));
+  assert.equal(channel.jobs.plan.outputs.validation_profile, '${{ needs.release_preflight.outputs.validation_profile }}');
+  assert.equal(channel.jobs.plan.outputs.checks_profile, '${{ needs.release_preflight.outputs.checks_profile }}');
   assert.doesNotMatch(raw, /inputs\.checks_profile/, 'no workflow path may retain a caller-selected checks profile');
 });
 
 test('release workflow derives promote mode from confirm and uses compact defaults for advanced options', async () => {
-  const { raw } = await loadWorkflow();
+  const raw = await readFile(join(repoRoot, '.github/workflows/release-channel.yml'), 'utf8');
 
   assert.match(raw, /CONFIRM:\s*\$\{\{ inputs\.confirm \}\}/, 'confirm should cross the workflow boundary as environment data');
   assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/, 'the canonical dispatch validator should own promotion selection');

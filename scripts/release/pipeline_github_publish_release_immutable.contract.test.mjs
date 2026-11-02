@@ -143,6 +143,7 @@ for (const failure of ['FAIL_UPLOAD', 'CORRUPT_UPLOAD']) {
       execFileSync(process.execPath, args(f.local), { cwd: repoRoot, env, encoding: 'utf8' });
       const log = readFileSync(f.log, 'utf8');
       assert.equal(log.match(/release create/g)?.length, 1);
+      assert.match(log, /release create .*--latest=false/);
       assert.equal(log.match(/release edit/g)?.length, 1);
       assert.equal(log.match(/release upload .*archive.tar.gz/g)?.length, 1);
       const beforePublish = log.slice(0, log.indexOf('gh release edit'));

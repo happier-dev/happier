@@ -51,6 +51,10 @@ on:
       version:
         value: ${{ jobs.release_actor_guard.outputs.version }}
     inputs:
+      source_contracts_result:
+        required: false
+        default: ""
+        type: string
       channel: { required: true, type: string }
       source_ref: { required: false, default: auto, type: string }
       authorized_sha: { required: false, default: '', type: string }
@@ -67,10 +71,13 @@ concurrency:
   group: publish-server-runtime-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT: ${{ inputs.source_contracts_result }}
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -108,7 +115,7 @@ jobs:
 
   release_actor_guard:
     name: Release actor guard and bind source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     needs: [trusted_ref_guard]
     permissions:
@@ -219,7 +226,7 @@ jobs:
     name: Build and smoke-test unsigned candidate
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
@@ -258,7 +265,7 @@ jobs:
         run: |
           node scripts/pipeline/release/publish-server-runtime.mjs \
             --phase build-candidate --channel "$CHANNEL" --base-version "$BASE_VERSION" \
-            --version "$VERSION" --allow-stable "$ALLOW_STABLE" --run-contracts true --check-installers true \
+            --version "$VERSION" --allow-stable "$ALLOW_STABLE" --run-contracts auto --check-installers true \
             --candidate-dir dist/release-assets/server
       - name: Upload opaque unsigned archives
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -394,7 +401,7 @@ jobs:
     name: Validate, sign, manifest, and publish authorized candidate
     needs: [trusted_ref_guard, release_actor_guard, build_candidate, finalize_darwin]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: release-shared
     permissions:
@@ -475,7 +482,7 @@ jobs:
     name: Re-promote exact immutable version after interrupted rolling upload
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: release-shared
     permissions:
@@ -543,7 +550,7 @@ jobs:
     name: Re-promote exact immutable version on a fresh runner
     needs: [trusted_ref_guard, release_actor_guard, promote_existing]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: release-shared
     permissions:

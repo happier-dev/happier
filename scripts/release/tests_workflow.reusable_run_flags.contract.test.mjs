@@ -72,7 +72,9 @@ test('shared CLI restoration handles a Windows drive path and preserves executab
 
 async function runInlineCollector(env) {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
-  const collectorSource = testsRaw.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n\s+NODE/)?.[1];
+  const workflow = YAML.parse(testsRaw);
+  const collectorRun = workflow.jobs.ci_summary.steps.find((step) => step.name === 'Collect every lane conclusion').run;
+  const collectorSource = collectorRun.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n\s*NODE/)?.[1];
   assert.ok(collectorSource, 'expected the inline CI lane collector');
 
   const scratch = mkdtempSync(join(tmpdir(), 'happier-ci-collector-'));
@@ -356,7 +358,7 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.equal(unmatchedStep.env.CHANGED_PATHS_JSON, '${{ steps.changes.outputs.changed_files }}');
   assert.equal(unmatchedStep.env.DOCUMENTATION_PATHS_JSON, '${{ steps.changes.outputs.documentation_files }}');
   for (const [name, output] of Object.entries(workflow.jobs.ci_plan.outputs)) {
-    if (!name.startsWith('run_')) continue;
+    if (!name.startsWith('run_') || output.includes('steps.pre_release.outputs.')) continue;
     assert.match(output, /steps\.unmatched\.outputs\.all == 'true'/);
   }
 });
@@ -379,8 +381,9 @@ test('protected pushes cover the complete source except planner-validated notes-
   assert.equal(notes.env.CI_SOURCE_SHA, '${{ github.sha }}');
   assert.match(notes.run, /classify-source-ci-paths\.mjs --notes-only/);
   assert.match(notes.run, /node --test scripts\/release\/release_notes_projection\.contract\.test\.mjs/);
+  assert.doesNotMatch(workflow.jobs.ci_plan.outputs.run_build_smoke, /notes_only/, 'the exact child still validates versioned production builds');
   for (const [name, output] of Object.entries(workflow.jobs.ci_plan.outputs)) {
-    if (!name.startsWith('run_')) continue;
+    if (!name.startsWith('run_') || name === 'run_build_smoke' || output.includes('steps.pre_release.outputs.')) continue;
     assert.match(output, /steps\.notes\.outputs\.notes_only != 'true' && \(/);
   }
 

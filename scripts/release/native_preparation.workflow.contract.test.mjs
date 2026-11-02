@@ -21,7 +21,7 @@ function prerequisites(jobs, name, seen = new Set()) {
 test('native preparation overlaps immutable component verification while credential-bearing consumers retain admission', () => {
   for (const [name, preparationJobs, publicationJobs, gate, sourceGate] of [
     ['nightly-dev', ['prepare_ui_mobile', 'prepare_ui_desktop'], ['ui_mobile', 'ui_desktop'], 'release_verify', 'verify_source_ci'],
-    ['release', ['prepare_ui'], ['deploy_ui'], 'verify_release_candidates', 'release_admission'],
+    ['release-channel', ['prepare_ui'], ['deploy_ui'], 'verify_release_candidates', 'release_admission'],
   ]) {
     const { jobs } = workflow(name);
     for (const job of preparationJobs) {
@@ -34,17 +34,25 @@ test('native preparation overlaps immutable component verification while credent
     }
     for (const job of publicationJobs) {
       const dependencies = prerequisites(jobs, job);
-      assert.ok(dependencies.has(gate), `${name}/${job} must retain aggregate publication admission`);
+      const publicationGate = name === 'nightly-dev' ? gate : sourceGate;
+      assert.ok(dependencies.has(publicationGate), `${name}/${job} must retain publication admission`);
+      if (name === 'release-channel') {
+        assert.ok(!dependencies.has(gate), `${name}/${job} must not wait for unrelated components`);
+        for (const promotion of ['promote_preview', 'promote_main']) {
+          assert.ok(!dependencies.has(promotion), `${name}/${job} publishes before channel promotion`);
+          assert.ok(prerequisites(jobs, promotion).has(job), `${name}/${promotion} waits for ${job}`);
+        }
+      }
       const preparation = name === 'nightly-dev' ? `prepare_${job}` : 'prepare_ui';
       assert.ok(dependencies.has(preparation));
-      assert.equal(jobs[job].with.use_prepared, name === 'release' ? "${{ needs.prepare_ui.result == 'success' }}" : true);
-      if (name === 'release') assert.match(jobs[job].if, /needs.prepare_ui.result == 'success'/);
+      assert.equal(jobs[job].with.use_prepared, name === 'release-channel' ? "${{ needs.prepare_ui.result == 'success' }}" : true);
+      if (name === 'release-channel') assert.match(jobs[job].if, /needs.prepare_ui.result == 'success'/);
     }
   }
 });
 
 test('web-only UI release keeps one preparation while OTA and desktop select the early phase', () => {
-  const release = workflow('release');
+  const release = workflow('release-channel');
   const needs = Object.fromEntries(release.jobs.prepare_ui.needs.map((name) => [name, { result: 'success', outputs: {} }]));
   needs.deploy_plan.outputs = { deploy_ui_resume_complete: 'false', deploy_ui_requested: 'true',
     deploy_ui_desktop_mode: 'none', deploy_ui_expo_action: 'none' };
