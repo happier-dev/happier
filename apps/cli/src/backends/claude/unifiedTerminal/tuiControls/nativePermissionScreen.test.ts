@@ -52,6 +52,9 @@ describe('native Claude permission presentation', () => {
         expect(parseClaudeNativePermissionScreen(blockFocused)).toMatchObject({
             kind: 'tool', amended: false, options: labels.map((label, index) => ({ label, focused: index === 1 })),
         });
+        expect(parseClaudeNativePermissionScreen(blockFocused.slice(blockFocused.indexOf(' Allow this read')))).toMatchObject({
+            kind: 'tool', amended: false, options: labels.map((label, index) => ({ label, focused: index === 1 })),
+        });
     });
     it('preserves an ordinary native Read file scope while focus hides the amendment hint', () => {
         const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-read-focused.txt', import.meta.url), 'utf8');
@@ -71,7 +74,7 @@ describe('native Claude permission presentation', () => {
         expect(parseClaudeNativePermissionScreen(screen.replace('2. No, and block reads outside the working directories from now on',
             '2. No, and change an unknown policy'))).toBeNull();
         expect(parseClaudeNativePermissionScreen(screen.replace(/^.*4\. Yes.+\n/mu, ''))).toBeNull();
-        expect(parseClaudeNativePermissionScreen(screen.replace(' Read outside the working directories\n', ' Upgrade notice\n'))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen.replace('Allow this read outside the working directories?', 'Allow an unknown scope?'))).toBeNull();
         expect(parseClaudeNativePermissionScreen(screen + 'Unknown active dialog')).toBeNull();
     });
     it('recognizes native permission and plan forms above the observed session-title rule while keeping unknown tails blocked', () => {
@@ -98,7 +101,6 @@ describe('native Claude permission presentation', () => {
         const parsed = parseClaudeNativePermissionScreen(screen);
         expect(parsed?.options[1]).toEqual({ label: 'Yes, and don’t ask again for: ruby *', focused: true });
         expect(parsed?.options.at(-1)?.label).toBe('No');
-        expect(parseClaudeNativePermissionScreen(screen.replace(' Bash command\n', ' Upgrade notice\n'))).toBeNull();
     });
     it('recognizes native ExitPlanMode choices and its editable feedback row without copying plan content', () => {
         const screen = readFileSync(new URL('./__fixtures__/claude-2.1.304-plan-exit.txt', import.meta.url), 'utf8');

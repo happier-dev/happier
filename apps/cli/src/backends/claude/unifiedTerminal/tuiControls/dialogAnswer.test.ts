@@ -75,6 +75,27 @@ function trustDialog(screen: string) {
 }
 
 describe('answerClaudeUnifiedRegisteredDialog', () => {
+  it.each(['2', '3'])('submits choice %s through a clipped file permission whose remembered scope hides the amendment hint', async (choice) => {
+    // Claude 2.1.316: a long Write preview pushes "Create file" off-screen.
+    const initial = [
+      '   4 harmless probe preview', '╌╌╌╌╌╌╌',
+      ' Do you want to create native-write-probe.txt?',
+      ' ❯ 1. Yes',
+      '   2. Yes, and always allow access to /tmp/issue671-native-probe/',
+      '      workspace for this session', '      (shift+tab)',
+      '   3. No', '', ' Esc to cancel · Tab to amend',
+    ].join('\n');
+    const remembered = initial.replace(' ❯ 1.', '   1.').replace('   2.', ' ❯ 2.').replace(' · Tab to amend', '');
+    const rejected = initial.replace(' ❯ 1.', '   1.').replace('   3.', ' ❯ 3.');
+    const port = createFakeControlPort({ captures: [initial, remembered, ...(choice === '3' ? [rejected] : []), IDLE] });
+    await expect(answerClaudeUnifiedRegisteredDialog({
+      port, dialogId: 'tool_permission', choice, resolveDialog: nativePermission,
+      isCurrent: () => true, settleMs: 0, wait: async () => undefined,
+      verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2,
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(choice === '2' ? ['ArrowDown', 'Enter'] : ['ArrowDown', 'ArrowDown', 'Enter']);
+  });
+
   it('navigates to native No through scopes whose footer omits the unavailable amendment hint', async () => {
     const second = readFileSync(new URL('./__fixtures__/claude-2.1.309-permission-remember-focused.txt', import.meta.url), 'utf8');
     const initial = second.replace(' ❯ 2.', '   2.').replace('   1.', ' ❯ 1.').replace(' Esc to cancel', ' Esc to cancel · Tab to amend');

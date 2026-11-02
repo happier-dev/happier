@@ -137,6 +137,25 @@ const CLAUDE_2_1_170 = {
 } as const;
 
 describe('parseClaudeScreenState — usage-limit chooser', () => {
+  it.each([
+    ['weekly limit', CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace('session limit', 'weekly limit')],
+    ['trust', CLAUDE_2_1_170.trustFolderPrompt],
+    ['model switch', CLAUDE_2_1_170.switchModelDialog],
+    ['generic', ['Choose an action', '', '❯ 1. Continue', '  2. Cancel', '', 'Enter to confirm · Esc to cancel'].join('\n')],
+  ])('keeps the active %s choices and focus independent of numbered transcript history', (_name, dialog) => {
+    const focused = dialog.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.');
+    const expected = parseClaudeScreenState(focused);
+    const state = parseClaudeScreenState([
+      'Earlier response:', '  1. First historical point', '  2. Second historical point', '', focused,
+    ].join('\n'));
+    expect(state.visibleNumberedDialog?.options).toEqual(expected.visibleNumberedDialog?.options);
+    expect(state.visibleDialogSelection).toEqual(expected.visibleDialogSelection);
+    expect(state.visibleDialogSelection?.options.map((option) => option.focused)).toEqual(
+      expected.visibleNumberedDialog!.options.map((_option, index) => index === 1),
+    );
+    if (_name === 'weekly limit') expect(state.usageLimitDialogVisible).toBe(true);
+  });
+
   it('recognizes an active usage-limit wait footer without treating historical notices as current', () => {
     const footer = [
       '  ⚠ Usage limit reached · limit resets 5:10pm · clau.de/wrap-up',

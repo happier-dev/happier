@@ -18,7 +18,6 @@ function lastLineIndex(lines: readonly string[], pattern: RegExp): number {
 }
 
 const PLAN_QUESTION = 'Claude has written up a plan and is ready to execute. Would you like to proceed?';
-const NATIVE_PERMISSION_HEADER = /^\s*(?:Bash command|Create file|Read file|Read outside the working directories)\s*$/u;
 const READ_OUTSIDE_CHOICES = [
     'Yes, and keep allowing any reads outside the working directories',
     'No, and block reads outside the working directories from now on',
@@ -97,18 +96,17 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
     const explanation = commandEnd >= 0
         ? lines.slice(start + commandEnd + 2, question + 1).map((line) => line.trimEnd()).join('\n').trim()
         : undefined;
-    const readOutside = lines[question]!.trim() === 'Allow this read outside the working directories?'
-        && context.split('\n').some((line) => line.trim() === 'Read outside the working directories');
+    const readOutside = lines[question]!.trim() === 'Allow this read outside the working directories?';
     // Auto-mode read scopes are not ordered as Yes ... No. Recognize the native labels
     // exactly: Tab can amend either approval row, which must remain terminal-owned.
     if (readOutside) {
         if (options.length !== READ_OUTSIDE_CHOICES.length
             || options.some((option, index) => option.label !== READ_OUTSIDE_CHOICES[index])) return null;
     } else if (options[options.length - 1]?.label !== 'No') return null;
-    // Remembered/automatic scopes hide the unavailable amendment affordance while focused.
-    // The shorter footer needs the observed native tool header as additional provenance.
+    // Scope focus hides the amendment hint, and a long preview can push the heading
+    // off-screen. Recognize the complete question/choices/footer independently of it.
     if (!lines[footer]!.includes('Tab to amend')
-        && (!context.split('\n').some((line) => NATIVE_PERMISSION_HEADER.test(line)) || !/^Yes\b/u.test(options[0]!.label))) return null;
+        && !/^Yes\b/u.test(options[0]!.label)) return null;
     return {
         kind: 'tool',
         context,

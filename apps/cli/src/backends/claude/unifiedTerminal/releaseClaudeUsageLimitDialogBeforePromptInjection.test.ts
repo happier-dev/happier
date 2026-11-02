@@ -11,10 +11,11 @@ function fixture(name: string): string {
 }
 
 describe('releaseClaudeUsageLimitDialogBeforePromptInjection', () => {
-  it('dismisses only a freshly observed usage-limit dialog before injection', async () => {
+  it.each(['incident-89861-ratelimit-resume.ansi', 'incident-weekly-limit-after-numbered-transcript.txt'])(
+    'dismisses only a freshly observed usage-limit dialog before injection (%s)', async (name) => {
     const port = createFakeControlPort({
       captures: [
-        fixture('incident-89861-ratelimit-resume.ansi'),
+        fixture(name),
         fixture('healthy-92862-idle.ansi'),
       ],
     });
