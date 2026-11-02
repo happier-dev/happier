@@ -4,6 +4,10 @@ import { z } from 'zod/mini';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import {
+  SavedSecretOperationAdmissionFailureReasonV1Schema,
+  type SavedSecretOperationAdmissionFailureReasonV1,
+} from '../account/settings/savedSecretReferenceV1.js';
 
 export const ProviderErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'model_not_granted', 'permission_mode_not_granted',
@@ -94,6 +98,8 @@ export const ProviderErrorV1Schema = lazyZodSchema(() => z.strictObject({
   sourceProfileId: z.optional(ProfileRecordIdV1Schema),
   retryable: z.boolean(),
   retryAfterMs: z.optional(z.number().check(z.int(), z.nonnegative(), z.maximum(86_400_000))),
+  /** The Saved Secret owner's admission reason behind a credential refusal, carried unchanged. */
+  savedSecretReason: z.optional(SavedSecretOperationAdmissionFailureReasonV1Schema),
   action: ProviderRecoveryActionV1Schema,
 }).check(z.superRefine((value, ctx) => {
   const [expectedRetryable, defaultAction] = ERROR_DEFAULTS[value.code];
@@ -109,6 +115,10 @@ export const ProviderErrorV1Schema = lazyZodSchema(() => z.strictObject({
   if (value.code !== 'provider_endpoint_rate_limited' && value.retryAfterMs !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['retryAfterMs'], message: 'Retry delay is rate-limit only' });
   }
+  if (value.savedSecretReason !== undefined && value.code !== 'provider_secret_missing'
+    && value.code !== 'provider_secret_unavailable' && value.code !== 'provider_binding_changed') {
+    ctx.addIssue({ code: 'custom', path: ['savedSecretReason'], message: 'Saved Secret reason is credential-refusal only' });
+  }
 })));
 export type ProviderErrorV1 = z.infer<typeof ProviderErrorV1Schema>;
 
@@ -119,6 +129,7 @@ export function createProviderErrorV1(
     machineId?: string;
     sourceProfileId?: string;
     retryAfterMs?: number;
+    savedSecretReason?: SavedSecretOperationAdmissionFailureReasonV1;
     modelLoadAvailable?: boolean;
   }> = {},
 ): ProviderErrorV1 {
