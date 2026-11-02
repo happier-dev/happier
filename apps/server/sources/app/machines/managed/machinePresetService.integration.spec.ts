@@ -79,7 +79,7 @@ describe("Machine preset relational owner", () => {
         const definition = { id: 'preset-setup-snapshot', homeId, owner: { kind: 'account', accountId }, name: 'Setup', recipe, controller, environment };
         expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
         const request = { custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'setup-snapshot-admission',
-            input: { requestId: 'setup-snapshot-create', continuationPresent: false, input: { selection: { kind: 'preset' as const,
+            input: { requestId: 'setup-snapshot-create', continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'preset' as const,
                 homeId, id: definition.id, revision: 0 }, controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } } };
         const admitted = await admitManagedAcquire(request);
         expect(admitted.machine.environmentSetup).toEqual({ environment, state: 'pending' });
@@ -141,7 +141,7 @@ describe("Machine preset relational owner", () => {
         const input = { id: 'preset-crabbox-direct', homeId, owner: { kind: 'account', accountId }, name: 'Local container', recipe: localRecipe, controller };
         expect((await requestPreset(accountId, 'create', input)).json()).toMatchObject({ kind: 'saved', preset: { recipe: localRecipe } });
         const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'crabbox-direct-reviewed',
-            input: { requestId: 'crabbox-direct-create', continuationPresent: false, input: { selection: { kind: 'one-off', homeId, controller,
+            input: { requestId: 'crabbox-direct-create', continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller,
                 launch: localRecipe, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } } });
         expect(acquired).toMatchObject({ machine: { launch: localRecipe } });
         const coordinatorRecipe = { ...localRecipe, choices: { backendId: 'aws', transport: 'coordinator', namespace: 'remote', target: 'linux',
@@ -207,7 +207,7 @@ describe("Machine preset relational owner", () => {
         expect(saved.json(), saved.body).toMatchObject({ kind: "saved", preset: { recipe: selected } });
         expect(saved.statusCode).toBe(200);
         expect(saved.body).not.toContain("must-not-disclose");
-        const reviewed = { selection: { kind: "preset" as const, homeId, id: input.id, revision: 0 }, controller, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false };
+        const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: input.id, revision: 0 }, controller, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false };
         if (written.status !== "written") throw new Error("Credential fixture was not written");
         expect(await deleteQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: written.credentialRevision, expectedStorageMode: 'plain', cleanupGroupReferences: false })).toMatchObject({ status: "deleted" });
         expect((await requestPreset(accountId, "create", { ...input, id: "preset-removed-profile", recipe: selected })).json()).toEqual({ kind: "refused", code: "credential_unavailable" });
@@ -234,7 +234,7 @@ describe("Machine preset relational owner", () => {
         const saved = await requestPreset(accountId, 'create', definition);
         expect(saved.json()).toMatchObject({ kind: 'saved', preset: { recipe: selected } });
         expect(saved.body).not.toContain('private-native');
-        const reviewed = { selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 0 }, controller,
+        const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 0 }, controller,
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
         const admitted = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId,
             requestEnvelopeDigest: 'plural-reviewed', input: { input: reviewed, requestId: 'plural-acquire', continuationPresent: false } });
@@ -254,7 +254,7 @@ describe("Machine preset relational owner", () => {
         const controller = await seedCurrentProvisioner(accountId, homeId);
         const created = await requestPreset(accountId, "create", { id: "preset-admission", homeId, owner: { kind: "account", accountId }, name: "Limited", recipe, controller, simultaneousLimit: { maximum: 1 } });
         expect(created.statusCode).toBe(200);
-        const reviewed = { selection: { kind: "preset" as const, homeId, id: "preset-admission", revision: 0 }, controller,
+        const reviewed = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: "preset" as const, homeId, id: "preset-admission", revision: 0 }, controller,
             retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false,
             reviewedFacts: { launch: recipe, controller, optionStatus: "current" as const, prerequisites: [{ requirement: { kind: "systemTool" as const, id: "native-cli" }, status: "available" as const }],
                 billing: { location: "local" as const, stoppedBilling: "not-billed" as const }, retentionCapabilities: { supportedIntents: ["start" as const, "stop" as const, "delete" as const] },
