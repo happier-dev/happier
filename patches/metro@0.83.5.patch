@@ -1,8 +1,7 @@
 diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalculator.js
-index 5b4b17b..316dc3f 100644
 --- a/src/DeltaBundler/DeltaCalculator.js
 +++ b/src/DeltaBundler/DeltaCalculator.js
-@@ -15,7 +15,7 @@ class DeltaCalculator extends _events.default {
+@@ -15,7 +15,7 @@
    _deletedFiles = new Set();
    _modifiedFiles = new Set();
    _addedFiles = new Set();
@@ -11,7 +10,30 @@ index 5b4b17b..316dc3f 100644
    constructor(entryPoints, changeEventSource, options) {
      super();
      this._options = options;
-@@ -51,16 +51,33 @@ class DeltaCalculator extends _events.default {
+@@ -42,41 +42,69 @@
+   }
+   async getDelta({ reset, shallow }) {
+     debug("Calculating delta (reset: %s, shallow: %s)", reset, shallow);
+-    if (this._currentBuildPromise) {
++    // Queued deltas do not consume packages. Acquire dependency custody only
++    // after this calculator's current read settles, never while waiting on it.
++    while (this._currentBuildPromise) {
+       await this._currentBuildPromise;
+     }
++    const read = () => this._calculateDelta({ reset, shallow });
++    this._currentBuildPromise = this._options.unstable_withDependencyConsumption
++      ? this._options.unstable_withDependencyConsumption(read)
++      : read();
++    try {
++      return await this._currentBuildPromise;
++    } finally {
++      this._currentBuildPromise = null;
++    }
++  }
++  async _calculateDelta({ reset, shallow }) {
+     const modifiedFiles = this._modifiedFiles;
+     this._modifiedFiles = new Set();
+     const deletedFiles = this._deletedFiles;
      this._deletedFiles = new Set();
      const addedFiles = this._addedFiles;
      this._addedFiles = new Set();
@@ -50,11 +72,30 @@ index 5b4b17b..316dc3f 100644
 -      };
 -      this._graph.dependencies.forEach((_, key) => markModified(key));
 -      this._graph.entryPoints.forEach(markModified);
+-    }
+-    this._currentBuildPromise = this._getChangedDependencies(
 +      }
-     }
-     this._currentBuildPromise = this._getChangedDependencies(
++    }
++    const build = this._getChangedDependencies(
        modifiedFiles,
-@@ -101,15 +118,8 @@ class DeltaCalculator extends _events.default {
+       deletedFiles,
+       addedFiles,
+     );
+     let result;
+     try {
+-      result = await this._currentBuildPromise;
++      result = await build;
+     } catch (error) {
+       modifiedFiles.forEach((file) => this._modifiedFiles.add(file));
+       deletedFiles.forEach((file) => this._deletedFiles.add(file));
+       addedFiles.forEach((file) => this._addedFiles.add(file));
+       throw error;
+-    } finally {
+-      this._currentBuildPromise = null;
+     }
+     if (reset) {
+       this._graph.reorderGraph({
+@@ -101,15 +129,8 @@
    };
    _handleFileChange = ({ type, filePath, metadata }, logger) => {
      debug("Handling %s: %s (type: %s)", type, filePath, metadata.type);
@@ -72,11 +113,71 @@ index 5b4b17b..316dc3f 100644
      }
      let state;
      if (this._deletedFiles.has(filePath)) {
+diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCalculator.js.flow
+--- a/src/DeltaBundler/DeltaCalculator.js.flow
++++ b/src/DeltaBundler/DeltaCalculator.js.flow
+@@ -90,12 +90,26 @@
+     ...
+   }): Promise<DeltaResult<T>> {
+     debug('Calculating delta (reset: %s, shallow: %s)', reset, shallow);
+-    // If there is already a build in progress, wait until it finish to start
+-    // processing a new one (delta server doesn't support concurrent builds).
+-    if (this._currentBuildPromise) {
++    // Queued deltas retain no dependency custody while the current read runs.
++    while (this._currentBuildPromise) {
+       await this._currentBuildPromise;
+     }
+-
++    const read = () => this._calculateDelta({reset, shallow});
++    this._currentBuildPromise = this._options.unstable_withDependencyConsumption
++      ? this._options.unstable_withDependencyConsumption(read)
++      : read();
++    try {
++      return await this._currentBuildPromise;
++    } finally {
++      this._currentBuildPromise = null;
++    }
++  }
++
++  async _calculateDelta({reset, shallow}: {
++    reset: boolean,
++    shallow: boolean,
++    ...
++  }): Promise<DeltaResult<T>> {
+     // We don't want the modified files Set to be modified while building the
+     // bundle, so we isolate them by using the current instance for the bundling
+     // and creating a new instance for the file watcher.
+@@ -124,7 +138,7 @@
+     // Concurrent requests should reuse the same bundling process. To do so,
+     // this method stores the promise as an instance variable, and then it's
+     // removed after it gets resolved.
+-    this._currentBuildPromise = this._getChangedDependencies(
++    const build = this._getChangedDependencies(
+       modifiedFiles,
+       deletedFiles,
+       addedFiles,
+@@ -133,7 +147,7 @@
+     let result;
+ 
+     try {
+-      result = await this._currentBuildPromise;
++      result = await build;
+     } catch (error) {
+       // In case of error, we don't want to mark the modified files as
+       // processed (since we haven't actually created any delta). If we do not
+@@ -144,8 +158,6 @@
+       addedFiles.forEach((file: string) => this._addedFiles.add(file));
+ 
+       throw error;
+-    } finally {
+-      this._currentBuildPromise = null;
+     }
+ 
+     // Return all the modules if the client requested a reset delta.
 diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
-index 9f1b169..4c3562a 100644
 --- a/src/DeltaBundler/Graph.js
 +++ b/src/DeltaBundler/Graph.js
-@@ -8,6 +8,7 @@ var _contextModule = require("../lib/contextModule");
+@@ -8,6 +8,7 @@
  var _CountingSet = _interopRequireDefault(require("../lib/CountingSet"));
  var _isResolvedDependency = require("../lib/isResolvedDependency");
  var _buildSubgraph = require("./buildSubgraph");
@@ -84,7 +185,7 @@ index 9f1b169..4c3562a 100644
  var _invariant = _interopRequireDefault(require("invariant"));
  var _nullthrows = _interopRequireDefault(require("nullthrows"));
  function _interopRequireDefault(e) {
-@@ -175,7 +176,31 @@ class Graph {
+@@ -175,7 +176,31 @@
            options.onDependencyAdd();
            const result = await options.transform(absolutePath, requireContext);
            options.onDependencyAdded();
@@ -118,7 +219,6 @@ index 9f1b169..4c3562a 100644
        },
      );
 diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
-index cf3bc0c..81265f0 100644
 --- a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
 +++ b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
 @@ -10,12 +10,13 @@
@@ -136,13 +236,58 @@ index cf3bc0c..81265f0 100644
    readonly firstLine1Based: number;
    readonly functionMap: null | undefined | FBSourceFunctionMap;
    readonly path: string;
+diff --git a/src/DeltaBundler/types.d.ts b/src/DeltaBundler/types.d.ts
+--- a/src/DeltaBundler/types.d.ts
++++ b/src/DeltaBundler/types.d.ts
+@@ -131,6 +131,7 @@
+   unstable_allowRequireContext: boolean;
+   unstable_enablePackageExports: boolean;
+   unstable_incrementalResolution: boolean;
++  unstable_withDependencyConsumption?: <R>(read: () => Promise<R>) => Promise<R>;
+   shallow: boolean;
+ }>;
+ export type DeltaResult<T = MixedOutput> = {
+diff --git a/src/DeltaBundler/types.js.flow b/src/DeltaBundler/types.js.flow
+--- a/src/DeltaBundler/types.js.flow
++++ b/src/DeltaBundler/types.js.flow
+@@ -156,6 +156,7 @@
+   unstable_allowRequireContext: boolean,
+   unstable_enablePackageExports: boolean,
+   unstable_incrementalResolution: boolean,
++  unstable_withDependencyConsumption?: <R>(read: () => Promise<R>) => Promise<R>,
+   shallow: boolean,
+ }>;
+ 
+diff --git a/src/DeltaBundler.d.ts b/src/DeltaBundler.d.ts
+--- a/src/DeltaBundler.d.ts
++++ b/src/DeltaBundler.d.ts
+@@ -41,6 +41,7 @@
+   _changeEventSource: EventEmitter;
+   _deltaCalculators: Map<Graph<T>, DeltaCalculator<T>>;
+   constructor(changeEventSource: EventEmitter);
++  unstable_setDependencyConsumption(consume: NonNullable<Options<T>['unstable_withDependencyConsumption']>): void;
+   end(): void;
+   getDependencies(
+     entryPoints: ReadonlyArray<string>,
 diff --git a/src/DeltaBundler.js b/src/DeltaBundler.js
-index da1cdb8..fbd7048 100644
 --- a/src/DeltaBundler.js
 +++ b/src/DeltaBundler.js
-@@ -25,13 +25,15 @@ class DeltaBundler {
+@@ -15,6 +15,9 @@
+   constructor(changeEventSource) {
+     this._changeEventSource = changeEventSource;
+   }
++  unstable_setDependencyConsumption(consume) {
++    this._withDependencyConsumption = consume;
++  }
+   end() {
+     this._deltaCalculators.forEach((deltaCalculator) => deltaCalculator.end());
+     this._deltaCalculators = new Map();
+@@ -23,26 +26,34 @@
+     const deltaCalculator = new _DeltaCalculator.default(
+       new Set(entryPoints),
        this._changeEventSource,
-       options,
+-      options,
++      { ...options, unstable_withDependencyConsumption: this._withDependencyConsumption },
      );
 -    await deltaCalculator.getDelta({
 -      reset: true,
@@ -163,9 +308,10 @@ index da1cdb8..fbd7048 100644
    }
    async buildGraph(entryPoints, options) {
      const deltaCalculator = new _DeltaCalculator.default(
-@@ -39,10 +41,16 @@ class DeltaBundler {
+       new Set(entryPoints),
        this._changeEventSource,
-       options,
+-      options,
++      { ...options, unstable_withDependencyConsumption: this._withDependencyConsumption },
      );
 -    await deltaCalculator.getDelta({
 -      reset: true,
@@ -184,11 +330,47 @@ index da1cdb8..fbd7048 100644
      const graph = deltaCalculator.getGraph();
      this._deltaCalculators.set(graph, deltaCalculator);
      return graph;
+diff --git a/src/DeltaBundler.js.flow b/src/DeltaBundler.js.flow
+--- a/src/DeltaBundler.js.flow
++++ b/src/DeltaBundler.js.flow
+@@ -42,10 +42,15 @@
+  */
+ export default class DeltaBundler<T = MixedOutput> {
+   _changeEventSource: EventEmitter;
++  _withDependencyConsumption: $PropertyType<Options<T>, 'unstable_withDependencyConsumption'>;
+   _deltaCalculators: Map<Graph<T>, DeltaCalculator<T>> = new Map();
+ 
+   constructor(changeEventSource: EventEmitter) {
+     this._changeEventSource = changeEventSource;
++  }
++
++  unstable_setDependencyConsumption(consume: $NonMaybeType<$PropertyType<Options<T>, 'unstable_withDependencyConsumption'>>): void {
++    this._withDependencyConsumption = consume;
+   }
+ 
+   end(): void {
+@@ -62,7 +67,7 @@
+     const deltaCalculator = new DeltaCalculator(
+       new Set(entryPoints),
+       this._changeEventSource,
+-      options,
++      {...options, unstable_withDependencyConsumption: this._withDependencyConsumption},
+     );
+ 
+     await deltaCalculator.getDelta({reset: true, shallow: options.shallow});
+@@ -82,7 +87,7 @@
+     const deltaCalculator = new DeltaCalculator(
+       new Set(entryPoints),
+       this._changeEventSource,
+-      options,
++      {...options, unstable_withDependencyConsumption: this._withDependencyConsumption},
+     );
+ 
+     await deltaCalculator.getDelta({reset: true, shallow: options.shallow});
 diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
-index 72d1720..7849f0d 100644
 --- a/src/Server/symbolicate.js
 +++ b/src/Server/symbolicate.js
-@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", {
+@@ -4,6 +4,7 @@
    value: true,
  });
  exports.default = symbolicate;
@@ -196,7 +378,7 @@ index 72d1720..7849f0d 100644
  var _search = require("metro-source-map/private/Consumer/search");
  var _Symbolication = require("metro-symbolicate/private/Symbolication");
  function createFunctionNameGetter(module) {
-@@ -30,6 +31,7 @@ async function symbolicate(stack, maps, config, extraData) {
+@@ -30,6 +31,7 @@
      mapsByUrl.set(url, map);
    }
    const functionNameGetters = new Map();
@@ -204,7 +386,7 @@ index 72d1720..7849f0d 100644
    function findModule(frame) {
      const map = mapsByUrl.get(frame.file);
      if (!map || frame.lineNumber == null) {
-@@ -57,6 +59,20 @@ async function symbolicate(stack, maps, config, extraData) {
+@@ -57,6 +59,20 @@
        line1Based: frame.lineNumber - module.firstLine1Based + 1,
        column0Based: frame.column,
      };
@@ -225,7 +407,7 @@ index 72d1720..7849f0d 100644
      const mappingIndex = (0, _search.greatestLowerBound)(
        module.map,
        generatedPosInModule,
-@@ -97,11 +113,6 @@ async function symbolicate(stack, maps, config, extraData) {
+@@ -97,11 +113,6 @@
          ...frame,
        };
      }
@@ -237,11 +419,32 @@ index 72d1720..7849f0d 100644
      const originalPos = findOriginalPos(frame, module);
      if (!originalPos) {
        return {
+diff --git a/src/node-haste/DependencyGraph/createFileMap.js b/src/node-haste/DependencyGraph/createFileMap.js
+--- a/src/node-haste/DependencyGraph/createFileMap.js
++++ b/src/node-haste/DependencyGraph/createFileMap.js
+@@ -106,6 +106,7 @@
+           autoSave,
+         })),
+     perfLoggerFactory: config.unstable_perfLoggerFactory,
++    processFileChanges: config.watcher.unstable_processFileChanges,
+     computeSha1: !config.watcher.unstable_lazySha1,
+     enableSymlinks: true,
+     extensions: Array.from(
+diff --git a/src/node-haste/DependencyGraph/createFileMap.js.flow b/src/node-haste/DependencyGraph/createFileMap.js.flow
+--- a/src/node-haste/DependencyGraph/createFileMap.js.flow
++++ b/src/node-haste/DependencyGraph/createFileMap.js.flow
+@@ -115,6 +115,7 @@
+           autoSave,
+         })),
+     perfLoggerFactory: config.unstable_perfLoggerFactory,
++    processFileChanges: config.watcher.unstable_processFileChanges,
+     computeSha1: !config.watcher.unstable_lazySha1,
+     enableSymlinks: true,
+     extensions: Array.from(
 diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
-index 342bbce..4b16f01 100644
 --- a/src/node-haste/DependencyGraph.js
 +++ b/src/node-haste/DependencyGraph.js
-@@ -186,6 +186,14 @@ class DependencyGraph extends _events.default {
+@@ -186,6 +186,14 @@
      return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
    }
    async getOrComputeSha1(mixedPath) {

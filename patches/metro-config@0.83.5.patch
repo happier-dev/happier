@@ -1,0 +1,40 @@
+diff --git a/src/types.d.ts b/src/types.d.ts
+--- a/src/types.d.ts
++++ b/src/types.d.ts
+@@ -10,7 +10,7 @@
+ 
+ import type {HandleFunction, Server} from 'connect';
+ import type {CacheStore, MetroCache} from 'metro-cache';
+-import type {CacheManagerFactory} from 'metro-file-map';
++import type {CacheManagerFactory, ProcessFileChanges} from 'metro-file-map';
+ import type {CustomResolver} from 'metro-resolver';
+ import type {JsTransformerConfig} from 'metro-transform-worker';
+ import type {
+@@ -212,6 +212,7 @@
+   }>;
+   unstable_autoSaveCache: Readonly<{enabled: boolean; debounceMs?: number}>;
+   unstable_lazySha1: boolean;
++  unstable_processFileChanges?: ProcessFileChanges;
+   watchman: Readonly<{deferStates: ReadonlyArray<string>}>;
+ };
+ export type InputConfigT = Partial<
+diff --git a/src/types.js.flow b/src/types.js.flow
+--- a/src/types.js.flow
++++ b/src/types.js.flow
+@@ -11,7 +11,7 @@
+ 
+ import type {HandleFunction, Server} from 'connect';
+ import type {CacheStore, MetroCache} from 'metro-cache';
+-import type {CacheManagerFactory} from 'metro-file-map';
++import type {CacheManagerFactory, ProcessFileChanges} from 'metro-file-map';
+ import type {CustomResolver} from 'metro-resolver';
+ import type {JsTransformerConfig} from 'metro-transform-worker';
+ import type {
+@@ -221,6 +221,7 @@
+     debounceMs?: number,
+   }>,
+   unstable_lazySha1: boolean,
++  unstable_processFileChanges?: ProcessFileChanges,
+   watchman: Readonly<{
+     deferStates: ReadonlyArray<string>,
+   }>,

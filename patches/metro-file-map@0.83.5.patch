@@ -1,11 +1,85 @@
+diff --git a/src/index.d.ts b/src/index.d.ts
+--- a/src/index.d.ts
++++ b/src/index.d.ts
+@@ -37,6 +37,8 @@
+   HasteMapData,
+   HasteMapItem,
+ };
++export type ProcessFileChanges = (processChanges: () => Promise<void>, signal: AbortSignal) => Promise<void>;
++
+ export type InputOptions = Readonly<{
+   computeSha1?: null | undefined | boolean;
+   enableSymlinks?: null | undefined | boolean;
+@@ -53,6 +55,7 @@
+   maxFilesPerWorker?: null | undefined | number;
+   maxWorkers: number;
+   perfLoggerFactory?: null | undefined | PerfLoggerFactory;
++  processFileChanges?: ProcessFileChanges;
+   resetCache?: null | undefined | boolean;
+   useWatchman?: null | undefined | boolean;
+   watch?: null | undefined | boolean;
 diff --git a/src/index.js b/src/index.js
-index 7764d3c..62af2b7 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -582,21 +582,13 @@ class FileMap extends _events.default {
-         _perf_hooks.performance.timeOrigin + _perf_hooks.performance.now();
-       changeQueue = changeQueue
-         .then(async () => {
+@@ -174,6 +174,7 @@
+     this.#options = {
+       ...buildParameters,
+       healthCheck: options.healthCheck,
++      processFileChanges: options.processFileChanges,
+       perfLoggerFactory: options.perfLoggerFactory,
+       resetCache: options.resetCache,
+       useWatchman: options.useWatchman == null ? true : options.useWatchman,
+@@ -514,7 +515,7 @@
+     let changeQueue = Promise.resolve();
+     let nextEmit = null;
+     const emitChange = () => {
+-      if (nextEmit == null || nextEmit.eventsQueue.length === 0) {
++      if (processingChanges || nextEmit == null || nextEmit.eventsQueue.length === 0) {
+         return;
+       }
+       const { eventsQueue, firstEventTimestamp, firstEnqueuedTimestamp } =
+@@ -544,153 +545,109 @@
+       this.emit("change", changeEvent);
+       nextEmit = null;
+     };
+-    const onChange = (change) => {
+-      if (
+-        change.metadata &&
+-        (change.metadata.type === "d" ||
+-          (change.metadata.type === "f" &&
+-            !hasWatchedExtension(change.relativePath)) ||
+-          (!this.#options.enableSymlinks && change.metadata?.type === "l"))
+-      ) {
+-        return;
+-      }
+-      const absoluteFilePath = path.join(
+-        change.root,
+-        (0, _normalizePathSeparatorsToSystem.default)(change.relativePath),
+-      );
+-      if (this.#options.ignorePattern.test(absoluteFilePath)) {
+-        return;
+-      }
+-      const relativeFilePath =
+-        this.#pathUtils.absoluteToNormal(absoluteFilePath);
+-      const linkStats = fileSystem.linkStats(relativeFilePath);
+-      if (
+-        change.event === "touch" &&
+-        linkStats != null &&
+-        change.metadata.modifiedTime != null &&
+-        linkStats.modifiedTime === change.metadata.modifiedTime
+-      ) {
+-        return;
+-      }
+-      const eventTypeToEmit =
+-        change.event === "touch"
+-          ? linkStats == null
+-            ? "add"
+-            : "change"
+-          : "delete";
+-      const onChangeStartTime =
+-        _perf_hooks.performance.timeOrigin + _perf_hooks.performance.now();
+-      changeQueue = changeQueue
+-        .then(async () => {
 -          if (
 -            nextEmit != null &&
 -            nextEmit.eventsQueue.find(
@@ -21,33 +95,198 @@ index 7764d3c..62af2b7 100644
 -                      change.metadata.modifiedTime)),
 -            )
 -          ) {
-+          // The installer's relink bursts can contain tens of thousands of
-+          // paths. Index the existing exact-event identity once per batch.
-+          const eventKey = change.metadata == null
-+            ? JSON.stringify([eventTypeToEmit, absoluteFilePath])
-+            : change.metadata.modifiedTime == null ? null
-+              : JSON.stringify([eventTypeToEmit, absoluteFilePath, change.metadata.modifiedTime]);
-+          if (eventKey != null && nextEmit?.eventKeys.has(eventKey)) {
-             return null;
-           }
-           const linkStats = fileSystem.linkStats(relativeFilePath);
-@@ -609,6 +601,7 @@ class FileMap extends _events.default {
-             if (nextEmit == null) {
-               nextEmit = {
-                 eventsQueue: [event],
-+                eventKeys: new Set(eventKey == null ? [] : [eventKey]),
-                 firstEnqueuedTimestamp:
-                   _perf_hooks.performance.timeOrigin +
-                   _perf_hooks.performance.now(),
-@@ -616,6 +609,7 @@ class FileMap extends _events.default {
-               };
-             } else {
-               nextEmit.eventsQueue.push(event);
-+              if (eventKey != null) nextEmit.eventKeys.add(eventKey);
+-            return null;
+-          }
+-          const linkStats = fileSystem.linkStats(relativeFilePath);
+-          const enqueueEvent = (metadata) => {
+-            const event = {
+-              filePath: absoluteFilePath,
+-              metadata,
+-              type: eventTypeToEmit,
++    // Watcher arrivals describe an installation in progress. Reconcile each
++    // changed path from the published tree once, under the consumer's existing
++    // dependency boundary, before notifying graph/resolution consumers.
++    const pendingChanges = new Map();
++    let processingChanges = false;
++    const processChanges = async () => {
++      while (pendingChanges.size > 0) {
++        const batch = [...pendingChanges.entries()];
++        pendingChanges.clear();
++        for (const [absoluteFilePath, {change, timestamp}] of batch) {
++          try {
++            const relativeFilePath = this.#pathUtils.absoluteToNormal(absoluteFilePath);
++            const previous = fileSystem.linkStats(relativeFilePath);
++            const previousSha1 = previous?.fileType === "f"
++              ? fileSystem.getSha1(relativeFilePath) : null;
++            let stat;
++            try {
++              stat = await _fs.promises.lstat(absoluteFilePath);
++            } catch (error) {
++              if (error.code !== "ENOENT") throw error;
++            }
++            const enqueueEvent = (type, metadata) => {
++              const event = {filePath: absoluteFilePath, metadata, type};
++              if (nextEmit == null) {
++                nextEmit = {
++                  eventsQueue: [event],
++                  firstEnqueuedTimestamp: _perf_hooks.performance.timeOrigin + _perf_hooks.performance.now(),
++                  firstEventTimestamp: timestamp,
++                };
++              } else {
++                nextEmit.eventsQueue.push(event);
++              }
+             };
+-            if (nextEmit == null) {
+-              nextEmit = {
+-                eventsQueue: [event],
+-                firstEnqueuedTimestamp:
+-                  _perf_hooks.performance.timeOrigin +
+-                  _perf_hooks.performance.now(),
+-                firstEventTimestamp: onChangeStartTime,
+-              };
+-            } else {
+-              nextEmit.eventsQueue.push(event);
++            if (stat == null) {
++              if (previous == null) continue;
++              const metadata = (0, _nullthrows.default)(fileSystem.remove(relativeFilePath));
++              this.#updateClock(clocks, change.clock);
++              plugins.forEach(({plugin, dataIdx}) => dataIdx != null
++                ? plugin.onRemovedFile(relativeFilePath, metadata[dataIdx])
++                : plugin.onRemovedFile(relativeFilePath));
++              enqueueEvent("delete", {modifiedTime:null, size:null, type:previous.fileType});
++              continue;
              }
-             return null;
-           };
-@@ -698,6 +692,9 @@ class FileMap extends _events.default {
+-            return null;
+-          };
+-          if (change.event === "touch") {
+-            (0, _invariant.default)(
+-              change.metadata.size != null,
+-              "since the file exists or changed, it should have known size",
+-            );
+-            const fileMetadata = [
+-              change.metadata.modifiedTime,
+-              change.metadata.size,
+-              0,
+-              null,
+-              change.metadata.type === "l" ? 1 : 0,
+-              null,
+-            ];
++            const type = stat.isSymbolicLink() ? "l" : stat.isFile() ? "f" : null;
++            if (type == null || (type === "l" && !this.#options.enableSymlinks)
++              || (type === "f" && !hasWatchedExtension(absoluteFilePath))) continue;
++            const metadata = {modifiedTime:stat.mtimeMs, size:stat.size, type};
++            if (previous?.fileType === type && previous.modifiedTime === metadata.modifiedTime
++              && previous.size === metadata.size) continue;
++            const fileMetadata = [metadata.modifiedTime, metadata.size, 0, null, type === "l" ? 1 : 0, null];
+             try {
+-              if (change.metadata.type === "l") {
++              if (type === "l") {
+                 await this.#maybeReadLink(relativeFilePath, fileMetadata);
+               } else {
+-                await this.#fileProcessor.processRegularFile(
+-                  relativeFilePath,
+-                  fileMetadata,
+-                  {
+-                    computeSha1: this.#options.computeSha1,
+-                    maybeReturnContent: false,
+-                  },
+-                );
++                await this.#fileProcessor.processRegularFile(relativeFilePath, fileMetadata, {
++                  computeSha1: this.#options.computeSha1 || previousSha1 != null,
++                  maybeReturnContent: false,
++                });
+               }
+-              fileSystem.addOrModify(relativeFilePath, fileMetadata);
+-              this.#updateClock(clocks, change.clock);
+-              plugins.forEach(({ plugin, dataIdx }) =>
+-                dataIdx != null
+-                  ? plugin.onNewOrModifiedFile(
+-                      relativeFilePath,
+-                      fileMetadata[dataIdx],
+-                    )
+-                  : plugin.onNewOrModifiedFile(relativeFilePath),
+-              );
+-              enqueueEvent(change.metadata);
+-            } catch (e) {
+-              if (!["ENOENT", "EACCESS"].includes(e.code)) {
+-                throw e;
+-              }
++            } catch (error) {
++              if (["ENOENT", "EACCESS"].includes(error.code)) continue;
++              throw error;
+             }
+-          } else if (change.event === "delete") {
+-            if (linkStats == null) {
+-              return null;
+-            }
+-            const metadata = (0, _nullthrows.default)(
+-              fileSystem.remove(relativeFilePath),
+-            );
++            fileSystem.addOrModify(relativeFilePath, fileMetadata);
+             this.#updateClock(clocks, change.clock);
+-            plugins.forEach(({ plugin, dataIdx }) =>
+-              dataIdx != null
+-                ? plugin.onRemovedFile(relativeFilePath, metadata[dataIdx])
+-                : plugin.onRemovedFile(relativeFilePath),
+-            );
+-            enqueueEvent({
+-              modifiedTime: null,
+-              size: null,
+-              type: linkStats.fileType,
+-            });
+-          } else {
+-            throw new Error(
+-              `metro-file-map: Unrecognized event type from watcher: ${change.event}`,
+-            );
++            plugins.forEach(({plugin, dataIdx}) => dataIdx != null
++              ? plugin.onNewOrModifiedFile(relativeFilePath, fileMetadata[dataIdx])
++              : plugin.onNewOrModifiedFile(relativeFilePath));
++            // Preserve metadata/hash freshness without publishing unchanged bytes.
++            if (type === "f" && previousSha1 != null
++              && previousSha1 === fileMetadata[_constants.default.SHA1]) continue;
++            enqueueEvent(previous == null ? "add" : "change", metadata);
++          } catch (error) {
++            this.#console.error(`metro-file-map: watch error:\n  ${error.stack}\n`);
+           }
+-          return null;
+-        })
+-        .catch((error) => {
+-          this.#console.error(
+-            `metro-file-map: watch error:\n  ${error.stack}\n`,
+-          );
+-        });
++        }
++      }
++    };
++    const onChange = (change) => {
++      if (change.metadata && (change.metadata.type === "d"
++        || (change.metadata.type === "f" && !hasWatchedExtension(change.relativePath))
++        || (!this.#options.enableSymlinks && change.metadata.type === "l"))) return;
++      const absoluteFilePath = path.join(change.root,
++        (0, _normalizePathSeparatorsToSystem.default)(change.relativePath));
++      if (this.#options.ignorePattern.test(absoluteFilePath)) return;
++      if (change.event === "touch" && !pendingChanges.has(absoluteFilePath)) {
++        const previous = fileSystem.linkStats(this.#pathUtils.absoluteToNormal(absoluteFilePath));
++        if (previous?.fileType === change.metadata.type
++          && change.metadata.modifiedTime != null
++          && previous.modifiedTime === change.metadata.modifiedTime
++          && previous.size === change.metadata.size) return;
++      }
++      pendingChanges.delete(absoluteFilePath);
++      pendingChanges.set(absoluteFilePath, {change,
++        timestamp:_perf_hooks.performance.timeOrigin + _perf_hooks.performance.now()});
++      if (processingChanges) return;
++      processingChanges = true;
++      changeQueue = Promise.resolve().then(() => this.#options.processFileChanges
++        ? this.#options.processFileChanges(processChanges, this.#crawlerAbortController.signal)
++        : processChanges()).catch(error => {
++          if (!this.#crawlerAbortController.signal.aborted)
++            this.#console.error(`metro-file-map: watch error:\n  ${error.stack}\n`);
++        }).finally(() => { processingChanges = false; });
+     };
+     this.#changeInterval = setInterval(emitChange, CHANGE_INTERVAL);
+     (0, _invariant.default)(
+@@ -698,6 +655,9 @@
        "Expected #watcher to have been initialised by build()",
      );
      await this.#watcher.watch(onChange);
@@ -58,10 +297,332 @@ index 7764d3c..62af2b7 100644
        const performHealthCheck = () => {
          if (!this.#watcher) {
 diff --git a/src/index.js.flow b/src/index.js.flow
-index 2f1c650..a74a026 100644
 --- a/src/index.js.flow
 +++ b/src/index.js.flow
-@@ -966,6 +966,9 @@ export default class FileMap extends EventEmitter {
+@@ -71,6 +71,8 @@
+   HasteMapItem,
+ };
+ 
++export type ProcessFileChanges = (processChanges: () => Promise<void>, signal: AbortSignal) => Promise<void>;
++
+ export type InputOptions = Readonly<{
+   computeSha1?: ?boolean,
+   enableSymlinks?: ?boolean,
+@@ -88,6 +90,7 @@
+   maxFilesPerWorker?: ?number,
+   maxWorkers: number,
+   perfLoggerFactory?: ?PerfLoggerFactory,
++  processFileChanges?: ProcessFileChanges,
+   resetCache?: ?boolean,
+   useWatchman?: ?boolean,
+   watch?: ?boolean,
+@@ -105,6 +108,7 @@
+   ...BuildParameters,
+   healthCheck: HealthCheckOptions,
+   perfLoggerFactory: ?PerfLoggerFactory,
++  processFileChanges: ?ProcessFileChanges,
+   resetCache: ?boolean,
+   useWatchman: boolean,
+   watch: boolean,
+@@ -314,6 +318,7 @@
+     this.#options = {
+       ...buildParameters,
+       healthCheck: options.healthCheck,
++      processFileChanges: options.processFileChanges,
+       perfLoggerFactory: options.perfLoggerFactory,
+       resetCache: options.resetCache,
+       useWatchman: options.useWatchman == null ? true : options.useWatchman,
+@@ -751,7 +756,7 @@
+     } = null;
+ 
+     const emitChange = () => {
+-      if (nextEmit == null || nextEmit.eventsQueue.length === 0) {
++      if (processingChanges || nextEmit == null || nextEmit.eventsQueue.length === 0) {
+         // Nothing to emit
+         return;
+       }
+@@ -779,186 +784,110 @@
+       nextEmit = null;
+     };
+ 
+-    const onChange = (change: WatcherBackendChangeEvent) => {
+-      if (
+-        change.metadata &&
+-        // Ignore all directory events
+-        (change.metadata.type === 'd' ||
+-          // Ignore regular files with unwatched extensions
+-          (change.metadata.type === 'f' &&
+-            !hasWatchedExtension(change.relativePath)) ||
+-          // Don't emit events relating to symlinks if enableSymlinks: false
+-          (!this.#options.enableSymlinks && change.metadata?.type === 'l'))
+-      ) {
+-        return;
+-      }
+-
+-      const absoluteFilePath = path.join(
+-        change.root,
+-        normalizePathSeparatorsToSystem(change.relativePath),
+-      );
+-
+-      // Ignore files (including symlinks) whose path matches ignorePattern
+-      // (we don't ignore node_modules in watch mode)
+-      if (this.#options.ignorePattern.test(absoluteFilePath)) {
+-        return;
+-      }
+-
+-      const relativeFilePath =
+-        this.#pathUtils.absoluteToNormal(absoluteFilePath);
+-      const linkStats = fileSystem.linkStats(relativeFilePath);
+-
+-      // The file has been accessed, not modified. If the modified time is
+-      // null, then it is assumed that the watcher does not have capabilities
+-      // to detect modified time, and change processing proceeds.
+-      if (
+-        change.event === 'touch' &&
+-        linkStats != null &&
+-        change.metadata.modifiedTime != null &&
+-        linkStats.modifiedTime === change.metadata.modifiedTime
+-      ) {
+-        return;
+-      }
+-
+-      // Emitted events, unlike memoryless backend events, specify 'add' or
+-      // 'change' instead of 'touch'.
+-      const eventTypeToEmit =
+-        change.event === 'touch'
+-          ? linkStats == null
+-            ? 'add'
+-            : 'change'
+-          : 'delete';
+-
+-      const onChangeStartTime = performance.timeOrigin + performance.now();
+-
+-      changeQueue = changeQueue
+-        .then(async () => {
+-          // If we get duplicate events for the same file, ignore them.
+-          if (
+-            nextEmit != null &&
+-            nextEmit.eventsQueue.find(
+-              event =>
+-                event.type === eventTypeToEmit &&
+-                event.filePath === absoluteFilePath &&
+-                ((!event.metadata && !change.metadata) ||
+-                  (event.metadata &&
+-                    change.metadata &&
+-                    event.metadata.modifiedTime != null &&
+-                    change.metadata.modifiedTime != null &&
+-                    event.metadata.modifiedTime ===
+-                      change.metadata.modifiedTime)),
+-            )
+-          ) {
+-            return null;
+-          }
+-
+-          const linkStats = fileSystem.linkStats(relativeFilePath);
+-
+-          const enqueueEvent = (metadata: ChangeEventMetadata) => {
+-            const event = {
+-              filePath: absoluteFilePath,
+-              metadata,
+-              type: eventTypeToEmit,
++    // Watcher arrivals describe an installation in progress. Reconcile each
++    // changed path from the published tree once, under the consumer's existing
++    // dependency boundary, before notifying graph/resolution consumers.
++    const pendingChanges: Map<string, {change: WatcherBackendChangeEvent, timestamp: number}> = new Map();
++    let processingChanges = false;
++    const processChanges = async (): Promise<void> => {
++      while (pendingChanges.size > 0) {
++        const batch = [...pendingChanges.entries()];
++        pendingChanges.clear();
++        for (const [absoluteFilePath, {change, timestamp}] of batch) {
++          try {
++            const relativeFilePath = this.#pathUtils.absoluteToNormal(absoluteFilePath);
++            const previous = fileSystem.linkStats(relativeFilePath);
++            const previousSha1 = previous?.fileType === "f"
++              ? fileSystem.getSha1(relativeFilePath) : null;
++            let stat;
++            try {
++              stat = await fsPromises.lstat(absoluteFilePath);
++            } catch (error) {
++              if (error.code !== "ENOENT") throw error;
++            }
++            const enqueueEvent = (type: 'add' | 'change' | 'delete', metadata: ChangeEventMetadata) => {
++              const event = {filePath: absoluteFilePath, metadata, type};
++              if (nextEmit == null) {
++                nextEmit = {
++                  eventsQueue: [event],
++                  firstEnqueuedTimestamp: performance.timeOrigin + performance.now(),
++                  firstEventTimestamp: timestamp,
++                };
++              } else {
++                nextEmit.eventsQueue.push(event);
++              }
+             };
+-            if (nextEmit == null) {
+-              nextEmit = {
+-                eventsQueue: [event],
+-                firstEnqueuedTimestamp:
+-                  performance.timeOrigin + performance.now(),
+-                firstEventTimestamp: onChangeStartTime,
+-              };
+-            } else {
+-              nextEmit.eventsQueue.push(event);
++            if (stat == null) {
++              if (previous == null) continue;
++              const metadata = nullthrows(fileSystem.remove(relativeFilePath));
++              this.#updateClock(clocks, change.clock);
++              plugins.forEach(({plugin, dataIdx}) => dataIdx != null
++                ? plugin.onRemovedFile(relativeFilePath, metadata[dataIdx])
++                : plugin.onRemovedFile(relativeFilePath));
++              enqueueEvent("delete", {modifiedTime:null, size:null, type:previous.fileType});
++              continue;
+             }
+-            return null;
+-          };
+-
+-          // If the file was added or modified,
+-          // parse it and update the file map.
+-          if (change.event === 'touch') {
+-            invariant(
+-              change.metadata.size != null,
+-              'since the file exists or changed, it should have known size',
+-            );
+-            const fileMetadata: FileMetadata = [
+-              change.metadata.modifiedTime,
+-              change.metadata.size,
+-              0,
+-              null,
+-              change.metadata.type === 'l' ? 1 : 0,
+-              null,
+-            ];
+-
++            const type = stat.isSymbolicLink() ? "l" : stat.isFile() ? "f" : null;
++            if (type == null || (type === "l" && !this.#options.enableSymlinks)
++              || (type === "f" && !hasWatchedExtension(absoluteFilePath))) continue;
++            const metadata = {modifiedTime:stat.mtimeMs, size:stat.size, type};
++            if (previous?.fileType === type && previous.modifiedTime === metadata.modifiedTime
++              && previous.size === metadata.size) continue;
++            const fileMetadata: FileMetadata = [metadata.modifiedTime, metadata.size, 0, null, type === "l" ? 1 : 0, null];
+             try {
+-              if (change.metadata.type === 'l') {
++              if (type === "l") {
+                 await this.#maybeReadLink(relativeFilePath, fileMetadata);
+               } else {
+-                await this.#fileProcessor.processRegularFile(
+-                  relativeFilePath,
+-                  fileMetadata,
+-                  {
+-                    computeSha1: this.#options.computeSha1,
+-                    maybeReturnContent: false,
+-                  },
+-                );
++                await this.#fileProcessor.processRegularFile(relativeFilePath, fileMetadata, {
++                  computeSha1: this.#options.computeSha1 || previousSha1 != null,
++                  maybeReturnContent: false,
++                });
+               }
+-              fileSystem.addOrModify(relativeFilePath, fileMetadata);
+-              this.#updateClock(clocks, change.clock);
+-              plugins.forEach(({plugin, dataIdx}) =>
+-                dataIdx != null
+-                  ? plugin.onNewOrModifiedFile(
+-                      relativeFilePath,
+-                      fileMetadata[dataIdx],
+-                    )
+-                  : plugin.onNewOrModifiedFile(relativeFilePath),
+-              );
+-              enqueueEvent(change.metadata);
+-            } catch (e) {
+-              if (!['ENOENT', 'EACCESS'].includes(e.code)) {
+-                throw e;
+-              }
+-              // Swallow ENOENT/ACCESS errors silently. Safe because either:
+-              // - We never knew about the file, so neither did any consumers.
+-              // Or,
+-              // - The watcher will soon (or has already) report a "delete"
+-              //   event for it, and we'll clean up in the usual way at that
+-              //   point.
++            } catch (error) {
++              if (["ENOENT", "EACCESS"].includes(error.code)) continue;
++              throw error;
+             }
+-          } else if (change.event === 'delete') {
+-            if (linkStats == null) {
+-              // Don't emit deletion events for files we weren't retaining.
+-              // This is expected for deletion of an ignored file.
+-              return null;
+-            }
+-            // We've already checked linkStats != null above, so the file
+-            // exists in the file map and remove should always return metadata.
+-            const metadata = nullthrows(fileSystem.remove(relativeFilePath));
++            fileSystem.addOrModify(relativeFilePath, fileMetadata);
+             this.#updateClock(clocks, change.clock);
+-            plugins.forEach(({plugin, dataIdx}) =>
+-              dataIdx != null
+-                ? plugin.onRemovedFile(relativeFilePath, metadata[dataIdx])
+-                : plugin.onRemovedFile(relativeFilePath),
+-            );
+-
+-            enqueueEvent({
+-              modifiedTime: null,
+-              size: null,
+-              type: linkStats.fileType,
+-            });
+-          } else {
+-            throw new Error(
+-              `metro-file-map: Unrecognized event type from watcher: ${change.event}`,
+-            );
++            plugins.forEach(({plugin, dataIdx}) => dataIdx != null
++              ? plugin.onNewOrModifiedFile(relativeFilePath, fileMetadata[dataIdx])
++              : plugin.onNewOrModifiedFile(relativeFilePath));
++            // Preserve metadata/hash freshness without publishing unchanged bytes.
++            if (type === "f" && previousSha1 != null
++              && previousSha1 === fileMetadata[H.SHA1]) continue;
++            enqueueEvent(previous == null ? "add" : "change", metadata);
++          } catch (error) {
++            this.#console.error(`metro-file-map: watch error:\n  ${error.stack}\n`);
+           }
+-          return null;
+-        })
+-        .catch((error: Error) => {
+-          this.#console.error(
+-            `metro-file-map: watch error:\n  ${error.stack}\n`,
+-          );
+-        });
++        }
++      }
+     };
+-
++    const onChange = (change: WatcherBackendChangeEvent) => {
++      if (change.metadata && (change.metadata.type === "d"
++        || (change.metadata.type === "f" && !hasWatchedExtension(change.relativePath))
++        || (!this.#options.enableSymlinks && change.metadata.type === "l"))) return;
++      const absoluteFilePath = path.join(change.root,
++        normalizePathSeparatorsToSystem(change.relativePath));
++      if (this.#options.ignorePattern.test(absoluteFilePath)) return;
++      if (change.event === "touch" && !pendingChanges.has(absoluteFilePath)) {
++        const previous = fileSystem.linkStats(this.#pathUtils.absoluteToNormal(absoluteFilePath));
++        if (previous?.fileType === change.metadata.type
++          && change.metadata.modifiedTime != null
++          && previous.modifiedTime === change.metadata.modifiedTime
++          && previous.size === change.metadata.size) return;
++      }
++      pendingChanges.delete(absoluteFilePath);
++      pendingChanges.set(absoluteFilePath, {change,
++        timestamp:performance.timeOrigin + performance.now()});
++      if (processingChanges) return;
++      processingChanges = true;
++      changeQueue = Promise.resolve().then(() => this.#options.processFileChanges
++        ? this.#options.processFileChanges(processChanges, this.#crawlerAbortController.signal)
++        : processChanges()).catch(error => {
++          if (!this.#crawlerAbortController.signal.aborted)
++            this.#console.error(`metro-file-map: watch error:\n  ${error.stack}\n`);
++        }).finally(() => { processingChanges = false; });
++    };
+     this.#changeInterval = setInterval(emitChange, CHANGE_INTERVAL);
+ 
+     invariant(
+@@ -966,6 +895,9 @@
        'Expected #watcher to have been initialised by build()',
      );
      await this.#watcher.watch(onChange);
@@ -72,10 +633,9 @@ index 2f1c650..a74a026 100644
      if (this.#options.healthCheck.enabled) {
        const performHealthCheck = () => {
 diff --git a/src/watchers/FallbackWatcher.js b/src/watchers/FallbackWatcher.js
-index fe12544..c233896 100644
 --- a/src/watchers/FallbackWatcher.js
 +++ b/src/watchers/FallbackWatcher.js
-@@ -51,18 +51,24 @@ class FallbackWatcher extends _AbstractWatcher.AbstractWatcher {
+@@ -51,18 +51,24 @@
    #watched = Object.create(null);
    async startWatching() {
      this.#watchdir(this.root);
@@ -92,8 +652,10 @@ index fe12544..c233896 100644
      await new Promise((resolve) => {
        recReaddir(
          this.root,
-         (dir) => {
-           this.#watchdir(dir);
+-        (dir) => {
+-          this.#watchdir(dir);
++        (dir, stats) => {
++          this.#watchdir(dir, stats);
          },
 -        (filename) => {
 -          this.#register(filename, "f");
@@ -106,7 +668,71 @@ index fe12544..c233896 100644
          () => {
            resolve();
          },
-@@ -339,13 +345,16 @@ function recReaddir(
+@@ -75,7 +81,7 @@
+     const dir = _path.default.dirname(filepath);
+     const filename = _path.default.basename(filepath);
+     if (this.#dirRegistry[dir] && this.#dirRegistry[dir][filename]) {
+-      return false;
++      return true;
+     }
+     const relativePath = _path.default.relative(this.root, filepath);
+     if (
+@@ -116,10 +122,14 @@
+       this.emitError(error);
+     }
+   };
+-  #watchdir = (dir) => {
+-    if (this.#watched[dir]) {
++  #watchdir = (dir, stats = _fs.default.statSync(dir)) => {
++    const previous = this.#watched[dir];
++    if (previous?.dev === stats.dev && previous.ino === stats.ino) {
+       return false;
+     }
++    // Package re-extraction can replace a watched path with another inode.
++    // The old native handle still watches the removed directory.
++    previous?.watcher.close();
+     const watcher = _fs.default.watch(
+       dir,
+       {
+@@ -127,7 +137,7 @@
+       },
+       (event, filename) => this.#normalizeChange(dir, event, filename),
+     );
+-    this.#watched[dir] = watcher;
++    this.#watched[dir] = {watcher, dev: stats.dev, ino: stats.ino};
+     watcher.on("error", this.#checkedEmitError);
+     if (this.root !== dir) {
+       this.#register(dir, "d");
+@@ -137,8 +147,8 @@
+   async #stopWatching(dir) {
+     if (this.#watched[dir]) {
+       await new Promise((resolve) => {
+-        this.#watched[dir].once("close", () => process.nextTick(resolve));
+-        this.#watched[dir].close();
++        this.#watched[dir].watcher.once("close", () => process.nextTick(resolve));
++        this.#watched[dir].watcher.close();
+         delete this.#watched[dir];
+       });
+     }
+@@ -220,7 +230,7 @@
+         recReaddir(
+           _path.default.resolve(this.root, relativePath),
+           (dir, stats) => {
+-            if (this.#watchdir(dir)) {
++            if (this.#watchdir(dir, stats)) {
+               this.#emitEvent({
+                 event: TOUCH_EVENT,
+                 relativePath: _path.default.relative(this.root, dir),
+@@ -230,6 +240,8 @@
+                   type: "d",
+                 },
+               });
++            } else {
++              return false;
+             }
+           },
+           (file, stats) => {
+@@ -339,13 +351,15 @@
    ignored,
  ) {
    const walk = (0, _walker.default)(dir);
@@ -121,8 +747,7 @@ index fe12544..c233896 100644
 +    if (ignored && common.posixPathMatchesPattern(ignored, currentDir)) {
 +      return false;
 +    }
-+    dirCallback(_path.default.normalize(currentDir), stats);
-+    return true;
++    return dirCallback(_path.default.normalize(currentDir), stats) !== false;
 +  });
    walk
 -    .on("dir", normalizeProxy(dirCallback))
@@ -130,13 +755,18 @@ index fe12544..c233896 100644
      .on("symlink", normalizeProxy(symlinkCallback))
      .on("error", errorCallback)
 diff --git a/src/watchers/FallbackWatcher.js.flow b/src/watchers/FallbackWatcher.js.flow
-index 5f87b07..efb98bf 100644
 --- a/src/watchers/FallbackWatcher.js.flow
 +++ b/src/watchers/FallbackWatcher.js.flow
-@@ -52,18 +52,29 @@ export default class FallbackWatcher extends AbstractWatcher {
+@@ -47,23 +47,34 @@
+     [directory: string]: {[file: string]: true, __proto__: null},
+     __proto__: null,
+   } = Object.create(null);
+-  +#watched: {[key: string]: FSWatcher, __proto__: null} = Object.create(null);
++  +#watched: {[key: string]: {watcher: FSWatcher, dev: number, ino: number}, __proto__: null} = Object.create(null);
+ 
    async startWatching(): Promise<void> {
      this.#watchdir(this.root);
- 
++
 +    // The file-map crawl finishes before watches attach. Replay this existing
 +    // walk so files added in that gap reach the map; it drops unchanged metadata.
 +    const registerInitialFile = (
@@ -151,12 +781,14 @@ index 5f87b07..efb98bf 100644
 +        metadata: {modifiedTime: stats.mtime.getTime(), size: stats.size, type},
 +      });
 +    };
-+
+ 
      await new Promise(resolve => {
        recReaddir(
          this.root,
-         dir => {
-           this.#watchdir(dir);
+-        dir => {
+-          this.#watchdir(dir);
++        (dir, stats) => {
++          this.#watchdir(dir, stats);
          },
 -        filename => {
 -          this.#register(filename, 'f');
@@ -169,7 +801,83 @@ index 5f87b07..efb98bf 100644
          () => {
            resolve();
          },
-@@ -414,14 +425,16 @@ function recReaddir(
+@@ -85,13 +96,13 @@
+    *    }
+    *  }
+    *
+-   *  Return false if ignored or already registered.
++   *  Return false if ignored; known paths in replaced directories remain included.
+    */
+   #register(filepath: string, type: ChangeEventMetadata['type']): boolean {
+     const dir = path.dirname(filepath);
+     const filename = path.basename(filepath);
+     if (this.#dirRegistry[dir] && this.#dirRegistry[dir][filename]) {
+-      return false;
++      return true;
+     }
+ 
+     const relativePath = path.relative(this.root, filepath);
+@@ -156,14 +167,18 @@
+   /**
+    * Watch a directory.
+    */
+-  #watchdir: (dir: string) => boolean = (dir: string) => {
+-    if (this.#watched[dir]) {
++  #watchdir: (dir: string, stats?: Stats) => boolean = (dir: string, stats: Stats = fs.statSync(dir)) => {
++    const previous = this.#watched[dir];
++    if (previous?.dev === stats.dev && previous.ino === stats.ino) {
+       return false;
+     }
++    // Package re-extraction can replace a watched path with another inode.
++    // The old native handle still watches the removed directory.
++    previous?.watcher.close();
+     const watcher = fs.watch(dir, {persistent: true}, (event, filename) =>
+       this.#normalizeChange(dir, event, filename),
+     );
+-    this.#watched[dir] = watcher;
++    this.#watched[dir] = {watcher, dev: stats.dev, ino: stats.ino};
+ 
+     watcher.on('error', this.#checkedEmitError);
+ 
+@@ -179,8 +194,8 @@
+   async #stopWatching(dir: string): Promise<void> {
+     if (this.#watched[dir]) {
+       await new Promise(resolve => {
+-        this.#watched[dir].once('close', () => process.nextTick(resolve));
+-        this.#watched[dir].close();
++        this.#watched[dir].watcher.once('close', () => process.nextTick(resolve));
++        this.#watched[dir].watcher.close();
+         delete this.#watched[dir];
+       });
+     }
+@@ -284,7 +299,7 @@
+         recReaddir(
+           path.resolve(this.root, relativePath),
+           (dir, stats) => {
+-            if (this.#watchdir(dir)) {
++            if (this.#watchdir(dir, stats)) {
+               this.#emitEvent({
+                 event: TOUCH_EVENT,
+                 relativePath: path.relative(this.root, dir),
+@@ -294,6 +309,8 @@
+                   type: 'd',
+                 },
+               });
++            } else {
++              return false;
+             }
+           },
+           (file, stats) => {
+@@ -406,7 +423,7 @@
+  */
+ function recReaddir(
+   dir: string,
+-  dirCallback: (string, Stats) => void,
++  dirCallback: (string, Stats) => void | boolean,
+   fileCallback: (string, Stats) => void,
+   symlinkCallback: (string, Stats) => void,
+   endCallback: () => void,
+@@ -414,14 +431,15 @@
    ignored: ?RegExp,
  ) {
    const walk = walker(dir);
@@ -185,8 +893,7 @@ index 5f87b07..efb98bf 100644
 +    if (ignored && common.posixPathMatchesPattern(ignored, currentDir)) {
 +      return false;
 +    }
-+    dirCallback(path.normalize(currentDir), stats);
-+    return true;
++    return dirCallback(path.normalize(currentDir), stats) !== false;
 +  });
    walk
 -    .on('dir', normalizeProxy(dirCallback))

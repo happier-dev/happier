@@ -1,0 +1,70 @@
+diff --git a/ios/Core/AppContext.swift b/ios/Core/AppContext.swift
+index 9ec8c521582e80..7f2a4e21eb45c9 100644
+--- a/ios/Core/AppContext.swift
++++ b/ios/Core/AppContext.swift
+@@ -120,17 +120,30 @@ public final class AppContext: NSObject, EXAppContextProtocol, @unchecked Sendab
+     }
+   }
+ 
+-  /**
+-   The application identifier that is used to distinguish between different `RCTHost`.
+-   It might be equal to `nil`, meaning we couldn't obtain the Id for the current app.
+-   It shouldn't be used on the old architecture.
+-   */
++  /// The number of app contexts created so far in this process.
++  private static let appContextsCount = Mutex<Int>(0)
++
++  /// The position of this app context in creation order, starting at 0.
++  internal let appIndex: Int = AppContext.appContextsCount.withLock { count in
++    defer {
++      count += 1
++    }
++    return count
++  }
++
++  /// The application identifier that distinguishes app contexts that are alive at the same time,
++  /// for example during a reload or when more than one `RCTHost` is running. It's `nil` for the first
++  /// app context, so its view names have no suffix.
+   @objc
+   public var appIdentifier: String? {
+-    guard let moduleRegistry = reactBridge?.moduleRegistry else {
++    return AppContext.appIdentifier(forIndex: appIndex)
++  }
++
++  internal static func appIdentifier(forIndex index: Int) -> String? {
++    if index == 0 {
+       return nil
+     }
+-    return "\(abs(ObjectIdentifier(moduleRegistry).hashValue))"
++    return String(index)
+   }
+ 
+   /**
+diff --git a/ios/Utilities/Mutex.swift b/ios/Utilities/Mutex.swift
+new file mode 100644
+--- /dev/null
++++ b/ios/Utilities/Mutex.swift
+@@ -0,0 +1,23 @@
++import Foundation
++
++/// A backport of `Mutex` from the Synchronization framework (iOS 18+).
++/// Protects mutable state with a lock, providing a safe `withLock` API
++/// identical to the one in the standard library.
++@available(iOS, deprecated: 18.0, message: "Use Mutex from the Synchronization framework")
++@available(macOS, deprecated: 15.0, message: "Use Mutex from the Synchronization framework")
++@available(tvOS, deprecated: 18.0, message: "Use Mutex from the Synchronization framework")
++public final class Mutex<Value>: @unchecked Sendable {
++  private var _value: Value
++  private let _lock = NSLock()
++
++  public init(_ initialValue: Value) {
++    _value = initialValue
++  }
++
++  @discardableResult
++  public func withLock<T>(_ body: (inout Value) throws -> T) rethrows -> T {
++    _lock.lock()
++    defer { _lock.unlock() }
++    return try body(&_value)
++  }
++}
