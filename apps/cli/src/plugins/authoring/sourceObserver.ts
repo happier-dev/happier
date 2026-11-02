@@ -176,9 +176,12 @@ async function inventoryProject(rootPath: string): Promise<Readonly<{
   };
 }
 
+type ObservedFileSignature = Readonly<{ metadata: string; digest: string }>;
+
 async function readObservedFileSignatures(
   observation: Extract<PluginDevelopmentSourceObservation, { ok: true }>,
-): Promise<ReadonlyMap<string, string>> {
+  previous?: ReadonlyMap<string, ObservedFileSignature>,
+): Promise<ReadonlyMap<string, ObservedFileSignature>> {
   const entries = await Promise.all(observation.observedRelativePaths.map(async (relativePath) => {
     const absolutePath = join(observation.sourceRootPath, ...relativePath.split('/'));
     try {
@@ -186,9 +189,16 @@ async function readObservedFileSignatures(
       if (metadata.isSymbolicLink() || !metadata.isFile()) return null;
       if (relativePath === 'pnpm-workspace.yaml'
         && isPluginAuthorTransientWorkspaceConfig(await readFile(absolutePath, 'utf8'))) return null;
+      const metadataSignature = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`;
+      const prior = previous?.get(relativePath);
+      // Filesystem touches and atomic publication can change identity/times
+      // without changing source. Only changed bytes submit a new candidate.
       return [
         relativePath,
-        `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`,
+        prior?.metadata === metadataSignature ? prior : {
+          metadata: metadataSignature,
+          digest: createHash('sha256').update(await readFile(absolutePath)).digest('hex'),
+        },
       ] as const;
     } catch (error) {
       if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
@@ -199,11 +209,11 @@ async function readObservedFileSignatures(
 }
 
 function diffObservedFileSignatures(
-  previous: ReadonlyMap<string, string>,
-  next: ReadonlyMap<string, string>,
+  previous: ReadonlyMap<string, ObservedFileSignature>,
+  next: ReadonlyMap<string, ObservedFileSignature>,
 ): string[] {
   return [...new Set([...previous.keys(), ...next.keys()])]
-    .filter((relativePath) => previous.get(relativePath) !== next.get(relativePath))
+    .filter((relativePath) => previous.get(relativePath)?.digest !== next.get(relativePath)?.digest)
     .sort();
 }
 
@@ -377,10 +387,10 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   let refreshing = false;
   let refreshAgain = false;
   let dependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
-  let observedFileSignatures: ReadonlyMap<string, string> | undefined;
+  let observedFileSignatures: ReadonlyMap<string, ObservedFileSignature> | undefined;
   // Adoption controls which inputs remain pending, while the last attempt
   // prevents output-only watcher events from replaying a rejected candidate.
-  let attemptedFileSignatures: ReadonlyMap<string, string> | undefined;
+  let attemptedFileSignatures: ReadonlyMap<string, ObservedFileSignature> | undefined;
   let attemptedDependencySignatures: ReadonlyMap<string, string | null> | undefined;
 
   let rejectFailure!: (error: Error) => void;
@@ -442,17 +452,18 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
         projectRoot: input.projectRoot,
         ...(input.sdkRegistryOrigin ? { sdkRegistryOrigin: input.sdkRegistryOrigin } : {}),
       });
-      let nextObservedFileSignatures: ReadonlyMap<string, string> | undefined;
+      let nextObservedFileSignatures: ReadonlyMap<string, ObservedFileSignature> | undefined;
       let nextDependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
       if (observation.ok) {
         const previousObservedFileSignatures = observedFileSignatures;
-        nextObservedFileSignatures = await readObservedFileSignatures(observation);
+        nextObservedFileSignatures = await readObservedFileSignatures(observation, attemptedFileSignatures);
         nextDependencyInputSignatures = observation.sourceKind === 'singleFile'
           ? new Map<string, string | null>()
           : await readDependencyInputSignatures(observation.sourceRootPath);
         if (attemptedFileSignatures && attemptedDependencySignatures
           && diffObservedFileSignatures(attemptedFileSignatures, nextObservedFileSignatures).length === 0
           && [...nextDependencyInputSignatures].every(([path, signature]) => attemptedDependencySignatures?.get(path) === signature)) {
+          attemptedFileSignatures = nextObservedFileSignatures;
           await reconcileWatches(observation);
           return;
         }

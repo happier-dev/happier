@@ -444,6 +444,70 @@ describe('plugin development source observation', () => {
     }
   });
 
+  it('adopts no unchanged-byte settle cycles and exactly one real source change', async () => {
+    vi.useFakeTimers();
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-settled-bytes-'));
+    const callbacks = new Map<string, (changedPath: string) => void>();
+    let inspections = 0;
+    const adopted: Array<readonly string[] | undefined> = [];
+    let handle: Awaited<ReturnType<typeof startPluginDevelopmentSourceObserver>> | undefined;
+    try {
+      await writeProject(projectRoot);
+      const canonicalRoot = await realpath(projectRoot);
+      const messagePath = join(canonicalRoot, 'src', 'nested', 'message.ts');
+      const original = await readFile(messagePath, 'utf8');
+      handle = await startPluginDevelopmentSourceObserver({
+        projectRoot,
+        debounceMs: 10,
+        startWatchingDirectory: (directoryPath, onChange) => {
+          callbacks.set(directoryPath, onChange);
+          return {
+            get ready() {
+              if (directoryPath === canonicalRoot) inspections += 1;
+              return Promise.resolve();
+            },
+            stop() {},
+          };
+        },
+        onObservation: (observation) => {
+          if (observation.ok) adopted.push(observation.request.changedPaths);
+          return 'adopted';
+        },
+      });
+      expect(adopted).toEqual([undefined]);
+      const settle = async () => {
+        const previousInspections = inspections;
+        callbacks.get(canonicalRoot)!(messagePath);
+        await vi.advanceTimersByTimeAsync(10);
+        await vi.waitFor(() => expect(inspections).toBeGreaterThan(previousInspections));
+      };
+
+      for (let cycle = 0; cycle < 4; cycle += 1) {
+        if (cycle % 2 === 0) {
+          await utimes(messagePath, new Date(0), new Date(1_000 + cycle));
+        } else {
+          const replacementPath = `${messagePath}.replacement`;
+          await writeFile(replacementPath, original);
+          await rename(replacementPath, messagePath);
+        }
+        await settle();
+      }
+      expect(adopted).toEqual([undefined]);
+
+      const metadata = await lstat(messagePath);
+      await writeFile(messagePath, original.replace('one', 'two'));
+      await utimes(messagePath, metadata.atime, metadata.mtime);
+      await settle();
+      await vi.waitFor(() => expect(adopted).toEqual([undefined, ['src/nested/message.ts']]));
+      await settle();
+      expect(adopted).toHaveLength(2);
+    } finally {
+      handle?.stop();
+      vi.useRealTimers();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each(['adopted', 'retained'] as const)('does not resubmit unchanged inputs after preparation writes (%s)', async (delivery) => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-preparation-feedback-'));
     let releasePreparation!: () => void;
