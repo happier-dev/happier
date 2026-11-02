@@ -12,8 +12,8 @@
 
 This release ships everything listed under release 2026-11-01.1 below, which had not reached production yet, plus these fixes:
 
-- CLI 0.2.19 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
-- Server and stack 0.2.19 ship together with CLI 0.2.19.
+- CLI 0.2.20 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
+- Server and stack 0.2.20 ship together with CLI 0.2.20.
 
 ## Release 2026-11-01.1 - 2026-11-01
 
