@@ -37,7 +37,9 @@ export async function resolveDeploymentDefinitionRoleForHost(context: ActionExec
         if (binding.machineId !== host.machineId) return refuse();
         if (binding.admittedMachineRole !== undefined) return binding.admittedMachineRole;
         // Older signed roots carry no grant. In particular, their synthesized
-        // operation machineAdmission must not turn a foreign requester into Use.
+        // operation machineAdmission must not turn a foreign requester into Use
+        // or Manage through the native execution identity's broader full-control tag.
+        if (binding.accountId !== binding.custodianAccountId) return refuse();
     } else {
         const ingress = context as RpcActionExecutorContext;
         if (ingress.machineAdmission) {
