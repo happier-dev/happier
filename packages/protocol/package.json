@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./deployments/deploymentChildRpcV1": {
+      "happier-source": "./src/deployments/deploymentChildRpcV1.ts",
+      "types": "./dist/deployments/deploymentChildRpcV1.d.ts",
+      "default": "./dist/deployments/deploymentChildRpcV1.js"
+    },
     "./deployments/storedAppInputV1": {
       "happier-source": "./src/deployments/storedAppInputV1.ts",
       "types": "./dist/deployments/storedAppInputV1.d.ts",
