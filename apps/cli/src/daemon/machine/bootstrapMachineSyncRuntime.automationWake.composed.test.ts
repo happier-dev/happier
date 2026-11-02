@@ -30,6 +30,7 @@ import { startAutomationWorker, type AutomationWorkerHandle } from '../automatio
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { readOrCreateInstallationIdentity } from '../identity/store';
 import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '../serverWork';
+import { getDaemonShutdownExitCode } from '../shutdownPolicy';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
@@ -38,7 +39,7 @@ const socketIo = vi.hoisted(() => vi.fn());
 // Home's Socket.IO transport is the boundary. Every owner beneath it stays real.
 vi.mock('socket.io-client', () => ({ io: socketIo }));
 
-it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run changes', 'interrupted workflow-run changes', 'cursor-gone', 'heartbeat receipt', 'source invalidation'] as const)(
+it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run changes', 'interrupted workflow-run changes', 'cursor-gone', 'heartbeat receipt', 'source invalidation', 'ownership conflict', 'machine replaced'] as const)(
     'catches up queued work through the composed Machine transport with empty assignments (%s)', async mode => {
         await withConfiguredDaemonTestHome({ prefix: 'automation-wake-machine-' }, async ({ homeDir }) => {
             const previousSettings = getActiveAccountSettingsSnapshot();
@@ -131,6 +132,7 @@ it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run c
             bindApiMachineSocketSequenceMock(socketIo, [socket, reconnectSocket]);
             let activeSocket = socket;
             const client = new ApiMachineClient(token, machine);
+            const shutdownRequests: Array<{ source: Parameters<typeof getDaemonShutdownExitCode>[0]; cause?: string }> = [];
             const phases: string[] = [];
             client.onConnectionStateChange(state => { phases.push(state.phase); });
             let control: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
@@ -179,7 +181,8 @@ it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run c
                     spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
                     spawnSessionForInternalResume: async () => { throw new Error('Unexpected internal resume'); },
                     stopSession: async () => ({ status: 'stopped' }), isSessionAlreadyRunning: async () => false,
-                    loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {}, requestShutdown: () => {},
+                    loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {},
+                    requestShutdown: (source, cause) => { shutdownRequests.push({ source, cause }); },
                     directPeerServerLifecycle: null, directTransferRegistryHost: createCliRegistryHostV1(),
                     connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null,
                     daemonServerWorkScheduler: createDaemonServerWorkScheduler({
@@ -190,6 +193,22 @@ it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run c
                 const activeWorker = bootstrap.automationWorker;
                 if (!activeWorker) throw new Error('Automation worker was not started by Machine bootstrap');
                 await vi.waitFor(() => expect(phases).toContain('online'));
+                if (mode === 'ownership conflict' || mode === 'machine replaced') {
+                    const cause = mode === 'ownership conflict' ? 'machine-owner-conflict' : 'machine-replaced';
+                    socket.trigger('connect_error', { message: cause, data: {
+                        error: cause, statusCode: mode === 'ownership conflict' ? 409 : 410,
+                        ...(mode === 'ownership conflict' ? { owner: {
+                            cliVersion: '0.2.10', publicReleaseChannel: 'stable',
+                            startupSource: 'background-service', serviceManaged: true,
+                            serviceLabel: 'com.happier.cli.daemon.default',
+                        } } : {}),
+                    } });
+                    await vi.waitFor(() => expect(shutdownRequests).toHaveLength(1));
+                    const request = shutdownRequests[0]!;
+                    expect(request.cause).toBe(cause);
+                    expect(getDaemonShutdownExitCode(request.source)).toBe(mode === 'ownership conflict' ? 1 : 0);
+                    return;
+                }
                 await vi.waitFor(() => expect(requests).toContain('GET /v3/automations/worker/assignments'));
                 if (mode === 'startup') {
                     await vi.waitFor(() => expect(claims).toBe(1));

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import type { PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
+import type { DaemonShutdownSource } from '../lifecycle/shutdown';
 import os from 'os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -634,7 +635,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadataForHandoff: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   beforeShutdown: () => Promise<void>;
-  requestShutdown: (source: 'happier-app', errorMessage?: string) => void;
+  requestShutdown: (source: DaemonShutdownSource, errorMessage?: string) => void;
   directPeerServerLifecycle: DirectTransferServerLifecycle | null;
   prepareWorkspaceSyncSeedExport?: NonNullable<import('@/api/machine/rpcHandlers.workspaceSync').MachineWorkspaceSyncRpcService['prepareSourceSeedExport']>;
   prepareWorkspaceSyncResolutionExport?: NonNullable<import('@/api/machine/rpcHandlers.workspaceSync').MachineWorkspaceSyncRpcService['prepareConflictResolutionExport']>;
@@ -2213,7 +2214,8 @@ export async function bootstrapMachineSyncRuntime(
       onConnect: handleMachineConnected,
       onOwnershipConflict: (conflict) => {
         logger.warn('[DAEMON RUN] Relay ownership conflict prevented machine connection', conflict);
-        params.requestShutdown('happier-app', 'machine-owner-conflict');
+        // A refused relay connection must let service managers retry after the incumbent retires.
+        params.requestShutdown('exception', 'machine-owner-conflict');
       },
       onMachineReplaced: (event) => {
         logger.warn('[DAEMON RUN] Machine was replaced by the server; shutting down stale daemon connection', event);
