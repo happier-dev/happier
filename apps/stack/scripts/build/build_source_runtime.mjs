@@ -1019,6 +1019,9 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   const installedProjectDir = join(sourceRepoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(runtimeDir, 'node_modules'));
   if (component === 'daemon') {
+    // Plugin entries live outside apps/cli, but externalize against that same
+    // host. Preserve its Node lookup chain before the checkout-root fallback.
+    await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(outputDir, 'packages/node_modules'));
     // Only hosts declaring public author packages need a physical author
     // closure; tiny source runtime fixtures have no such package inventory.
     if ((manifest.bundledDependencies ?? []).some(name => workspacePackages.get(name)?.manifest.happier?.publicSdkRelease)) {

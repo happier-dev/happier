@@ -67,11 +67,13 @@ console.log(JSON.stringify([imported.evidence, required.evidence]));
     }
   });
 
-  it('retains importer dependencies and import/require conditions in lazy shared chunks', async () => {
+  it('retains importer dependencies and conditions across a host dependency relayout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-source-import-owner-'));
     try {
       const plugin = join(root, 'installed plugin#owner');
-      const output = join(root, 'runtime');
+      const host = join(root, 'apps/cli');
+      const outputRoot = join(root, 'runtime');
+      const output = join(outputRoot, 'apps/cli');
       for (const directory of [root, plugin]) {
         const dependency = join(directory, 'node_modules', 'fixture-css');
         await mkdir(dependency, { recursive: true });
@@ -84,18 +86,38 @@ console.log(JSON.stringify([imported.evidence, required.evidence]));
       await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
       await writeFile(join(plugin, 'shape.js'), "import { generate } from 'fixture-css'; export { generate }; export const required = require('fixture-css').generate;");
       await writeFile(join(plugin, 'index.js'), "export async function parse() { const shape = await import('./shape.js'); return [shape.generate, shape.required]; } export async function optional() { return import('fixture-uninstalled'); }");
-      await build({ entryPoints: [join(plugin, 'index.js')], outdir: output, bundle: true,
+      const nested = join(host, 'node_modules/fixture-relayout');
+      await mkdir(nested, { recursive: true });
+      await writeFile(join(nested, 'package.json'), JSON.stringify({ name: 'fixture-relayout', type: 'module',
+        exports: { import: './index.js', require: './index.cjs' } }));
+      await writeFile(join(nested, 'index.js'), "export const value = 'host-import';");
+      await writeFile(join(nested, 'index.cjs'), "module.exports = { value: 'host-require' };");
+      await writeFile(join(host, 'index.js'), `export { parse, optional } from '../../installed plugin#owner/index.js';
+import { value } from 'fixture-relayout';
+export const hostValues = [value, require('fixture-relayout').value];
+export async function lazyHost() { return (await import('fixture-relayout')).value; }`);
+      await mkdir(output, { recursive: true });
+      await symlink(join(root, 'node_modules'), join(outputRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      await symlink(join(host, 'node_modules'), join(output, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      await build({ entryPoints: [join(host, 'index.js')], outdir: output, bundle: true,
         splitting: true, format: 'esm', platform: 'node',
         banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
-        plugins: [createWorkspaceSourceResolver({ workspacePackages: new Map(), requireFromProject: createRequire(join(root, 'package.json')) })],
+        plugins: [createWorkspaceSourceResolver({ workspacePackages: new Map(), requireFromProject: createRequire(join(host, 'package.json')) })],
       });
       // Native import observes the emitted graph without Vitest re-resolving it.
-      const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+      const probe = async () => {
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
 const m = await import(${JSON.stringify(pathToFileURL(join(output, 'index.js')).href)});
 let missing; try { await m.optional(); } catch (e) { missing = e.code; }
-console.log(JSON.stringify({ parsed: await m.parse(), missing }));
+console.log(JSON.stringify({ parsed: await m.parse(), missing, hostValues: m.hostValues, lazyHost: await m.lazyHost() }));
 `]);
-      expect(JSON.parse(stdout)).toEqual({ parsed: ['plugin-import', 'plugin-require'], missing: 'ERR_MODULE_NOT_FOUND' });
+        expect(JSON.parse(stdout)).toEqual({ parsed: ['plugin-import', 'plugin-require'], missing: 'ERR_MODULE_NOT_FOUND',
+          hostValues: ['host-import', 'host-require'], lazyHost: 'host-import' });
+      };
+      await probe();
+      await cp(nested, join(root, 'node_modules/fixture-relayout'), { recursive: true });
+      await rm(nested, { recursive: true });
+      await probe();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

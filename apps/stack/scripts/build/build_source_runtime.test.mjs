@@ -1217,6 +1217,32 @@ async function installSourcePreparationInputs(repoDir, component) {
   ]) if (!existsSync(join(repoDir, path))) await writeFile(join(repoDir, path), contents);
 }
 
+test('source exports keep host dependency resolution through nested-to-hoisted relayouts', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-export-dependency-relayout-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture,
+    'import runtime from "relayout-package"; console.log(runtime.value);');
+  const nested = join(repoDir, 'apps/cli/node_modules/relayout-package');
+  await mkdir(nested);
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(nested, 'package.json'), JSON.stringify({ name: 'relayout-package', main: 'index.cjs' }));
+  await writeFile(join(nested, 'index.cjs'), 'exports.value = 1;');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env };
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const runtime = await build({ repoDir, outputDir: fixture.path('export'), component: 'daemon', env });
+  const launch = async () => (await promisify(execFile)(process.execPath, [runtime.entrypoint], { env })).stdout.trim();
+  const pluginLaunch = async () => (await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+import { createRequire } from 'node:module';
+console.log(createRequire(${JSON.stringify(resolve(runtime.runtimeDir, '../../packages/plugins/probe/dist/index.js'))})('relayout-package').value);
+`], { env })).stdout.trim();
+  assert.equal(await launch(), '1');
+  assert.equal(await pluginLaunch(), '1', 'plugin entries must share the host lookup chain before relayout');
+  await rename(nested, join(repoDir, 'node_modules/relayout-package'));
+  assert.equal(await launch(), '1', 'the built CLI must resolve the hoisted dependency without rebuilding');
+  assert.equal(await pluginLaunch(), '1', 'plugin entries must fall back to the hoisted tree after relayout');
+});
+
 async function createReloadDaemonRepo(fixture, source) {
   const repoDir = fixture.path('repo');
   const cliDir = join(repoDir, 'apps/cli');

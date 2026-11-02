@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { isBuiltin } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.mjs';
 
@@ -232,18 +233,24 @@ export function createWorkspaceSourceResolver({ workspacePackages, requireFromPr
         if (args.path === 'libsodium-wrappers-sumo') return { path: requireFromProject.resolve(args.path) };
         if (args.path === 'libsodium-sumo') return;
         if (externalPackages === undefined) {
-          // Shared chunks no longer sit beside their authored package. Resolve
-          // support from the importer before externalizing, preserving its
-          // installed version and ESM/CJS export conditions under pnpm.
+          if (isBuiltin(args.path)) return { path: args.path, external: true };
+          // Shared chunks borrow the host's installed tree, which can be
+          // relaid out after emission. Keep host-visible imports bare, but
+          // bundle importer-local dependencies rather than selecting a
+          // different host version or retaining a vanished installed path.
           const resolved = await builder.resolve(args.path, {
             kind: args.kind, importer: args.importer, resolveDir: args.resolveDir,
             namespace: args.namespace, pluginData: resolvingExternal,
           });
           // Optional, uninstalled imports keep their existing runtime failure.
-          const path = resolved.errors.length === 0 ? resolved.path : args.path;
-          const esmImport = args.kind === 'import-statement' || args.kind === 'dynamic-import';
-          // ESM uses URLs (including Windows drives and #); require uses paths.
-          return { path: esmImport && isAbsolute(path) ? pathToFileURL(path).href : path, external: true };
+          if (resolved.errors.length) return { path: args.path, external: true };
+          const host = await builder.resolve(args.path, {
+            kind: args.kind, resolveDir: dirname(requireFromProject.resolve.paths(args.path)[0]),
+            namespace: args.namespace, pluginData: resolvingExternal,
+          });
+          return host.errors.length === 0 && host.path === resolved.path
+            ? { path: args.path, external: true }
+            : { path: resolved.path };
         }
         if (externalPackages.some((name) => args.path === name || args.path.startsWith(`${name}/`))) {
           return { path: args.path, external: true };

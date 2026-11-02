@@ -1460,10 +1460,14 @@ If a bundled workspace imports another internal workspace at runtime, the host p
 
 ### One module instance for the plugin-shared runtime
 
-Development source bundles resolve external support from the authored importer
-before relocating code into shared chunks. The source resolver retains that
-installed package version and its import/require export conditions, including
-lazy imports; a root-hoisted package cannot replace a plugin-local dependency.
+Development source bundles borrow installed support from their host checkout.
+The source resolver compares the authored importer and host resolutions under
+the same import/require conditions. Matching dependencies remain bare imports,
+so Node resolves them after an install relayout rather than loading a path baked
+into the export. Importer-local dependencies that differ from the host are
+bundled into the source graph, including lazy imports; a root-hoisted package
+cannot replace a plugin-local dependency. Emitted plugin entries share the
+CLI host's package-local lookup tree before falling back to the checkout root.
 Native payloads retain their explicit support closure, while external installed
 plugins bundle dependencies through the existing plugin authoring owner.
 
