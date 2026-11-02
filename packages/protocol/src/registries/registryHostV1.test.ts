@@ -9,6 +9,27 @@ const source=(id:string):RegistrySourceDescriptorV1=>({id,title:id,format:'git',
 const tree={sha:'tree',tree:[{path:'review/SKILL.md',type:'blob',mode:'100644',sha:'blob',size:3},{path:'review',type:'tree',mode:'040000',sha:'subtree'}]};
 
 describe('registry link operation',()=>{
+  it('retains app source detection without probing app catalogs for a selected skill link', async () => {
+    const requests: string[] = [];
+    const url = 'https://github.com/owner/catalog';
+    const indexUrl = 'https://raw.githubusercontent.com/owner/catalog/HEAD/templates/service-templates.json';
+    const forbidden = async (): Promise<never> => { throw new Error('Detection cannot read selected bodies'); };
+    const http: RegistryHttpV1 = { getJson: async target => {
+      requests.push(target);
+      if (target === indexUrl) return { ok: true, fetchedAt: 1, value: { database: { slogan: 'Database' } } };
+      if (target.endsWith('/.claude-plugin/marketplace.json')) return { ok: true, fetchedAt: 1, value: { plugins: [] } };
+      throw new Error(`Unexpected detection request: ${target}`);
+    }, getText: forbidden, getBytes: forbidden };
+    const host = createRegistryHostV1({ host: 'web', http, readSources: async () => [] });
+    expect(await host.execute('registries.sources.detect', { url })).toMatchObject({ detected: {
+      format: 'coolify-templates', kinds: ['app'],
+    } });
+    expect(requests).toEqual([indexUrl]);
+    requests.length = 0;
+    expect(await host.fetchRequest({ op: 'link', url })).toEqual({ op: 'link', items: [] });
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests).not.toContain(indexUrl);
+  });
   it.each([
     ['tree/main/skills/pdf', 'skills/pdf', 'main'],
     ['blob/main/skills/pdf/SKILL.md', 'skills/pdf', 'main'],

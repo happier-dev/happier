@@ -4,6 +4,7 @@ import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
 import { githubRegistryAdapterV1,createGitHubRegistryOperationV1,readGitHubRepositoryV1,registryRelativePathV1 } from './formats/github.js';
 import { createClaudeMarketplaceRegistryAdapterV1 } from './formats/claudeMarketplace.js';
 import { couldReadWellKnownSkillsV1, readWellKnownSkillsV1 } from './formats/wellKnownSkills.js';
+import { composeCatalogRegistryAdapterV1 } from './formats/composeCatalog.js';
 import type { RegistryDetectedSourceV1,RegistryFetchContextV1,RegistryHttpV1,RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.js';
 import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,type RegistrySourceV1,type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
@@ -16,6 +17,7 @@ import type { RegistrySourcesMutationV1,RegistrySourcesMutationResultV1 } from '
 import type { RegistryUpdateCheckResultV1 } from './registryUpdatesV1.js';
 export type RegistryHostDepsV1=Readonly<{
   host:'web'|'native'|'node';http:RegistryHttpV1;signal?:AbortSignal;git?:RegistryFetchContextV1['git'];
+  withAppCatalog?:RegistryFetchContextV1['withAppCatalog'];
   readSources:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
   updates?:(filter?:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>)=>Promise<RegistryUpdateCheckResultV1>;
   mutateSources?:(mutation:RegistrySourcesMutationV1)=>Promise<RegistrySourcesMutationResultV1>;
@@ -34,13 +36,15 @@ function adapterFor(source:RegistrySourceV1):RegistryFormatAdapterV1 {
   if(!adapter) throw new RegistryFetchErrorV1({state:'newer_format',found:source.format});
   return adapter;
 }
-export async function detectRegistrySourceV1(ctx:RegistryFetchContextV1,url:string):Promise<RegistryDetectedSourceV1> {
+export async function detectRegistrySourceV1(ctx:RegistryFetchContextV1,url:string,kind?:'skill'):Promise<RegistryDetectedSourceV1> {
   const normalized=normalizeRegistrySourceUrlV1(url);
   const repo=readGitHubRepositoryV1(normalized);
   if(repo) {
     // An explicit skill file selects its folder; otherwise detect the format at
     // the selected folder/ref, which may differ from the repository root.
     if (!new URL(normalized).pathname.endsWith('/SKILL.md')) {
+      const appCatalog = kind === 'skill' ? null : await composeCatalogRegistryAdapterV1.detect?.(ctx, normalized);
+      if (appCatalog) return appCatalog;
       const path = registryRelativePathV1(repo.path ?? '').replace(/(?:^|\/)\.claude-plugin\/marketplace\.json$/, '');
       const marketplace=await ctx.http.getJson(`https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${encodeURIComponent(repo.ref ?? 'HEAD')}/${path ? path.split('/').map(encodeURIComponent).join('/')+'/' : ''}.claude-plugin/marketplace.json`);
       if (!marketplace.ok && marketplace.status.state === 'rate_limited') throw new RegistryFetchErrorV1(marketplace.status);
@@ -61,9 +65,9 @@ export async function detectRegistrySourceV1(ctx:RegistryFetchContextV1,url:stri
   if(normalized.endsWith('.git')) return {format:'git',kinds:['skill'],title:new URL(normalized).pathname.split('/').at(-1)!.replace(/\.git$/,'')};
   const detectionAdapters: readonly RegistryFormatAdapterV1[] = Object.values(REGISTRY_FORMAT_ADAPTERS_V1);
   for (const adapter of detectionAdapters) {
-    if (!adapter.detect) continue;
+    if (!adapter.detect || kind && !adapter.kinds.includes(kind)) continue;
     const detected = await adapter.detect(ctx, normalized);
-    if (detected) return detected;
+    if (detected && (!kind || 'unsupported' in detected || detected.kinds.includes(kind))) return detected;
   }
   return {unsupported:'unknown_format'};
 }
@@ -84,7 +88,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     getText: (...args) => transport(() => deps.http.getText(...args)),
     getBytes: (...args) => transport(() => deps.http.getBytes(...args)),
   };
-  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git };
+  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, withAppCatalog: deps.withAppCatalog };
   const viaDaemon = async (request: RegistryFetchRequestV1): Promise<RegistryFetchResponseV1> => {
     const fetch = deps.daemonFetch;
     return fetch
@@ -216,7 +220,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
   };
   const linkSource = async (url: string): Promise<RegistrySourceDescriptorV1> => {
     const normalized = normalizeRegistrySourceUrlV1(url);
-    const detected = await detectRegistrySourceV1(ctx, normalized);
+    const detected = await detectRegistrySourceV1(ctx, normalized, 'skill');
     if ('unsupported' in detected) throw new RegistryFetchErrorV1({ state: detected.unsupported === 'needs_token'
       ? 'auth_failed' : detected.unsupported === 'unreachable' ? 'unreachable' : 'invalid_source' });
     return {

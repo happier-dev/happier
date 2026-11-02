@@ -49,6 +49,10 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   links: z.optional(z.strictObject({ repository: z.optional(z.string()), website: z.optional(z.string()) })),
   flags: z.optional(z.strictObject({ deprecated: z.optional(z.literal(true)), pick: z.optional(z.literal(true)) })),
   problem: z.optional(RegistryItemProblemV1Schema),
+  appMetadata: z.optional(z.strictObject({ category: z.optional(z.string()), tags: z.optional(z.array(z.string())),
+    upstreamIcon: z.optional(z.string()), upstreamMinimumVersion: z.optional(z.string()),
+    containerPort: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
+    architectures: z.optional(z.array(z.enum(['amd64', 'arm64']))) })),
   agentDistribution: z.optional(RegistryAgentDistributionV1Schema),
 }));
 export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;

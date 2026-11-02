@@ -11,16 +11,23 @@ function hashObject(kind: 'blob' | 'tree', bytes: Uint8Array): string {
 }
 export function computeGitBlobShaV1(bytes: Uint8Array): string { return hashObject('blob', bytes); }
 export function computeGitTreeShaV1(files: readonly RegistrySkillFileBytesV1[]): string {
-  type Tree = Map<string, Tree | RegistrySkillFileBytesV1>;
+  return computeGitTreeShaFromEntriesV1(files.map(file => ({ ...file, blobSha: computeGitBlobShaV1(file.bytes) })));
+}
+/** A selected file set has the same native Git identity whether acquired as
+ * bytes or read from the repository's pinned blob metadata. */
+export function computeGitTreeShaFromEntriesV1(files: readonly Readonly<{ path: string; unixMode: 0o644 | 0o755; blobSha: string }>[]): string {
+  type Entry = typeof files[number];
+  type Tree = Map<string, Tree | Entry>;
   const root: Tree = new Map();
   for (const file of files) {
     const parts = file.path.split('/');
+    if (!/^[a-f0-9]{40}$/i.test(file.blobSha)) throw new Error('invalid_blob_sha');
     if (parts.some(p => !p || p === '.' || p === '..' || p.includes('\0') || p.includes('\\'))) throw new Error('invalid_file_path');
     let tree = root;
     for (const part of parts.slice(0, -1)) {
       const prior = tree.get(part);
       if (prior && !(prior instanceof Map)) throw new Error('invalid_file_path');
-      const next = prior ?? new Map<string, Tree | RegistrySkillFileBytesV1>(); tree.set(part, next); tree = next;
+      const next = prior ?? new Map<string, Tree | Entry>(); tree.set(part, next); tree = next;
     }
     const leaf = parts.at(-1)!;
     if (tree.has(leaf)) throw new Error('duplicate_file_path');
@@ -34,7 +41,7 @@ export function computeGitTreeShaV1(files: readonly RegistrySkillFileBytesV1[]):
     });
     return hashObject('tree', concatBytes(...entries.map(({ name, child }) => concatBytes(
       encode(`${child instanceof Map ? '40000' : child.unixMode === 0o755 ? '100755' : '100644'} ${name}\0`),
-      hexToBytes(child instanceof Map ? hash(child) : computeGitBlobShaV1(child.bytes)),
+      hexToBytes(child instanceof Map ? hash(child) : child.blobSha),
     ))));
   }
   return hash(root);

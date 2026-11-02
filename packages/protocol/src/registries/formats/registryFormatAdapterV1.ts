@@ -13,6 +13,9 @@ export type RegistryDetectedSourceV1 = Readonly<{ format: RegistryFormatV1; kind
 export type RegistryFetchContextV1 = Readonly<{
 packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
  http: RegistryHttpV1; signal?: AbortSignal;
+  /** Node owner retains immutable catalog resources across finite reads; mutable currentness stays with the adapter. */
+  withAppCatalog?: <T>(input: Readonly<{ source: RegistrySourceV1; commit: string; current: boolean; http: RegistryHttpV1 }>,
+    consume: (http: RegistryHttpV1) => Promise<T>) => Promise<T>;
   /** The host applies target placement while retaining the original catalog
    * pointer on daemon requests. Null defers a daemon-only target during browse. */
   readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string }>) => Promise<RegistryItemV1 | null>;
