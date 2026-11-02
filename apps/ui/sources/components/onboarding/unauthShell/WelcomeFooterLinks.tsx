@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +10,7 @@ import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUr
 import { derivePresentableRelayHost } from '@/sync/domains/server/url/serverUrlDisplay';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 
 const DOCS_URL = 'https://docs.happier.dev';
 const GITHUB_URL = 'https://github.com/happier-dev/happier';
@@ -38,9 +39,9 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
-    const openDocs = React.useCallback(() => { void Linking.openURL(DOCS_URL); }, []);
-    const openGithub = React.useCallback(() => { void Linking.openURL(GITHUB_URL); }, []);
-    const openDiscord = React.useCallback(() => { void Linking.openURL(DISCORD_URL); }, []);
+    const [, openDocs] = useOpenExternalUrl(DOCS_URL);
+    const [, openGithub] = useOpenExternalUrl(GITHUB_URL);
+    const [, openDiscord] = useOpenExternalUrl(DISCORD_URL);
 
     const labelColor = { color: theme.colors.text.secondary };
     const actionColor = { color: theme.colors.text.primary };

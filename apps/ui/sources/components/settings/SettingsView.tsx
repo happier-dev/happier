@@ -1,4 +1,5 @@
 import { View, Pressable, Platform, Linking, useWindowDimensions } from 'react-native';
+import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Text } from '@/components/ui/text/Text';
@@ -157,15 +158,9 @@ export const SettingsView = React.memo(function SettingsView() {
         };
     }, []);
 
-    const handleGitHub = async () => {
-        const url = 'https://github.com/happier-dev/happier';
-        const supported = await Linking.canOpenURL(url);
-        if (supported) {
-            await Linking.openURL(url);
-        }
-    };
+    const [, handleGitHub] = useOpenExternalUrl('https://github.com/happier-dev/happier');
 
-    const handleReportIssue = async () => {
+    const [, handleReportIssue] = useHappyAction(async () => {
         recordBugReportUserAction('settings.report_issue_open');
         const overrideUrl = String(process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL ?? '').trim();
         if (overrideUrl.length > 0) {
@@ -176,7 +171,7 @@ export const SettingsView = React.memo(function SettingsView() {
             }
         }
         pushRoute('/settings/report-issue');
-    };
+    });
 
     const handleSubscribe = async () => {
         trackPaywallButtonClicked();
