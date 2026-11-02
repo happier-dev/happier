@@ -1,3 +1,4 @@
+import type { PluginSecretSourceRuntimeV1 } from '../secretSources.js';
 import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
 import type { PluginProjectNativeAdapterRuntimeV1 } from '../projectNativeAdapters.js';
@@ -57,6 +58,8 @@ type CapturedActionHandler = (input: never, context: never) => ReturnType<Action
  * owner; adding a second hand-maintained family map is a correctness bug.
  */
 export interface PluginRegistrationValueByFamily {
+    secretSources: PluginSecretSourceRuntimeV1;
+
     workItems: PluginWorkItemsRuntime;
     dragSources: PluginDragSourceRuntime;
     dropTargets: PluginDropTargetRuntime;

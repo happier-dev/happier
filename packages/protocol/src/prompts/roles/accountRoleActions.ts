@@ -307,3 +307,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
     return refuse('unsupported_action');
   };
 }
+
+export type RawRoleSettingsMutationV1 = (mutate: (
+  raw: Readonly<Record<string, unknown>>,
+) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>, signal?: AbortSignal) => Promise<void>;

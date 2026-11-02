@@ -5,6 +5,7 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
   actions?: ResolvedContributionRegistry['actions'];
 }>): ResolvedContributionRegistry {
   return {
+    backupDestinations: [],
     agents: [],
     actions: params?.actions ?? [],
     resources: [],
@@ -22,6 +23,7 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
 
 const { getResolvedContributionRegistry } = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn<() => ResolvedContributionRegistry>(() => ({
+    backupDestinations: [],
     agents: [],
     actions: [],
     resources: [],

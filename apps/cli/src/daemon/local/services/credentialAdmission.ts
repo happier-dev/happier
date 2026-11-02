@@ -22,3 +22,25 @@ export async function assertLocalServiceCredentialAdmission(input: Readonly<{
         throw new Error('requester_credentials_unavailable');
     }
 }
+
+export async function assertLocalServiceReadCustody(input: LocalServiceCredentialScope): Promise<void> {
+    const context = input.context;
+    // Local calls use the daemon's own credentials. Transport authority is host-private.
+    if (!context?.machineAdmission && !context?.authorization && !context?.transportRequestId) return;
+    const admission = context.machineAdmission;
+    const requester = context.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
+        && context.workspaceSyncSourceExecution?.originalActionEnvelope
+        ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
+    const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
+    if (!input.accountId || !admission || admission.actorAccountId !== input.accountId && !privateMove
+        || admission.machineId !== input.machineId || context.signal.aborted
+        || !context.verifyMachineAdmissionCurrent) {
+        throw new Error('requester_credentials_unavailable');
+    }
+}
+
+type LocalServiceCredentialScope = Readonly<{
+    accountId?: string;
+    machineId: string;
+    context?: RpcHandlerContext;
+}>;

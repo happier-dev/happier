@@ -1,4 +1,36 @@
-import axios from 'axios';
+import { createDeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isDeploymentChildRootActionIdV1, deploymentChildEffectActionIdForRootV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { type MachineAdminAccessActionInput } from '@happier-dev/protocol';
+import { type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import axios from '@/api/client/credentialAxios';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { matchesManagedMachineEnrollmentAdminAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { type MachineAgentIsolationPreviewInputV1 } from '@happier-dev/protocol';
+import { type MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol';
+import { matchesManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { type MachineSetupApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
+import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol';
+import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { observeManagedChildApprovalExecution } from './managedChildApproval';
+import { type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readDeploymentChildRpcV1 } from '@happier-dev/protocol';
+import { doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { DeploymentPublishInputV1Schema } from '@happier-dev/protocol';
+import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol';
+import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
+
 import { randomBytes } from 'node:crypto';
 
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -543,31 +575,44 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   workspaceSyncSourceRouting?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
   workspaceSyncSeedRouting?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSeedRoutingV1;
+  deploymentChildRouting?: DeploymentChildRoutingV1;
+  deploymentChildExecution?: WorkspaceSyncSourceExecutionV1;
+  deploymentArchiveOrigin?: DeploymentArchiveOriginForHost;
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): ExternalActionMachineRpcExecutionV1 | null {
   const authorization = input.context?.externalActionExecutionAuthorization;
   const target = input.context?.externalActionTarget;
   if (!authorization || !target || !input.requestId) return null;
   const effectActionId = ExternalActionActionIdV1Schema.parse(input.effectActionId);
+  const admittedChild = readHostAdmittedReviewedChildV1(input.context);
+  const reviewedChild = admittedChild?.actionId === effectActionId
+    ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest } : undefined;
   return {
     v: 1,
     authorization,
     effectActionId,
     target,
     installationId: input.installationId,
+    ...(reviewedChild ? { reviewedChild } : {}),
+    ...(input.deploymentChildRouting ? { deploymentChildRouting: input.deploymentChildRouting } : {}),
+    ...(input.deploymentChildExecution ? { deploymentChildExecution: createDeploymentChildExecutionProofV1(input.deploymentChildExecution, input.deploymentArchiveOrigin) } : {}),
     machineSignature: signExternalActionMachineRpcRequestV1({
       authorizationToken: authorization.token,
       requesterAccountContext: authorization.requesterAccountContext,
       effectActionId,
       target,
       installationId: input.installationId,
+      ...(reviewedChild ? { reviewedChild } : {}),
       event: SOCKET_RPC_EVENTS.CALL,
       method: input.method,
       requestId: input.requestId,
       ...(input.params === undefined ? {} : { params: input.params }),
-      ...(input.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: input.workspaceSyncSourceRouting } : {}),
+        ...(input.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: input.workspaceSyncSourceRouting } : {}),
       ...(input.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: input.workspaceSyncSourceWriterTargetRouting } : {}),
       ...(input.workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: input.workspaceSyncSeedRouting } : {}),
+      ...(input.deploymentChildRouting ? { deploymentChildRouting: input.deploymentChildRouting } : {}),
+      ...(input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
+      ...(input.deploymentArchiveOrigin ? { deploymentArchiveOrigin: input.deploymentArchiveOrigin } : {}),
       privateKey: input.privateKey,
     }),
   };
@@ -584,7 +629,9 @@ export function readExternalActionSourceMachineRpcSigner(
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
-  if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start') && binding.target.kind === 'machine'
+  if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
+    || isDeploymentChildRootActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
+    || isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })) && binding.target.kind === 'machine'
     && binding.target.machineId === binding.machineId) return { machineId: binding.machineId, installationId: binding.installationId };
   if ('authentication' in binding && binding.sessionActionOrigin && binding.sessionActionSource) {
     return binding.sessionActionSource;
@@ -597,6 +644,7 @@ export function readExternalActionSourceMachineRpcSigner(
 }
 
 export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
+  context?: ActionExecutorContext;
   authorization: ExternalActionExecutionAuthorizationV1;
   effectActionId: string;
   target: ExternalActionTargetV1;
@@ -605,29 +653,42 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   method: string;
   requestId?: string;
   params?: unknown;
+  deploymentChildRouting?: DeploymentChildRoutingV1;
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): ExternalActionMachineRpcExecutionV1 | null {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
   const source = readExternalActionSourceMachineRpcSigner(parsed.data);
+  const deploymentChild = input.deploymentChildRouting;
+  const setupPlanRoot = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
+    effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN });
+  const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
+    effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1) });
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
+    || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
+      || input.method !== `${binding.machineId}:${binding.actionId}`)
     || input.target.kind !== 'machine' || binding.machineId !== input.target.machineId
     || !externalActionTargetsEqualV1(binding.target, input.target)
     || binding.actionId === 'projects.service.relocate'
       && readProjectServiceMoveChildEffectV1(input.method.slice(input.method.indexOf(':') + 1)) !== input.effectActionId
     || binding.actionId === 'discussion.second_opinion.start'
       && (input.effectActionId !== 'session.spawn_new' || !isDiscussionSecondOpinionModelRpcMethodV1(input.method.slice(input.method.indexOf(':') + 1)))
-    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start'
+    || isDeploymentChildRootActionIdV1(binding.actionId, binding.deploymentPreparationAdmission) && (!deploymentChild
+      || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission)
+      || input.effectActionId !== deploymentChild.actionId
+      || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
+    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !deploymentChild && !setupPlanChild
       && !input.method.startsWith(`${binding.machineId}:`)) return null;
   return createExternalActionMachineRpcExecution({
-    context: { surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },
+    context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },
     effectActionId: input.effectActionId,
     installationId: binding.installationId,
     method: input.method,
     ...(input.requestId ? { requestId: input.requestId } : {}),
     ...(input.params === undefined ? {} : { params: input.params }),
+    ...(deploymentChild ? { deploymentChildRouting: deploymentChild } : {}),
     privateKey: input.privateKey,
   });
 }
@@ -1390,3 +1451,110 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
     return false;
   }
 }
+
+export async function isReviewedDeploymentChild(input: Parameters<typeof readReviewedDeploymentChildRoot>[0]): Promise<boolean> {
+  return await readReviewedDeploymentChildRoot(input) !== null;
+}
+
+export async function readReviewedDeploymentChildRoot(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
+  onRefused?: (reason: DeploymentChildDerivationRefusal) => void;
+}>) {
+  const child = readDeploymentChildRpcV1({ rootActionId: input.authorization.binding.actionId,
+    rootPreparationAdmission: input.authorization.binding.deploymentPreparationAdmission, reviewedChild: input.reviewedChild,
+    effectActionId: input.actionId, method: input.method ?? RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: input.params });
+  if (!child || child.machineId !== input.machineId) { input.onRefused?.('child_invalid'); return null; }
+  const rootInput = await readReviewedExternalActionInput(input);
+  if (rootInput === null || rootInput === undefined) return null;
+  const matches = doesDeploymentChildInputMatchRootV1({ rootActionId: input.authorization.binding.actionId, rootInput, child,
+    rootPreparationAdmission: input.authorization.binding.deploymentPreparationAdmission, reviewedChild: input.reviewedChild });
+  if (!matches) { input.onRefused?.('child_input_mismatch'); return null; }
+  const parentInput = projectNativeJsonValueForTransport(rootInput);
+  const isParentInputRecord = (value: typeof parentInput): value is Readonly<Record<string, typeof parentInput>> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  if (!isParentInputRecord(parentInput)) return null;
+  return { actionId: input.authorization.binding.actionId, input: parentInput };
+}
+
+export type DeploymentChildDerivationRefusal = 'child_invalid' | 'child_input_mismatch'
+  | 'root_envelope_invalid' | 'root_custody_unavailable' | 'root_cancelled'
+  | 'root_binding_mismatch' | 'root_encryption_unavailable' | `root_open_${RootOpenFailurePhase}`;
+
+type RootOpenFailurePhase = Parameters<NonNullable<Parameters<typeof openExternalActionRequestV2>[0]['onFailure']>>[0]['phase'];
+
+export async function readReviewedDeploymentDeployInput(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; signal?: AbortSignal;
+}>) {
+  const actionId = input.authorization.binding.actionId;
+  if (actionId !== 'deployments.deploy' && actionId !== 'deployments.publish') return null;
+  const root = await readReviewedExternalActionInput(input);
+  if (actionId === 'deployments.publish') {
+    const parsed = DeploymentPublishInputV1Schema.safeParse(root);
+    return parsed.success ? parsed.data.preparedChildren.deploy : null;
+  }
+  const parsed = DeploymentDeployActionInputV1Schema.safeParse(root);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function readReviewedActionOperationCancelAddress(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; signal?: AbortSignal;
+}>): Promise<z.infer<typeof ActionOperationAddressV1Schema> | null> {
+  const binding = input.authorization.binding;
+  if (binding.actionId !== 'action.operations.cancel') return null;
+  const parsed = ActionOperationAddressV1Schema.safeParse(await readReviewedExternalActionInput(input));
+  if (!parsed.success || parsed.data.machineId !== binding.machineId
+    || !await isServerProfileHomeIdentity(parsed.data.serverId, binding.serverIdentityId)) return null;
+  return !input.signal?.aborted ? parsed.data : null;
+}
+
+
+
+
+
+
+
+export async function isReviewedMachineSetupPlanChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+}>): Promise<boolean> {
+  if (input.actionId !== 'machines.setup.plan'
+    || (input.method ?? RPC_METHODS.MACHINE_SETUP_PLAN) !== RPC_METHODS.MACHINE_SETUP_PLAN) return false;
+  const rootInput = await readReviewedExternalActionInput(input);
+  if (!rootInput || typeof rootInput !== 'object' || !('homeId' in rootInput)
+    || rootInput.homeId !== input.authorization.binding.serverIdentityId) return false;
+  return readMachineSetupPlanChildInputV1({ rootActionId: input.authorization.binding.actionId,
+    rootInput, machineId: input.machineId, input: input.params }) !== null;
+}
+
+export async function isReviewedSessionStopChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; target?: unknown; signal?: AbortSignal;
+}>): Promise<boolean> {
+  if (!isSessionStopChildRootV1(input.authorization.binding.actionId) || input.actionId !== 'session.stop') return false;
+  const rootInput = await readReviewedExternalActionInput(input);
+  return rootInput != null && isSessionStopChildV1({ rootActionId: input.authorization.binding.actionId,
+    effectActionId: input.actionId, method: input.method ?? RPC_METHODS.STOP_SESSION,
+    target: input.target, params: input.params, rootInput });
+}
+
+
+
+
+
+
+
+
+
+
+
+export function readExternalActionRequesterInvocation(context: ActionExecutorContext): ExternalActionRequesterInvocationV1 | undefined {
+  const parsed = ExternalActionRequesterInvocationV1Schema.safeParse({ caller: context.actionCaller ?? { kind: 'host' },
+    surface: context.surface, authority: context.authority, callerPermissionMode: context.callerPermissionMode,
+    callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
+    defaultSessionId: context.defaultSessionId });
+  return parsed.success ? parsed.data : undefined;
+}
+
+export type DeploymentArchiveOriginForHost = NonNullable<NonNullable<ExternalActionMachineRpcExecutionV1['deploymentChildExecution']>['archiveOrigin']>;

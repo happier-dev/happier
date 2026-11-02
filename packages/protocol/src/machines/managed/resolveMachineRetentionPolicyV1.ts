@@ -139,3 +139,9 @@ export function resolveMachineRetentionPolicyV1(input: Readonly<{
   return { category, retention, wakeOnAcceptedMessage, retentionSource, wakeSource,
     source: retentionSource === wakeSource ? retentionSource : 'mixed' };
 }
+
+export function resolveMachineWakeNativeIntentV1(observedPower: Parameters<typeof isRedundantManagedWakeIntentV1>[1],
+  supportedIntents: NativeIntentsV1): 'start' | 'resume' | null {
+  return (['start', 'resume'] as const).find(intent => supportedIntents.includes(intent)
+    && !isRedundantManagedWakeIntentV1(intent, observedPower, supportedIntents)) ?? null;
+}

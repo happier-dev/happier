@@ -1,3 +1,4 @@
+import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
@@ -65,4 +66,10 @@ export function deriveSessionInputActionRequestAttributionV1(params: Readonly<{
     persona: params.persona,
     origin: params.origin,
   });
+}
+
+export function readAuthenticatedActionRequesterAccountIdV1(binding: ExternalActionExecutionAuthorizationBindingV1): string | null {
+  return 'authentication' in binding
+    && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
+    ? binding.accountId : null;
 }

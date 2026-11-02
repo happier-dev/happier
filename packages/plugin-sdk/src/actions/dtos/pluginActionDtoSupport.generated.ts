@@ -9377,9 +9377,11 @@ export type CurrentSessionPresentationIntentV1 = {
         frameStyle?: 'plain' | 'card' | undefined;
     };
 };
-export type JSONType = string | number | boolean | JSONType[] | {
+export type JSONType<Input extends boolean = false> = Input extends true ? JSONType<true>[] | boolean | null | number | string | {
+    [key: string]: JSONType<true>;
+} : JSONType[] | boolean | null | number | string | {
     [key: string]: JSONType;
-} | null;
+};
 export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
     kind: 'dragSource';
     sourceId: string | {

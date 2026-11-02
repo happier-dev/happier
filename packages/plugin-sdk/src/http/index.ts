@@ -14,3 +14,5 @@ export type { RequestInterceptorContribution } from '../http.js';
 export { isPermanentRequestError } from '../httpStatusError.js';
 export { isPermanentRequestStatus } from '../httpStatusError.js';
 export { readHttpStatus } from '../httpStatusError.js';
+
+export { HttpResponse } from './index.public.js';

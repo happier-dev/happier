@@ -1,3 +1,5 @@
+import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
+import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -208,10 +210,11 @@ export const ManagedMachineBootstrapApprovalPromptV1Schema = lazyZodSchema(() =>
   z.strictObject({ kind: z.literal('daemon.replaceRemoteBackgroundServices'), message: ActionOperationProgressLabelV1Schema }),
 ]));
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
+    z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,
   }),
+
   z.strictObject({
     kind: z.literal('forkRequest'),
     id: ActionOperationIdentifierV1Schema,
@@ -239,6 +242,24 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     targetMachineId: z.optional(ActionOperationIdentifierV1Schema),
   }),
   ProjectCommandAttachmentV1Schema,
+z.strictObject({
+    kind: z.literal('machineSetup'),
+    serverId: ActionOperationIdentifierV1Schema,
+    machineId: ActionOperationIdentifierV1Schema,
+    preset: z.optional(z.strictObject({ id: ActionOperationIdentifierV1Schema, revision: z.number().check(z.int(), z.nonnegative()) })),
+    managedId: z.optional(ActionOperationIdentifierV1Schema),
+    setupTask: z.optional(z.strictObject({
+      id: ActionOperationIdentifierV1Schema,
+      taskKind: z.enum(['machine.setup.plan.v1', 'machine.setup.apply.v1', 'machine.setup.remove.v1']),
+      prompt: z.optional(MachineSudoPasswordPromptV1Schema),
+    })),
+    terminalId: z.optional(ActionOperationIdentifierV1Schema),
+    terminals: z.optional(z.strictObject({
+      install: z.optional(ActionOperationIdentifierV1Schema),
+      setup: z.optional(ActionOperationIdentifierV1Schema),
+    })),
+    exitCode: z.optional(z.number().check(z.int())),
+  }),
   z.strictObject({
     kind: z.literal('machineEnvironment'),
     serverId: ActionOperationIdentifierV1Schema,
@@ -464,3 +485,14 @@ export function canAdvanceActionOperationSnapshotV1(current: ActionOperationSnap
   if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state) return false;
   return !(current.state === 'running' && incoming.state === 'accepted');
 }
+
+export const ManagedMachineBootstrapPromptV1Schema = lazyZodSchema(() => z.union([
+  ManagedMachineBootstrapApprovalPromptV1Schema, ManagedMachineBootstrapEstablishPromptV1Schema,
+]));
+
+export const ManagedMachineBootstrapEstablishPromptV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('administrator.establish'), promptId: ActionOperationIdentifierV1Schema,
+  administratorUsername: MachineAdministratorUsernameV1Schema, message: ActionOperationProgressLabelV1Schema,
+}));
+
+export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;

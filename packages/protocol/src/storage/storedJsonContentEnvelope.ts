@@ -33,3 +33,9 @@ export function isStoredJsonContentEnvelopeModeCompatible(
     ? envelope.t === 'plain'
     : envelope.t === 'encrypted';
 }
+
+export const TaskResourceStoredJsonContentEnvelopeSchema = lazyZodSchema(() => z.strictObject({
+  t: z.literal('encrypted'),
+  k: z.literal('task'),
+  c: z.string().check(z.minLength(1)),
+}));

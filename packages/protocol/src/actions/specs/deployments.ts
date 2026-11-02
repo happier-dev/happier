@@ -8,11 +8,11 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       const parsed = DeploymentActionInputSchemasV1['deployments.templates.instantiate'].safeParse(input);
       return parsed.success && parsed.data.mode === 'preview' ? 'safe' : 'danger';
     } } : {}),
-    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: id === 'deployments.teardown' ? 'policy' : 'direct' },
-    ...(id === 'deployments.teardown' ? { irreversible: true as const } : {}),
+    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.domains.remove' ? 'policy' : 'direct' },
+    ...(id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.domains.remove' ? { irreversible: true as const } : {}),
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish'
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: id === 'deployments.backups.restore' || id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     originalExecution: { accountRoot: 'allowed' },
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
@@ -20,7 +20,18 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
     ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === 'deployments.environments.update' ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
     inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],
-    inputHints: id === 'deployments.templates.instantiate' ? { fields: [
+    inputHints: id === 'deployments.backups.restore' ? { fields: [
+      { path: 'mode', title: 'Prepare or confirm restore', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+      { path: 'machineId', title: 'Runtime Machine', widget: 'text', required: true },
+      { path: 'installationId', title: 'Machine installation', widget: 'text', required: true },
+      { path: 'targetLinkId', title: 'Current deployment target', widget: 'text', required: true },
+      { path: 'deploymentId', title: 'Backup capture receipt', widget: 'text', required: true },
+      { path: 'restoreBackupId', title: 'Backup', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
+      { path: 'prepareOperationId', title: 'Prepared restore operation', widget: 'text' },
+    ] } : id === 'deployments.templates.instantiate' ? { fields: [
       { path: 'mode', title: 'Preview or apply', widget: 'text', required: true },
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'machineId', title: 'Target Machine', widget: 'text', required: true },
@@ -85,7 +96,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: true },
       ]),
     ] },
-    ...(id === 'deployments.templates.instantiate' || id === 'deployments.publish' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
+    ...(id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.publish' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
   } as const satisfies ActionSpecProjectionMetadata & Readonly<{
@@ -109,14 +120,18 @@ export const DEPLOYMENT_ACTION_SPECS_V1 = [
   deploymentSpec('deployments.publish', 'Publish reviewed deployment', undefined),
   deploymentSpec('deployments.prepare', 'Ask an agent to prepare deployment', undefined),
   deploymentSpec('deployments.health.read', 'Read deployed service health', undefined, true),
+  deploymentSpec('deployments.health.current', 'Read current Environment edge health', undefined, true),
   deploymentSpec('deployments.drift.read', 'Read deployed service drift', undefined, true),
   deploymentSpec('deployments.logs.read', 'Read deployment logs', undefined, true),
   deploymentSpec('deployments.environments.create', 'Create deployment environment', '/v1/deployments/environments'),
   deploymentSpec('deployments.environments.update', 'Update deployment environment', '/v1/deployments/environments/:environmentId'),
   deploymentSpec('deployments.environments.controller.set', 'Change environment controller', '/v1/deployments/environments/:environmentId/controller'),
   deploymentSpec('deployments.targets.link', 'Link deployment target', '/v1/deployments/environments/:environmentId/targets'),
+
   deploymentSpec('deployments.deploy', 'Deploy environment', '/v1/deployments/environments/:environmentId/deploy'),
   deploymentSpec('deployments.rollback', 'Roll back deployment', '/v1/deployments/environments/:environmentId/rollback'),
+  deploymentSpec('deployments.backups.restore', 'Restore deployment backup', undefined),
+  deploymentSpec('deployments.restart', 'Restart deployed service', undefined),
   deploymentSpec('deployments.cancel', 'Cancel deployment', '/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions'),
   deploymentSpec('deployments.promote', 'Promote deployment', '/v1/deployments/environments/:environmentId/promote'),
   deploymentSpec('deployments.teardown', 'Tear down deployment resources', '/v1/deployments/environments/:environmentId/teardown'),

@@ -26,8 +26,6 @@ function authorizedReadiness(input: Readonly<{
         delegate: createPluginExecSystemToolResolver({ definitions: [definition], registerGrant() {} }),
     });
     return createStablePluginExecService({
-        allowedExecutables: [{ kind: 'systemTool', id: 'claude-cli' }],
-        allowedEnvKeys: ['PROBE_MARKER', 'PROBE_VERSION'],
         environment: {
             PROBE_MARKER: input.env.PROBE_MARKER ?? '',
             PROBE_VERSION: input.env.PROBE_VERSION ?? '',

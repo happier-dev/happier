@@ -1,3 +1,4 @@
+import type { JsonValue } from '@happier-dev/protocol';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -72,8 +73,7 @@ describe('Codex candidate index head', () => {
         const socketPath = join(root, 'native.sock');
         const server = createServer(socket => socket.destroy());
         await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
-        const exec = createStablePluginExecService({
-            allowedExecutables: [], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        const exec = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             resolvePath: async () => root,
             resolveExecutable: async () => { throw new Error('Socket connection must not launch a process'); },
             systemTools: { async resolve(request) {
@@ -104,15 +104,14 @@ describe('Codex candidate index head', () => {
         const pidPath = join(root, 'proxy.pid');
         let entered!: () => void;
         const initializeSeen = new Promise<void>(resolve => { entered = resolve; });
-        const server = await createCodexControlSocketFixture(socketPath, request => {
+        const server = await createCodexControlSocketFixture(socketPath, (request): JsonValue | undefined => {
             if (request.method === 'initialize') entered();
             return undefined;
         });
         nativeServers.push(server);
         const controller = new AbortController();
         const script = `require('node:fs').writeFileSync(${JSON.stringify(pidPath)},String(process.pid));\n${CODEX_RAW_PROXY_FIXTURE_SCRIPT}`;
-        const exec = createStablePluginExecService({
-            allowedExecutables: [], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        const exec = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             resolvePath: async () => root,
             resolveExecutable: async () => { throw new Error('Expected retained native CLI grant'); },
             systemTools: { async resolve(request) {
@@ -155,8 +154,7 @@ describe('Codex candidate index head', () => {
             return undefined;
         });
         nativeServers.push(server);
-        const exec = createStablePluginExecService({
-            allowedExecutables: [], allowedEnvKeys: ['CODEX_HOME'], environment: { CODEX_HOME: root },
+        const exec = createStablePluginExecService({ environment: { CODEX_HOME: root },
             signal: new AbortController().signal, isOccurrenceCurrent: () => true, resolvePath: async () => root,
             resolveExecutable: async () => { throw new Error('Expected retained native CLI grant'); },
             systemTools: { async resolve(request) {
@@ -198,7 +196,7 @@ describe('Codex candidate index head', () => {
         const socketPath = join(codexHome, 'app-server-control', 'app-server-control.sock');
         let prefix = 'Native';
         let nativeFailure = false;
-        const server = await createCodexControlSocketFixture(socketPath, message => {
+        const server = await createCodexControlSocketFixture(socketPath, (message): JsonValue | undefined => {
             if (message.method === 'initialize') return {};
             if (message.method === 'thread/read') {
                 if (nativeFailure) throw new Error('native unavailable');
@@ -214,8 +212,7 @@ describe('Codex candidate index head', () => {
         // private WebSocket framing, native client and page projection stay real.
         let resolutions = 0;
         const proxyArgs = ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, socketPath];
-        const exec = createStablePluginExecService({
-            allowedExecutables: [], allowedEnvKeys: ['CODEX_HOME'], environment: { CODEX_HOME: codexHome },
+        const exec = createStablePluginExecService({ environment: { CODEX_HOME: codexHome },
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             resolvePath: async () => root,
             resolveExecutable: async () => { throw new Error('Expected retained native CLI grant'); },

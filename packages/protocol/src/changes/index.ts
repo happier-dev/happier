@@ -404,3 +404,12 @@ export const CursorGoneErrorSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
+
+export const ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'linked-identities' as const;
+export function readAccountIdentitiesChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
+  if (change.kind !== 'account') return false;
+  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
+  const hint = change.hint;
+  return change.entityId === 'self' && hint !== null && typeof hint === 'object' && !Array.isArray(hint)
+    && 'linkedProviders' in hint && hint.linkedProviders === true;
+}

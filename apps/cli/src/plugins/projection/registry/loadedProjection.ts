@@ -566,6 +566,7 @@ export function projectLoadedPluginRegistry(
             ...(contribution.localizedPresentation
                 ? { localizedPresentation: contribution.localizedPresentation }
                 : {}),
+            admittedTarget: contribution.admittedTarget,
             definition: contribution.definition,
         });
     }

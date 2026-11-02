@@ -1,4 +1,5 @@
 export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1 } from './deployments.js';
+import type { MachineConnectorSecretsService } from '../secrets.js';
 import type { HealthChecksService } from '../healthCheckKinds.js';
 /** @moduleRealm daemon */
 import type { PluginOperationAvailability } from '../availability.js';
@@ -333,6 +334,7 @@ export type PluginServiceId =
     | 'storage'
     | 'settings'
     | 'secrets'
+    | 'machineConnectorSecrets'
     | 'events'
     | 'http'
     | 'healthChecks'
@@ -352,6 +354,8 @@ export type PluginServiceId =
     | 'composerContent';
 
 export interface PluginServices {
+  readonly machineConnectorSecrets?: MachineConnectorSecretsService;
+
     availability(serviceId: PluginServiceId): PluginOperationAvailability;
     readonly logger: LoggerService;
     readonly backgroundServices: BackgroundServicesService;
@@ -376,3 +380,5 @@ export interface PluginServices {
     readonly interactions: InteractionsService;
     readonly composerContent: ComposerContentService;
 }
+
+export type { MachineConnectorSecretsService } from '../secrets.js';

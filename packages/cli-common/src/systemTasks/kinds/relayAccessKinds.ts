@@ -1,4 +1,8 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import { normalizeRelayAccessCanonicalPublicServerUrl } from '../../relayAccess/normalizePublicServerUrl.js';
+import type { AccessProviderRefV1 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { projectRelayAccessConfigV1, type RelayAccessTaskSnapshotV1 } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
+import { parseRelayAccessConfig, readBuiltinRelayAccessProviderId, relayAccessProviderDescriptors } from '../../relayAccess/catalog.js';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -8,7 +12,6 @@ import type {
   RelayAccessConfig,
   RelayAccessExecutionContext,
   RelayAccessProvider,
-  RelayAccessProviderId,
   RelayAccessStatus,
 } from '../../relayAccess/types.js';
 
@@ -22,11 +25,7 @@ export type RelayAccessStatusSnapshot = Readonly<{
   details: SystemTaskJsonValue | null;
 }>;
 
-export type RelayAccessTaskSnapshot = Readonly<{
-  configured: boolean;
-  providerId: RelayAccessProviderId | null;
-  status: RelayAccessStatusSnapshot;
-}>;
+export type RelayAccessTaskSnapshot = Readonly<RelayAccessTaskSnapshotV1>;
 
 export type RelayAccessStatusTaskParams = Readonly<{
   target: RelayAccessTaskTarget;
@@ -35,7 +34,6 @@ export type RelayAccessStatusTaskParams = Readonly<{
 export type RelayAccessConfigureTaskParams = Readonly<{
   target: RelayAccessTaskTarget;
   upstreamUrl: string | null;
-  providerId: RelayAccessProviderId;
   config: RelayAccessConfig;
 }>;
 
@@ -45,20 +43,20 @@ export type RelayAccessDisableTaskParams = Readonly<{
 
 export type RelayAccessStatusKindDeps = Readonly<{
   readConfig: (params: Readonly<{ target: RelayAccessTaskTarget }>) => Promise<RelayAccessConfig | null>;
-  getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
+  getProvider: (provider: AccessProviderRefV1) => RelayAccessProvider;
   createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
 }>;
 
 export type RelayAccessConfigureKindDeps = Readonly<{
   writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig }>) => Promise<void>;
-  getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
+  getProvider: (provider: AccessProviderRefV1) => RelayAccessProvider;
   createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
 }>;
 
 export type RelayAccessDisableKindDeps = Readonly<{
   readConfig: (params: Readonly<{ target: RelayAccessTaskTarget }>) => Promise<RelayAccessConfig | null>;
   writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
-  getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
+  getProvider: (provider: AccessProviderRefV1) => RelayAccessProvider;
   createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
 }>;
 
@@ -84,7 +82,7 @@ export function createRelayAccessStatusTaskKind(deps: RelayAccessStatusKindDeps)
         message: 'Checking relay access provider status',
       });
 
-      const provider = deps.getProvider(config.providerId);
+      const provider = deps.getProvider(config.provider);
       const status = await provider.status({
         config,
         ctx: deps.createExecutionContext({ target: parsed.target, upstreamUrl: null }),
@@ -92,7 +90,8 @@ export function createRelayAccessStatusTaskKind(deps: RelayAccessStatusKindDeps)
       });
       return {
         configured: true,
-        providerId: config.providerId,
+        providerId: readBuiltinRelayAccessProviderId(config.provider),
+        selection: projectRelayAccessConfigV1(config),
         status: normalizeRelayAccessStatus(status),
       };
     },
@@ -116,7 +115,7 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
       });
 
       const executionContext = deps.createExecutionContext({ target: parsed.target, upstreamUrl: parsed.upstreamUrl });
-      const provider = deps.getProvider(parsed.providerId);
+      const provider = deps.getProvider(parsed.config.provider);
       if (provider.configure) {
         ctx.emit({
           type: 'progress',
@@ -131,7 +130,8 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
         if (configureResult.state === 'needs_auth' || configureResult.state === 'error') {
           return {
             configured: true,
-            providerId: parsed.providerId,
+            providerId: readBuiltinRelayAccessProviderId(parsed.config.provider),
+            selection: projectRelayAccessConfigV1(parsed.config),
             status: normalizeRelayAccessStatus(configureResult),
           };
         }
@@ -150,7 +150,8 @@ export function createRelayAccessConfigureTaskKind(deps: RelayAccessConfigureKin
       });
       return {
         configured: true,
-        providerId: parsed.providerId,
+        providerId: readBuiltinRelayAccessProviderId(parsed.config.provider),
+        selection: projectRelayAccessConfigV1(parsed.config),
         status: normalizeRelayAccessStatus(status),
       };
     },
@@ -170,7 +171,7 @@ export function createRelayAccessDisableTaskKind(deps: RelayAccessDisableKindDep
 
       const config = await deps.readConfig({ target: parsed.target });
       if (config) {
-        const provider = deps.getProvider(config.providerId);
+        const provider = deps.getProvider(config.provider);
         if (provider.disable) {
           await provider.disable({
             config,
@@ -204,22 +205,16 @@ export function parseRelayAccessConfigureParams(params: unknown): RelayAccessCon
   const base = ensureObject(params, 'relay.access.configure');
   const target = parseRelayAccessTarget(params);
 
-  const providerIdRaw = typeof base.providerId === 'string'
-    ? base.providerId
-    : (base.config && typeof base.config === 'object' && !Array.isArray(base.config)
-        ? (base.config as Record<string, unknown>).providerId
-        : null);
-  const providerId = parseRelayAccessProviderId(providerIdRaw);
-
-  const configRaw = base.config && typeof base.config === 'object' && !Array.isArray(base.config)
-    ? base.config as Record<string, unknown>
-    : {};
-  const config = parseRelayAccessConfig({ providerId, config: configRaw });
+  if (Object.keys(base).some(key => !['target', 'config', 'upstreamUrl'].includes(key))) {
+    throw new SystemTaskExecutionError('invalid_params', 'Invalid relay access configuration.');
+  }
+  const config = parseRelayAccessConfig(base.config, relayAccessProviderDescriptors.filter(descriptor =>
+    descriptor.definition.targets.includes('homeRelay')));
+  if (!config) throw new SystemTaskExecutionError('invalid_params', 'Invalid relay access selection.');
 
   return {
     target,
     upstreamUrl: typeof base.upstreamUrl === 'string' ? base.upstreamUrl.trim() || null : null,
-    providerId,
     config,
   };
 }
@@ -232,6 +227,7 @@ function buildDisabledRelayAccessSnapshot(): RelayAccessTaskSnapshot {
   return {
     configured: false,
     providerId: null,
+    selection: null,
     status: {
       state: 'disabled',
       shareUrl: null,
@@ -242,7 +238,7 @@ function buildDisabledRelayAccessSnapshot(): RelayAccessTaskSnapshot {
 
 function normalizeRelayAccessStatus(status: RelayAccessStatus): RelayAccessStatusSnapshot {
   const shareUrl = typeof status.shareUrl === 'string' && status.shareUrl.trim().length > 0
-    ? redactSensitiveSystemTaskJsonValue(status.shareUrl.trim()) as string
+    ? normalizeRelayAccessCanonicalPublicServerUrl(status.shareUrl)
     : null;
   const details = typeof status.details === 'undefined'
     ? null
@@ -270,53 +266,9 @@ function parseRelayAccessTarget(params: unknown): RelayAccessTaskTarget {
   return { kind: 'local' };
 }
 
-function parseRelayAccessProviderId(value: unknown): RelayAccessProviderId {
-  const raw = typeof value === 'string' ? value.trim() : '';
-  switch (raw) {
-    case 'localOnly':
-    case 'lan':
-    case 'tailscaleServe':
-    case 'tailscaleFunnel':
-    case 'cloudflareNamed':
-      return raw;
-    default:
-      throw new SystemTaskExecutionError('invalid_params', 'Invalid relay access provider.');
-  }
-}
-
-function parseRelayAccessConfig(params: Readonly<{ providerId: RelayAccessProviderId; config: Record<string, unknown> }>): RelayAccessConfig {
-  const providerId = params.providerId;
-  const value = params.config;
-
-  if (providerId === 'lan') {
-    return {
-      providerId: 'lan',
-      url: ensureNonEmptyString(value.url, 'config.url'),
-    };
-  }
-
-  if (providerId === 'cloudflareNamed') {
-    return {
-      providerId: 'cloudflareNamed',
-      hostname: ensureNonEmptyString(value.hostname, 'config.hostname'),
-      token: ensureNonEmptyString(value.token, 'config.token'),
-    };
-  }
-
-  return { providerId };
-}
-
 function ensureObject(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new SystemTaskExecutionError('invalid_params', `Invalid ${field}.`);
   }
   return value as Record<string, unknown>;
-}
-
-function ensureNonEmptyString(value: unknown, field: string): string {
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) {
-    throw new SystemTaskExecutionError('invalid_params', `Missing ${field}.`);
-  }
-  return text;
 }

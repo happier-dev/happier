@@ -110,7 +110,6 @@ describe('Agent CLI system-tool binding (integration)', () => {
             definition: { toolId: 'claude-cli', displayName: 'Claude Code CLI', lookupNames: ['claude'] }, launch,
             delegate: { resolve: async () => { throw new Error('Unexpected fallback outside the exact Agent CLI binding'); } } });
         const exec = createStablePluginExecService({
-            allowedExecutables: [{ kind: 'systemTool', id: 'claude-cli' }],
             signal: new AbortController().signal, isOccurrenceCurrent: () => true, systemTools,
             resolveExecutable: async () => { throw new Error('The exact resolution grant was not consumed'); },
             resolvePath: async path => resolvePluginPathWithinRoots({ pluginData: directory, workspace: directory, projects: new Map() }, path),

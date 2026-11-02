@@ -1,3 +1,4 @@
+import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -56,6 +57,26 @@ export const SessionApprovalDecisionCurrentnessV1Schema = lazyZodSchema(() => z.
 export type SessionApprovalDecisionCurrentnessV1 = z.infer<typeof SessionApprovalDecisionCurrentnessV1Schema>;
 
 export const MachineInstallationProofPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+deploymentTransition: z.optional(z.strictObject({
+        serverId: ActionOperationIdentifierV1Schema,
+        environmentId: ActionOperationIdentifierV1Schema,
+        deploymentId: ActionOperationIdentifierV1Schema,
+        actionOperationId: ActionOperationIdentifierV1Schema,
+        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
+deploymentSecretLaunch: z.optional(z.strictObject({
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
+deploymentDomainTransition: z.optional(z.strictObject({
+        serverId: ActionOperationIdentifierV1Schema, environmentId: ActionOperationIdentifierV1Schema,
+        domainId: ActionOperationIdentifierV1Schema, actionOperationId: ActionOperationIdentifierV1Schema,
+        expectedRevision: z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+
     version: z.literal(1),
     installationId: z.string().check(z.trim(), z.minLength(1)),
     machineId: z.string().check(z.trim(), z.minLength(1)),
@@ -133,10 +154,26 @@ export const MachineInstallationProofPayloadV1Schema = lazyZodSchema(() => z.str
     })),
     managedPolicyCensus: z.optional(z.strictObject({ homeId: z.string().check(z.minLength(1)) })),
 }).check(z.superRefine((value, ctx) => {
-    if (value.sessionCreation && (!value.accountId || value.externalActionOrigin || value.rpcAdmission
+    if (value.deploymentDomainTransition && (!value.accountId || value.deploymentSecretLaunch
+        || value.deploymentTransition || value.sessionCreation || value.externalActionOrigin || value.rpcAdmission
+        || value.managedPolicy || value.managedPolicyCensus || value.replacesMachineId || value.replacementReason
+        || value.contentPublicKeyFingerprint)) {
+        ctx.addIssue({ code: 'custom', message: 'Domain transition proof binds only its exact installed operation and material' });
+    }
+    if (value.deploymentSecretLaunch && (!value.accountId || value.deploymentTransition || value.sessionCreation
+        || value.externalActionOrigin || value.rpcAdmission || value.managedPolicy || value.managedPolicyCensus
+        || value.replacesMachineId || value.replacementReason || value.contentPublicKeyFingerprint)) {
+        ctx.addIssue({ code: 'custom', message: 'Environment grant read proof must bind only its exact installed receiver and body' });
+    }
+    if (value.sessionCreation && (!value.accountId || value.deploymentSecretLaunch || value.deploymentTransition || value.externalActionOrigin || value.rpcAdmission
         || value.managedPolicy || value.managedPolicyCensus || value.replacesMachineId || value.replacementReason
         || value.contentPublicKeyFingerprint)) {
         ctx.addIssue({ code: 'custom', message: 'Session birth proof must bind only its exact native body and source' });
+    }
+    if (value.deploymentTransition && (!value.accountId || value.deploymentSecretLaunch || value.sessionCreation || value.externalActionOrigin || value.rpcAdmission
+        || value.managedPolicy || value.managedPolicyCensus || value.replacesMachineId || value.replacementReason
+        || value.contentPublicKeyFingerprint)) {
+        ctx.addIssue({ code: 'custom', message: 'Deployment transition proof must bind only its exact installed operation and body' });
     }
     if (!value.externalActionOrigin) return;
     if (!value.accountId) ctx.addIssue({ code: 'custom', path: ['accountId'], message: 'Session Action origin requires the authenticated requester' });
@@ -179,6 +216,25 @@ export function buildMachineInstallationProofPayloadBytes(
             ? { contentPublicKeyFingerprint: normalized.contentPublicKeyFingerprint }
             : null),
         ...(normalized.accountId ? { accountId: normalized.accountId } : null),
+        ...(normalized.deploymentSecretLaunch ? { deploymentSecretLaunch: {
+            requestBodyDigest: normalized.deploymentSecretLaunch.requestBodyDigest,
+        } } : {}),
+        ...(normalized.deploymentTransition ? { deploymentTransition: {
+            serverId: normalized.deploymentTransition.serverId,
+            environmentId: normalized.deploymentTransition.environmentId,
+            deploymentId: normalized.deploymentTransition.deploymentId,
+            actionOperationId: normalized.deploymentTransition.actionOperationId,
+            expectedRevision: normalized.deploymentTransition.expectedRevision,
+            requestBodyDigest: normalized.deploymentTransition.requestBodyDigest,
+        } } : {}),
+        ...(normalized.deploymentDomainTransition ? { deploymentDomainTransition: {
+            serverId: normalized.deploymentDomainTransition.serverId,
+            environmentId: normalized.deploymentDomainTransition.environmentId,
+            domainId: normalized.deploymentDomainTransition.domainId,
+            actionOperationId: normalized.deploymentDomainTransition.actionOperationId,
+            expectedRevision: normalized.deploymentDomainTransition.expectedRevision,
+            requestBodyDigest: normalized.deploymentDomainTransition.requestBodyDigest,
+        } } : {}),
         ...(normalized.sessionCreation ? { sessionCreation: {
             sourceExecutionDigest: normalized.sessionCreation.sourceExecutionDigest,
             requestBodyDigest: normalized.sessionCreation.requestBodyDigest,

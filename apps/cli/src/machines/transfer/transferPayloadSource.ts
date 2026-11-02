@@ -11,9 +11,18 @@ type TransferPayloadSourceBase = Readonly<{
   manifestHash?: string;
   name?: string;
   dispose?: TransferPayloadDispose;
+  /** Retained native authority; checked even when open/chunk bytes are cached. */
+  assertCurrentAuthority?: () => Promise<void>;
 }>;
 
 export type TransferPayloadSource =
+  | Readonly<TransferPayloadSourceBase & {
+      /** The native filesystem child owns every descriptor and temporary file. */
+      kind: 'native';
+      sizeBytes: number;
+      manifestHash: string;
+      readChunk: (input: Readonly<{ offset: number; length: number }>) => Promise<Buffer>;
+    }>
   | Readonly<TransferPayloadSourceBase & {
       kind: 'buffer';
       payload: Buffer;
@@ -24,7 +33,7 @@ export type TransferPayloadSource =
       sourceOffsetBytes?: number;
     }>;
 
-export function createBufferTransferPayloadSource(payload: Buffer): TransferPayloadSource {
+export function createBufferTransferPayloadSource(payload: Buffer): Extract<TransferPayloadSource, { kind: 'buffer' }> {
   return {
     kind: 'buffer',
     payload,
@@ -40,7 +49,7 @@ export function createFileTransferPayloadSource(input: Readonly<{
   name?: string;
   sourceOffsetBytes?: number;
   dispose?: TransferPayloadDispose;
-}>): TransferPayloadSource {
+}>): Extract<TransferPayloadSource, { kind: 'file' }> {
   const sizeBytes =
     typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes) && input.sizeBytes >= 0
       ? Math.floor(input.sizeBytes)
@@ -61,6 +70,7 @@ export function createFileTransferPayloadSource(input: Readonly<{
 }
 
 export async function resolveTransferPayloadSizeBytes(source: TransferPayloadSource): Promise<number> {
+  if (source.kind === 'native') return source.sizeBytes;
   if (source.kind === 'buffer') {
     return typeof source.sizeBytes === 'number' && Number.isFinite(source.sizeBytes) && source.sizeBytes >= 0
       ? source.sizeBytes
@@ -78,6 +88,7 @@ export async function resolveTransferPayloadSizeBytes(source: TransferPayloadSou
 }
 
 export async function resolveTransferPayloadManifestHash(source: TransferPayloadSource): Promise<string> {
+  if (source.kind === 'native') return source.manifestHash;
   if (typeof source.manifestHash === 'string' && source.manifestHash.length > 0) {
     return source.manifestHash;
   }
@@ -121,6 +132,7 @@ export async function readTransferPayloadChunk(input: Readonly<{
     return Buffer.alloc(0);
   }
   const boundedLength = Math.min(input.length, sizeBytes - input.offset);
+  if (input.source.kind === 'native') return await input.source.readChunk({ offset: input.offset, length: boundedLength });
   const file = await open(input.source.filePath, 'r');
   try {
     const chunkBuffer = Buffer.allocUnsafe(boundedLength);

@@ -1381,7 +1381,6 @@ describe('runner daemon PluginServices host', () => {
             },
         }));
         const exec = createStablePluginExecService({
-            allowedExecutables: [executable],
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -1508,11 +1507,6 @@ describe('runner daemon PluginServices host', () => {
             release,
         }));
         const exec = createStablePluginExecService({
-            allowedExecutables: [{
-                kind: 'managedDependency',
-                id: 'fixture.adapter',
-            }],
-            allowedEnvKeys: ['SAFE_ENV'],
             environment: { SAFE_ENV: 'host' },
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,

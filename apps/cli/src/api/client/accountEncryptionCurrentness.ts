@@ -1,3 +1,5 @@
+import { type AccountE2eeCustodyHolder } from '@/persistence';
+import { admitCliReportedAccountMode } from './accountModeAdmission';
 import axios from '@/api/client/credentialAxios';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionCurrentnessErrorResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
@@ -35,6 +37,8 @@ export function isRetryableAccountEncryptionCurrentnessError(error: unknown): bo
 
 type AccountEncryptionCurrentnessRead = Readonly<{
   token: string;
+  /** The in-hand credential behind `token`; without it custody is read for the bearer. */
+  credentials?: AccountE2eeCustodyHolder;
   authorizationHeaders?: Readonly<Record<string, string>>;
   /** Provisioning checks readiness without binding retained historical material. */
   allowCredentialRecovery?: boolean;
@@ -147,5 +151,6 @@ export async function fetchAccountEncryptionCurrentnessFromServer(params: Accoun
       'Account encryption currentness response is invalid',
     );
   }
+  await admitCliReportedAccountMode(parsed.data.mode, params.credentials ?? { token: params.token });
   return parsed.data;
 }

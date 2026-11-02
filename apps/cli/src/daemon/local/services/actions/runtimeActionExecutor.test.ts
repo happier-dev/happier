@@ -1,3 +1,4 @@
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { describe, expect, it, vi } from 'vitest';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -213,7 +214,7 @@ describe('daemon local-services runtime action executor', () => {
             const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: handle.instanceId,
                 workspaceId: workspace.id, cwd: workspace.rootPath, declaration };
             const registered = registerLocalServicePreview(registry, {
-                previewId: 'actual-preview', machineId: 'machine_1', owner: { kind: 'user', id: 'starter' }, serviceTarget,
+                previewId: handle.instanceId, machineId: 'machine_1', owner: { kind: 'user', id: 'starter' }, serviceTarget,
                 target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
                 display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host',
             });
@@ -232,16 +233,36 @@ describe('daemon local-services runtime action executor', () => {
             const opened = await execute(runtimeArgs({ actionId: 'localServices.actions.openPreview', input: {
                 requestId: 'open-managed-service', action: 'open_preview', target: serviceTarget }, context: { defaultSessionId: 'invoking-session' } }));
             assertActionOutputContract('localServices.actions.openPreview', opened);
-            expect(opened).toMatchObject({ status: 'existing', preview: { previewId: 'actual-preview',
+            expect(opened).toMatchObject({ status: 'existing', preview: { previewId: handle.instanceId,
                 accessUrl: 'https://actual-preview.example.test/?previewToken=current', resource: { serviceTarget } } });
+            const settings = normalizeActionsSettingsV1({ v: 1,
+                approvalWaivedSurfaces: { 'localServices.preview.openOrCreate': ['agent'] } });
+            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
+                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            const bridge = createActionToolExecutorBridge({ executor, surface: 'agent', actionsSettings: settings,
+                defaultSessionMachineId: 'machine_1' });
+            for (const selector of ['launchTargetId', 'managedServiceId']) {
+                const agentReopen = await bridge.executeActionByToolName('action_execute', {
+                    actionId: 'localServices.preview.openOrCreate',
+                    input: { machineId: 'machine_1', [selector]: handle.instanceId },
+                }, 'invoking-session');
+                if (!agentReopen.ok) throw new Error(`Managed agent preview reopen failed: ${agentReopen.errorCode}`);
+                expect(agentReopen).toMatchObject({ ok: true, result: { status: 'existing',
+                    preview: { previewId: handle.instanceId, resource: { owner: { kind: 'user', id: 'starter' }, serviceTarget } } } });
+            }
+            const wrongSession = await bridge.executeActionByToolName('action_execute', {
+                actionId: 'localServices.preview.openOrCreate',
+                input: { machineId: 'machine_1', launchTargetId: handle.instanceId, sessionId: 'invoking-session' },
+            }, 'invoking-session');
+            expect(wrongSession).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
             const wrong = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
-                machineId: 'machine_1', previewId: 'actual-preview', serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
+                machineId: 'machine_1', previewId: handle.instanceId, serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
             expect(wrong).toMatchObject({ ok: false });
-            expect(registry.previewsById.has('actual-preview')).toBe(true);
+            expect(registry.previewsById.has(handle.instanceId)).toBe(true);
             const revoked = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
-                machineId: 'machine_1', previewId: 'actual-preview', serviceTarget } }));
-            expect(revoked).toMatchObject({ revoked: true, previewId: 'actual-preview' });
-            expect(registry.previewsById.has('actual-preview')).toBe(false);
+                machineId: 'machine_1', previewId: handle.instanceId, serviceTarget } }));
+            expect(revoked).toMatchObject({ revoked: true, previewId: handle.instanceId });
+            expect(registry.previewsById.has(handle.instanceId)).toBe(false);
         } finally { await handle.stop(); await owner.dispose(); }
     });
     it('opens the requested inventory listener and Session through real private-preview registration', async () => {

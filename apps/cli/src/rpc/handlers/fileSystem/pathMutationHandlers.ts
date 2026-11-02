@@ -1,3 +1,4 @@
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import * as z from 'zod/mini';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { realpathSync } from 'node:fs';
@@ -284,7 +285,7 @@ export async function executeFilesystemMutationAction(
             const payload = transferId === operationId ? exported.payloadSource
               : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: null });
             if (payload.kind === 'buffer') await writeFile(destinationPath, payload.payload);
-            else await copyFile(payload.filePath, destinationPath);
+            else await writeTransferPayloadSourceToFile({ source: payload, destinationPath });
           },
         });
         if (outcome.status === 'recovery_needed') {

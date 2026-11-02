@@ -73,11 +73,10 @@ function cloneRequest(input: ProviderHttpRequest): ProviderHttpRequest {
     ...(input.credentialBinding === undefined
       ? {}
       : {
-          credentialBinding: {
-            ...input.credentialBinding,
-            provider: { ...input.credentialBinding.provider },
-            parameters: { ...input.credentialBinding.parameters },
-          },
+          credentialBinding: input.credentialBinding.kind === 'connectedAccountPurpose'
+            ? { ...input.credentialBinding, headerNames: [...input.credentialBinding.headerNames] }
+            : { ...input.credentialBinding, provider: { ...input.credentialBinding.provider },
+                parameters: { ...input.credentialBinding.parameters } },
         }),
   };
 }

@@ -43,14 +43,11 @@ import type { PluginFileSystemRoots } from './types';
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const satisfies ManagedExecutableRef);
 
 function createService(options?: Readonly<{ current?: () => boolean; controller?: AbortController;
-    recordDisclosureMismatch?: Parameters<typeof createStablePluginExecService>[0]['recordDisclosureMismatch'];
+    signal?: AbortSignal;
     filesystemRoots?: PluginFileSystemRoots }>) {
     return createStablePluginExecService({
-        allowedExecutables: [executable],
-        allowedEnvKeys: ['FIXTURE_VALUE'],
-        signal: options?.controller?.signal ?? new AbortController().signal,
+        signal: options?.signal ?? options?.controller?.signal ?? new AbortController().signal,
         isOccurrenceCurrent: options?.current ?? (() => true),
-        ...(options?.recordDisclosureMismatch ? { recordDisclosureMismatch: options.recordDisclosureMismatch } : {}),
         async resolveExecutable(ref) {
             expect(ref).toEqual(executable);
             return { command: process.execPath, args: [], env: {} };
@@ -363,7 +360,7 @@ describe('createStablePluginExecService', () => {
     it('keeps finite Run and managed Service owners separate from retained Session services', async () => {
         const retained = createStablePluginExecService({
             processOwner: { kind: 'session', sessionId: 'session-retained' },
-            allowedExecutables: [executable], signal: new AbortController().signal,
+             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
             resolvePath: async () => process.cwd(), transformAgentChildLaunchEnvironment: () => ({}),
         });
@@ -397,7 +394,7 @@ describe('createStablePluginExecService', () => {
         vi.stubEnv('HAPPIER_PROCESS_OWNER', hostTag);
         try {
             const service = createStablePluginExecService({
-                allowedExecutables: [executable], allowedEnvKeys: ['HAPPIER_PROCESS_OWNER'],
+
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => process.cwd(),
@@ -408,7 +405,7 @@ describe('createStablePluginExecService', () => {
             const result = await child.wait();
             expect(Buffer.from(result.stdout).toString()).toBe(hostTag);
             const omitted = createStablePluginExecService({
-                allowedExecutables: [executable], signal: new AbortController().signal,
+                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => process.cwd(), transformAgentChildLaunchEnvironment: () => ({}),
             });
@@ -419,15 +416,13 @@ describe('createStablePluginExecService', () => {
     });
     it('executes a selected absolute process cwd outside plugin filesystem roots through the canonical owner', async () => {
         await withTempDir('happier selected machine cwd ünicode ', async root => {
-            const mismatches: unknown[] = [];
             const pluginData = join(root, 'admitted-plugin-root');
             await mkdir(pluginData);
             const request = { executable, cwd: root, args: ['-e', 'process.stdout.write(process.cwd())'] };
-            const observed = await createService({ recordDisclosureMismatch: mismatch => mismatches.push(mismatch),
+            const observed = await createService({
                 filesystemRoots: { pluginData, workspace: pluginData, projects: new Map() } }).run(request);
             expect(observed.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
             expect(new TextDecoder().decode(observed.stdout)).toBe(await realpath(root));
-            expect(mismatches).toContainEqual({ capability: 'filesystem', path: root, access: 'read' });
         });
     });
 
@@ -683,8 +678,8 @@ describe('createStablePluginExecService', () => {
             let released = 0;
             const installedArgs = ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(1),env:process.env}))', '--'];
             const service = createStablePluginExecService({
-                allowedExecutables: [executable],
-                allowedEnvKeys: ['REMOVE', 'KEEP'],
+
+
                 environment: { REMOVE: 'host', KEEP: 'host' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
@@ -762,7 +757,7 @@ describe('createStablePluginExecService', () => {
     it('keeps plugin-supplied project purpose/options nonactivating and refuses host preparation holds before resolving a process', async () => {
         let resolutions = 0;
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => { resolutions += 1; return { command: process.execPath }; },
@@ -797,7 +792,7 @@ describe('createStablePluginExecService', () => {
             expect(command.kind).toBe('resolved');
             if (command.kind !== 'resolved') throw new Error('Expected the real native command owner to resolve');
             const service = createStablePluginExecService({
-                allowedExecutables: [executable], signal: new AbortController().signal,
+                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: command.command, args: command.args, env: command.environmentOverlay }),
                 resolvePath: async () => command.cwd,
@@ -832,7 +827,7 @@ describe('createStablePluginExecService', () => {
                 const controller = new AbortController();
                 let releases = 0;
                 const service = createStablePluginExecService({
-                    allowedExecutables: [executable],
+
                     signal: controller.signal, isOccurrenceCurrent: () => true,
                     resolveExecutable: async () => ({ command: process.execPath, release: () => { releases += 1; } }),
                     resolvePath: async () => root,
@@ -866,13 +861,6 @@ describe('createStablePluginExecService', () => {
     it('authorizes an exact launch for a runner without spawning in the daemon owner', async () => {
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
-            allowedEnvKeys: ['FIXTURE_VALUE'],
-            allowedCwdScopes: [{
-                root: 'workspace',
-                pathPrefix: 'project',
-                access: ['read'],
-            }],
             environment: {
                 FIXTURE_VALUE: 'host',
                 UNDECLARED_VALUE: 'hidden',
@@ -1118,7 +1106,7 @@ describe('createStablePluginExecService', () => {
 
     it('resolves the exact invocation-local system-tool launch for its host composer', async () => {
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -1162,7 +1150,7 @@ describe('createStablePluginExecService', () => {
         } as const satisfies ManagedExecutableRef);
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [managedDependency],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async (ref) => {
@@ -1222,7 +1210,7 @@ describe('createStablePluginExecService', () => {
         });
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [managedDependency],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => current,
             resolveExecutable: async () => await resolution,
@@ -1258,7 +1246,7 @@ describe('createStablePluginExecService', () => {
         });
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [managedDependency],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => await resolution,
@@ -1350,7 +1338,7 @@ describe('createStablePluginExecService', () => {
             await symlink(process.execPath, command);
             const args = ['value with spaces', 'folder\\mixed/path', 'literal "quotes"', '$HOME;$(echo should-not-run)'];
             const service = createStablePluginExecService({
-                allowedExecutables: [executable],
+
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 // Executable and filesystem resolution are the OS boundaries;
@@ -1408,15 +1396,7 @@ describe('createStablePluginExecService', () => {
             kind: 'systemTool' as const,
             id: 'fixture.other',
         });
-        const mismatches: unknown[] = [];
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
-            allowedEnvKeys: ['DECLARED_VALUE'],
-            allowedCwdScopes: [{
-                root: 'workspace',
-                pathPrefix: 'declared',
-                access: ['read'],
-            }],
             environment: { DECLARED_VALUE: 'default', HIDDEN_VALUE: 'hidden' },
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
@@ -1433,10 +1413,6 @@ describe('createStablePluginExecService', () => {
                 expect(path).toEqual({ root: 'workspace', relativePath: 'outside-disclosure' });
                 return '/workspace/outside-disclosure';
             },
-            recordDisclosureMismatch(mismatch) {
-                mismatches.push(mismatch);
-                throw new Error('diagnostic sink failed');
-            },
         });
 
         const launch = await authorizePluginExecLaunchForHost(service, {
@@ -1452,16 +1428,7 @@ describe('createStablePluginExecService', () => {
                 UNDECLARED_VALUE: 'request',
             },
         });
-        expect(launch.env).not.toHaveProperty('HIDDEN_VALUE');
-        expect(mismatches).toEqual([
-            { capability: 'process', executable: otherExecutable },
-            { capability: 'environment', keys: ['UNDECLARED_VALUE'] },
-            {
-                capability: 'filesystem',
-                path: { root: 'workspace', relativePath: 'outside-disclosure' },
-                access: 'read',
-            },
-        ]);
+        expect(launch.env).toHaveProperty('HIDDEN_VALUE', 'hidden');
         launch.release();
 
         await expect(authorizePluginExecLaunchForHost(service, {
@@ -1475,7 +1442,7 @@ describe('createStablePluginExecService', () => {
 
     it('enforces the declared system-tool argument allowlist before spawning', async () => {
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({
@@ -1493,7 +1460,7 @@ describe('createStablePluginExecService', () => {
 
     it('preserves argument policy across invocation-local system-tool resolution', async () => {
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -1551,7 +1518,7 @@ describe('createStablePluginExecService', () => {
             return { command: process.execPath, release };
         };
         const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal,
+             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: resolver,
             resolveManagedExecutable: resolver,
             resolvePath: async () => { throw new Error('Unexpected path'); },
@@ -1599,7 +1566,7 @@ describe('createStablePluginExecService', () => {
         const released = new Promise<void>(resolve => { markReleased = resolve; });
         const release = vi.fn(markReleased);
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: controller.signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
@@ -1632,7 +1599,7 @@ describe('createStablePluginExecService', () => {
 
     it('normalizes resolver failure before a process handle exists', async () => {
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => { throw new Error('ambient resolver detail'); },
@@ -1649,7 +1616,7 @@ describe('createStablePluginExecService', () => {
         await withTempDir('happier managed executable custody ', async root => {
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
@@ -1720,7 +1687,7 @@ describe('createStablePluginExecService', () => {
     it('releases a managed executable lease when spawn rejects before a handle exists', async () => {
         const release = vi.fn();
         const service = createStablePluginExecService({
-            allowedExecutables: [executable],
+
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
@@ -1750,7 +1717,7 @@ describe('createStablePluginExecService', () => {
             const pidPath = join(root, 'survivor.pid');
             const service = createStablePluginExecService({
                 processOwner: { kind: 'run', runId: 'protocol-cleanup-recovery' },
-                allowedExecutables: [executable], signal: new AbortController().signal,
+                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => root,

@@ -110,6 +110,17 @@ import { createMachineManagedServices, type MachineManagedServiceHandle, type Ma
     type ManagedNativeServiceReference } from './machineManagedServices';
 import { runManagedServiceNativeControl, type ManagedServiceNativeControl } from './managedServiceNativeControl';
 import { resolveSetupScriptServiceEffects, type SetupScriptServiceEffectsInput } from './setupScriptServiceEffects';
+import { type ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
+import { type ServiceCommandResultV1 } from '@/daemon/local/services/launch/serviceCommand';
+import type { HostAuthorizedPluginExecLaunch } from './exec';
+import { type ServiceShellObservation } from '@/daemon/local/services/launch/serviceCommand';
+import type { NativeContainerProcessSource } from '@/daemon/processes/roots/listHappierProcessRoots';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
+import { withAdmittedServiceShellForHost } from '@/daemon/local/services/launch/serviceCommand';
+import { executeAdmittedServiceCommand } from '@/daemon/local/services/launch/serviceCommand';
+
 export type { MachineManagedServiceHandle, MachineManagedServiceSupervisionInput, ManagedNativeServiceReference } from './machineManagedServices';
 
 type ManagedServicesScope = Readonly<{
@@ -183,6 +194,10 @@ export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedS
     inspectCurrentOccurrence(): Promise<ManagedServiceSnapshot>;
     isServing(): boolean;
     controlNative?(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
+    executeServiceCommand?(command: ServiceCommandV1, options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ServiceCommandResultV1>;
+    /** Host-private person-terminal handoff; no caller command/cwd/endpoint. */
+    withServiceShell?<TTerminal>(options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>,
+        consume: (launch: HostAuthorizedPluginExecLaunch) => Promise<ServiceShellObservation<TTerminal>>): Promise<ServiceShellObservation<TTerminal>>;
     /** First-deploy compensation of this retained exact generation only. */
     removeNative?(options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>): Promise<ManagedServiceSnapshot>;
     /** Host-private exact keys retained by admitted native supervision. */
@@ -1717,6 +1732,7 @@ function wrapHandle(
     request: (
         request: ManagedServiceRequest,
         lifetimeSignal: AbortSignal,
+        stopSignal: AbortSignal,
     ) => Promise<ManagedServiceResponse>,
     signal?: AbortSignal,
     onTerminalDetected?: (snapshot: ManagedServiceProcessSnapshot, unexpected: boolean) => void,
@@ -1731,6 +1747,7 @@ function wrapHandle(
     let terminal = false;
     let terminalCompletionPublished = false;
     const requestLifetime = new AbortController();
+    const explicitStop = new AbortController();
     const markTerminal = (): void => {
         if (terminal) return;
         terminal = true;
@@ -1906,7 +1923,7 @@ function wrapHandle(
                 );
             }
             try {
-                return await request(input, requestLifetime.signal);
+                return await request(input, requestLifetime.signal, explicitStop.signal);
             } catch (error) {
                 return translateError(error);
             }
@@ -1919,6 +1936,7 @@ function wrapHandle(
             return stopResult;
         },
         async dispose() {
+            explicitStop.abort('Managed-service disposal requested');
             await runWithFinalization(
                 async () => await handle.dispose(),
             );
@@ -1970,6 +1988,7 @@ type ManagedServiceRequestInput = Readonly<{
     method: string;
     headers: Headers;
     body: Uint8Array | undefined;
+    interactive: true | undefined;
     timeoutMs: number | undefined;
     signal: AbortSignal | undefined;
 }>;
@@ -2143,12 +2162,16 @@ function normalizeManagedServiceRequest(
     ) {
         return requestUnavailable('Managed-service request signal is invalid');
     }
+    if (request.interactive !== undefined && request.interactive !== true) {
+        return requestUnavailable('Managed-service request lifetime is invalid');
+    }
     return Object.freeze({
         pathAndQuery,
         method,
         headers,
         ...(body ? { body: body.slice() } : { body: undefined }),
         timeoutMs,
+        interactive: request.interactive,
         signal: request.signal,
     });
 }
@@ -2256,7 +2279,6 @@ function boundManagedServiceResponseBody(input: Readonly<{
     body: ReadableStream<Uint8Array> | null;
     signal: AbortSignal;
     callerSignal?: AbortSignal | null;
-    isCurrent(): boolean;
     cleanup(): void;
 }>): ReadableStream<Uint8Array> | null {
     if (!input.body) {
@@ -2307,13 +2329,12 @@ function boundManagedServiceResponseBody(input: Readonly<{
     return new ReadableStream<Uint8Array>({
         start(controller) {
             outputController = controller;
-            if (input.signal.aborted || !input.isCurrent()) abort();
+            if (input.signal.aborted) abort();
         },
         async pull(controller) {
             if (
                 settled
                 || input.signal.aborted
-                || !input.isCurrent()
             ) {
                 abort();
                 return;
@@ -2338,7 +2359,7 @@ function boundManagedServiceResponseBody(input: Readonly<{
                     pending = next.value;
                     pendingOffset = 0;
                 }
-                if (input.signal.aborted || !input.isCurrent()) {
+                if (input.signal.aborted) {
                     abort();
                     return;
                 }
@@ -2372,9 +2393,13 @@ async function executeManagedServiceFetch(input: Readonly<{
     fetch: typeof globalThis.fetch;
     target: URL;
     init: RequestInit;
+    /** Host-injected headers carry credentials even when their names are custom. */
+    privateCredentialHeaderNames?: ReadonlySet<string>;
     signals: readonly (AbortSignal | null | undefined)[];
     /** The request's own `signal`, kept apart from the composed lifetime so cancellation stays attributable. */
     callerSignal?: AbortSignal | null;
+    interactive?: true;
+    stopSignal?: AbortSignal;
     timeoutMs: number | undefined;
     isCurrent(): boolean;
     isDispatchCurrent?(signal: AbortSignal): Promise<boolean>;
@@ -2382,7 +2407,11 @@ async function executeManagedServiceFetch(input: Readonly<{
     if (!input.isCurrent()) {
         return requestUnavailable('Managed-service request is unavailable');
     }
-    const lifetime = composeAbortSignals(input.signals);
+    // Admission is the natural boundary for finite requests. Open-ended reads
+    // retain the existing scope/handle retirement signals as well as cancellation.
+    const lifetime = composeAbortSignals(input.interactive === true
+        ? input.signals
+        : [input.callerSignal, input.stopSignal]);
     const timeout = new AbortController();
     const timeoutHandle = input.timeoutMs === undefined ? undefined : setTimeout(
         () => timeout.abort('Managed-service request timed out'),
@@ -2434,15 +2463,16 @@ async function executeManagedServiceFetch(input: Readonly<{
     }
     let response: Response;
     try {
-        response = await input.fetch(input.target, {
+        response = await fetchWithCredentialRedirectRefusal(input.target, {
             ...input.init,
             credentials: 'omit',
             redirect: 'manual',
             signal: establishment.signal,
-        });
+        }, input.fetch, input.privateCredentialHeaderNames);
     } catch (cause) {
         cleanupEstablishment();
         cleanupLifetime();
+        if (cause instanceof CredentialRequestRedirectError) throw toPluginHttpRedirectFailure(cause);
         return requestFailure(
             input.callerSignal,
             'Managed-service request failed',
@@ -2472,14 +2502,14 @@ async function executeManagedServiceFetch(input: Readonly<{
         cleanupEstablishment();
         await response.body?.cancel().catch(() => undefined);
         cleanupLifetime();
+        if (error instanceof CredentialRequestRedirectError) throw toPluginHttpRedirectFailure(error);
         if (isPluginError(error)) throw error;
         return requestUnavailable('Managed-service response is unavailable');
     }
     const establishmentAborted = establishment.signal.aborted;
     cleanupEstablishment();
     if (
-        !input.isCurrent()
-        || establishmentAborted
+        establishmentAborted
         || lifetime.signal.aborted
     ) {
         await response.body?.cancel().catch(() => undefined);
@@ -2493,7 +2523,6 @@ async function executeManagedServiceFetch(input: Readonly<{
         body: response.body,
         signal: lifetime.signal,
         ...(input.callerSignal ? { callerSignal: input.callerSignal } : {}),
-        isCurrent: input.isCurrent,
         cleanup: cleanupLifetime,
     });
     return Object.freeze({
@@ -2941,6 +2970,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     }>>;
     /** Host-private read of incumbent supervisor records; no root registry is retained. */
     readProcessRoots(): readonly HappierProcessRootSource[];
+    readNativeContainerSources(): readonly NativeContainerProcessSource[];
     /** Captures exact incumbent Stop custody and its supported original Start Action. */
     readResourceTargets(): readonly ManagedServiceResourceTarget[];
     /** Private daemon projection of the same retained supervisor custody. */
@@ -3574,6 +3604,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     suppliedContext.managedProvider ?? null,
                 requestAuth:
                     suppliedContext.requestAuth ?? null,
+                ...(suppliedContext.authorizePreparedLaunch ? { authorizePreparedLaunch: suppliedContext.authorizePreparedLaunch } : {}),
             });
         const services: ManagedServices = Object.freeze({
             dependencies,
@@ -3657,7 +3688,30 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         resolveManagedExecutable: (executable: ManagedExecutableRef, isCurrent: () => boolean) => input.resolveManagedExecutable!(scope, executable, isCurrent),
                     } : {}),
                     isOccurrenceCurrent: scope.isOccurrenceCurrent, exec,
+                    ...(context.authorizePreparedLaunch ? { authorizePreparedLaunch: context.authorizePreparedLaunch } : {}),
                 });
+                // An Agent's original Exec authority authenticates every
+                // acquisition, including reuse, before material or a prior
+                // handle is released. Provider/host exact-claim lifetimes keep
+                // their distinct supervision contract.
+                let runnerSupervision: Awaited<ReturnType<NonNullable<typeof processSupervisor.prepareSpawn>>> | undefined;
+                if (context.authorizePreparedLaunch) {
+                    if (normalizedSpec.mode.kind === 'native') {
+                        return fail('plugin_managed_service_unavailable', 'Native lifetime requires daemon custody');
+                    }
+                    if (normalizedSpec.mode.kind === 'spawn') {
+                        if (!processSupervisor.prepareSpawn) return fail('plugin_managed_service_unavailable', 'Runner launch admission is unavailable');
+                        const admissionSignals = composeAbortSignals([scope.signal, options?.signal]);
+                        try {
+                            runnerSupervision = await processSupervisor.prepareSpawn({ serverId: normalizedSpec.id,
+                                executable: normalizedSpec.mode.launch.executable,
+                                environmentKeys: projectManagedServiceSpawnEnvironmentKeys(normalizedSpec) }, admissionSignals.signal);
+                        } catch (error) {
+                            if (admissionSignals.signal.aborted) return fail('plugin_operation_aborted', 'Managed-service operation was aborted');
+                            return translateError(error);
+                        } finally { admissionSignals.cleanup(); }
+                    }
+                }
                 const clientAccess = validateClientAccess(
                     normalizedSpec,
                     scope,
@@ -3734,14 +3788,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         // current shared census and its injected path before
                         // comparing specifications or joining the new owner.
                         return await services.supervise(spec, options);
-                    }
-                }
-                if (existing) {
-                    if (existing.terminal) {
-                        return fail(
-                            'plugin_managed_service_not_reusable',
-                            'Managed-service handle is terminal and cannot be reused',
-                        );
                     }
                     return sharedConsumers
                         ? await acquireSharedConsumer(existing, suppliedScope, suppliedBindingContext, options?.signal)
@@ -3942,6 +3988,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                             ),
                             {
                                 signal: establishmentSignals.signal,
+                                ...(runnerSupervision ? { runnerSupervision } : {}),
                                 registerEstablishmentCleanup(cleanup) {
                                     entry.establishmentCleanup = cleanup;
                                     const custody = Object.freeze({
@@ -3980,7 +4027,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                 'Managed-service invocation authority changed during establishment',
                             );
                         }
-                        if (!materialized.attachHandle(handle)) {
+                        if (materialized.isInvalidated()) {
                             await releaseEntryProcessHandle(entry, true);
                             await materialized.dispose();
                             return fail(
@@ -3993,7 +4040,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         const requestFromExactHandle = async (
                             request: ManagedServiceRequest,
                             lifetimeSignal: AbortSignal,
+                            stopSignal: AbortSignal,
                         ): Promise<ManagedServiceResponse> => {
+                            if (establishedMaterialization.isInvalidated()) {
+                                return requestUnavailable('Managed-service credentials changed');
+                            }
                             const normalized = normalizeManagedServiceRequest(
                                 request,
                             );
@@ -4092,6 +4143,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                 : Uint8Array.from(normalized.body);
                             return await executeManagedServiceFetch({
                                 fetch: hostFetch,
+                                privateCredentialHeaderNames: new Set(Object.keys(injectedHeaders).map(name => name.toLowerCase())),
                                 target,
                                 init: {
                                     method: normalized.method,
@@ -4109,6 +4161,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                     ? { callerSignal: normalized.signal }
                                     : {}),
                                 timeoutMs: normalized.timeoutMs,
+                                interactive: normalized.interactive,
+                                stopSignal,
                                 isCurrent,
                                 ...(requestCredentialCurrentness
                                     ? {
@@ -4514,7 +4568,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 async () => {},
                 { status: 'stopped' },
                 request.processSpec.startupTimeoutMs,
-                async (rawRequest, requestLifetime) => {
+                async (rawRequest, requestLifetime, stopSignal) => {
                     const normalized = normalizeManagedServiceRequest(rawRequest);
                     const endpoint = readHealthyServiceProcessEndpoint(process);
                     if (!endpoint) {
@@ -4539,6 +4593,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         signals: [lifetime.signal, requestLifetime, normalized.signal],
                         ...(normalized.signal ? { callerSignal: normalized.signal } : {}),
                         timeoutMs: normalized.timeoutMs,
+                        interactive: normalized.interactive,
+                        stopSignal,
                         isCurrent: dispatchCurrent,
                     });
                 },
@@ -4611,6 +4667,45 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     },
                 } : {}),
                 ...(witness.kind === 'environment' && request.kind === 'environment' ? {
+                async withServiceShell<TTerminal>(options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>,
+                    consume: (launch: HostAuthorizedPluginExecLaunch) => Promise<ServiceShellObservation<TTerminal>>) {
+                    const native = request.processSpec.mode;
+                    if (native.kind !== 'native' || !native.builtinLifecycle?.shell)
+                        return fail('service_admission_unavailable', 'Service shell admission is unavailable');
+                    const shell = native.builtinLifecycle.shell;
+                    const signal = AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : []),
+                        ...(options.operation.signal ? [options.operation.signal] : [])]);
+                    const assertShellCurrent = async () => {
+                        signal.throwIfAborted(); assertCurrent();
+                        await witness.release.assertCurrent();
+                        signal.throwIfAborted(); assertCurrent();
+                    };
+                    await assertShellCurrent();
+                    return runManagedServiceNativeControl(entry, { ...request.nativeEffects,
+                        operation: { ...options.operation, signal } }, context => withAdmittedServiceShellForHost({
+                            context, signal, assertCurrent: assertShellCurrent,
+                            launch: () => shell({ signal }),
+                        }, consume), notifyActivity);
+                },
+                async executeServiceCommand(command: ServiceCommandV1, options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>) {
+                    const native = request.processSpec.mode;
+                    if (native.kind !== 'native' || !native.builtinLifecycle?.admitServiceCommand) return fail('service_admission_unavailable', 'Service command admission is unavailable');
+                    const admit = native.builtinLifecycle.admitServiceCommand;
+                    const signal = AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : []),
+                        ...(options.operation.signal ? [options.operation.signal] : [])]);
+                    const assertCommandCurrent = async () => {
+                        signal.throwIfAborted(); assertCurrent();
+                        await witness.release.assertCurrent();
+                        signal.throwIfAborted(); assertCurrent();
+                    };
+                    await assertCommandCurrent();
+                    return runManagedServiceNativeControl(entry, { ...request.nativeEffects,
+                        operation: { ...options.operation, signal } }, async context => {
+                        const admitted = await admit(command, { context, keys: request.nativeEffects.keys, signal,
+                            assertCurrent: assertCommandCurrent });
+                        return executeAdmittedServiceCommand(admitted);
+                    }, notifyActivity);
+                },
                 async readNativeEffectKeys(options?: Readonly<{ signal?: AbortSignal }>) {
                     options?.signal?.throwIfAborted();
                     assertCurrent();
@@ -4850,6 +4945,19 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 } }] } : {}) }];
         });
     };
+    const readNativeContainerSources = (): readonly NativeContainerProcessSource[] => listProjectServices().flatMap(handle => {
+        if (!handle.isCurrent() || handle.retirementSignal.aborted) return [];
+        const target = handle.kind === 'environment' ? handle : handle.workspace;
+        if (!target.serverId || !target.machineId) return [];
+        return (handle.readNativeContainers?.() ?? []).flatMap(container => {
+            if (handle.kind === 'environment' && container.service !== handle.composeService
+                || !/^[a-f0-9]{64}$/u.test(container.id) || !container.pid || !Number.isSafeInteger(container.pid) || container.pid < 1) return [];
+            return [{ pid: container.pid, owner: { kind: 'container' as const, serverId: target.serverId, machineId: target.machineId,
+                serviceId: handle.serviceId, containerId: container.id, composeProject: container.composeProject, composeService: container.service,
+                ...(handle.kind === 'environment' ? { environmentId: handle.environmentId } : {}) },
+                ...(handle.kind === 'workspace' ? { requesterWorkAttributionV1: handle.requester, workspacePath: handle.cwd } : {}) }];
+        });
+    });
     return Object.freeze({
         activity,
         async readMachineRebootServices(request) {
@@ -5020,6 +5128,24 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 }
             }));
         },
+
+
+
+
+        readNativeContainerSources,
+
+
+
+
+
+
+
+
+
+
+        ...machineServices,
+
+
         isAvailable({ occurrenceId, contributionQualifiedId }) {
             return input.resolveScope({
                 occurrenceId,
@@ -5189,28 +5315,24 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 ) {
                     return Object.freeze({ status: 'not_current' as const });
                 }
-                try {
-                    const value = await existing.establishment;
-                    if (existing.terminal) {
-                        await retireExplicitStartOperation(existing);
-                        return Object.freeze({
-                            status: 'not_current' as const,
-                        });
-                    }
-                    return acceptsOperation()
-                        && semanticEntries.get(entryKey) === existing
-                        && readsCurrent(operationInput.isCurrent)
-                        ? Object.freeze({
-                            status: 'established' as const,
-                            value: projectManagedProviderExplicitStartJoin(
-                                value,
-                                operationInput,
-                            ),
-                        })
-                        : Object.freeze({ status: 'not_current' as const });
-                } catch (error) {
-                    throw error;
+                const value = await existing.establishment;
+                if (existing.terminal) {
+                    await retireExplicitStartOperation(existing);
+                    return Object.freeze({
+                        status: 'not_current' as const,
+                    });
                 }
+                return acceptsOperation()
+                    && semanticEntries.get(entryKey) === existing
+                    && readsCurrent(operationInput.isCurrent)
+                    ? Object.freeze({
+                        status: 'established' as const,
+                        value: projectManagedProviderExplicitStartJoin(
+                            value,
+                            operationInput,
+                        ),
+                    })
+                    : Object.freeze({ status: 'not_current' as const });
             }
 
             // A terminal physical service can outlive its explicit-start
@@ -5482,10 +5604,10 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 },
                 /**
                  * The one transport for an admitted managed Provider endpoint.
-                 * It scopes the caller's relative request to the declared
-                 * endpoint paths, then dispatches through the exact supervised
-                 * handle, so header injection, credential currentness, redirect
-                 * refusal and request bounding have a single owner.
+                 * It resolves the trusted caller's relative request against
+                 * the supervised origin, then dispatches through that exact
+                 * handle so credential injection and redirect handling retain
+                 * their existing owner.
                  */
                 async request(
                     request: ManagedServiceRequest,

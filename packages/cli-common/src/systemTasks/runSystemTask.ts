@@ -1,3 +1,4 @@
+import { TailscaleCommandError } from '../tailscale/commandError.js';
 import { SYSTEM_TASK_PROTOCOL_VERSION, SystemTaskEventSchema, SystemTaskJsonValueSchema, SystemTaskResultSchema, SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskEvent, SystemTaskResult } from '@happier-dev/protocol';
 
@@ -199,4 +200,12 @@ function isAbortLikeError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const name = 'name' in error ? String(error.name ?? '') : '';
   return name === 'AbortError';
+}
+
+export function readKnownSystemTaskFailure(error: unknown): Readonly<{ code: string; message: string }> | null {
+  if (error instanceof SystemTaskExecutionError) return error;
+  if (error instanceof TailscaleCommandError && error.failure) {
+    return { code: error.failure.code, message: error.message };
+  }
+  return null;
 }

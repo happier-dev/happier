@@ -1,3 +1,9 @@
+import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
+import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
+import { AccessProviderContributionV1Schema } from '../plugins/contributions/accessProviders.js';
+import { BackupDestinationContributionV1Schema } from '../plugins/contributions/backupDestinations.js';
+import { PluginProjectedMachineRecipeEntryV1Schema, PluginProjectedMachineSetupPresetEntryV1Schema } from './machineSetupProjection.js';
+import { MachinePublishedMetadataV1Schema } from '../machines/machinePublishedContentV1.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -2717,6 +2723,12 @@ export const PluginProjectedDropTargetEntryV1Schema = lazyZodSchema(() => z.stri
 export type PluginProjectedDropTargetEntryV1 = z.infer<typeof PluginProjectedDropTargetEntryV1Schema>;
 
 export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
+  typeof PluginProjectedMachineSetupPresetEntryV1Schema,
+  typeof PluginProjectedMachineRecipeEntryV1Schema,
+  typeof PluginProjectedAccessProviderEntryV1Schema,
+  typeof PluginProjectedBackupDestinationEntryV1Schema,
+  typeof PluginProjectedHealthCheckKindEntryV1Schema,
+  typeof PluginProjectedDeploymentTargetEntryV1Schema,
   typeof PluginProjectedWorkItemsEntryV1Schema,
   typeof PluginProjectedMachineProvisionerEntryV1Schema,
   typeof PluginProjectedDragSourceEntryV1Schema,
@@ -2742,6 +2754,12 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedBrowserEntryV2Schema,
   typeof PluginProjectedUiEntryV2Schema,
 ]> = lazyZodSchema(() => z.union([
+  PluginProjectedMachineSetupPresetEntryV1Schema,
+  PluginProjectedMachineRecipeEntryV1Schema,
+  PluginProjectedAccessProviderEntryV1Schema,
+  PluginProjectedBackupDestinationEntryV1Schema,
+  PluginProjectedHealthCheckKindEntryV1Schema,
+  PluginProjectedDeploymentTargetEntryV1Schema,
   PluginProjectedWorkItemsEntryV1Schema,
   PluginProjectedMachineProvisionerEntryV1Schema,
   PluginProjectedDragSourceEntryV1Schema,
@@ -2809,6 +2827,18 @@ const PluginProjectedComposerControlsFamilyV1Schema = lazyZodSchema(() => projec
 const PluginProjectedComposerRegionsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('composerRegions', PluginProjectedComposerRegionEntryV1Schema));
 
 type PluginProjectedFamiliesByIdV2Shape = {
+accessProviders: z.ZodMiniOptional<typeof PluginProjectedAccessProvidersFamilyV1Schema>;
+
+machineSetupPresets: z.ZodMiniOptional<typeof PluginProjectedMachineSetupPresetsFamilyV1Schema>;
+
+machineRecipes: z.ZodMiniOptional<typeof PluginProjectedMachineRecipesFamilyV1Schema>;
+
+healthCheckKinds: z.ZodMiniOptional<typeof PluginProjectedHealthCheckKindsFamilyV1Schema>;
+
+deploymentTargets: z.ZodMiniOptional<typeof PluginProjectedDeploymentTargetsFamilyV1Schema>;
+
+backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFamilyV1Schema>;
+
   providers: z.ZodMiniOptional<typeof PluginProjectedProvidersFamilyV2Schema>;
   connectedAccounts: z.ZodMiniOptional<typeof PluginProjectedConnectedAccountsFamilyV2Schema>;
   scmHostingProviders: z.ZodMiniOptional<typeof PluginProjectedScmHostingProvidersFamilyV2Schema>;
@@ -2839,6 +2869,18 @@ type PluginProjectedFamiliesByIdV2Shape = {
 const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   z.ZodMiniObject<PluginProjectedFamiliesByIdV2Shape, z.core.$strict>
 > = lazyZodSchema(() => z._default(z.strictObject({
+accessProviders: z.optional(PluginProjectedAccessProvidersFamilyV1Schema),
+
+machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema),
+
+machineRecipes: z.optional(PluginProjectedMachineRecipesFamilyV1Schema),
+
+healthCheckKinds: z.optional(PluginProjectedHealthCheckKindsFamilyV1Schema),
+
+deploymentTargets: z.optional(PluginProjectedDeploymentTargetsFamilyV1Schema),
+
+backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
+
   providers: z.optional(PluginProjectedProvidersFamilyV2Schema),
   connectedAccounts: z.optional(PluginProjectedConnectedAccountsFamilyV2Schema),
   scmHostingProviders: z.optional(PluginProjectedScmHostingProvidersFamilyV2Schema),
@@ -2868,6 +2910,12 @@ const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
 assertPluginProjectionFamilyIdsV2(Object.keys(PluginProjectedFamiliesByIdV2Schema._zod.def.innerType.shape));
 
 export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
+  typeof PluginProjectedAccessProvidersFamilyV1Schema,
+  typeof PluginProjectedMachineSetupPresetsFamilyV1Schema,
+  typeof PluginProjectedMachineRecipesFamilyV1Schema,
+  typeof PluginProjectedHealthCheckKindsFamilyV1Schema,
+  typeof PluginProjectedDeploymentTargetsFamilyV1Schema,
+  typeof PluginProjectedBackupDestinationsFamilyV1Schema,
   typeof PluginProjectedWorkItemsFamilyV1Schema,
   typeof PluginProjectedProvidersFamilyV2Schema,
   typeof PluginProjectedConnectedAccountsFamilyV2Schema,
@@ -2894,6 +2942,12 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedComposerControlsFamilyV1Schema,
   typeof PluginProjectedComposerRegionsFamilyV1Schema,
 ]> = lazyZodSchema(() => z.union([
+  PluginProjectedAccessProvidersFamilyV1Schema,
+  PluginProjectedMachineSetupPresetsFamilyV1Schema,
+  PluginProjectedMachineRecipesFamilyV1Schema,
+  PluginProjectedHealthCheckKindsFamilyV1Schema,
+  PluginProjectedDeploymentTargetsFamilyV1Schema,
+  PluginProjectedBackupDestinationsFamilyV1Schema,
   PluginProjectedWorkItemsFamilyV1Schema,
   PluginProjectedProvidersFamilyV2Schema,
   PluginProjectedConnectedAccountsFamilyV2Schema,
@@ -2966,6 +3020,7 @@ export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodMi
   composerSurfaceCatalog: z.ZodMiniOptional<z.ZodMiniArray<typeof DaemonPluginUiComposerSurfaceCatalogEntryV1Schema>>;
   automationEligibleEvents: z.ZodMiniOptional<typeof DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema>;
   pluginSkills: z.ZodMiniOptional<typeof PluginSkillLibraryContentV1Schema>;
+  machineRecipeTarget: z.ZodMiniOptional<typeof MachineRecipeReadTargetV1Schema>;
 }, z.core.$loose> = lazyZodSchema(() => z.looseObject({
   protocolVersion: z.literal(1),
   /** Digest of the complete full response, excluding this field; absent on older daemons. */
@@ -2980,6 +3035,7 @@ export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodMi
   automationEligibleEvents: z.optional(DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema),
   /** Addressed read-only content; executable placement and installation remain unchanged. */
   pluginSkills: z.optional(PluginSkillLibraryContentV1Schema),
+  machineRecipeTarget: z.optional(MachineRecipeReadTargetV1Schema),
 }));
 export type DaemonContributionRegistryProjectionDescribeResponse = z.infer<
   typeof DaemonContributionRegistryProjectionDescribeResponseSchema
@@ -3003,3 +3059,55 @@ export { DaemonContributionRegistryProjectionSectionsResponseSchema, buildDaemon
   computeDaemonProjectionSectionDigest, omitKnownDaemonProjectionSectionBodies, reassembleDaemonProjectionSections,
   type DaemonContributionRegistryProjectionSectionsResponse,
 } from './contributionRegistryProjectionSections.js';
+
+export { type PluginProjectedMachineRecipeEntryV1 } from './machineSetupProjection.js';
+
+export const MachineRecipeReadTargetV1Schema = lazyZodSchema(() => z.pick(MachinePublishedMetadataV1Schema, { platform: true, arch: true }));
+
+export type MachineRecipeReadTargetV1 = z.infer<typeof MachineRecipeReadTargetV1Schema>;
+
+export const PluginProjectedDeploymentTargetEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: DeploymentTargetContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Deployment target identity must match its descriptor' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Deployment target origin requires its serving occurrence' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export const PluginProjectedHealthCheckKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: HealthCheckKindContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Health check kind identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Health check kind origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+const PluginProjectedBackupDestinationEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: BackupDestinationContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Destination identity must match its descriptor' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Destination origin requires its serving occurrence' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export const PluginProjectedAccessProviderEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema), definition: AccessProviderContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Access provider identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Access provider origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
+const PluginProjectedDeploymentTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('deploymentTargets', PluginProjectedDeploymentTargetEntryV1Schema));
+const PluginProjectedHealthCheckKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('healthCheckKinds', PluginProjectedHealthCheckKindEntryV1Schema));
+const PluginProjectedMachineRecipesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineRecipes', PluginProjectedMachineRecipeEntryV1Schema));
+const PluginProjectedMachineSetupPresetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineSetupPresets', PluginProjectedMachineSetupPresetEntryV1Schema));
+const PluginProjectedAccessProvidersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('accessProviders', PluginProjectedAccessProviderEntryV1Schema));

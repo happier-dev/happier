@@ -14,7 +14,7 @@ type ConsumerLifecycle = Readonly<{
 export async function assembleAutomationRuntime(input: Readonly<{
     credentials: StoredCredentials | null;
     activationTargets: ResolvedContributionRegistry['activationTargets'];
-    activatedPluginIds: ReadonlySet<string>;
+    activatedPluginIds: Pick<ReadonlySet<string>, 'has'>;
     resolveCurrentMaterialization(pluginId: string): PluginMachineMaterializationRefV1 | null;
     readPluginOccurrenceId(pluginId: string): string | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
@@ -28,9 +28,12 @@ export async function assembleAutomationRuntime(input: Readonly<{
         transport: AutomationEventSourcesListTransportV1;
         owner: AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1;
     }>> = [];
-    if (input.credentials) {
+    async function refreshActivatedPlugin(pluginId?: string): Promise<void> {
+        const credentials = input.credentials;
+        if (!credentials) return;
         const sourceTargets = input.activationTargets.filter((target) => (
-            input.activatedPluginIds.has(target.pluginId)
+            (pluginId === undefined || target.pluginId === pluginId)
+            && input.activatedPluginIds.has(target.pluginId)
             && (target.manifest.contributes.events ?? []).some((event) => (
                 event.kind === 'event'
                 && event.automation?.eligible === true
@@ -53,13 +56,18 @@ export async function assembleAutomationRuntime(input: Readonly<{
                 }
             }
             for (const transportKind of transportKinds) {
+                if (adoptedOwners.some(candidate => (
+                    candidate.occurrenceId === occurrenceId
+                    && candidate.transport.kind === transportKind
+                    && arePluginMachineMaterializationRefsEqual(candidate.caller, caller)
+                ))) continue;
                 const transport: AutomationEventSourcesListTransportV1 = transportKind === 'checkpointedPull'
                     ? { kind: 'checkpointedPull' }
                     : transportKind === 'socket'
                         ? { kind: 'socket' }
                         : { kind: 'durablePush' };
                 const owner = createAutomationEventAdoptedDefinitionSetHostV1({
-                    credentials: input.credentials,
+                    credentials,
                     caller,
                     occurrenceId,
                     sourceCustody,
@@ -79,59 +87,57 @@ export async function assembleAutomationRuntime(input: Readonly<{
             }
         }
     }
-    const owners = Object.freeze(adoptedOwners);
-    const resolveAdoptedDefinitionSet = owners.length > 0
-        ? (
-            caller: PluginMachineMaterializationRefV1,
-            occurrenceId: string,
-            transport: AutomationEventSourcesListTransportV1,
-        ): AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 | null => {
-            const current = input.resolveCurrentMaterialization(caller.pluginId);
-            if (current === null || !arePluginMachineMaterializationRefsEqual(current, caller)) return null;
-            return owners.find((candidate) => (
-                arePluginMachineMaterializationRefsEqual(candidate.caller, caller)
-                && candidate.occurrenceId === occurrenceId
-                && candidate.transport.kind === transport.kind
-            ))?.owner ?? null;
-        }
-        : undefined;
-    const resolveHistoryGapSource = resolveAdoptedDefinitionSet
-        ? async (request: Readonly<{
-            pluginId: string;
-            eventLocalIds: readonly string[];
-            reset: import('@happier-dev/protocol').PluginEventAutomationHistoryGapResetActionInputV1;
-            signal: AbortSignal;
-            isCurrent(): boolean;
-        }>) => {
-            request.signal.throwIfAborted();
-            if (!request.isCurrent()) return null;
-            const caller = input.resolveCurrentMaterialization(request.pluginId);
-            const occurrenceId = input.readPluginOccurrenceId(request.pluginId);
-            if (!caller || !occurrenceId) return null;
-            const owner = resolveAdoptedDefinitionSet(caller, occurrenceId, { kind: 'checkpointedPull' });
-            if (!owner) return null;
-            const definition = await owner.readCurrentCheckpointedPullSource({
-                reset: request.reset,
-                signal: request.signal,
-            });
-            request.signal.throwIfAborted();
-            const currentCaller = input.resolveCurrentMaterialization(request.pluginId);
-            if (
-                definition === null
-                || !request.isCurrent()
-                || currentCaller === null
-                || !arePluginMachineMaterializationRefsEqual(caller, currentCaller)
-                || definition.eventRef.pluginId !== request.pluginId
-                || !request.eventLocalIds.includes(definition.eventRef.localId)
-            ) return null;
-            return Object.freeze({
-                eventLocalId: definition.eventRef.localId,
-                sourceConfig: structuredClone(definition.sourceConfig),
-            });
-        }
-        : undefined;
+    await refreshActivatedPlugin();
+    // The resolver belongs to this assembly, not its initial active snapshot.
+    // A dormant source can gain its existing owner before its service starts.
+    const resolveAdoptedDefinitionSet = (
+        caller: PluginMachineMaterializationRefV1,
+        occurrenceId: string,
+        transport: AutomationEventSourcesListTransportV1,
+    ): AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 | null => {
+        const current = input.resolveCurrentMaterialization(caller.pluginId);
+        if (current === null || !arePluginMachineMaterializationRefsEqual(current, caller)) return null;
+        return adoptedOwners.find((candidate) => (
+            arePluginMachineMaterializationRefsEqual(candidate.caller, caller)
+            && candidate.occurrenceId === occurrenceId
+            && candidate.transport.kind === transport.kind
+        ))?.owner ?? null;
+    };
+    const resolveHistoryGapSource = async (request: Readonly<{
+        pluginId: string;
+        eventLocalIds: readonly string[];
+        reset: import('@happier-dev/protocol').PluginEventAutomationHistoryGapResetActionInputV1;
+        signal: AbortSignal;
+        isCurrent(): boolean;
+    }>) => {
+        request.signal.throwIfAborted();
+        if (!request.isCurrent()) return null;
+        const caller = input.resolveCurrentMaterialization(request.pluginId);
+        const occurrenceId = input.readPluginOccurrenceId(request.pluginId);
+        if (!caller || !occurrenceId) return null;
+        const owner = resolveAdoptedDefinitionSet(caller, occurrenceId, { kind: 'checkpointedPull' });
+        if (!owner) return null;
+        const definition = await owner.readCurrentCheckpointedPullSource({
+            reset: request.reset,
+            signal: request.signal,
+        });
+        request.signal.throwIfAborted();
+        const currentCaller = input.resolveCurrentMaterialization(request.pluginId);
+        if (
+            definition === null
+            || !request.isCurrent()
+            || currentCaller === null
+            || !arePluginMachineMaterializationRefsEqual(caller, currentCaller)
+            || definition.eventRef.pluginId !== request.pluginId
+            || !request.eventLocalIds.includes(definition.eventRef.localId)
+        ) return null;
+        return Object.freeze({
+            eventLocalId: definition.eventRef.localId,
+            sourceConfig: structuredClone(definition.sourceConfig),
+        });
+    };
     return Object.freeze({
-        adoptedDefinitionOwners: owners,
+        refreshActivatedPlugin,
         resolveAdoptedDefinitionSet,
         resolveHistoryGapSource,
     });

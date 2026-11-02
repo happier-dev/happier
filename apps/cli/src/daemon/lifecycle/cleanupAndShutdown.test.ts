@@ -89,7 +89,7 @@ describe('cleanupAndShutdown', () => {
             const handles: PluginProtocolClientHandle<'jsonRpc'>[] = [];
             configureLanguageServerHost({ readCurrentContributionRegistry: () => registry, async openProtocol(input) {
                 // The real stdio child is the OS boundary; host lifecycle, codec and supervision remain real.
-                const service = createStablePluginExecService({ allowedExecutables: [input.definition.executable],
+                const service = createStablePluginExecService({
                     processOwner: input.processOwner, signal: input.signal, isOccurrenceCurrent: () => !input.signal.aborted,
                     resolveExecutable: async () => ({ command: process.execPath,
                         args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify({ delayHover: true })] }),

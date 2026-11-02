@@ -1,6 +1,9 @@
+import { ActionIdSchema } from '../actions/actionIds.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { InputPathSchema } from '../inputs/inputPredicates.js';
+
 import { ComputerSecretFillRequestV1Schema } from '../computer/v1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from '../browser/automation/v1.js';
 
@@ -25,7 +28,23 @@ export const PrivateSecretContinuationV1Schema = lazyZodSchema(() => {
 });
 export type PrivateSecretContinuationV1 = z.infer<typeof PrivateSecretContinuationV1Schema>;
 
-/** Value-free presentation from the declaration owner; private admission rebinds current paths. */
+export type PrivateActionInputContinuationV1 = z.infer<typeof PrivateActionInputContinuationV1Schema>;
+
+export const PrivateActionInputContinuationV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), kind: z.literal('action_inputs'),
+  artifactId: z.string().check(z.minLength(1)), requestId: z.string().check(z.minLength(1)),
+  actionId: ActionIdSchema, request: z.record(z.string(), StrictJsonValueSchema),
+  serverId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)),
+  accountEncryptionMode: z.enum(['plain', 'e2ee']),
+  choices: z.array(z.strictObject({ path: InputPathSchema, choice: PrivateSecretChoiceV1Schema })),
+}));
+
 export const ConfidentialActionInputReviewV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('action_inputs'), paths: z.array(InputPathSchema),
 }));
+
+export const PrivateConfidentialContinuationV1Schema = lazyZodSchema(() => z.union([
+  PrivateSecretContinuationV1Schema, PrivateActionInputContinuationV1Schema,
+]));
+
+export type PrivateConfidentialContinuationV1 = z.infer<typeof PrivateConfidentialContinuationV1Schema>;

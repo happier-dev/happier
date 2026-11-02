@@ -56,3 +56,5 @@ export const INTERNAL_TASK_ACTION_SPECS = [
     ] },
     bindings: { mcpToolName: 'tasks_internal_transition' }, cli: { acceptsServerId: true, commands: [{ path: ['tasks', 'internal', 'transition'], visibility: 'canonical' }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+
+export const InternalTaskActionIdSchema = lazyZodSchema(() => z.enum(INTERNAL_TASK_ACTION_IDS));

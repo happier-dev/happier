@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as selection } from '../registry.js';
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../tailscale/index.js", async () => {
@@ -21,6 +22,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleFunnel returns needs_auth when not logged in", async () => {
     const { runTailscaleStatusJson } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "NeedsLogin",
       authUrl: "https://login.example.test",
       dnsName: null,
@@ -32,7 +36,7 @@ describe("tailscale relay access providers", () => {
     });
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
-    const status = await tailscaleFunnelRelayAccessProvider.status({ config: { providerId: "tailscaleFunnel" }, ctx: { env: process.env, upstreamUrl: null } });
+    const status = await tailscaleFunnelRelayAccessProvider.status({ config: selection('tailscaleFunnel'), ctx: { env: process.env, upstreamUrl: null } });
     expect(status).toEqual(
       expect.objectContaining({
         state: "needs_auth",
@@ -43,6 +47,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleFunnel returns enabled with a shareUrl when logged in", async () => {
     const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -57,7 +64,7 @@ describe("tailscale relay access providers", () => {
     );
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
-    const status = await tailscaleFunnelRelayAccessProvider.status({ config: { providerId: "tailscaleFunnel" }, ctx: { env: process.env, upstreamUrl: null } });
+    const status = await tailscaleFunnelRelayAccessProvider.status({ config: selection('tailscaleFunnel'), ctx: { env: process.env, upstreamUrl: null } });
     expect(status).toEqual(
       expect.objectContaining({
         state: "enabled",
@@ -69,6 +76,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleFunnel bounds status commands to the provided timeout", async () => {
     const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -84,7 +94,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
     await tailscaleFunnelRelayAccessProvider.status({
-      config: { providerId: "tailscaleFunnel" },
+      config: selection('tailscaleFunnel'),
       ctx: { env: process.env, upstreamUrl: null },
       timeoutMs: 25,
     });
@@ -101,6 +111,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleFunnel returns disabled when funnel is not configured", async () => {
     const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -113,7 +126,7 @@ describe("tailscale relay access providers", () => {
     vi.mocked(runTailscaleFunnelStatus).mockResolvedValue("No funnel config");
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
-    const status = await tailscaleFunnelRelayAccessProvider.status({ config: { providerId: "tailscaleFunnel" }, ctx: { env: process.env, upstreamUrl: null } });
+    const status = await tailscaleFunnelRelayAccessProvider.status({ config: selection('tailscaleFunnel'), ctx: { env: process.env, upstreamUrl: null } });
     expect(status).toEqual(
       expect.objectContaining({
         state: "disabled",
@@ -127,7 +140,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
     await tailscaleFunnelRelayAccessProvider.disable?.({
-      config: { providerId: "tailscaleFunnel" },
+      config: selection('tailscaleFunnel'),
       ctx: { env: process.env, upstreamUrl: null },
     });
 
@@ -144,7 +157,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
     const ctx = { env: process.env, upstreamUrl: "http://127.0.0.1:3005" };
-    const res = await tailscaleFunnelRelayAccessProvider.configure?.({ config: { providerId: "tailscaleFunnel" }, ctx });
+    const res = await tailscaleFunnelRelayAccessProvider.configure?.({ config: selection('tailscaleFunnel'), ctx });
     expect(runTailscaleFunnelEnable).toHaveBeenCalledTimes(1);
     expect(res).toEqual({ state: "enabled", shareUrl: "https://my-machine.tailnet.ts.net" });
   });
@@ -168,7 +181,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
     await tailscaleFunnelRelayAccessProvider.configure?.({
-      config: { providerId: "tailscaleFunnel" },
+      config: selection('tailscaleFunnel'),
       ctx: { env: process.env, upstreamUrl: "http://127.0.0.1:3005" },
       deadline,
       signal: abortController.signal,
@@ -186,6 +199,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleServe returns enabled with a shareUrl when logged in", async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -200,7 +216,7 @@ describe("tailscale relay access providers", () => {
     );
 
     const { tailscaleServeRelayAccessProvider } = await import("./tailscaleServe/index.js");
-    const status = await tailscaleServeRelayAccessProvider.status({ config: { providerId: "tailscaleServe" }, ctx: { env: process.env, upstreamUrl: null } });
+    const status = await tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } });
     expect(status).toEqual(
       expect.objectContaining({
         state: "enabled",
@@ -212,6 +228,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleServe bounds status commands to the provided timeout", async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -227,7 +246,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleServeRelayAccessProvider } = await import("./tailscaleServe/index.js");
     await tailscaleServeRelayAccessProvider.status({
-      config: { providerId: "tailscaleServe" },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: null },
       timeoutMs: 25,
     });
@@ -262,7 +281,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleServeRelayAccessProvider } = await import("./tailscaleServe/index.js");
     await tailscaleServeRelayAccessProvider.configure?.({
-      config: { providerId: "tailscaleServe" },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: "http://127.0.0.1:3005" },
       deadline,
       signal: abortController.signal,
@@ -280,6 +299,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleServe recomputes remaining time from one provider deadline for serial status commands", async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -304,7 +326,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleServeRelayAccessProvider } = await import("./tailscaleServe/index.js");
     const params = {
-      config: { providerId: "tailscaleServe" as const },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: null },
       deadline,
     };
@@ -328,7 +350,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleServeRelayAccessProvider } = await import("./tailscaleServe/index.js");
     const status = await tailscaleServeRelayAccessProvider.status({
-      config: { providerId: "tailscaleServe" },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: null },
     });
 
@@ -348,6 +370,9 @@ describe("tailscale relay access providers", () => {
   it("tailscaleFunnel returns the share url for the requested upstream even when funnel status includes other mappings first", async () => {
     const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import("../../tailscale/index.js");
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: "Running",
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
@@ -367,7 +392,7 @@ describe("tailscale relay access providers", () => {
 
     const { tailscaleFunnelRelayAccessProvider } = await import("./tailscaleFunnel/index.js");
     const status = await tailscaleFunnelRelayAccessProvider.status({
-      config: { providerId: "tailscaleFunnel" },
+      config: selection('tailscaleFunnel'),
       ctx: { env: process.env, upstreamUrl: "http://127.0.0.1:3005" },
     });
 

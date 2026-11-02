@@ -317,7 +317,7 @@ describe('target activation publication', () => {
                 } });
                 let terminalPreparations = 0;
                 const terminalExec = createStablePluginExecService({
-                    allowedExecutables: [], signal: environmentSignal, isOccurrenceCurrent: environmentProduction.production.isCurrent,
+                     signal: environmentSignal, isOccurrenceCurrent: environmentProduction.production.isCurrent,
                     resolveExecutable: async () => { throw new Error('Installed Agent must not be resolved as the wrapper'); },
                     resolvePath: async () => projectRoot,
                     prepareAgentNativeLaunch: async () => {
@@ -484,8 +484,8 @@ describe('target activation publication', () => {
             expect(originalExecutableReleased).toBe(1);
             const originalExecutable = { kind: 'systemTool', id: 'pixi' } as const;
             const originalExec = createStablePluginExecService({
-                allowedExecutables: [originalExecutable], environment: { KEEP: 'base' },
-                allowedEnvKeys: ['KEEP'],
+                 environment: { KEEP: 'base' },
+
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: reference => resolveExecutable(reference, pixiAdapter.pluginId),
                 resolvePath: async () => projectRoot,
@@ -505,8 +505,8 @@ describe('target activation publication', () => {
             const installedAgentRef = { kind: 'systemTool', id: 'fixture.agent' } as const;
             let installedAgentReleases = 0;
             const installedAgentExec = createStablePluginExecService({
-                allowedExecutables: [installedAgentRef], environment: { KEEP: 'base' },
-                allowedEnvKeys: ['KEEP'],
+                 environment: { KEEP: 'base' },
+
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async reference => {
                     expect(reference).toEqual(installedAgentRef);

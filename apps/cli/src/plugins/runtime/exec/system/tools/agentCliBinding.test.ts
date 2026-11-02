@@ -18,8 +18,7 @@ describe('Agent CLI system-tool startup prerequisite', () => {
             const environment = resolveNativeAgentLaunchEnvironment({
                 processEnv: { ...process.env, HOST_CREDENTIAL: 'must-not-reach-agent' },
             });
-            const service = createStablePluginExecService({
-                allowedExecutables: [], allowedEnvKeys: [], environment: {},
+            const service = createStablePluginExecService({ environment: {},
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 systemTools: createRetainedAgentCliSystemToolService({
                     agentId: 'fixture', binding: { toolId: 'agent-cli' },

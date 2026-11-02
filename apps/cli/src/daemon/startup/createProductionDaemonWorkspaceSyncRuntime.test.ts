@@ -2187,7 +2187,7 @@ describe('bind-child source handoff through real daemon controllers', () => {
     expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
     // The all-files owner fences an absent/empty target; final copy happens after quiescence.
     expect(await readdir(fixture.targetPath)).toEqual([]);
-    if (settlement === 'abort') {
+    {
       const { operationId, accountServerId, action, sourceMachineId, targetMachineId,
         sourceWorkspaceRefId, targetWorkspaceRefId, sourceRootPath, targetRootPath } = fixture.prepareInput;
       const originalInput = { operationId, accountServerId, action, sourceMachineId, targetMachineId,
@@ -2196,15 +2196,37 @@ describe('bind-child source handoff through real daemon controllers', () => {
         { ...originalInput, targetReplacementApprovalReceiptId: 'substituted-receipt' },
         { ...originalInput, targetReplacementApprovalActionInput: { sessionId: 'substituted-session' } },
         { ...originalInput, sourceWorkspaceRefId: 'substituted-source-ref' },
+        { ...originalInput, sourceMachineId: 'substituted-child' },
+        { ...originalInput, sourceRootPath: `${originalInput.sourceRootPath}-unrelated` },
       ]) {
-        const forgedAbort = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse({
-          v: 1, phase: 'abort', input: substitutedInput, prepared,
+        const forgedSettlement = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse({
+          v: 1, phase: settlement, input: substitutedInput, prepared,
         });
-        await expect(fixture.callWorkspaceSourcePhase({ machineId: fixture.controller.machineId, request: forgedAbort }))
+        await expect(fixture.callWorkspaceSourcePhase({ machineId: fixture.controller.machineId, request: forgedSettlement }))
           .rejects.toMatchObject({ code: 'workspace_sync_operation_conflict' });
         expect(await fixture.probeSource()).toMatchObject({ kind: 'overlap' });
         expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
       }
+      const receiver = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE);
+      if (!receiver) throw new Error('The physical SOURCE phase owner was not registered');
+      const machineAdmission = { actorAccountId: 'other-requester', custodianAccountId: 'other-requester',
+        machineId: originalInput.sourceMachineId, installationId: fixture.childInstallationId,
+        role: 'manage' as const, encryptionMode: 'plain' as const };
+      const sourceContext = { machineAdmission, callerAuthority: 'present_user' as const };
+      await expect(receiver({ v: 1, phase: settlement, input: originalInput, prepared }, {
+        machineAdmission, callerAuthority: 'present_user', signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
+        workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: settlement,
+          operationId: originalInput.operationId, accountServerId: originalInput.accountServerId,
+          sourceMachineId: originalInput.sourceMachineId, sourceRootPath: originalInput.sourceRootPath, sourceContext }),
+      })).rejects.toMatchObject({ code: 'workspace_sync_operation_conflict' });
+      const unknownOperationId = `${originalInput.operationId}-unprepared`;
+      const unknownSettlement = fixture.callWorkspaceSourcePhase({ machineId: fixture.controller.machineId,
+        request: WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse({ v: 1, phase: settlement,
+          input: { ...originalInput, operationId: unknownOperationId }, prepared: { ...prepared, operationId: unknownOperationId } }) });
+      if (settlement === 'abort') await expect(unknownSettlement).resolves.toMatchObject({ phase: 'aborted' });
+      else await expect(unknownSettlement).rejects.toMatchObject({ code: 'workspace_sync_prepare_missing' });
+      expect(await fixture.probeSource()).toMatchObject({ kind: 'overlap' });
+      expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
     }
     // The Session coordinator quiesces the original child Session before this final source delta.
     await writeFile(join(fixture.sourcePath, 'payload.txt'), 'after quiesce');

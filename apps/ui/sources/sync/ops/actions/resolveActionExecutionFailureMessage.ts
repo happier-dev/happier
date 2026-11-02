@@ -45,6 +45,8 @@ function readFailureMessage(value: unknown): string | null {
     const record = asRecord(value);
     if (!record) return null;
     const code = record.errorCode ?? record.code;
+    if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
+    if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
     if (code === 'credential_scope_denied') return t('errors.permissionDenied');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffMessage');

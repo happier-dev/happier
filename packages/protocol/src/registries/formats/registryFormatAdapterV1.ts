@@ -1,3 +1,4 @@
+import type { RegistryPackagedSourceDescriptorV1 } from '../registrySourcesV1.js';
 import type { RegistrySourceV1, RegistryFormatV1, RegistryKindV1 } from '../registrySourcesV1.js';
 import type { RegistryItemV1, RegistrySkillItemV1, RegistryContentRefV1, RegistryProvenanceV1 } from '../registryItemsV1.js';
 import type { RegistryListPageV1, RegistrySourceStatusV1 } from '../registryListV1.js';
@@ -9,7 +10,9 @@ export type RegistryHttpV1 = Readonly<{
 }>;
 export type RegistryDetectedSourceV1 = Readonly<{ format: RegistryFormatV1; kinds: readonly RegistryKindV1[]; title: string; itemCount?: number }>
   | Readonly<{ unsupported: 'organisation' | 'unknown_format' | 'needs_token' | 'unreachable' }>;
-export type RegistryFetchContextV1 = Readonly<{ http: RegistryHttpV1; signal?: AbortSignal;
+export type RegistryFetchContextV1 = Readonly<{
+packageContent?: Readonly<{ read(source: RegistryPackagedSourceDescriptorV1): Promise<Readonly<{ text: string; fetchedAt: number }>> }>;
+ http: RegistryHttpV1; signal?: AbortSignal;
   /** The host applies target placement while retaining the original catalog
    * pointer on daemon requests. Null defers a daemon-only target during browse. */
   readTargetItem?: (request: Readonly<{ source: RegistrySourceV1; kind: RegistryKindV1; itemId: string; version?: string }>) => Promise<RegistryItemV1 | null>;

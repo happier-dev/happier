@@ -22,6 +22,12 @@ export type {
 export type { HttpMethod } from './services/io.js';
 export type {
     HttpService,
+    HttpRequest,
+    HttpResponse,
+    HttpStreamRequest,
+    HttpStreamResponse,
+    HttpPreparedReadInput,
+    PreparedHttpRead,
     PluginFetchCredentialBinding,
     PluginWebSocketClose,
     PluginWebSocketConnection,

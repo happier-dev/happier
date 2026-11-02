@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import { AccountNoticeItemTypeV1Schema, AccountNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import {
@@ -60,7 +60,10 @@ export type StablePluginNotificationsHost = Readonly<{
     readChannel(ref: PluginContributionRef, seed?: PluginInvocationServicesSeed): PluginNotificationSenderBinding | null;
     readAttentionPolicy?(): unknown;
     resolveNoticeArtifacts?(seed: PluginInvocationServicesSeed): Promise<Readonly<{
-        accountId: string; store: Pick<ReturnType<typeof createAccountArtifactStore>, 'writeNotice'>;
+        accountId: string; store: Readonly<{
+            writeNotice(input: Omit<Parameters<ReturnType<typeof createAccountArtifactStore>['writeNotice']>[0], 'page'>
+                & Readonly<{ page?: ReturnType<typeof PluginNoticePageV1Schema.parse> }>): ReturnType<ReturnType<typeof createAccountArtifactStore>['writeNotice']>;
+        }>;
     }> | null>;
     preferencePolicy?: Readonly<{
         read(params: Readonly<{
@@ -230,7 +233,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
         const rawData = request.data;
         const { itemId, resolved } = request;
         const itemType = request.type === undefined ? undefined : AccountNoticeItemTypeV1Schema.parse(request.type);
-        const itemPage = request.page === undefined ? undefined : AccountNoticePageV1Schema.parse(request.page);
+        const itemPage = request.page === undefined ? undefined : PluginNoticePageV1Schema.parse(request.page);
         if (typeof clientRequestId !== 'string'
             || clientRequestId.length < 1
             || typeof categoryId !== 'string'

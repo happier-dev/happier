@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
@@ -7,7 +8,8 @@ import { LocalRelayAccessControlSection } from '@/components/settings/server/loc
 
 export type RelayAccessTailscalePrerequisitesStepProps = Readonly<{
     testID?: string;
-    providerId: 'tailscaleServe' | 'tailscaleFunnel';
+    /** A provider whose descriptor runs the Tailscale secure-access task (decided by the caller). */
+    providerId: RelayAccessProviderId;
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;

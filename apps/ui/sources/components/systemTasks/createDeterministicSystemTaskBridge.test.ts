@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildLocalRelayRuntimeSystemTaskSpec } from './specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
@@ -203,12 +204,10 @@ describe('createDeterministicSystemTaskBridge', () => {
     it('persists configured relay-access status for follow-up status checks', async () => {
         const bridge = createDeterministicSystemTaskBridge();
         const runner = createSystemTaskRunner({ bridge, mode: 'dev' });
+        const config = createBuiltinRelayAccessSelection('lan', { url: 'https://relay.example.test/relay?route=office#status' });
+        const selection = createBuiltinRelayAccessSelection('lan', { url: 'https://relay.example.test/relay' });
         const configureTaskId = await runner.start(buildRelayAccessConfigureSystemTaskSpec({
-            providerId: 'lan',
-            config: {
-                providerId: 'lan',
-                url: 'https://relay.example.test',
-            },
+            config,
             upstreamUrl: 'http://127.0.0.1:53288',
         }));
 
@@ -221,9 +220,10 @@ describe('createDeterministicSystemTaskBridge', () => {
             data: {
                 configured: true,
                 providerId: 'lan',
+                selection,
                 status: {
                     state: 'enabled',
-                    shareUrl: 'https://relay.example.test',
+                    shareUrl: 'https://relay.example.test/relay',
                 },
             },
         });
@@ -238,9 +238,10 @@ describe('createDeterministicSystemTaskBridge', () => {
             data: {
                 configured: true,
                 providerId: 'lan',
+                selection,
                 status: {
                     state: 'enabled',
-                    shareUrl: 'https://relay.example.test',
+                    shareUrl: 'https://relay.example.test/relay',
                 },
             },
         });

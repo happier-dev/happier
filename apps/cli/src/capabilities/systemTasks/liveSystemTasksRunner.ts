@@ -203,9 +203,13 @@ async function readLiveRelayRuntimeSnapshot(params: RelayRuntimeTaskParams): Pro
 type SystemTasksRunnerAdapter = Readonly<{
   start: (params: Record<string, unknown>) => Promise<unknown>;
   poll: (params: Record<string, unknown>) => Promise<unknown>;
-  respond: (params: Record<string, unknown>) => Promise<void>;
+  respond: (params: Record<string, unknown>) => Promise<SystemTaskJsonValue | undefined>;
   cancel: (params: Record<string, unknown>) => Promise<void>;
-  startAdmitted: (kind: import('@happier-dev/cli-common/systemTasks').InteractiveSystemTaskKind) => Promise<Readonly<{ taskId: string }>>;
+  startAdmitted: (kind: import('@happier-dev/cli-common/systemTasks').InteractiveSystemTaskKind, taskKind?: string,
+    observation?: Readonly<{
+      started(task: Readonly<{ taskId: string }>): void;
+      prompt(task: Readonly<{ taskId: string }>, request: import('@happier-dev/cli-common/systemTasks/interactiveTaskKinds').InteractiveSystemTaskPromptRequest | null): void;
+    }>) => Promise<Readonly<{ taskId: string }>>;
   wait: ReturnType<typeof createSystemTasksRunner>['wait'];
 }>;
 
@@ -419,7 +423,19 @@ function createLiveSystemTasksRunnerAdapter(params: Readonly<{
   });
 
   return {
-    startAdmitted: async (kind) => await runner.startAdmitted({ taskId: `system-task:${randomUUID()}`, kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, kind),
+    startAdmitted: async (kind, taskKind = 'remote.ssh.bootstrapMachine.v1', observation) => {
+      const task = { taskId: `system-task:${randomUUID()}` };
+      return await runner.startAdmitted({ ...task, kind: taskKind, params: {} }, observation ? {
+        run: async context => {
+          observation.started(task);
+          return await kind.run({ ...context, prompt: async request => {
+            const answer = context.prompt(request);
+            try { observation.prompt(task, request); return await answer; }
+            finally { observation.prompt(task, null); }
+          } });
+        },
+      } : kind);
+    },
     wait: runner.wait,
     start: async (params) => {
       const spec = SystemTaskSpecSchema.parse(params.spec ?? null);
@@ -436,9 +452,13 @@ function createLiveSystemTasksRunnerAdapter(params: Readonly<{
       });
     },
     respond: async (params) => {
-      await runner.respond({
+      return await runner.respond({
         taskId: String(params.taskId ?? '').trim(),
         answer: params.answer,
+        ...(Object.hasOwn(params, 'delivery') ? { delivery: params.delivery } : {}),
+        ...(Object.hasOwn(params, 'responseAuthorization') ? { responseAuthorization: params.responseAuthorization } : {}),
+        ...(params.expectedPromptKind !== undefined ? { expectedPromptKind: params.expectedPromptKind } : {}),
+        ...(params.expectedPromptId !== undefined ? { expectedPromptId: params.expectedPromptId } : {}),
       });
     },
     cancel: async (params) => {

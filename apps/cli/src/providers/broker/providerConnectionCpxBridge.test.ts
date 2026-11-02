@@ -1,3 +1,4 @@
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { Buffer } from 'node:buffer';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -184,7 +185,7 @@ describe('Provider Connection CPX bridge', () => {
       publicHeaders: { 'x-provider-client': 'happier' }, credentialHeaderName: 'authorization',
     });
     expect(result.headers).not.toHaveProperty('set-cookie');
-    expect(await new Response(result.body).text()).toBe('{"echo":"[REDACTED]"}');
+    expect(await new Response(await readProviderBrokerResponseBody(result.body)).text()).toBe('{"echo":"[REDACTED]"}');
     expect(JSON.stringify({ projection, result })).not.toContain('gateway.example');
   });
 

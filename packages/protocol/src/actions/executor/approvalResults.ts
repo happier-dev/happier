@@ -1,3 +1,6 @@
+import { settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
+import { projectApprovalExecutionFailureV2 } from '../../approvals/approvalExecutionFailure.js';
+import { isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -116,4 +119,45 @@ export async function classifyApprovalExecutionOriginCurrentness(args: Readonly<
     }
     return { status: 'read_failed', error, failure };
   }
+}
+
+export function projectSettledApprovalExecution(args: Readonly<{
+  request: ApprovalRequest;
+  actionId: ActionId | null;
+  exec: ActionExecuteResult;
+  dispatchEffectAttempted: boolean;
+  executedAtMs: number;
+}>): ApprovalRequest {
+  const { request, actionId, exec, executedAtMs } = args;
+  // Only an explicit typed failed result can refine the dispatch fact. A
+  // missing value or a thrown failure's normalization retains uncertainty.
+  const effectAttempted = !exec.ok && typeof exec.effectAttempted === 'boolean'
+    ? exec.effectAttempted : args.dispatchEffectAttempted;
+  // Private Artifact custody carries ordinary typed results back to a caller
+  // waiting on another host. Blocking flow alone does not make that result
+  // live-only. Only declared live-only results use the safe projection here;
+  // public reads and decisions independently apply the observation projection.
+  const persistedExec = actionId !== null
+    && getActionSpec(actionId).approvalResultCustody === 'live_only'
+    ? projectActionExecutionObservation(actionId, exec)
+    : exec;
+  // Deferred replay has already read the raw arguments. Terminal history keeps
+  // the Action's own observation projection instead of write-only secrets.
+  const settledRequest = settleApprovalRequestReplayInputs(request);
+  const executionReceipt = {
+    updatedAtMs: Math.max(executedAtMs, request.updatedAtMs),
+    execution: persistedExec.ok
+      ? { executedAtMs, effectAttempted, ok: true, result: persistedExec.result }
+      : request.v === 2
+        ? projectApprovalExecutionFailureV2({ request, failure: persistedExec, executedAtMs, effectAttempted })
+        : { executedAtMs, ok: false, errorCode: persistedExec.errorCode, error: persistedExec.error },
+  };
+  const nextExecuted: ApprovalRequest = settledRequest.v === 2
+    ? { ...settledRequest, ...executionReceipt,
+        status: exec.ok ? 'executed' : 'failed' }
+    : { ...settledRequest, ...executionReceipt, status: exec.ok ? 'executed' : 'failed' };
+  if (nextExecuted.v === 2 && effectAttempted && persistedExec.operationCredentialUses?.length) {
+    nextExecuted.execution = { ...nextExecuted.execution!, operationCredentialUses: [...persistedExec.operationCredentialUses] };
+  }
+  return nextExecuted;
 }

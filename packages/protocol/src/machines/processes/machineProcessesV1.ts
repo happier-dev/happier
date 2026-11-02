@@ -12,6 +12,9 @@ export const ProcessOwnerRefV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   z.strictObject({ kind: z.literal('session'), sessionId: id() }),
   z.strictObject({ kind: z.literal('terminal'), terminalId: id(), sessionId: z.optional(id()) }),
   z.strictObject({ kind: z.literal('service'), serviceId: id(), pluginId: z.optional(id()), sessionId: z.optional(id()), workspaceId: z.optional(id()) }),
+  // Native lifecycle custody, not a spawned-process marker or requester identity.
+  z.strictObject({ kind: z.literal('container'), serverId: id(), machineId: id(), serviceId: id(),
+    containerId: z.string().check(z.regex(/^[a-f0-9]{64}$/u)), composeProject: id(), composeService: id(), environmentId: z.optional(id()) }),
   z.strictObject({ kind: z.literal('run'), runId: id(), sessionId: z.optional(id()) }),
   z.strictObject({ kind: z.literal('browser_sidecar') }),
   z.strictObject({ kind: z.literal('workspace_sync') }),

@@ -1,3 +1,19 @@
+import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
+import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
+import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
+import { readAuthenticatedActionRequesterAccountIdV1 } from '../actionRequestAttributionV1.js';
+import { WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1, type WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinitionV1.js';
+import { ActionIdSchema, type ActionId } from '../actionIds.js';
+import { getActionSpec } from '../actionSpecs.js';
+import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
+import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
+import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import type { DeploymentPublishInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { MachineSetupApplyInputV1 } from '../../machines/managed/actionsV1.js';
+import type { ActionExecutorContext } from './types.js';
+import type { WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
 import { readWorkflowRunDisplayMetadataV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
 import { z as zodMiniCore0 } from 'zod/mini';
@@ -2693,3 +2709,163 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
   } };
 }
+
+export type WorkflowCombinedRunStartV1 = Readonly<{
+  parent: Readonly<{ actionId: 'deployments.publish'; input: DeploymentPublishInputV1 }>
+    | Readonly<{ actionId: 'machines.setup.apply'; input: MachineSetupApplyInputV1 }>;
+  start: WorkflowActionExecuteArgs<'workflow.run.start'>['input'];
+  context: ActionExecutorContext;
+  orchestrationTarget: WorkflowProjectTargetV1;
+}>;
+
+function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['steps'][number],
+  materializedLeaves: WorkflowAcceptedSnapshotV1['materializedLeaves'] = [],
+  admittedStep: WorkflowApprovedOperationV1['steps'][number] = step): boolean {
+  const actionId = ActionIdSchema.safeParse(step.actionId);
+  if (!actionId.success || actionId.data === 'action.invoke') {
+    const envelope = actionId.success ? ActionInvokeInputSchema.safeParse(step.input) : null;
+    if (envelope && (!envelope.success || !sameStrictJsonValue(envelope.data, step.input))) return false;
+    const target = envelope?.success ? envelope.data.action : parseQualifiedPluginActionId(step.actionId);
+    if (!target) return false;
+    const admittedEnvelope = admittedStep.actionId === 'action.invoke'
+      ? ActionInvokeInputSchema.safeParse(admittedStep.input) : null;
+    if (admittedEnvelope && !admittedEnvelope.success) return false;
+    const admittedInput = admittedEnvelope?.success ? admittedEnvelope.data.input ?? null : admittedStep.input;
+    const references = admittedStep.binding?.kind === 'producer_result' ? admittedStep.binding.references : undefined;
+    const leaves = materializedLeaves.filter(leaf => {
+      if (leaf.kind !== 'action' || leaf.actionId !== formatQualifiedPluginActionId(target)
+        || leaf.actionInput === undefined) return false;
+      const frozenInput = references
+        ? Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field)))
+        : leaf.actionInput;
+      return sameStrictJsonValue(frozenInput, admittedInput);
+    });
+    if (leaves.length === 0) return false;
+    const input = envelope?.success ? envelope.data.input ?? null : step.input;
+    // Exact operands select their admitted occurrence. If indistinguishable
+    // occurrences disagree, none may borrow a less confidential declaration.
+    return leaves.every(leaf => {
+      const contract = leaf.actionContract;
+      // Older frozen schemas do not establish confidential operands.
+      if (!contract || contract.secretInputPaths === undefined) return false;
+      const schema = PluginJsonSchemaV2Schema.safeParse(contract.inputSchema);
+      if (!schema.success || !step.binding
+        && !validateExecutionRunProfileResult(input, { kind: 'json', schema: schema.data }).ok) return false;
+      const projection = projectTargetActionApprovalInput(input, contract.secretInputPaths);
+      return projection !== null && projection.confidentialPaths.length === 0;
+    });
+  }
+  const spec = getActionSpec(actionId.data);
+  if (spec.approvalInputCustody === 'live_only') return false;
+  // Deferred operands cannot satisfy the concrete Action schema yet. The Run
+  // owner resolves them before ordinary preparation validates the full input.
+  if (step.binding?.kind === 'deployment_sha') {
+    // The canonical binding schema validates fixed operands before the Run
+    // supplies its admitted SHA and originating request key.
+    if (!WorkflowApprovedOperationStepV1Schema.safeParse(step).success) return false;
+  } else if (step.binding?.kind !== 'producer_result') {
+    const parsed = spec.inputSchema.safeParse(step.input);
+    if (!parsed.success || !sameStrictJsonValue(parsed.data, step.input)) return false;
+  }
+  const projection = projectTargetActionApprovalInput(step.input,
+    (spec.inputHints?.fields ?? []).filter(field => field.widget === 'secret').map(field => field.path));
+  return projection !== null && projection.confidentialPaths.length === 0;
+}
+export type WorkflowApprovedOperationNativeAccountV1 = Readonly<{
+  accountId: string;
+  serverId: string;
+  isCurrent: () => Promise<boolean>;
+}>;
+export async function prepareWorkflowApprovedOperation(params: Readonly<{
+  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  context: ActionExecutorContext;
+  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
+  /** The Run materializer's admitted declarations, never authored Action JSON. */
+  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
+}>): Promise<WorkflowApprovedOperationV1> {
+  const { context, parent } = params;
+  const proof = context.presentUserApproval;
+  let accountId: string | null = null;
+  if (proof && context.approvedActionReplay && context.approvedActionReplay.artifactId === proof.artifactId
+    && proof.actionId === parent.actionId && proof.requestId === context.actionRequestId
+    && proof.inputDigest === computeActionInputApprovalDigestV1(parent.actionId, parent.input)
+    && proof.decidingAccountId) accountId = proof.decidingAccountId;
+  if (!accountId && proof?.decidingAccountId && proof.decidingAccountId === context.runtimeAccountId
+    && (!params.nativeAccount || params.nativeAccount.accountId === proof.decidingAccountId
+      && params.nativeAccount.serverId === context.serverId)) {
+    const child = readHostReviewedChildOperationV1(context, parent.actionId, parent.input);
+    // The issuer admits the exact child; durable authoring retains the person
+    // who reviewed its original parent, not a fabricated child decision.
+    if (child && isHostAdmittedReviewedChildPolicyV1(child, parent.actionId, parent.input)
+      && proof.actionId === child.parent.actionId
+      && proof.inputDigest === computeActionInputApprovalDigestV1(proof.actionId, child.parent.input)) {
+      accountId = proof.decidingAccountId;
+    }
+  }
+  if (!accountId) {
+    const authorization = context.externalActionExecutionAuthorization;
+    const binding = authorization?.binding;
+    const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
+    const projection = authorization?.requesterAccountProjection;
+    if (context.authority === 'present_user' && context.actionCaller?.kind === 'host'
+      && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+      && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
+      && binding?.actionId === parent.actionId && binding.requestId === context.actionRequestId
+      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
+      && requesterAccountId && projection?.accountId === requesterAccountId && await projection.isCurrent()) {
+      accountId = requesterAccountId;
+    }
+  }
+  const nativeAccount = params.nativeAccount;
+  const savedBy = artifactSavedByFromActionContextV1(context);
+  if (!accountId && nativeAccount
+    && (parent.actionId === 'workflow.trigger.add' || parent.actionId === 'workflow.trigger.update'
+      || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update')
+    && context.authority === 'present_user' && context.actionCaller?.kind === 'host'
+    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+    && typeof context.actionRequestId === 'string' && context.actionRequestId.length > 0
+    && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+    && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
+    && !context.presentUserApproval && !context.approvedActionReplay
+    && savedBy?.kind === 'person' && savedBy.accountId === nativeAccount.accountId
+    && context.runtimeAccountId === nativeAccount.accountId && context.serverId === nativeAccount.serverId
+    && await nativeAccount.isCurrent()) accountId = nativeAccount.accountId;
+  if (!accountId || !hasDurableWorkflowApprovalInput(parent)
+    || params.steps.some(step => !hasDurableWorkflowApprovalInput(step, params.materializedLeaves))) {
+    throw workflowError('approval_required');
+  }
+  return structuredClone(WorkflowApprovedOperationV1Schema.parse({
+    parent, approvedBy: { accountId }, steps: params.steps,
+  }));
+}
+export function bindWorkflowApprovedOperationSteps(params: Readonly<{
+  operation: WorkflowApprovedOperationV1;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
+}>): WorkflowApprovedOperationV1 {
+  const operation = WorkflowApprovedOperationV1Schema.parse(params.operation);
+  if (params.steps.some(step => {
+    const native = ActionIdSchema.safeParse(step.actionId);
+    if (native.success && native.data !== 'action.invoke') return !hasDurableWorkflowApprovalInput(step);
+    // Preparation may add defaults or resolve producer operands. Select the
+    // original reviewed fixed operands before reading their frozen declaration.
+    const admitted = operation.steps.filter(candidate => candidate.actionId === step.actionId
+      && Object.entries(candidate.input).every(([field, value]) => sameStrictJsonValue(value, step.input[field])));
+    return admitted.length === 0 || admitted.some(candidate =>
+      !hasDurableWorkflowApprovalInput(step, params.materializedLeaves, candidate));
+  })) throw workflowError('approval_required');
+  return structuredClone(WorkflowApprovedOperationV1Schema.parse({ ...operation, steps: params.steps }));
+}
+export async function prepareWorkflowApprovedOperationSnapshot(params: Readonly<{
+  snapshot: WorkflowAcceptedSnapshotV1;
+  parent: Readonly<{ actionId: ActionId; input: WorkflowApprovedOperationV1['parent']['input'] }>;
+  steps: readonly WorkflowApprovedOperationV1['steps'][number][];
+  context: ActionExecutorContext;
+  nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
+}>): Promise<WorkflowAcceptedSnapshotV1> {
+  return { ...params.snapshot, approvedOperation: await prepareWorkflowApprovedOperation({ ...params,
+    materializedLeaves: params.snapshot.materializedLeaves }) };
+}
+
+export { matchesApprovedOperationStepV1 } from '../approvedOperationV1.js';

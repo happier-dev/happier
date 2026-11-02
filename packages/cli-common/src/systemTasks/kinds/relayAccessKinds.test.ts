@@ -1,377 +1,125 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import type { RelayAccessConfig, RelayAccessProvider } from '../../relayAccess/types.js';
-import { RelayAccessConfigV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
-import { getRelayAccessProvider } from '../../relayAccess/registry.js';
+import { describe, expect, it } from 'vitest';
+import type { RelayAccessConfig, RelayAccessCommandRunner } from '../../relayAccess/types.js';
+import { RelayAccessTaskSnapshotV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
+import { getRelayAccessProvider, createBuiltinRelayAccessSelection as selection } from '../../relayAccess/registry.js';
+import { TailscaleCommandError } from '../../tailscale/index.js';
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
-
 import {
-  createRelayAccessConfigureTaskKind,
-  createRelayAccessDisableTaskKind,
-  createRelayAccessStatusTaskKind,
-  parseRelayAccessConfigureParams,
-  redactRelayAccessParams,
+  createRelayAccessConfigureTaskKind, createRelayAccessDisableTaskKind,
+  createRelayAccessStatusTaskKind, parseRelayAccessConfigureParams,
 } from './relayAccessKinds.js';
 
+const target = { kind: 'local' } as const;
+const noPrompt = async (): Promise<never> => { throw new Error('Relay access should not prompt'); };
+const accountRefs = [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount',
+  account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' } } }] as const;
+
 describe('relay access shared system task kinds', () => {
-  it.each(['status', 'configure'] as const)('returns a credential-free terminal %s snapshot from the real LAN provider', async (operation) => {
-    const config = {
-      providerId: 'lan',
-      url: 'https://user:password@relay.example.test:8443/relay?route=office#status',
-    } as const;
-    let persistedConfig: RelayAccessConfig = config;
-    const deps = {
-      getProvider: getRelayAccessProvider,
-      createExecutionContext: () => ({ env: {}, upstreamUrl: null }),
-    };
+  it.each(['status', 'configure'] as const)('returns a credential-free terminal %s snapshot without changing persisted LAN input', async operation => {
+    const config = selection('lan', { url: 'https://user:password@relay.example.test:8443/relay?token=relay-query-secret#relay-fragment-secret' });
+    let persisted = config;
+    const deps = { getProvider: getRelayAccessProvider, createExecutionContext: () => ({ env: {}, upstreamUrl: null }) };
     const kind = operation === 'status'
-      ? createRelayAccessStatusTaskKind({ ...deps, readConfig: async () => persistedConfig })
-      : createRelayAccessConfigureTaskKind({ ...deps, writeConfig: async ({ config: next }) => {
-        persistedConfig = next;
-      } });
+      ? createRelayAccessStatusTaskKind({ ...deps, readConfig: async () => persisted })
+      : createRelayAccessConfigureTaskKind({ ...deps, writeConfig: async ({ config: next }) => { persisted = next; } });
     const taskKind = `relay.access.${operation}.v1`;
     const runner = createSystemTasksRunner({ kinds: { [taskKind]: kind } });
-
-    await runner.start({
-      taskId: 'relay-status-credentials',
-      kind: taskKind,
-      params: operation === 'status'
-        ? { target: { kind: 'local' } }
-        : { target: { kind: 'local' }, providerId: 'lan', config },
-    });
-
-    expect(await runner.wait({ taskId: 'relay-status-credentials' })).toEqual({
-      protocolVersion: 1,
-      taskId: 'relay-status-credentials',
-      ok: true,
-      data: {
-        configured: true,
-        providerId: 'lan',
-        status: {
-          state: 'enabled',
-          shareUrl: 'https://relay.example.test:8443/relay?route=office#status',
-          details: null,
-        },
-      },
-    });
-    expect(persistedConfig).toEqual(config);
+    await runner.start({ taskId: 'lan', kind: taskKind,
+      params: operation === 'status' ? { target } : { target, config } });
+    const result = await runner.wait({ taskId: 'lan' });
+    expect(result).toEqual({ protocolVersion: 1, taskId: 'lan', ok: true, data: {
+      configured: true, providerId: 'lan',
+      selection: selection('lan', { url: 'https://relay.example.test:8443/relay' }),
+      status: { state: 'enabled', shareUrl: 'https://relay.example.test:8443/relay', details: null },
+    } });
+    if (result?.ok) expect(RelayAccessTaskSnapshotV1Schema.safeParse(result.data).success).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('password');
+    expect(persisted).toEqual(config);
   });
 
-  it('preserves task config normalization across the portable Action config variants', () => {
-    for (const config of [
-      { providerId: 'localOnly' },
-      { providerId: 'lan', url: ' http://localhost:3000 ' },
-      { providerId: 'lan', url: ' relay-host:3000 ' },
-      { providerId: 'tailscaleServe' },
-      { providerId: 'tailscaleFunnel' },
-      { providerId: 'cloudflareNamed', hostname: ' relay.example.test ', token: ' tunnel-token ' },
-    ]) {
-      const parsed = parseRelayAccessConfigureParams({ target: { kind: 'local' }, providerId: config.providerId, config });
-      expect(RelayAccessConfigV1Schema.parse(config)).toEqual(parsed.config);
+  it('admits descriptor-owned configuration and exact references, refusing legacy identities and raw values', () => {
+    for (const config of [selection('localOnly'), selection('lan', { url: 'http://localhost:3000' }),
+      selection('tailscaleServe'), selection('tailscaleFunnel'),
+      selection('cloudflareNamed', { hostname: 'relay.example.test' }, [...accountRefs])]) {
+      expect(parseRelayAccessConfigureParams({ target, config }).config).toEqual(config);
     }
+    for (const config of [{ providerId: 'tailscaleServe' },
+      { provider: { kind: 'builtin', id: 'cloudflareNamed' }, config: { hostname: 'relay.example.test', token: 'private-token' }, credentialRefs: [] },
+      { provider: { kind: 'builtin', id: 'lan' }, config: { url: 'https://relay.test', hostname: 'wrong-field' }, credentialRefs: [] }]) {
+      expect(() => parseRelayAccessConfigureParams({ target, config })).toThrow();
+    }
+    expect(() => parseRelayAccessConfigureParams({ target, providerId: 'lan',
+      config: selection('lan', { url: 'https://relay.test' }) })).toThrow();
   });
 
-  it('parses cloudflare named-tunnel config and redacts the token field', () => {
-    const parsed = parseRelayAccessConfigureParams({
-      target: { kind: 'local' },
-      providerId: 'cloudflareNamed',
-      config: {
-        hostname: 'relay.example.test',
-        token: 'super-secret',
-      },
-    });
-
-    expect(parsed.providerId).toBe('cloudflareNamed');
-    expect(parsed.config).toEqual({
-      providerId: 'cloudflareNamed',
-      hostname: 'relay.example.test',
-      token: 'super-secret',
-    });
-    expect(parsed.upstreamUrl).toBeNull();
-
-    expect(redactRelayAccessParams(parsed as unknown as Record<string, unknown>)).toEqual({
-      target: { kind: 'local' },
-      upstreamUrl: null,
-      providerId: 'cloudflareNamed',
-      config: {
-        providerId: 'cloudflareNamed',
-        hostname: 'relay.example.test',
-      },
-    });
-  });
-
-  it('status kind normalizes provider output and redacts sensitive details', async () => {
-    const abortController = new AbortController();
-    const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
-      env: process.env,
-      upstreamUrl: params.upstreamUrl,
-    }));
-    const status = vi.fn(async () => ({
-      state: 'enabled',
-      shareUrl: 'https://relay.example.test',
-      details: {
-        token: 'super-secret',
-        ok: true,
-      },
-    } as const));
-    const provider: RelayAccessProvider = {
-      descriptor: {
-        id: 'cloudflareNamed',
-        title: 'Cloudflare',
-        exposure: 'public',
-        prerequisites: [],
-      },
-      status,
-    };
-
-    const readConfig = vi.fn(async () => ({
-      providerId: 'cloudflareNamed',
-      hostname: 'relay.example.test',
-      token: 'super-secret',
-    } as const));
-
-    const kind = createRelayAccessStatusTaskKind({
-      readConfig,
-      getProvider: () => provider,
-      createExecutionContext,
-    });
-
-    const events: unknown[] = [];
-    const result = await kind.run({
-      params: {
-        target: { kind: 'local' },
-      },
-      signal: abortController.signal,
-      emit: (event) => {
-        events.push(event);
-      },
-      prompt: async () => {
-        throw new Error('relay access status should not prompt');
-      },
-    });
-
-    expect(events).toEqual([
-      {
-        type: 'progress',
-        stepId: 'relay.access.status.inspect',
-        message: 'Inspecting relay access configuration',
-      },
-      {
-        type: 'progress',
-        stepId: 'relay.access.status.check',
-        message: 'Checking relay access provider status',
-      },
-    ]);
-
-    expect(status).toHaveBeenCalledWith(expect.objectContaining({
-      signal: abortController.signal,
-    }));
-
-    expect(result).toEqual({
-      configured: true,
-      providerId: 'cloudflareNamed',
-      status: {
-        state: 'enabled',
-        shareUrl: 'https://relay.example.test',
-        details: {
-          ok: true,
-        },
-      },
-    });
-  });
-
-  it('configure kind persists the parsed config and returns a redacted status snapshot', async () => {
-    const abortController = new AbortController();
-    const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
-      env: process.env,
-      upstreamUrl: params.upstreamUrl,
-    }));
-    const configure = vi.fn(async () => ({ state: 'enabled', shareUrl: 'https://relay.example.test' } as const));
-    const provider: RelayAccessProvider = {
-      descriptor: {
-        id: 'cloudflareNamed',
-        title: 'Cloudflare',
-        exposure: 'public',
-        prerequisites: [],
-      },
-      configure,
-      status: () => ({
-        state: 'enabled',
-        shareUrl: 'https://relay.example.test',
-        details: {
-          token: 'super-secret',
-          ok: true,
-        },
-      }),
-    };
-
-    const writeConfig = vi.fn(async () => undefined);
-
+  it('reports desired Cloudflare references as unverified rather than inventing reachable service evidence', async () => {
+    const config = selection('cloudflareNamed', { hostname: 'relay.example.test' }, [...accountRefs]);
+    let persisted: RelayAccessConfig | null = null;
     const kind = createRelayAccessConfigureTaskKind({
-      writeConfig,
-      getProvider: () => provider,
-      createExecutionContext,
+      writeConfig: async ({ config: next }) => { persisted = next; },
+      getProvider: getRelayAccessProvider, createExecutionContext: () => ({ env: {}, upstreamUrl: null }),
     });
-
-    const result = await kind.run({
-      params: {
-        target: { kind: 'local' },
-        upstreamUrl: 'http://127.0.0.1:3005',
-        providerId: 'cloudflareNamed',
-        config: { hostname: 'relay.example.test', token: 'super-secret' },
-      },
-      signal: abortController.signal,
-      emit: () => {},
-      prompt: async () => {
-        throw new Error('relay access configure should not prompt');
-      },
-    });
-
-    expect(writeConfig).toHaveBeenCalledWith({
-      target: { kind: 'local' },
-      config: {
-        providerId: 'cloudflareNamed',
-        hostname: 'relay.example.test',
-        token: 'super-secret',
-      },
-    });
-    expect(configure).toHaveBeenCalledTimes(1);
-    expect(configure).toHaveBeenCalledWith(expect.objectContaining({
-      ctx: expect.objectContaining({
-        upstreamUrl: 'http://127.0.0.1:3005',
-      }),
-      signal: abortController.signal,
-    }));
-
-    expect(result).toEqual({
-      configured: true,
-      providerId: 'cloudflareNamed',
-      status: {
-        state: 'enabled',
-        shareUrl: 'https://relay.example.test',
-        details: {
-          ok: true,
-        },
-      },
-    });
+    const result = await kind.run({ params: { target, config }, emit: () => {}, prompt: noPrompt });
+    expect(result).toEqual({ configured: true, providerId: 'cloudflareNamed', selection: config,
+      status: { state: 'unknown', shareUrl: null, details: { reason: 'connector_verification_required' } } });
+    expect(persisted).toEqual(config);
   });
 
-  it('configure kind preserves approval responses from provider.configure without forcing a status refresh', async () => {
-    const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
-      env: process.env,
-      upstreamUrl: params.upstreamUrl,
-    }));
-    const provider: RelayAccessProvider = {
-      descriptor: {
-        id: 'tailscaleServe',
-        title: 'Tailscale Serve',
-        exposure: 'private',
-        prerequisites: [],
-      },
-      configure: async () => ({
-        state: 'needs_auth',
-        details: {
-          approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
-        },
-      }),
-      status: () => {
-        throw new Error('relay access status should not run when configure already returned an approval response');
-      },
+  it('preserves native approval outcomes through the real Tailscale codec and command budget', async () => {
+    const config = selection('tailscaleServe');
+    const controller = new AbortController();
+    let persisted: RelayAccessConfig | null = null;
+    const requests: Parameters<RelayAccessCommandRunner>[0][] = [];
+    // The only fake is the OS command boundary: native status text and command failure.
+    const runCommand: RelayAccessCommandRunner = async request => {
+      requests.push(request);
+      const base = { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' };
+      if (request.args.join(' ') === 'serve status') return base;
+      if (request.args.join(' ') === 'serve --bg http://127.0.0.1:3005') {
+        throw new TailscaleCommandError('approval required', { ...base, exitCode: 1,
+          stderr: 'To enable Serve, visit https://login.tailscale.com/f/serve?node=node-123' });
+      }
+      throw new Error('Unexpected native command');
     };
-
-    const writeConfig = vi.fn(async () => undefined);
-
     const kind = createRelayAccessConfigureTaskKind({
-      writeConfig,
-      getProvider: () => provider,
-      createExecutionContext,
+      writeConfig: async ({ config: next }) => { persisted = next; },
+      getProvider: getRelayAccessProvider,
+      createExecutionContext: ({ upstreamUrl }) => ({ env: { HAPPIER_TAILSCALE_BIN: '/test/tailscale' }, upstreamUrl, runCommand }),
     });
-
-    const result = await kind.run({
-      params: {
-        target: { kind: 'local' },
-        upstreamUrl: 'http://127.0.0.1:3005',
-        providerId: 'tailscaleServe',
-        config: { providerId: 'tailscaleServe' },
-      },
-      emit: () => {},
-      prompt: async () => {
-        throw new Error('relay access configure should not prompt');
-      },
-    });
-
-    expect(writeConfig).toHaveBeenCalledWith({
-      target: { kind: 'local' },
-      config: {
-        providerId: 'tailscaleServe',
-      },
-    });
-    expect(result).toEqual({
-      configured: true,
-      providerId: 'tailscaleServe',
-      status: {
-        state: 'needs_auth',
-        shareUrl: null,
-        details: {
-          approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
-        },
-      },
-    });
+    const result = await kind.run({ params: { target, config, upstreamUrl: 'http://127.0.0.1:3005' },
+      signal: controller.signal, emit: () => {}, prompt: noPrompt });
+    expect(result).toEqual({ configured: true, providerId: 'tailscaleServe', selection: config,
+      status: { state: 'needs_auth', shareUrl: null, details: {
+        reason: 'tailscale_serve_approval_required', approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123' } } });
+    expect(persisted).toEqual(config);
+    expect(requests.every(request => request.signal === controller.signal && Number(request.timeoutMs) > 0)).toBe(true);
   });
 
-  it('disable kind clears persisted config and returns a disabled snapshot', async () => {
-    const abortController = new AbortController();
-    const createExecutionContext = vi.fn((params: { upstreamUrl: string | null; target: unknown }) => ({
-      env: process.env,
-      upstreamUrl: params.upstreamUrl,
-    }));
-    const disable = vi.fn(async () => undefined);
-    const provider: RelayAccessProvider = {
-      descriptor: {
-        id: 'tailscaleServe',
-        title: 'Tailscale Serve',
-        exposure: 'private',
-        prerequisites: [],
-      },
-      status: () => ({ state: 'enabled', shareUrl: 'https://machine.tailnet.ts.net' }),
-      disable,
+  it.each([false, true])('clears configuration only after the native disable succeeds (refused=%s)', async refused => {
+    const config = selection('tailscaleServe');
+    let persisted: RelayAccessConfig | null = config;
+    const controller = new AbortController();
+    const runCommand: RelayAccessCommandRunner = async request => {
+      expect(request.args).toEqual(['serve', '--https=443', '--set-path=/', 'off']);
+      expect(request.signal).toBe(controller.signal);
+      const result = { command: request.command, args: request.args, exitCode: refused ? 1 : 0,
+        stdout: '', stderr: refused ? 'permission denied' : '' };
+      if (refused) throw new TailscaleCommandError('permission denied', result);
+      return result;
     };
-    const readConfig = vi.fn(async () => ({ providerId: 'tailscaleServe' } as const));
-    const writeConfig = vi.fn(async () => undefined);
     const kind = createRelayAccessDisableTaskKind({
-      readConfig,
-      writeConfig,
-      getProvider: () => provider,
-      createExecutionContext,
+      readConfig: async () => persisted, writeConfig: async ({ config: next }) => { persisted = next; },
+      getProvider: getRelayAccessProvider,
+      createExecutionContext: () => ({ env: { HAPPIER_TAILSCALE_BIN: '/test/tailscale' }, upstreamUrl: null, runCommand }),
     });
-
-    const result = await kind.run({
-      params: {
-        target: { kind: 'local' },
-      },
-      signal: abortController.signal,
-      emit: () => {},
-      prompt: async () => {
-        throw new Error('relay access disable should not prompt');
-      },
-    });
-
-    expect(writeConfig).toHaveBeenCalledWith({
-      target: { kind: 'local' },
-      config: null,
-    });
-    expect(disable).toHaveBeenCalledTimes(1);
-    expect(disable).toHaveBeenCalledWith(expect.objectContaining({
-      signal: abortController.signal,
-    }));
-    expect(result).toEqual({
-      configured: false,
-      providerId: null,
-      status: {
-        state: 'disabled',
-        shareUrl: null,
-        details: null,
-      },
-    });
+    const pending = kind.run({ params: { target }, signal: controller.signal, emit: () => {}, prompt: noPrompt });
+    if (refused) {
+      await expect(pending).rejects.toThrow('permission denied');
+      expect(persisted).toEqual(config);
+    } else {
+      expect(await pending).toEqual({ configured: false, providerId: null, selection: null,
+        status: { state: 'disabled', shareUrl: null, details: null } });
+      expect(persisted).toBeNull();
+    }
   });
 });

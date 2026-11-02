@@ -8,7 +8,9 @@ import type { AutomationDefinitionListResponse } from '../automations/automation
 import type { MachinePoolListOutputV1 } from './pools/v1.js';
 
 export const MachineReferenceV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
-  kind: z.enum(['board', 'profile', 'machine_pool', 'workflow_assignment', 'automation_assignment']),
+deploymentRoles: z.optional(z.readonly(z.array(z.enum(['runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge'])))),
+
+  kind: z.enum(['board', 'profile', 'machine_pool', 'workflow_assignment', 'automation_assignment', 'deployment_environment']),
   id: z.string().check(z.trim(), z.minLength(1)), name: z.string(),
 })));
 export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
@@ -138,3 +140,15 @@ export async function readMachineReferenceCensusV1(input: Readonly<{
   return { homeId: input.homeId, machineId: input.machineId, coverage: unavailable.size === 0 ? 'complete' : 'partial', references: families.flat(),
     unavailable: (['artifacts', 'profiles', 'pools', 'assignments'] as const).filter(source => unavailable.has(source)) };
 }
+
+export const MachineDeploymentReferencesPageV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
+  coverage: z.enum(['complete', 'partial']), references: z.readonly(z.array(MachineReferenceV1Schema)), nextCursor: z.nullable(z.string()),
+})));
+
+export const MachineDeploymentReferencesInputV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.string().check(z.trim(), z.minLength(1)),
+  cursor: z.optional(z.string().check(z.minLength(1))),
+})));
+export type MachineDeploymentReferencesInputV1 = z.infer<typeof MachineDeploymentReferencesInputV1Schema>;
+export type MachineDeploymentReferencesPageV1 = z.infer<typeof MachineDeploymentReferencesPageV1Schema>;

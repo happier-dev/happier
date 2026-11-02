@@ -1,3 +1,4 @@
+import { DeploymentCreationDefaultsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
 export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, type IdleCompactionPreference } from './idleCompactionPreferences.js';
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
@@ -1335,7 +1336,15 @@ const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
     sessionTmuxTmpDir: accountPreference(z.nullable(accountBoundedString(16 * 1024)), null, 'session terminal defaults', 16 * 1024),
     installablesPolicyByMachineId: accountPolicy(AccountInstallablePoliciesByMachineIdSchema, {}, 'installable policy', 64 * 1024),
 } as const;
+export const accountDeploymentSettingDefinitions = {
+    deploymentDefaultsV1: accountCatalogDefinition(DeploymentCreationDefaultsV1Schema, {}, {
+        semanticDomain: 'deployment creation defaults', classification: 'preference',
+        maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
+    }),
+} as const;
+
 const ACCOUNT_SETTING_CANDIDATES = {
+    ...accountDeploymentSettingDefinitions,
     ...ACCOUNT_CORE_CATALOG_DEFINITIONS,
     ...ACCOUNT_DISPLAY_CATALOG_DEFINITIONS,
     ...ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS,

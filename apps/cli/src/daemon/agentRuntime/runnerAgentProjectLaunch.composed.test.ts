@@ -138,7 +138,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => invocation.disposeProjectAgentLaunch());
   const executable = { kind: 'systemTool' as const, id: 'fixture.agent' };
-  const service = createStablePluginExecService({ allowedExecutables: [executable], signal, isOccurrenceCurrent: () => true,
+  const service = createStablePluginExecService({  signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: '/installed/agent', args: ['installed-agent'] }), resolvePath: async () => cwd,
     prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch });
   const launch = () => authorizePluginExecLaunchForHost(service, { executable, cwd, args: ['--resume'], env: { ORIGINAL: 'host' } },
@@ -146,7 +146,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   const missingCustody = createRunnerAgentProjectLaunchInvocation({ cwd, signal, isCurrent: () => true,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => missingCustody.disposeProjectAgentLaunch());
-  const missingCustodyService = createStablePluginExecService({ allowedExecutables: [executable], signal, isOccurrenceCurrent: () => true,
+  const missingCustodyService = createStablePluginExecService({  signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
     prepareAgentNativeLaunch: missingCustody.prepareAgentNativeLaunch });
   const scope = { accountId: f.bootstrap.attribution.accountId, machineId: 'machine', sessionId: 'session' };
@@ -161,7 +161,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
           operation: operation satisfies ProjectSetupOperationContext,
           resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
         onTestFinished(() => retained.disposeProjectAgentLaunch());
-        const retainedService = createStablePluginExecService({ allowedExecutables: [executable], signal: operation.signal,
+        const retainedService = createStablePluginExecService({  signal: operation.signal,
           isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => cwd,
           prepareAgentNativeLaunch: retained.prepareAgentNativeLaunch });
         const authorize = () => authorizePluginExecLaunchForHost(retainedService, { executable, cwd },
@@ -218,7 +218,7 @@ it('retains a known host executable-resolution refusal before native input dispa
   onTestFinished(() => controller.abort());
   let executableDispatches = 0;
   const exec = createStablePluginExecService({
-    signal: controller.signal, isOccurrenceCurrent: () => true, allowedExecutables: [],
+    signal: controller.signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => { executableDispatches++; return { command: process.execPath }; },
     resolvePath: async () => process.cwd(),
   });

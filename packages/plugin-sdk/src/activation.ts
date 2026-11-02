@@ -58,6 +58,7 @@ import type {
 import type { PluginUiIconTokenV1 } from './ui.js';
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { PluginCaptureSourceRuntime } from './captureSources.js';
+import type { PluginSecretSourceRuntimeV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterRuntimeV1 } from './projectNativeAdapters.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from './entityDragDrop.js';
 import type { PluginWorkItemsRuntime } from './workItems.js';
@@ -409,6 +410,7 @@ export interface PluginApi {
     readonly resources: ResourcesRegistrationApi;
     readonly backgroundServices: BackgroundServicesRegistrationApi;
     readonly captureSources: { register(id: string, runtime: PluginCaptureSourceRuntime): void };
+    readonly secretSources: { register(id: string, runtime: PluginSecretSourceRuntimeV1): void };
     readonly projectNativeAdapters: { register(id: string, runtime: PluginProjectNativeAdapterRuntimeV1): void };
 }
 

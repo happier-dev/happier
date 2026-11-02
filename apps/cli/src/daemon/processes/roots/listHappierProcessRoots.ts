@@ -188,3 +188,9 @@ export async function readProcessOwnershipBootTimeMs(platform: NodeJS.Platform =
         return value === undefined ? undefined : Number(value) * 1000;
     } catch { return undefined; }
 }
+
+export type NativeContainerProcessSource = Readonly<{
+    owner: Extract<ProcessOwnerRef, { kind: 'container' }>; pid: number;
+    requesterWorkAttributionV1?: HappierProcessRoot['requesterWorkAttributionV1'];
+    workspacePath?: string;
+}>;

@@ -1,3 +1,4 @@
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { createHash } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1825,8 +1826,7 @@ describe('workspace sync target authority', () => {
             const payload = transferId === request.operationId
               ? exported.payloadSource
               : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: {} });
-            if (payload.kind === 'buffer') await writeFile(destinationPath, payload.payload);
-            else await copyFile(payload.filePath, destinationPath);
+            await writeTransferPayloadSourceToFile({ source: payload, destinationPath });
           },
           release: async () => await exported.payloadSource.dispose?.(),
         };
@@ -1903,8 +1903,7 @@ describe('workspace sync target authority', () => {
             const payload = transferId === request.operationId
               ? exported.payloadSource
               : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: {} });
-            if (payload.kind === 'buffer') await writeFile(destinationPath, payload.payload);
-            else await copyFile(payload.filePath, destinationPath);
+            await writeTransferPayloadSourceToFile({ source: payload, destinationPath });
           },
           release: async () => await exported.payloadSource.dispose?.(),
         };

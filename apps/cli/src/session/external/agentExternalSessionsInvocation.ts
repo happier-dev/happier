@@ -121,11 +121,12 @@ function boundManagedEndpointResponseBody(
 ): Awaited<ReturnType<AgentExternalSessionsManagedEndpointRead>> {
     if (maxResponseBytes === undefined || response.body === null) return response;
 
-    let reader: ReadableStreamDefaultReader<Uint8Array> | null = response.body.getReader();
+    type ManagedEndpointReader = ReturnType<NonNullable<typeof response.body>['getReader']>;
+    let reader: ManagedEndpointReader | null = response.body.getReader();
     let settled = false;
     let readerReleased = false;
     let receivedBytes = 0;
-    const releaseReader = (activeReader: ReadableStreamDefaultReader<Uint8Array>): void => {
+    const releaseReader = (activeReader: ManagedEndpointReader): void => {
         if (reader === activeReader) reader = null;
         if (readerReleased) return;
         readerReleased = true;

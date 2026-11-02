@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -45,7 +45,7 @@ export type CurrentAccountMachineInventoryItem = Readonly<{
 export type CurrentAccountMachineTargetResolution =
   | Readonly<{ kind: 'selected'; target: CurrentAccountMachineTarget }>
   | Readonly<{ kind: 'selection_required'; candidates: readonly CurrentAccountMachineTarget[] }>
-  | Readonly<{ kind: 'unavailable'; code: string; message: string }>;
+  | Readonly<{ kind: 'unavailable'; code: string; message: string; details?: Readonly<{ machineIds: readonly string[] }> }>;
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -74,6 +74,9 @@ export async function listCurrentAccountMachines(params: Readonly<{
   effectActionId?: string;
   serverHttpBaseUrl?: string;
   signal?: AbortSignal;
+  /** Host selection consumes identity, current access and presence, never private metadata. */
+  projection?: 'hostFacts';
+  machineIds?: readonly string[];
 }>): Promise<readonly CurrentAccountMachineInventoryItem[]> {
   params.signal?.throwIfAborted();
   try {
@@ -85,28 +88,37 @@ export async function listCurrentAccountMachines(params: Readonly<{
       || normalizeServerHttpBaseUrl(projection.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(serverHttpBaseUrl)
       || !await projection.isCurrent())) throw new Error('Requester Machine inventory authority is unavailable');
     if (!params.authorization && !params.token) throw new Error('Machine inventory authentication is unavailable');
+    const demandedIds = params.machineIds === undefined ? undefined : new Set(params.machineIds);
+    // Existing requester/API-token grants authorize the Account roster. Ordinary
+    // stored credentials can use the existing exact read for a reviewed host.
+    const exactId = params.credentials && !params.authorization && demandedIds?.size === 1 ? [...demandedIds][0] : undefined;
+    const path = exactId === undefined ? '/v1/machines' : `/v1/machines/${encodeURIComponent(exactId)}`;
     const headers = projection ? await projection.createRequestHeaders({
-      effectActionId: params.effectActionId ?? params.authorization!.binding.actionId, method: 'GET', path: '/v1/machines',
+      effectActionId: params.effectActionId ?? params.authorization!.binding.actionId, method: 'GET', path,
       ...(params.signal ? { signal: params.signal } : {}),
     }) : { Authorization: `Bearer ${params.token}` };
     if (!headers) throw new Error('Requester Machine inventory authority is unavailable');
-    const response = await axios.get<unknown>(`${serverHttpBaseUrl}/v1/machines`, {
-      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers },
+    const response = await axios.get<unknown>(`${serverHttpBaseUrl}${path}`, {
+      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers,
+        ...(params.projection === 'hostFacts' ? { Accept: 'application/json;happier-machine-projection=host-facts' } : {}) },
       timeout: 20_000,
+      ...(exactId === undefined ? {} : { validateStatus: (status: number) => status === 404 || status >= 200 && status < 300 }),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     params.signal?.throwIfAborted();
     if (projection && !await projection.isCurrent()) throw new Error('Requester Machine inventory authority retired');
-    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(response.data);
+    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(exactId === undefined ? response.data
+      : response.status === 404 ? [] : [z.object({ machine: ACCOUNT_MACHINE_ROW_SCHEMA }).parse(response.data).machine]);
     if (!inventory.success) throw new Error('invalid machine inventory');
+    const rows = demandedIds === undefined ? inventory.data : inventory.data.filter(row => demandedIds.has(row.id));
     let accountMode: Promise<'plain' | 'e2ee' | 'unknown'> | undefined;
     const readAccountMode = (credentials: StoredCredentials) => accountMode ??= readAccountEncryptionModeOnce({ request: () => axios.get(
       `${serverHttpBaseUrl}/v1/account/encryption`, { headers: { Authorization: `Bearer ${credentials.token}` },
         timeout: 20_000, ...(params.signal ? { signal: params.signal } : {}) },
     ) }).then(mode => mode.kind === 'resolved' ? mode.mode : 'unknown' as const).catch(() => 'unknown' as const);
-    const namedMachines = await Promise.all(inventory.data.map(async (row) => {
+    const namedMachines = await Promise.all(rows.map(async (row) => {
       let metadata: ReturnType<typeof StoredMachinePublishedMetadataV1Schema.parse> | undefined;
-      if (params.credentials && row.metadata && (!row.access || row.access.accessState === 'ready')) {
+      if (params.projection !== 'hostFacts' && params.credentials && row.metadata && (!row.access || row.access.accessState === 'ready')) {
         try {
           const declaredMode = row.access?.resourceMode ?? row.storageMode;
           const expectedAccountMode = declaredMode === 'plain' || declaredMode === 'e2ee' ? declaredMode : await readAccountMode(params.credentials);
@@ -122,7 +134,8 @@ export async function listCurrentAccountMachines(params: Readonly<{
         }
       }
       params.signal?.throwIfAborted();
-      const nameMetadata = metadata ?? (params.credentials ? null : readMachineNameMetadata(row.metadata));
+      const nameMetadata = params.projection === 'hostFacts' ? null
+        : metadata ?? (params.credentials ? null : readMachineNameMetadata(row.metadata));
       return {
         host: nameMetadata?.host,
         machine: {
@@ -132,12 +145,13 @@ export async function listCurrentAccountMachines(params: Readonly<{
           ...(metadata ? { platform: metadata.platform, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
           ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
           ...(row.access ? { access: row.access } : {}),
-          ...(row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
-          ...(row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
-          ...(row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),
+          ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
+          ...(params.projection === 'hostFacts' || row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
+          ...(params.projection === 'hostFacts' || row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),
         },
       };
     }));
+    if (params.projection === 'hostFacts') return namedMachines.map(({ machine }) => machine);
     const names = resolveMachineDisplayNameParts(namedMachines.map(({ host, machine }) => ({ id: machine.id, name: machine.label, host })));
     return namedMachines.map(({ machine }) => {
       const name = names.get(machine.id)!;
@@ -161,7 +175,7 @@ export async function listCurrentAccountAdministrationMachines(params: Parameter
     const resolution = await resolveCurrentAccountMachineTarget(params);
     return resolution.kind === 'selected' ? [resolution.target.machineId] : [];
   }
-  const machines = await listCurrentAccountMachines(params);
+  const machines = await listCurrentAccountMachines({ ...params, projection: 'hostFacts' });
   let pluginMachines: ReadonlySet<string> | undefined;
   if (params.requiredPluginId) {
     try {
@@ -239,7 +253,15 @@ export async function resolveCurrentAccountMachineTarget(params: Readonly<{
         && (!row.access || row.access.accessState === 'ready')
       ))
       .map((row) => ({ machineId: row.id, machineLabel: row.label }));
-    if (candidates.length === 0) return unavailable('no_current_machine', 'No current machine is available.');
+    if (candidates.length === 0) {
+      const currentMachines = inventory.filter(row => row.kind === 'persistent'
+        && row.revokedAt === null && row.replacedByMachineId === null);
+      if (currentMachines.every(row => !row.active)) return {
+        kind: 'unavailable', code: 'machine_offline', message: 'No active machine is available.',
+        details: { machineIds: currentMachines.map(row => row.id) },
+      };
+      return unavailable('no_current_machine', 'No current machine is available.');
+    }
     if (candidates.length > 1) return { kind: 'selection_required', candidates };
     return { kind: 'selected', target: candidates[0]! };
   } catch {

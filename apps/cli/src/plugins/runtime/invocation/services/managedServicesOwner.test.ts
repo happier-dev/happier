@@ -1,3 +1,4 @@
+import { readManagedServiceResponseJson, readManagedServiceResponseText } from '@/plugins/testkit/managedServiceResponse';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { Buffer } from 'node:buffer';
@@ -93,6 +94,8 @@ import { resolveProcessOwnerRequester } from '@/daemon/processes/ownership/resol
 import { projectMachineProcesses } from '@/daemon/processes/view/projectMachineProcesses';
 import { MachineProcessesAnswerV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import type { ProcessCensusSnapshot } from '@/processes/census/processCensus';
+import { createProjectNativeToolchainIoForHost } from './exec';
+
 
 type CredentialFileMaterializeInput = Parameters<
     ManagedServiceCredentialFileOwner['materialize']
@@ -179,7 +182,7 @@ describe('managed service requester process projection', () => {
             await service.waitUntilHealthy();
             const response = await service.request({ pathAndQuery: '/verdict' });
             expect(response.status).toBe(200);
-            expect(await new Response(response.body).json()).toEqual({
+            expect(await readManagedServiceResponseJson(response)).toEqual({
                 cwd: await realpath(directory), selection: identity === 'foreign' ? 'foreign-selected' : 'invocation-selected',
             });
         } finally {
@@ -245,7 +248,7 @@ describe('shared managed Provider physical Exec custody', () => {
             return { command: process.execPath };
         };
         const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: firstInvocation.signal,
+            signal: firstInvocation.signal,
             isOccurrenceCurrent: () => true, resolveExecutable: resolver,
             resolveManagedExecutable: resolver,
             resolvePath: async () => directory,
@@ -278,7 +281,7 @@ describe('shared managed Provider physical Exec custody', () => {
             await handle.waitUntilHealthy();
             const response = await handle.request({ pathAndQuery: '/pid' });
             expect(response.status).toBe(200);
-            const observed = Number(await new Response(response.body).text());
+            const observed = Number(await readManagedServiceResponseText(response));
             expect(Number.isInteger(observed) && observed > 0).toBe(true);
             return observed;
         };
@@ -308,7 +311,7 @@ describe('shared managed Provider physical Exec custody', () => {
             await first?.dispose();
             const response = await second.request({ pathAndQuery: '/v1/models' });
             expect(response.status).toBe(200);
-            expect(await new Response(response.body).text()).toBe('/v1/models');
+            expect(await readManagedServiceResponseText(response)).toBe('/v1/models');
             await second.dispose();
             expect(await waitForProcessExit(pid)).toBe(true);
             completed = true;
@@ -649,7 +652,7 @@ function createProjectLifecycleInput(options: Readonly<{
                     environment: {
                         selection: { kind: 'host' }, root: workspace.rootPath,
                         platform: process.platform,
-                        io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                        io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
                     },
                 },
                 launch: {
@@ -746,9 +749,9 @@ describe('managed-services SVC09 owner', () => {
             await service.waitUntilHealthy();
             const response = await service.request({ pathAndQuery: '/v1/models' });
             expect(response.status).toBe(200);
-            expect(await new Response(response.body).text()).toBe('/v1/models');
+            expect(await readManagedServiceResponseText(response)).toBe('/v1/models');
             const processResponse = await service.request({ pathAndQuery: '/pid' });
-            const pid = Number(await new Response(processResponse.body).text());
+            const pid = Number(await readManagedServiceResponseText(processResponse));
             await service.dispose();
             if (!Number.isInteger(pid) || pid <= 0) throw new Error('Expected a physical Provider process');
             expect(await waitForProcessExit(pid)).toBe(true);
@@ -1115,7 +1118,7 @@ describe('managed-services SVC09 owner', () => {
         let admitted = true;
         const input = createProjectLifecycleInput({ isCurrent: () => admitted });
         const executable = { kind: 'systemTool', id: 'fixture.native-helper' } as const;
-        const helper = await createStablePluginExecService({ allowedExecutables: [executable], signal: new AbortController().signal,
+        const helper = await createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
             resolvePath: async () => input.cwd }).spawn({ executable, args: ['-e', 'setInterval(()=>{},1000)'] });
         const pid = readSupervisedPluginProcessIdForHost(helper);
@@ -1132,7 +1135,7 @@ describe('managed-services SVC09 owner', () => {
             const launch = await authorizeResolvedProjectExecLaunchForHost({ signal, assertCurrent() {},
                 projectLaunch: { status: 'ready', reviewedEffectDigest: input.specIdentity,
                     environment: { selection: { kind: 'host' }, root: input.cwd, platform: process.platform,
-                        io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                        io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
                 launch: { command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: input.cwd, env: {} } });
             // Current requester access changes after the real final authorizer
             // returned, before the owner can hand that tuple to its supervisor.
@@ -1498,7 +1501,7 @@ describe('managed-services SVC09 owner', () => {
                         selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
                         root: input.cwd,
                         platform: 'linux',
-                        io: createProjectNativeEnvironmentIoForHost({
+                        io: createProjectNativeToolchainIoForHost({
                             // Suspend only installed-tool resolution, a genuine OS boundary.
                             resolveTool: async () => {
                                 resolving = true;
@@ -7254,7 +7257,7 @@ describe('Project Local Services control composition', () => {
                 authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
                     signal, assertCurrent() {}, projectLaunch: { status: 'ready', reviewedEffectDigest: 'preview-web-effect',
                         environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
-                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                            io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
                     launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: workspace.rootPath, env: {} },
                 }),
             });
@@ -7322,7 +7325,7 @@ describe('Project Local Services control composition', () => {
                 authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
                     signal, assertCurrent() {}, projectLaunch: { status: 'ready', reviewedEffectDigest,
                         environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
-                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                            io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
                     launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: workspace.rootPath, env: {} },
                 }),
             });

@@ -49,9 +49,8 @@ export type HomeRuntimeRestartOutputV1 = z.output<typeof HomeRuntimeRestartOutpu
 export const HOME_RUNTIME_ACTION_INPUT_SCHEMAS_V1 = {
   'relay.access.status': Empty,
   'relay.access.configure': lazyZodSchema(() => z.strictObject({
-    providerId: z.enum(['localOnly', 'lan', 'tailscaleServe', 'tailscaleFunnel', 'cloudflareNamed']),
     config: RelayAccessConfigV1Schema, upstreamUrl: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
-  }).check(z.refine(input => input.providerId === input.config.providerId, { path: ['providerId'], message: 'Relay provider must match configuration' }))),
+  })),
   'relay.access.disable': Empty,
   'relay.runtime.status': RuntimeInput,
   'relay.runtime.install_or_update': RuntimeInput,

@@ -40,7 +40,7 @@ it('projects admitted language-server custody through the real requester resolve
         }] });
         configureLanguageServerHost({ readCurrentContributionRegistry: () => registry, async openProtocol(input) {
             // Only the executable/OS boundary is supplied; native custody and Processes stay real.
-            const exec = createStablePluginExecService({ allowedExecutables: [input.definition.executable],
+            const exec = createStablePluginExecService({
                 signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => ({ command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log] }),
                 resolvePath: async () => rootPath });

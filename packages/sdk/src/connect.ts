@@ -668,9 +668,9 @@ function createClient(
       ? (credential.encryption || MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined)
       : requireExternalActionRequestId(options.requestId);
     const requiresReplySupport = requestInput !== null && typeof requestInput === 'object'
-      && 'reply' in requestInput && requestInput.reply !== undefined && requestInput.reply !== 'none';
+      && 'reply' in requestInput && 'reply' in requestInput && 'reply' in requestInput && requestInput.reply !== undefined && requestInput.reply !== 'none';
     const requiresStructuredInputSupport = requestInput !== null && typeof requestInput === 'object'
-      && 'structuredInput' in requestInput && requestInput.structuredInput !== undefined;
+      && 'structuredInput' in requestInput && 'structuredInput' in requestInput && 'structuredInput' in requestInput && requestInput.structuredInput !== undefined;
     if (actionId === 'session.message.send' && (requiresReplySupport || requiresStructuredInputSupport)) {
       const parsed = PUBLIC_ACTION_INPUT_SCHEMAS['session.message.send'].safeParse(requestInput);
       if (!parsed.success) throw new HappierActionError('invalid_parameters', 'Invalid Session message input.', undefined, requestId);

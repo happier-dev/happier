@@ -1,3 +1,4 @@
+import { PluginListFilterFieldV1Schema } from '../../../collections/filter/pluginListFilterFieldV1.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -799,3 +800,12 @@ export const PluginUiContributionsV2Schema = lazyZodSchema(() => z._default(z.st
   });
 })), { views: [], renderers: [], settingsGroups: [], settingsPages: [], translations: [] }));
 export type PluginUiContributionsV2 = z.infer<typeof PluginUiContributionsV2Schema>;
+
+export const PluginCollectionListExtensionV1Schema = lazyZodSchema(() => z.strictObject({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  entity: z.union([z.literal('sessionWork'), z.literal('workflow'), z.literal('discussion'),
+    z.templateLiteral(['plugin:', z.string().check(z.minLength(1))])]),
+  filterFields: z.optional(z.array(PluginListFilterFieldV1Schema)),
+  rowMark: z.optional(z.strictObject({ fieldId: z.string().check(z.minLength(1)), slot: z.enum(['context', 'mark']) })),
+}));
+export type PluginCollectionListExtensionV1 = z.infer<typeof PluginCollectionListExtensionV1Schema>;

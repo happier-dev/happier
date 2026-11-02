@@ -1,3 +1,4 @@
+import type { WorkspaceProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceActionRequestV1, DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import type { ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -22,7 +23,7 @@ export type LocalServiceActionExecutionContext = Readonly<{
     actionContext: RuntimeActionExecuteArgs['context'];
     prepareStartAction?: (request: DaemonLocalServiceLauncherStartRequestV1, context: RuntimeActionExecuteArgs['context']) => Promise<ActionPrepareResult>;
 }>;
-export type RestartProjectManagedService = (request: LocalServiceActionRequestV1, handle: ProjectManagedServiceHandle,
+export type RestartProjectManagedService = (request: LocalServiceActionRequestV1, handle: WorkspaceProjectManagedServiceHandle,
     context: LocalServiceActionExecutionContext) => Promise<LocalServiceActionExecutionOutcome>;
 
 /** Exact retained-resource cleanup; serving/new-effect admission is a separate contract. */
@@ -75,13 +76,13 @@ export async function executeLocalServiceAction(input: Readonly<{
                 : { status: 'succeeded', undoKey: result.undoKey };
         }
         case 'stop_managed': {
-            if (input.target.kind !== 'managed_service') return { status: 'denied', reasonCode: 'wrong_target_kind' };
+            if (input.target.kind !== 'managed_service' || input.target.handle.kind !== 'workspace') return { status: 'denied', reasonCode: 'wrong_target_kind' };
             const signals = [input.execution?.ingress?.signal, input.execution?.actionContext.signal]
                 .filter((signal): signal is AbortSignal => signal !== undefined);
             return await stopProjectManagedService(input.target.handle, signals.length ? AbortSignal.any(signals) : undefined);
         }
         case 'restart_managed':
-            if (input.target.kind === 'managed_service' && input.restartManagedService && input.execution)
+            if (input.target.kind === 'managed_service' && input.target.handle.kind === 'workspace' && input.restartManagedService && input.execution)
                 return await input.restartManagedService(input.request, input.target.handle, input.execution);
             return { status: 'denied', reasonCode: input.target.kind === 'managed_service' ? 'managed_service_restart_admission_required' : 'wrong_target_kind' };
         case 'terminate_detected': {

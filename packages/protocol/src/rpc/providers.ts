@@ -1,3 +1,4 @@
+import { ProviderBindingAuthorizationTicketV1Schema } from '../providers/grants/v1.js';
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1280,3 +1281,15 @@ export const DaemonProviderProfileMigrationConflictConfirmResponseV1Schema = laz
 export type DaemonProviderProfileMigrationConflictConfirmResponseV1 = z.infer<
   typeof DaemonProviderProfileMigrationConflictConfirmResponseV1Schema
 >;
+
+export const DaemonProviderNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  authorizationTicket: ProviderBindingAuthorizationTicketV1Schema,
+  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
+  endpoint: z.strictObject({
+    endpointTemplateId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
+    normalizedUrl: ProviderHttpsUrlSchema,
+    protocol: ProviderWireProtocolSchema,
+    publicHeaders: ProviderPublicHeadersV1Schema,
+  }),
+  credentialTransport: ProviderCredentialTransportV1Schema,
+}));

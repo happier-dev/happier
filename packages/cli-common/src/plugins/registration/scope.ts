@@ -67,6 +67,7 @@ const REGISTRATION_FAMILY = Object.freeze({
     voiceProviders: 'voiceProviders',
     backgroundServices: 'backgroundServices',
     captureSources: 'captureSources',
+    secretSources: 'secretSources',
     projectNativeAdapters: 'projectNativeAdapters',
     dragSources: 'dragSources',
     workItems: 'workItems',
@@ -447,6 +448,9 @@ export function createPluginRegistrationScope(
         }),
         captureSources: Object.freeze({
             register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.captureSources, id, runtime),
+        }),
+        secretSources: Object.freeze({
+            register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.secretSources, id, runtime),
         }),
         projectNativeAdapters: Object.freeze({
             register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.projectNativeAdapters, id, runtime),

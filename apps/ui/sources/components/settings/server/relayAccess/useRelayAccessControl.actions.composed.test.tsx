@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as relaySelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -10,7 +11,8 @@ vi.mock('@/modal', async () => {
 });
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskBridgeListenerSet } from '@/components/systemTasks/types';
-import { ApprovalRequestSchema, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createClientActionReverseDispatcher } from '../../../../../../cli/src/session/actions/clientActionReverseDispatch';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -22,7 +24,7 @@ import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/prov
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-const bridge = vi.hoisted(() => ({ specs: [] as SystemTaskSpec[], taskIds: [] as string[], sequence: 0, cancelled: [] as string[], desktopCalls: [] as string[], startError: undefined as unknown, responses: [] as { taskId: string; answer: unknown }[], listeners: new Map<string, SystemTaskBridgeListenerSet>(), statusRunner: null as ReturnType<typeof import('@happier-dev/cli-common/systemTasks').createSystemTasksRunner> | null }));
+const bridge = vi.hoisted(() => ({ specs: [] as SystemTaskSpec[], taskIds: [] as string[], sequence: 0, cancelled: [] as string[], desktopCalls: [] as string[], startError: undefined as unknown, responses: [] as { taskId: string; answer: unknown }[], listeners: new Map<string, SystemTaskBridgeListenerSet>(), extraRunnerKinds: new Set<string>(), statusRunner: null as ReturnType<typeof import('@happier-dev/cli-common/systemTasks').createSystemTasksRunner> | null }));
 // Native task transport is the external boundary; admission, Action policy,
 // material resolution, task construction and runner remain real.
 vi.mock('@/components/systemTasks/createNativeSshBridge', () => ({ createNativeSshBridge: () => ({
@@ -30,14 +32,15 @@ vi.mock('@/components/systemTasks/createNativeSshBridge', () => ({ createNativeS
         const taskId = `relay-${++bridge.sequence}`;
         bridge.specs.push(spec); bridge.taskIds.push(taskId);
         if (bridge.startError) throw bridge.startError;
-        if (bridge.statusRunner && spec.kind === 'relay.access.status.v1') {
+        if (bridge.statusRunner && (spec.kind === 'relay.access.status.v1' || bridge.extraRunnerKinds.has(spec.kind))) {
             await bridge.statusRunner.start({ taskId, kind: spec.kind, params: spec.params ?? {} });
         }
         return taskId;
     },
     subscribe: async (id: string, listeners: SystemTaskBridgeListenerSet) => {
         bridge.listeners.set(id, listeners);
-        if (bridge.statusRunner && bridge.specs[bridge.taskIds.indexOf(id)]?.kind === 'relay.access.status.v1') {
+        const kind = bridge.specs[bridge.taskIds.indexOf(id)]?.kind;
+        if (bridge.statusRunner && kind && (kind === 'relay.access.status.v1' || bridge.extraRunnerKinds.has(kind))) {
             const result = await bridge.statusRunner.wait({ taskId: id });
             const snapshot = await bridge.statusRunner.poll({ taskId: id, cursor: 0 });
             snapshot.events.forEach(event => listeners.onEvent(event));
@@ -47,6 +50,8 @@ vi.mock('@/components/systemTasks/createNativeSshBridge', () => ({ createNativeS
     },
     cancel: async (id: string) => { bridge.cancelled.push(id); }, respond: async (taskId: string, answer: unknown) => { bridge.responses.push({ taskId, answer }); },
 }) }));
+const cloudflareCredentialRefs = [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const,
+    account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-reference' } } }];
 const account = createProviderSettingsAccountHarness();
 const home = account.home;
 installDisconnectedServerSocketBoundary();
@@ -97,6 +102,7 @@ afterEach(async () => {
     bridge.desktopCalls.length = 0;
     bridge.startError = undefined;
     bridge.statusRunner = null;
+    bridge.extraRunnerKinds.clear();
     bridge.responses.length = 0;
     bridge.listeners.clear();
     vi.unstubAllGlobals();
@@ -131,7 +137,7 @@ it('signed-in local Reach and Runtime controls obey disabled Actions before nati
     const runtime = await renderHook(() => useLocalRelayRuntimeControl({ runner: getSystemTasksRunner(),
         actionScope: { serverId, accountId: 'account' } }));
     await act(async () => {
-        expect(await relay.getCurrent().configure({ providerId: 'lan', config: { providerId: 'lan', url: 'https://relay.test' } })).toBeNull();
+        expect(await relay.getCurrent().configure({ config: relaySelection('lan', { url: 'https://relay.test' }) })).toBeNull();
         expect(await relay.getCurrent().disable()).toBeNull();
         await runtime.getCurrent().startRelay();
     });
@@ -150,7 +156,7 @@ it('signed-in device Runtime without a Personal Home receipt obeys active Accoun
     await waitForHomeGovernance(() => expect(reach.getCurrent().actionServerId).toBe(serverId));
     await act(async () => { await runtime.getCurrent().startRelay(); });
     await act(async () => {
-        expect(await reach.getCurrent().configure({ providerId: 'lan', config: { providerId: 'lan', url: 'https://relay.test' } })).toBeNull();
+        expect(await reach.getCurrent().configure({ config: relaySelection('lan', { url: 'https://relay.test' }) })).toBeNull();
     });
     expect(bridge.specs).toEqual([]);
     expect(runtime.getCurrent().lastErrorMessage).toBeTruthy();
@@ -241,13 +247,14 @@ it('opening the first Inbox approval retains the live Relay author and its nativ
             })}
         </>}
     </WorkspaceProvider>);
-    await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.choice:cloudflareNamed')
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.choice:lan')
         .some(node => node.props.disabled === false)).toBe(true));
-    await screen.pressByTestIdAsync('settings.server.relayAccess.choice:cloudflareNamed');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('settings.server.relayAccess.cloudflareToken')).not.toBeNull());
+    await screen.pressByTestIdAsync('settings.server.relayAccess.choice:lan');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('settings.server.relayAccess.lanUrl')).not.toBeNull());
+    // A method whose declared fields are incomplete cannot be saved: Save waits for the URL.
+    expect(screen.findAllByTestId('settings.server.relayAccess.save').every(node => node.props.disabled === true)).toBe(true);
     await act(async () => {
-        screen.changeTextByTestId('settings.server.relayAccess.cloudflareHostname', 'relay.fixture.test');
-        screen.changeTextByTestId('settings.server.relayAccess.cloudflareToken', 'fixture-only-relay-material');
+        screen.changeTextByTestId('settings.server.relayAccess.lanUrl', 'https://user:fixture-only-relay-material@relay.fixture.test/relay');
     });
     await waitForHomeGovernance(() => expect(screen.findAllByTestId('settings.server.relayAccess.save').some(node => node.props.disabled === false)).toBe(true));
     // Save's live continuation intentionally waits for the human decision.
@@ -285,8 +292,7 @@ it('opening the first Inbox approval retains the live Relay author and its nativ
     const native = bridge.specs.find(spec => spec.kind === 'relay.access.configure.v1')!;
     const config = native.params?.config;
     if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Expected native relay config');
-    expect(config.hostname).toBe('relay.fixture.test');
-    expect(config.token === 'fixture-only-relay-material').toBe(true);
+    expect(config).toEqual(relaySelection('lan', { url: 'https://user:fixture-only-relay-material@relay.fixture.test/relay' }));
     await act(async () => {
         await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
             { surface: 'ui', serverId, expectedAccountId: 'account' });
@@ -303,9 +309,9 @@ it.each(['reject', 'retire'] as const)('blocking native Relay input remains priv
     await waitForHomeGovernance(() => expect(relay.getCurrent().actionServerId).toBe(serverId));
     let pending!: Promise<string | null>;
     await act(async () => {
-        pending = relay.getCurrent().configure({ providerId: 'cloudflareNamed', config: {
-            providerId: 'cloudflareNamed', hostname: 'relay.fixture.test', token: 'fixture-only-blocking-material',
-        } });
+        pending = relay.getCurrent().configure({ config: relaySelection('lan', {
+            url: 'https://user:fixture-only-blocking-material@relay.fixture.test/relay',
+        }) });
     });
     await waitForHomeGovernance(() => expect(relay.getCurrent().approval.approvalPending).toBe(true));
     const artifactId = relay.getCurrent().approval.approvalId!;
@@ -396,7 +402,7 @@ it('signed-in native file choices, reveal, opening and uninstall obey the same d
 it('policy denial prevents both actual relay Save and Disable from issuing a bridge task', async () => {
     const { relay } = await openRelay({ v: 1, actions: { 'remote_hosts.relay.configure': { enabled: false } } });
     await act(async () => {
-        expect(await relay.getCurrent().configure({ providerId: 'lan', config: { providerId: 'lan', url: 'https://relay.test' } })).toBeNull();
+        expect(await relay.getCurrent().configure({ config: relaySelection('lan', { url: 'https://relay.test' }) })).toBeNull();
         expect(await relay.getCurrent().disable()).toBeNull();
     });
     expect(bridge.specs.filter(spec => spec.kind !== 'relay.access.status.v1')).toEqual([]);
@@ -571,10 +577,10 @@ it('an unpersisted signed-out onboarding draft retains the native Relay access r
     const serverId = await home.addHome({ name: 'Signed-out Home', serverUrl: 'https://draft-relay.test', accountId: null });
     storage.setState({ profileScope: null, settingsScope: null, settings: settingsParse({}) });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
-    const [{ RemoteSshChecklistStep }, { RelayAccessLanUrlStep }, { createRootLayoutFeaturesResponse },
+    const [{ RemoteSshChecklistStep }, { RelayAccessConfigFieldsStep }, { createRootLayoutFeaturesResponse },
         { primeServerFeaturesSnapshot }] = await Promise.all([
         import('@/components/onboarding/checklists/remoteSsh/RemoteSshChecklistStep'),
-        import('@/components/onboarding/steps/relayAccess/RelayAccessLanUrlStep'),
+        import('@/components/onboarding/steps/relayAccess/RelayAccessConfigFieldsStep'),
         import('@/dev/testkit/fixtures/featureFixtures'), import('@/sync/api/capabilities/serverFeaturesClient'),
     ]);
     const features = createRootLayoutFeaturesResponse({ features: { remoteHosts: {
@@ -601,7 +607,8 @@ it('an unpersisted signed-out onboarding draft retains the native Relay access r
     // Signed-out device credentials remain absent; no Account authority is fabricated.
     const completed = callbacks.completion;
     if (!completed) throw new Error('Draft completion was not published');
-    await act(async () => { screen.update(<RelayAccessLanUrlStep testID="draft-access" upstreamUrl="https://draft-relay.test"
+    const definition = (await import('@/components/onboarding/steps/relayAccess/relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
+    await act(async () => { screen.update(<RelayAccessConfigFieldsStep definition={definition} testID="draft-access" upstreamUrl="https://draft-relay.test"
         target={completed.relayAccessTarget ?? undefined} remoteHost={completed.relayAccessRemoteHost}
         runWithTarget={completed.runWithRelayAccessTarget} onWizardPrimaryChange={next => { callbacks.primary = next; }} />); });
     await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.access.status.v1')).toBe(true));
@@ -609,12 +616,12 @@ it('an unpersisted signed-out onboarding draft retains the native Relay access r
     await waitForHomeGovernance(() => expect(bridge.listeners.has(bridge.taskIds[statusIndex])).toBe(true));
     const statusTaskId = bridge.taskIds[statusIndex];
     await act(async () => { bridge.listeners.get(statusTaskId)?.onResult({ protocolVersion: 1, taskId: statusTaskId, ok: true,
-        data: { configured: false, providerId: null, status: { state: 'disabled', shareUrl: null, details: null } } }); });
+        data: { configured: false, providerId: null, selection: null, status: { state: 'disabled', shareUrl: null, details: null } } }); });
     await act(async () => { screen.changeTextByTestId('draft-access-url', 'https://draft-published.test'); });
     expect(callbacks.primary?.disabled).toBe(false);
     await act(async () => { await callbacks.primary?.onPress(); });
     expect(bridge.specs.find(spec => spec.kind === 'relay.access.configure.v1')).toMatchObject({ params: {
-        target: { kind: 'ssh', ssh: { target: 'dev@draft.example' } }, config: { providerId: 'lan', url: 'https://draft-published.test' },
+        target: { kind: 'ssh', ssh: { target: 'dev@draft.example' } }, config: relaySelection('lan', { url: 'https://draft-published.test' }),
     } });
     expect(home.artifacts(serverId).list()).toEqual([]);
 });
@@ -712,7 +719,7 @@ it('a non-UI remote relay configure Action observes its admitted native task to 
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const pending = createDefaultActionExecutor().execute('remote_hosts.relay.configure', {
         hostId: host.id, expectedRevision: 4,
-        operation: { kind: 'configure', config: { providerId: 'lan', url: 'https://relay.test' } },
+        operation: { kind: 'configure', config: relaySelection('lan', { url: 'https://relay.test' }) },
     }, { surface: 'mcp', serverId, expectedAccountId: 'account' });
     await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.access.configure.v1')).toBe(true));
     const taskId = bridge.taskIds[bridge.specs.findIndex(spec => spec.kind === 'relay.access.configure.v1')];
@@ -733,7 +740,7 @@ it('an agent remote relay task retains human SSH trust and passphrase decisions 
     const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('human-key-passphrase');
     const pending = createDefaultActionExecutor().execute('remote_hosts.relay.configure', {
         hostId: host.id, expectedRevision: 4,
-        operation: { kind: 'configure', config: { providerId: 'lan', url: 'https://relay.test' } },
+        operation: { kind: 'configure', config: relaySelection('lan', { url: 'https://relay.test' }) },
     }, { surface: 'mcp', serverId, expectedAccountId: 'account' });
     await waitForHomeGovernance(() => expect(bridge.specs.some(spec => spec.kind === 'relay.access.configure.v1')).toBe(true));
     const taskId = bridge.taskIds[bridge.specs.findIndex(spec => spec.kind === 'relay.access.configure.v1')];
@@ -770,7 +777,7 @@ it('a terminal relay status Action observation consumes the real credential-free
     // native task producer, UI runner and Action result validation all remain real.
     bridge.statusRunner = createSystemTasksRunner({ kinds: {
         'relay.access.status.v1': createRelayAccessStatusTaskKind({
-            readConfig: async () => ({ providerId: 'lan', url: 'https://user:password@relay.example.test:8443/relay?route=office#status' }),
+            readConfig: async () => (relaySelection('lan', { url: 'https://user:password@relay.example.test:8443/relay?token=relay-query-secret#relay-fragment-secret' })),
             getProvider: getRelayAccessProvider,
             createExecutionContext: () => ({ env: { NODE_ENV: 'test' }, upstreamUrl: null }),
         }),
@@ -780,15 +787,74 @@ it('a terminal relay status Action observation consumes the real credential-free
     const taskId = bridge.taskIds.at(-1)!;
     const terminal = await bridge.statusRunner.wait({ taskId });
     expect(terminal).toEqual({ protocolVersion: 1, taskId, ok: true, data: {
-        configured: true, providerId: 'lan', status: {
-            state: 'enabled', shareUrl: 'https://relay.example.test:8443/relay?route=office#status', details: null,
+        configured: true, providerId: 'lan',
+        selection: relaySelection('lan', { url: 'https://relay.example.test:8443/relay' }), status: {
+            state: 'enabled', shareUrl: 'https://relay.example.test:8443/relay', details: null,
         },
     } });
     expect(outcome).toEqual({ ok: true, result: { status: 'completed', taskId, result: terminal } });
     expect(JSON.stringify(outcome)).not.toContain('user:password');
+    expect(JSON.stringify(outcome)).not.toContain('relay-query-secret');
+    expect(JSON.stringify(outcome)).not.toContain('relay-fragment-secret');
 });
 
-it('an agent open-path Action without its originating Machine retains approval and cannot reach the OS transport', async () => {
+it('preserves native operator refusal in a terminal Action and presents its localized remedy without re-polling', async () => {
+    const { relay, serverId } = await openRelay({ v: 1, approvalWaivedSurfaces: { 'relay.access.disable': ['mcp'] } });
+    await waitForHomeGovernance(() => expect(bridge.listeners.size).toBeGreaterThan(0));
+    const [{ createDefaultActionExecutor }, { createRelayAccessStatusTaskKind, createRelayAccessDisableTaskKind, createSystemTasksRunner },
+        { getRelayAccessProvider }, { TailscaleCommandError }, { t }] = await Promise.all([
+        import('@/sync/ops/actions/defaultActionExecutor'), import('@happier-dev/cli-common/systemTasks'),
+        import('@happier-dev/cli-common/relayAccess'), import('@happier-dev/cli-common/tailscale'), import('@/text'),
+    ]);
+    let nativeCommands = 0;
+    let persistedConfig: unknown = relaySelection('tailscaleServe');
+    const createExecutionContext = () => ({ env: {}, upstreamUrl: null,
+        resolveCommandOnPath: () => '/fixture/tailscale',
+        runCommand: async ({ command, args }: import('@happier-dev/cli-common/relayAccess').RelayAccessCommandRequest) => {
+            nativeCommands += 1;
+            throw new TailscaleCommandError('Native command refused', { command, args, exitCode: 1, stdout: '',
+                stderr: "sending serve config: 401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket\n/private/operator/path token=private-token" });
+        },
+    });
+    // Only native process execution and config storage are substituted. The
+    // command classifier, provider, task runner, Action and UI presenter are real.
+    bridge.statusRunner = createSystemTasksRunner({ kinds: {
+        'relay.access.status.v1': createRelayAccessStatusTaskKind({
+            readConfig: async () => (relaySelection('tailscaleServe')),
+            getProvider: getRelayAccessProvider,
+            createExecutionContext,
+        }),
+        'relay.access.disable.v1': createRelayAccessDisableTaskKind({
+            readConfig: async () => (relaySelection('tailscaleServe')),
+            writeConfig: async ({ config }) => { persistedConfig = config; },
+            getProvider: getRelayAccessProvider,
+            createExecutionContext,
+        }),
+    } });
+    const outcome = await createDefaultActionExecutor({ homeRuntimeRunner: getSystemTasksRunner() }).execute(
+        'relay.access.status', {}, { surface: 'mcp', serverId, expectedAccountId: 'account' });
+    expect(outcome).toMatchObject({ ok: true, result: { status: 'completed', result: { ok: true, data: {
+        status: { state: 'error', details: { code: 'tailscale_operator_authorization_refused', retryable: false } },
+    } } } });
+    expect(JSON.stringify(outcome)).not.toContain('/private/operator/path');
+    expect(JSON.stringify(outcome)).not.toContain('private-token');
+    await act(async () => { await relay.getCurrent().refreshStatus(); });
+    await waitForHomeGovernance(() => expect(relay.getCurrent().lastErrorMessage)
+        .toBe(t('settings.relayAccess.tailscaleOperatorAuthorizationRefused')));
+    expect(nativeCommands).toBe(2);
+    bridge.extraRunnerKinds.add('relay.access.disable.v1');
+    const disabled = await createDefaultActionExecutor({ homeRuntimeRunner: getSystemTasksRunner() }).execute(
+        'relay.access.disable', {}, { surface: 'mcp', serverId, expectedAccountId: 'account' });
+    expect(disabled).toMatchObject({ ok: true, result: { status: 'completed', result: { ok: false,
+        error: { code: 'tailscale_operator_authorization_refused' },
+    } } });
+    expect(persistedConfig).toEqual(relaySelection('tailscaleServe'));
+    expect(JSON.stringify(disabled)).not.toContain('/private/operator/path');
+    expect(JSON.stringify(disabled)).not.toContain('private-token');
+    expect(nativeCommands).toBe(3);
+});
+
+it('an agent client open-path Action without an originating Machine opens the exact path only after approval', async () => {
     const { serverId } = await openRelay({ v: 1 });
     // OS command invocation is the genuine desktop boundary. Account admission,
     // approval creation/decision and Action policy remain the canonical owners.
@@ -808,14 +874,20 @@ it('an agent open-path Action without its originating Machine retains approval a
         expect(invoke).not.toHaveBeenCalled();
         const approval = findApproval()!;
         const request = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(approval.id) ?? 'null'));
-        expect(request).toMatchObject({ actionId: 'relay.runtime.open_path', status: 'open' });
+        expect(request).toMatchObject({ actionId: 'relay.runtime.open_path',
+            actionArgs: { path: '/home/user/.happier/downloaded-app' }, status: 'open' });
         expect(request.v === 2 && request.executionOriginV1.machineId).toBeUndefined();
         const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
         const decision = await renderHook(() => useApprovalDecisionHandler({ id: approval.id, header: null }, request, '', serverId));
-        await act(async () => { expect(await decision.getCurrent()('approve')).toBe(false); });
+        let accepted = false;
+        await act(async () => { accepted = await decision.getCurrent()('approve'); });
+        expect(accepted).toBe(true);
+        expect(invoke.mock.calls).toEqual([['system_tasks_open_log_path', { path: '/home/user/.happier/downloaded-app' }]]);
         const retained = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(approval.id) ?? 'null'));
-        expect(retained.status).toBe('open');
-        expect(invoke).not.toHaveBeenCalled();
+        expect(retained).toMatchObject({ status: 'executed', execution: { ok: true, effectAttempted: true,
+            result: { status: 'completed' } } });
+        await pending;
+        expect(invoke.mock.calls).toEqual([['system_tasks_open_log_path', { path: '/home/user/.happier/downloaded-app' }]]);
     } finally {
         observer.abort();
         await pending;
@@ -868,12 +940,12 @@ it('waived Save and Disable share the Action task owner and captured host/Home, 
     const focusedId = await home.addHome({ name: 'Staged Home', serverUrl: 'https://staged-relay-action.test', accountId: 'other', active: false });
     await act(async () => { await setActiveServerId(focusedId, { scope: 'device' }); });
     await act(async () => {
-        expect(await relay.getCurrent().configure({ providerId: 'lan', config: { providerId: 'lan', url: 'https://relay.test' } })).not.toBeNull();
+        expect(await relay.getCurrent().configure({ config: relaySelection('lan', { url: 'https://relay.test' }) })).not.toBeNull();
         expect(await relay.getCurrent().disable()).not.toBeNull();
     });
     expect(bridge.specs.find(spec => spec.kind === 'relay.access.configure.v1')).toMatchObject({ params: {
         upstreamUrl: issued.serverUrl, target: { kind: 'ssh', ssh: { target: host.ssh.target } },
-        config: { providerId: 'lan', url: 'https://relay.test' },
+        config: relaySelection('lan', { url: 'https://relay.test' }),
     } });
     expect(bridge.specs.find(spec => spec.kind === 'relay.access.disable.v1')).toMatchObject({ params: {
         target: { kind: 'ssh', ssh: { target: host.ssh.target } },
@@ -887,15 +959,16 @@ it.each(['configure', 'configureLan', 'configureLanCredentials', 'disable'] as c
         'remote_hosts.relay.configure': { approvalRequiredSurfaces: ['ui'] },
     } });
     const operationKind = operation === 'disable' ? 'disable' : 'configure';
-    const config = operation === 'configureLan' || operation === 'configureLanCredentials'
-        ? { providerId: 'lan' as const, url: operation === 'configureLanCredentials'
+    const configId = operation === 'configureLan' || operation === 'configureLanCredentials' ? 'lan' : 'cloudflareNamed';
+    const config = configId === 'lan'
+        ? relaySelection('lan', { url: operation === 'configureLanCredentials'
             ? 'https://lan-user:lan-password@relay.example.test/relay?token=lan-query-secret#lan-fragment-secret'
-            : 'http://localhost:3000' }
-        : { providerId: 'cloudflareNamed' as const, hostname: 'relay.example.test', token: 'live-relay-token' };
+            : 'http://localhost:3000' })
+        : relaySelection('cloudflareNamed', { hostname: 'relay.example.test' }, cloudflareCredentialRefs);
     let pending!: Promise<string | null>;
     await act(async () => {
         pending = operationKind === 'configure'
-            ? relay.getCurrent().configure({ providerId: config.providerId, config })
+            ? relay.getCurrent().configure({ config })
             : relay.getCurrent().disable();
     });
     const approval = await waitForHomeGovernance(() => {
@@ -919,16 +992,16 @@ it.each(['configure', 'configureLan', 'configureLanCredentials', 'disable'] as c
     expect(text).toContain(operationKind === 'configure' ? 'Configure relay' : 'Disable relay');
     expect(presentation.unrepresentable).toBeNull();
     if (operationKind === 'configure') {
-        expect(request.actionArgs).toMatchObject({ operation: { config: { providerId: config.providerId } } });
-        expect(text).toContain(config.providerId === 'lan' ? 'LAN' : 'Cloudflare named tunnel');
+        expect(request.actionArgs).toMatchObject({ operation: { config: { provider: { kind: 'builtin', id: configId } } } });
+        if (configId === 'cloudflareNamed') expect(request.actionArgs).toMatchObject({ operation: { config: {
+            credentialRefs: cloudflareCredentialRefs,
+        } } });
         expect(text).toContain(operation === 'configureLanCredentials' ? 'https://relay.example.test/relay'
-            : 'url' in config ? config.url : config.hostname);
+            : configId === 'lan' ? 'http://localhost:3000' : 'relay.example.test');
     } else {
         expect(text).not.toContain('cloudflareNamed');
         expect(text).not.toContain('relay.example.test');
     }
-    expect(text).not.toContain('live-relay-token');
-    expect(JSON.stringify(request)).not.toContain('live-relay-token');
     for (const secret of ['lan-user', 'lan-password', 'lan-query-secret', 'lan-fragment-secret']) {
         expect(text).not.toContain(secret);
         expect(JSON.stringify(request)).not.toContain(secret);

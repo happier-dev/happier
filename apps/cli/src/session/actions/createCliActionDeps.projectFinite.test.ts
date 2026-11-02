@@ -153,7 +153,7 @@ describe('Project finite Actions through exact Machine transport', () => {
     expect(await owner.execute('projects.compute.exec', compute, context)).toEqual({ ok: true, result: pending });
     expect(boundary).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: 'selected-worker',
       method: 'daemon.projects.compute.exec.v1', request: compute }));
-    boundary.mockRejectedValueOnce(new machineTransport.MachineRpcTargetNotCurrentError('selected-worker'));
+    boundary.mockRejectedValueOnce(new machineTransport.MachineRpcTargetNotCurrentError('selected-worker', 'machine_revoked_or_replaced'));
     expect(await owner.execute('projects.compute.exec', compute, { ...context, actionRequestId: 'original-worker-invocation' }))
       .toMatchObject({ ok: false, errorCode: 'action_failed' });
     expect(boundary).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: 'selected-worker',

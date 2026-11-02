@@ -36,9 +36,10 @@ const relationship = {
 
 function enrolledBindChild() {
     const child = { id: 'child-ref', serverId: 'server-1', machineId: 'child-machine', rootPath: '/work/child', createdAtMs: 1 };
+    const controller = { machineId: 'source-machine', installationId: 'parent-installation' };
     const managedMachine = ManagedMachineV1Schema.parse({
       id: 'managed-child', homeId: 'server-1', custodianAccountId: 'owner',
-      controller: { machineId: 'source-machine', installationId: 'parent-installation' },
+      controller,
       launch: { provider: { pluginId: 'acme.devcontainer', localId: 'child' }, schemaVersion: 1, name: 'Child', choices: {} },
       allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: child.machineId,
@@ -47,10 +48,10 @@ function enrolledBindChild() {
           storage: { kind: 'bind', hostPath: '/source', childPath: child.rootPath } } },
     });
     const projection = deriveManagedDevcontainerChildProjectionV1({ managedMachineId: managedMachine.id,
-      controllerMachineId: managedMachine.controller.machineId, enrolledMachineId: child.machineId, resource: managedMachine.resource });
+      controllerMachineId: controller.machineId, enrolledMachineId: child.machineId, resource: managedMachine.resource });
     if (!projection) throw new Error('Expected ordinary enrolled child projection');
     const facts = { serverId: 'server-1', machineId: child.machineId, installationId: 'child-installation', projection, managedMachine,
-      controller: { ...managedMachine.controller, available: true } } satisfies WorkspaceSyncChildMachineFacts;
+      controller: { ...controller, available: true } } satisfies WorkspaceSyncChildMachineFacts;
     return { child, managedMachine, facts };
 }
 

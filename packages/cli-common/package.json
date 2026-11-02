@@ -479,6 +479,31 @@
       "types": "./dist/machines/managed/index.d.ts",
       "import": "./dist/machines/managed/index.js",
       "default": "./dist/machines/managed/index.js"
+    },
+    "./plugins/registration": {
+      "happier-source": "./src/plugins/registration/index.ts",
+      "types": "./dist/plugins/registration/index.d.ts",
+      "import": "./dist/plugins/registration/index.js",
+      "default": "./dist/plugins/registration/index.js"
+    },
+    "./plugins/http": {
+      "happier-source": "./src/plugins/http/index.ts",
+      "types": "./dist/plugins/http/index.d.ts",
+      "import": "./dist/plugins/http/index.js",
+      "default": "./dist/plugins/http/index.js"
+    },
+    "./plugins/http/contracts": {
+      "happier-source": "./src/plugins/http/contracts.ts",
+      "types": "./dist/plugins/http/contracts.d.ts",
+      "import": "./dist/plugins/http/contracts.js",
+      "default": "./dist/plugins/http/contracts.js"
+    },
+
+    "./fs/jsonOwnerFileLock": {
+      "happier-source": "./src/fs/jsonOwnerFileLock.ts",
+      "types": "./dist/fs/jsonOwnerFileLock.d.ts",
+      "import": "./dist/fs/jsonOwnerFileLock.js",
+      "default": "./dist/fs/jsonOwnerFileLock.js"
     }
   },
   "scripts": {

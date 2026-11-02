@@ -4,6 +4,13 @@
 import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type LocalDaemonServicesActionInputById = {
+readonly "machines.services.detail": {
+        serviceId: string;
+        serverId: string;
+        machineId: string;
+        expectedGeneration?: string | undefined;
+    };
+
     readonly "machines.local.service.status": {
         serverId: string;
     };
@@ -28,6 +35,109 @@ export type LocalDaemonServicesActionInputById = {
     };
 };
 export type LocalDaemonServicesActionResultById = {
+readonly "machines.services.detail": {
+        kind: 'service';
+        service: {
+            serviceId: string;
+            name: string;
+            authority: 'machine' | 'plugin' | 'project';
+            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+            generation: null | string;
+            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
+            capabilities: {
+                start: boolean;
+                stop: boolean;
+                restart: boolean;
+                logs: boolean;
+                accounting: boolean;
+            };
+            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            native?: undefined | {
+                phase: 'running' | 'stopped' | 'unknown';
+                readiness: 'not_ready' | 'not_reported' | 'ready';
+            };
+            configuration?: null | undefined | {
+                ports: {
+                    target: null | number | string;
+                    published: null | number | string;
+                    bindAddress: null | string;
+                    protocol: null | string;
+                }[];
+            };
+            health?: undefined | {
+                status: 'degraded' | 'down' | 'unknown' | 'up';
+                observedAtMs: null | number;
+                freshness: 'current' | 'unavailable';
+                reason?: string | undefined;
+                expectedDown?: 'stop' | undefined;
+            };
+            deployment?: undefined | {
+                deploymentId: string;
+                installationId: string;
+                service: {
+                    kind: 'deployment';
+                    machineId: string;
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    composeService: string;
+                    serviceId: string;
+                };
+            };
+            nativeInstance?: undefined | {
+                adapter: {
+                    pluginId: string;
+                    localId: string;
+                };
+                nativeResourceId: string;
+            };
+            baseUrl?: null | string | undefined;
+            port?: null | number | undefined;
+            environmentId?: string | undefined;
+            watchId?: string | undefined;
+            watchRevision?: string | undefined;
+        };
+        accounting?: undefined | {
+            kind: 'sample';
+            samples: {
+                nativeResourceId: string;
+                cpuPercent: null | number;
+                memoryBytes: null | number;
+            }[];
+        } | {
+            kind: 'unavailable';
+            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        };
+        runtimeFacts?: undefined | {
+            configuration: null | {
+                name: string;
+                replicas: null | number | string;
+                resources: {
+                    cpus: null | number | string;
+                    memory: null | number | string;
+                };
+                restartPolicy: null | string;
+                healthcheck: 'absent' | 'configured';
+                ports: {
+                    target: null | number | string;
+                    published: null | number | string;
+                    bindAddress: null | string;
+                    protocol: null | string;
+                }[];
+                mounts: {
+                    type: null | string;
+                    source: null | string;
+                    target: null | string;
+                    readOnly: boolean;
+                }[];
+            };
+            observedAt: null | number;
+            freshness: 'current' | 'unavailable';
+        };
+    } | {
+        kind: 'unavailable';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+    };
+
     readonly "machines.local.service.status": {
         taskId: string;
         result: {

@@ -53,4 +53,3 @@ export interface HealthChecksService {
             /** Absolute producer deadline; null waits for an authenticated receipt. */
             nextEligibleAt?: number | null }>[]>;
 }
-

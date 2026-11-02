@@ -1,183 +1,79 @@
-import type { RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
+import { parseRelayAccessConfig, relayAccessProviderDescriptors, type RelayAccessConfig, type RelayAccessProviderDescriptor } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskSnapshot } from '@happier-dev/cli-common/systemTasks';
 
-import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 
-export type RelayAccessConfigStepFieldId = 'url' | 'hostname' | 'token';
-export type RelayAccessConfigStepProviderId = 'lan' | 'cloudflareNamed';
-export type RelayAccessConfigStepDraft = Readonly<Record<RelayAccessConfigStepFieldId, string>>;
+export type RelayAccessConfigStepFieldId = string;
+export type RelayAccessConfigStepProviderId = string;
+export type RelayAccessConfigStepDraft = Readonly<Record<string, string>>;
+export type RelayAccessCredentialRefs = readonly RelayAccessConfig['credentialRefs'][number][];
 
 export type RelayAccessConfigStepField = Readonly<{
-    id: RelayAccessConfigStepFieldId;
-    label: string;
-    placeholder: string;
-    secureTextEntry?: boolean;
+    id: string; label: string; placeholder: string;
     autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
     autoCorrect?: boolean;
 }>;
 
+type DraftComparison = Readonly<{
+    configuredDraft: RelayAccessConfigStepDraft;
+    normalizedDraft: RelayAccessConfigStepDraft;
+    configuredCredentialRefs?: RelayAccessCredentialRefs;
+    credentialRefs?: RelayAccessCredentialRefs;
+}>;
+
 export type RelayAccessConfigStepDefinition = Readonly<{
-    providerId: RelayAccessConfigStepProviderId;
+    providerId: string;
+    descriptor: RelayAccessProviderDescriptor;
     testIDPrefix: string;
     fields: readonly RelayAccessConfigStepField[];
     hint: string;
     readConfiguredDraft: (snapshot: RelayAccessTaskSnapshot | null) => RelayAccessConfigStepDraft;
     normalizeDraft: (draft: RelayAccessConfigStepDraft) => RelayAccessConfigStepDraft;
-    isSaveNeeded: (params: Readonly<{
-        configuredDraft: RelayAccessConfigStepDraft;
-        normalizedDraft: RelayAccessConfigStepDraft;
-    }>) => boolean;
-    isPrimaryDisabled: (params: Readonly<{
-        needsSave: boolean;
-        normalizedDraft: RelayAccessConfigStepDraft;
-    }>) => boolean;
-    createConfig: (params: Readonly<{
-        normalizedDraft: RelayAccessConfigStepDraft;
-    }>) => Promise<RelayAccessConfig | null>;
+    isSaveNeeded: (params: DraftComparison) => boolean;
+    isPrimaryDisabled: (params: Readonly<{ needsSave: boolean; normalizedDraft: RelayAccessConfigStepDraft; credentialRefs?: RelayAccessCredentialRefs }>) => boolean;
+    createConfig: (params: Readonly<{ normalizedDraft: RelayAccessConfigStepDraft; credentialRefs?: RelayAccessCredentialRefs }>) => Promise<RelayAccessConfig | null>;
 }>;
 
-const EMPTY_DRAFT: RelayAccessConfigStepDraft = Object.freeze({
-    url: '',
-    hostname: '',
-    token: '',
-});
-
-function createEmptyDraft(): RelayAccessConfigStepDraft {
-    return {
-        ...EMPTY_DRAFT,
-    };
-}
-
-function normalizeUrl(value: string): string {
-    return value.trim().replace(/\/+$/, '');
-}
-
-function normalizeHostname(value: string): string {
-    return value.trim();
-}
-
-function normalizeToken(value: string): string {
-    return value.trim();
-}
-
-async function createLanConfig(normalizedDraft: RelayAccessConfigStepDraft): Promise<RelayAccessConfig | null> {
-    if (!normalizedDraft.url) {
-        await Modal.alert(t('common.error'), t('settings.relayAccess.missingUrl'));
-        return null;
-    }
-
-    return {
-        providerId: 'lan',
-        url: normalizedDraft.url,
-    };
-}
-
-async function createCloudflareConfig(normalizedDraft: RelayAccessConfigStepDraft): Promise<RelayAccessConfig | null> {
-    if (!normalizedDraft.hostname) {
-        await Modal.alert(t('common.error'), t('settings.relayAccess.missingHostname'));
-        return null;
-    }
-    if (!normalizedDraft.token) {
-        await Modal.alert(t('common.error'), t('settings.relayAccess.missingToken'));
-        return null;
-    }
-
-    return {
-        providerId: 'cloudflareNamed',
-        hostname: normalizedDraft.hostname,
-        token: normalizedDraft.token,
-    };
-}
-
-export const relayAccessConfigStepCatalog: Readonly<Record<RelayAccessConfigStepProviderId, RelayAccessConfigStepDefinition>> = {
-    lan: {
-        providerId: 'lan',
-        testIDPrefix: 'relay-access-lan',
-        fields: [
-            {
-                id: 'url',
-                label: t('settings.relayAccess.fields.urlLabel'),
-                placeholder: t('common.urlPlaceholder'),
-                autoCapitalize: 'none',
-                autoCorrect: false,
+/** Home's form presentation is projected from the same declarations as config admission. */
+export const relayAccessConfigStepCatalog: Readonly<Record<string, RelayAccessConfigStepDefinition>> = Object.freeze(
+    Object.fromEntries(relayAccessProviderDescriptors.flatMap(descriptor => {
+        const step = descriptor.homeUi?.configStep;
+        if (!step || !descriptor.definition.targets.includes('homeRelay')) return [];
+        const emptyDraft = () => Object.fromEntries(step.fields.map(field => [field.id, '']));
+        const normalizeDraft = (draft: RelayAccessConfigStepDraft): RelayAccessConfigStepDraft => Object.fromEntries(step.fields.map(field => {
+            const value = (draft[field.id] ?? '').trim();
+            return [field.id, field.format === 'url' ? value.replace(/\/+$/, '') : value];
+        }));
+        const createSelection = (draft: RelayAccessConfigStepDraft, credentialRefs: RelayAccessCredentialRefs = []) => {
+            if (descriptor.definition.credentialPurposes.some(requirement => requirement.required
+                && !credentialRefs.some(ref => ref.purpose === requirement.purpose))) return null;
+            return parseRelayAccessConfig({ provider: descriptor.provider, config: normalizeDraft(draft), credentialRefs: [...credentialRefs] });
+        };
+        const definition: RelayAccessConfigStepDefinition = {
+            providerId: descriptor.id, descriptor,
+            testIDPrefix: step.testIDPrefix,
+            fields: step.fields.map(field => ({ id: field.id, label: t(field.labelKey as TranslationKey),
+                placeholder: t((field.placeholderKey ?? field.labelKey) as TranslationKey), autoCapitalize: 'none', autoCorrect: false })),
+            hint: t(step.hintKey as TranslationKey),
+            readConfiguredDraft: snapshot => {
+                if (!snapshot?.configured || snapshot.providerId !== descriptor.id) return emptyDraft();
+                const selection = parseRelayAccessConfig(snapshot.selection);
+                const config = selection?.config;
+                if (!config || typeof config !== 'object' || Array.isArray(config)) return emptyDraft();
+                const fields = config as Readonly<Record<string, unknown>>;
+                return normalizeDraft(Object.fromEntries(step.fields.map(field => {
+                    const value = fields[field.id];
+                    return [field.id, typeof value === 'string' ? value : ''];
+                })));
             },
-        ],
-        hint: t('setupOnboarding.relayAccessUrlBody'),
-        readConfiguredDraft: (snapshot) => {
-            if (snapshot?.configured !== true || snapshot.providerId !== 'lan') {
-                return createEmptyDraft();
-            }
-
-            return {
-                ...createEmptyDraft(),
-                url: typeof snapshot.status?.shareUrl === 'string'
-                    ? normalizeUrl(snapshot.status.shareUrl)
-                    : '',
-            };
-        },
-        normalizeDraft: (draft) => ({
-            ...createEmptyDraft(),
-            url: normalizeUrl(draft.url),
-        }),
-        isSaveNeeded: ({ configuredDraft, normalizedDraft }) => configuredDraft.url.length === 0 || normalizedDraft.url !== configuredDraft.url,
-        isPrimaryDisabled: ({ needsSave, normalizedDraft }) => needsSave && normalizedDraft.url.length === 0,
-        createConfig: async ({ normalizedDraft }) => await createLanConfig(normalizedDraft),
-    },
-    cloudflareNamed: {
-        providerId: 'cloudflareNamed',
-        testIDPrefix: 'relay-access-cloudflare',
-        fields: [
-            {
-                id: 'hostname',
-                label: t('settings.relayAccess.fields.hostnameLabel'),
-                placeholder: t('settings.relayAccess.fields.hostnameLabel'),
-                autoCapitalize: 'none',
-                autoCorrect: false,
-            },
-            {
-                id: 'token',
-                label: t('settings.relayAccess.fields.tokenLabel'),
-                placeholder: t('settings.relayAccess.fields.tokenLabel'),
-                autoCapitalize: 'none',
-                autoCorrect: false,
-                secureTextEntry: true,
-            },
-        ],
-        hint: t('setupOnboarding.relayAccessCloudflareBody'),
-        readConfiguredDraft: (snapshot) => {
-            if (snapshot?.configured !== true || snapshot.providerId !== 'cloudflareNamed') {
-                return createEmptyDraft();
-            }
-
-            const shareUrl = typeof snapshot.status?.shareUrl === 'string' ? snapshot.status.shareUrl.trim() : '';
-            let hostname = '';
-            if (shareUrl) {
-                try {
-                    hostname = new URL(shareUrl).hostname;
-                } catch {
-                    hostname = '';
-                }
-            }
-
-            return {
-                ...createEmptyDraft(),
-                hostname,
-            };
-        },
-        normalizeDraft: (draft) => ({
-            ...createEmptyDraft(),
-            hostname: normalizeHostname(draft.hostname),
-            token: normalizeToken(draft.token),
-        }),
-        isSaveNeeded: ({ configuredDraft, normalizedDraft }) => (
-            configuredDraft.hostname.length === 0
-            || normalizedDraft.hostname !== configuredDraft.hostname
-            || normalizedDraft.token.length > 0
-        ),
-        isPrimaryDisabled: ({ needsSave, normalizedDraft }) => (
-            needsSave && (normalizedDraft.hostname.length === 0 || normalizedDraft.token.length === 0)
-        ),
-        createConfig: async ({ normalizedDraft }) => await createCloudflareConfig(normalizedDraft),
-    },
-};
+            normalizeDraft,
+            isSaveNeeded: ({ configuredDraft, normalizedDraft, configuredCredentialRefs = [], credentialRefs = [] }) =>
+                !createSelection(configuredDraft, configuredCredentialRefs)
+                || step.fields.some(field => normalizedDraft[field.id] !== configuredDraft[field.id])
+                || JSON.stringify(configuredCredentialRefs) !== JSON.stringify(credentialRefs),
+            isPrimaryDisabled: ({ needsSave, normalizedDraft, credentialRefs }) => needsSave && !createSelection(normalizedDraft, credentialRefs),
+            createConfig: async ({ normalizedDraft, credentialRefs }) => createSelection(normalizedDraft, credentialRefs),
+        };
+        return [[descriptor.id, definition]];
+    })),
+);

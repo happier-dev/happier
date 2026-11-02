@@ -3,8 +3,8 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { MachineSetupV1Schema, readMachineSetupAppIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
-import { MachineRecipeReferenceV1Schema } from './machineRecipeV1.js';
+import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
+import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
 import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
 import { WorkflowRunIdV1Schema } from '../../workflows/workflowIdsV1.js';
 import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMetadataFieldV1,
@@ -47,6 +47,29 @@ export const MachineSetupAppOriginV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type MachineSetupAppOriginV1 = z.infer<typeof MachineSetupAppOriginV1Schema>;
 
+/** Missing correspondence is not evidence that an admitted app is new. */
+export function readMachineSetupAppOriginsV1(currentSources: MachineSetupSourceV1,
+  proposedSources: MachineSetupSourceV1): MachineSetupAppOriginV1[] {
+  const counts = (sources: MachineSetupSourceV1) => {
+    const values = new Map<string, number>();
+    for (const source of sources) for (const item of source.setup.items ?? []) {
+      if (item.kind !== 'app') continue;
+      const identity = readMachineSetupAppIdentityV1(item);
+      if (identity !== undefined) values.set(identity, (values.get(identity) ?? 0) + 1);
+    }
+    return values;
+  };
+  const incumbent = counts(currentSources);
+  const proposed = counts(proposedSources);
+  return proposedSources.flatMap((source, sourceIndex) => (source.setup.items ?? []).flatMap((item, itemIndex) => {
+    if (item.kind !== 'app') return [];
+    const identity = readMachineSetupAppIdentityV1(item);
+    const count = identity === undefined ? 0 : incumbent.get(identity) ?? 0;
+    const kind: MachineSetupAppOriginV1['kind'] = identity === undefined || proposed.get(identity) !== 1 || count > 1 ? 'unknown'
+      : count === 0 ? 'new' : 'retained';
+    return [{ sourceIndex, itemIndex, kind }];
+  }));
+}
 /** Copy revision is not attachment identity; no extra identity is persisted. */
 export function machineSetupSourceOriginKeyV1(source: MachineSetupSourceEntryV1): string {
   return source.kind === 'accountPreset' ? `account:${source.presetId}`
@@ -55,6 +78,25 @@ export function machineSetupSourceOriginKeyV1(source: MachineSetupSourceEntryV1)
 type SetupItem = Exclude<MachinePresetItemV1, { kind: 'app' }>;
 export function machineSetupItemKeyV1(item: SetupItem): string {
   return createCanonicalJsonSigningInput(item);
+}
+function recipeIdentity(item: SetupItem): string {
+  return JSON.stringify([item.selection.ref.pluginId, item.selection.ref.recipeId]);
+}
+/** Selected recipes keep their coordinates in the full certified source copies. */
+export function selectMachineSetupRecipeItemsV1(setups: readonly MachineSetupV1[],
+  exclusions: readonly MachineSetupExclusionV1[], executionSources?: readonly MachineSetupV1[]):
+  readonly Readonly<{ sourceIndex: number; itemIndex: number; item: SetupItem; execute: boolean }>[] {
+  const selected: { sourceIndex: number; itemIndex: number; item: SetupItem; execute: boolean }[] = [];
+  for (const [sourceIndex, setup] of setups.entries()) {
+    const executing = executionSources && new Set((executionSources[sourceIndex]?.items ?? [])
+      .flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]));
+    for (const [itemIndex, item] of (setup.items ?? []).entries()) {
+      if (item.kind === 'app' || isMachineSetupRecipeExcludedV1(item.selection.ref, exclusions)) continue;
+      selected.push({ sourceIndex, itemIndex, item,
+        execute: !executing || executing.has(machineSetupItemKeyV1(item)) });
+    }
+  }
+  return selected;
 }
 export function readMachineSetupFirstPresentV1(sources: MachineSetupSourceV1,
   sourceFacts: MachineSetupSourceFactsMapV1 = {}): ReadonlyMap<string, FirstPresence | undefined> {
@@ -68,6 +110,74 @@ export function readMachineSetupFirstPresentV1(sources: MachineSetupSourceV1,
       : observed === 'absent' || previous === 'absent' ? 'absent' : undefined);
   }
   return values;
+}
+
+/** Full copies remain saved; only changed operands execute on a reviewed Update. */
+export function projectMachineSetupSourceChangeExecutionV1(currentSources: MachineSetupSourceV1,
+  proposedSources: MachineSetupSourceV1, mergedSetup: MachineSetupV1, currentExclusions: readonly MachineSetupExclusionV1[]):
+  Readonly<{ ok: true; sources: MachineSetupV1[]; setup: MachineSetupV1 }>
+  | Extract<ReturnType<typeof mergeMachineSetupsV1>, { ok: false }> {
+  const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
+  if (!current.ok) return current;
+  const unchangedToolchain = sameStrictJsonValue(current.setup.toolchain, mergedSetup.toolchain);
+  const oldItems = new Set(selectMachineSetupRecipeItemsV1(currentSources.map(source => source.setup), currentExclusions)
+    .map(({ item }) => machineSetupItemKeyV1(item)));
+  const previous = new Map(currentSources.map(source => [machineSetupSourceOriginKeyV1(source), source]));
+  const sources = proposedSources.map(source => {
+    const saved = previous.get(machineSetupSourceOriginKeyV1(source));
+    const { toolchain, ...setup } = source.setup;
+    return { ...setup, ...(!unchangedToolchain && toolchain ? { toolchain } : {}),
+      ...(source.setup.items ? { items: source.setup.items.filter(item => item.kind === 'app' || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
+      ...(source.setup.scripts ? { scripts: source.setup.scripts.filter((script, index) => !sameStrictJsonValue(script, saved?.setup.scripts?.[index])) } : {}),
+    };
+  });
+  const { toolchain, ...setup } = mergedSetup;
+  return { ok: true, sources, setup: { ...setup, ...(!unchangedToolchain && toolchain ? { toolchain } : {}),
+    ...(mergedSetup.items ? { items: mergedSetup.items.filter(item => item.kind === 'app' || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
+    scripts: sources.flatMap(source => source.scripts ?? []),
+  } };
+}
+
+export type MachineSetupDetachedItemV1 = Readonly<{
+  itemKey: string; item: SetupItem; initialPresence: FirstPresence | 'unknown'; selected: boolean;
+}>;
+/** Detaching defaults to Keep in direct. Only a native first-absent fact admits Remove. */
+export function reviewMachineSetupSourceChangeV1(input: Readonly<{
+  currentSources: MachineSetupSourceV1; currentSourceFacts?: MachineSetupSourceFactsMapV1;
+  proposedSources: MachineSetupSourceV1; removeItemKeys?: readonly string[];
+}>): Readonly<{ ok: true; sources: MachineSetupSourceV1; detached: readonly MachineSetupDetachedItemV1[] }>
+  | Readonly<{ ok: false; errorCode: 'plan_changed' | 'remove_unsupported'; error: string }> {
+  const proposed = new Set(input.proposedSources.flatMap(source => (source.setup.items ?? [])
+    .flatMap(item => item.kind === 'app' ? [] : [recipeIdentity(item)])));
+  const selected = new Set(input.removeItemKeys ?? []);
+  if (selected.size !== (input.removeItemKeys ?? []).length) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
+  const seen = new Set<string>();
+  const firstPresentByKey = readMachineSetupFirstPresentV1(input.currentSources, input.currentSourceFacts);
+  const detached: MachineSetupDetachedItemV1[] = [];
+  for (const source of input.currentSources) for (const item of source.setup.items ?? []) {
+    if (item.kind === 'app') continue;
+    const itemKey = machineSetupItemKeyV1(item);
+    const carriedToDirect = source.kind !== 'direct' && input.proposedSources.some(copy => copy.kind === 'direct'
+      && copy.setup.items?.some(candidate => candidate.kind !== 'app' && machineSetupItemKeyV1(candidate) === itemKey))
+      && !input.proposedSources.some(copy => copy.kind !== 'direct'
+        && copy.setup.items?.some(candidate => candidate.kind !== 'app' && recipeIdentity(candidate) === recipeIdentity(item)));
+    if (proposed.has(recipeIdentity(item)) && !carriedToDirect) continue;
+    if (seen.has(itemKey)) continue;
+    seen.add(itemKey);
+    const first = firstPresentByKey.get(itemKey);
+    if (selected.has(itemKey) && first !== 'absent') return { ok: false, errorCode: 'remove_unsupported', error: 'remove_unsupported' };
+    detached.push({ itemKey, item, initialPresence: first ?? 'unknown', selected: selected.has(itemKey) });
+  }
+  if ([...selected].some(key => !seen.has(key))) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
+  const kept = detached.filter(item => !item.selected);
+  if (!kept.length) return { ok: true, sources: input.proposedSources, detached };
+  const sources = input.proposedSources.map(source => {
+    if (source.kind !== 'direct') return source;
+    const carried = new Set((source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]));
+    return { ...source, setup: { ...source.setup,
+      items: [...source.setup.items ?? [], ...kept.filter(entry => !carried.has(entry.itemKey)).map(entry => entry.item)] } };
+  });
+  return { ok: true, sources, detached };
 }
 
 /** A root creation continuation delegates only its admitted setup snapshot. */
@@ -109,6 +219,13 @@ export const MachineSetupExclusionsV1Schema = lazyZodSchema(() => z.array(Machin
     .some(previous => sameStrictJsonValue(previous.ref, entry.ref))),
   { message: 'Each excluded recipe reference is reviewed once.' }),
 ));
+export function isMachineSetupRecipeExcludedV1(ref: MachineRecipeReferenceV1, exclusions: readonly MachineSetupExclusionV1[]): boolean {
+  return exclusions.some(entry => sameStrictJsonValue(entry.ref, ref));
+}
+export function areMachineSetupExclusionsBoundV1(setups: readonly MachineSetupV1[], exclusions: readonly MachineSetupExclusionV1[]): boolean {
+  return MachineSetupExclusionsV1Schema.safeParse(exclusions).success && exclusions.every(exclusion => setups.some(setup =>
+    setup.items?.some(item => item.kind !== 'app' && sameStrictJsonValue(item.selection.ref, exclusion.ref))));
+}
 export type MachineSetupDesiredV1 = Readonly<{
   version: 1; revision: number; sources: MachineSetupSourceV1;
   exclusions: Array<z.infer<typeof MachineSetupExclusionV1Schema>>;

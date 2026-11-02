@@ -1,13 +1,23 @@
+import type { ExternalActionApprovalReplay } from "@/rpc/handlers/externalAction";
+
+
+
+
+
+
+
+import { prepareApprovedDiscussionAgentPublication } from "@/discussions/discussionAgentPublisher";
+import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isDeploymentActionIdV1 } from "@happier-dev/protocol";
-import { prepareManagedMachineSetupApplyInput } from "@/daemon/externalActions/prepareManagedMachineSetupApplyInput";
+
 import { createDaemonDeploymentActionDeps } from "@/deployments/createDaemonDeploymentActionDeps";
 import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vitals/machineVitalsSampleV1";
 import { createOwnServerDeploymentRuntimeForHost } from "@/deployments/targets/ownServer/ownServerDeploymentHostRuntime";
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from "@happier-dev/protocol/actions/executor/agentStartAdmission";
 import { DiscussionAgentPublisherResponseV1Schema } from "@happier-dev/protocol/discussions/api";
-import { prepareApprovedDiscussionAgentPublication, type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
+import { type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
 import { createApprovedDiscussionAgentPublisher } from "@/discussions/approvedDiscussionAgentPublisher";
 import { createApprovedWorkflowDiscussionPublisher } from "@/discussions/approvedWorkflowDiscussionPublisher";
 import { runTracedExternalActionStage } from "@/daemon/externalActions/externalActionPhase";
@@ -88,10 +98,7 @@ export type DaemonExternalActionExecutorFactory = (credentials: Parameters<typeo
     >[0]['getCurrentTurnWorkDepth'], isSessionActionCallerCurrent?: () => Promise<boolean>, managedAgentStartMachineId?: string, requesterRuntime?: RequesterSessionRuntimeContext | null, managedPolicyAction?: Readonly<{
       managedMachineAction?: NonNullable<ActionExecutorDeps['managedMachineAction']>;
       hostActionApprovalLifetime: NonNullable<ActionExecutorDeps['hostActionApprovalLifetime']>;
-    }>, requesterAccountContext?: RequesterAccountActionContext, sessionStopEffect?: ActionExecutorDeps['sessionStop'], postAgentDiscussionMessage?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['postAgentDiscussionMessage'], accountPluginActions?: Readonly<{ accountPluginActions: true }>) => Pick<
-    ReturnType<typeof createCliActionExecutorFromCredentials>,
-    'execute' | 'replayApprovedApprovalRequest' | 'continueConfidentialApprovalRequest'
-  >;
+    }>, requesterAccountContext?: RequesterAccountActionContext, sessionStopEffect?: ActionExecutorDeps['sessionStop'], postAgentDiscussionMessage?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['postAgentDiscussionMessage'], accountPluginActions?: Readonly<{ accountPluginActions: true }>) => DaemonExternalActionExecutor;
 
 export function createDaemonExternalActionExecution({
   params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry,
@@ -487,14 +494,20 @@ resolveServerFeaturesSnapshot?: () =>
       if (isDeploymentAction && !deploymentHomeId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      const deploymentDeps = (isDeploymentAction || actionId === 'approval.request.decide') && deploymentHomeId ? createDaemonDeploymentActionDeps({
+      const deploymentDeps = (isDeploymentAction || actionId === 'approval.request.decide') && deploymentHomeId ? createDaemonDeploymentActionDeps({resolveRequesterIdentity: async context => apiMachineForSessions
+          ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
+          : { kind: 'unknown', reason: 'requester_authority_unavailable' },
+
         credentials, serverId: deploymentHomeId,
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext }
           : requesterRuntime ? { savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
         serverHttpBaseUrl: requesterAccountContext?.serverHttpBaseUrl ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
         machineId: params.machineId,
         readMachineVitals: () => params.readDoctorResourceVitals?.().sample ?? null,
-        runtime: createOwnServerDeploymentRuntimeForHost({
+        runtime: createOwnServerDeploymentRuntimeForHost({resolveRequesterIdentity: async context => apiMachineForSessions
+            ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
+            : { kind: 'unknown', reason: 'requester_authority_unavailable' },
+
           // The native receiver consumes only installation grants and the admitted
           // requester's source projection, never the controller's Account keys.
           credentials: params.credentials,
@@ -1250,3 +1263,6 @@ resolveServerFeaturesSnapshot?: () =>
   };
   return createExternalActionExecutor;
 }
+
+type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
+  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay }>;

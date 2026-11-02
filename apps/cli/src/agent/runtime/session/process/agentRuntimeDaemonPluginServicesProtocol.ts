@@ -27,7 +27,7 @@ import {
     AgentRuntimeDaemonServiceTurnWitnessV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
-import { AccountNoticeItemTypeV1Schema, AccountNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 const BoundedIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(512)));
 const HostPluginContributionIdentityV1Schema = lazyZodSchema(() => asHostProtocolZod(
@@ -989,7 +989,7 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
             data: z.optional(RunnerDaemonPluginServiceWireValueV1Schema),
             itemId: z.optional(z.string().check(z.minLength(1))),
             type: z.optional(lazyZodSchema(() => asHostProtocolZod(AccountNoticeItemTypeV1Schema))),
-            page: z.optional(lazyZodSchema(() => asHostProtocolZod(AccountNoticePageV1Schema))),
+            page: z.optional(lazyZodSchema(() => asHostProtocolZod(PluginNoticePageV1Schema))),
             resolved: z.optional(z.boolean()),
         }),
     })),

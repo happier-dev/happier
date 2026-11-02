@@ -9926,3 +9926,12 @@ export * from './deployments/deploymentBindingPatchV1.js';
 export * from './plugins/contributions/backupDestinations.js';
 
 export * from './plugins/contributions/deploymentTemplates.js';
+export * from './machines/setup/machineSetupSourcesV1.js';
+export * from './machines/machineAuthorityV1.js';
+export * from './actions/specs/machine/adminAccess.js';
+export * from './machines/reachability/actionsV1.js';
+export * from './machines/reachability/machineReachabilityPostureV1.js';
+export * from './artifacts/artifactMutationHttpV1.js';
+export { type PluginCollectionListExtensionV1 } from './plugins/contributions/ui/v2.js';
+export { type DeploymentRestartInputV1 } from './deployments/deploymentRestartV1.js';
+export { type HealthCheckKindContributionV1 } from './plugins/contributions/healthCheckKinds.js';

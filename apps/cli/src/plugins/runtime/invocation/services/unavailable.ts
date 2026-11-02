@@ -237,7 +237,9 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
         systemToolsForPlugin?: (
             pluginId: string,
         ) => NonNullable<Parameters<typeof createStablePluginExecService>[0]['systemTools']>;
-    }>;
+
+agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+}>;
     managedServices?: ManagedServicesInvocationOwner;
     managedServiceCredentialFiles?: ManagedServiceCredentialFileOwner;
     managedServiceDeclaredSecretReadPort?: Readonly<{
@@ -376,6 +378,15 @@ function createHostAccessDisclosureMismatchRecorder(
  * between independently maintained matrices.
  */
 export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
+    machineConnectorSecrets: {
+        id: 'machineConnectorSecrets', publicProperty: 'machineConnectorSecrets', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(): PluginServices['machineConnectorSecrets'] {
+            return undefined;
+        },
+        createAvailable({ seed }): PluginServices['machineConnectorSecrets'] | null {
+            return seed.machineConnectorSecrets ?? null;
+        },
+    },
     backgroundServices: {
         id: 'backgroundServices', publicProperty: 'backgroundServices', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['backgroundServices'] {
@@ -1020,13 +1031,12 @@ export function createPluginInvocationServicesFromDescriptors(
         : undefined;
     const exec = execAvailable
         ? createStablePluginExecService({
+...(params.exec?.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
+
             readSpawnFailureLimits: params.exec?.readSpawnFailureLimits,
             ...(params.exec?.posixProcessGroup ? { posixProcessGroup: params.exec.posixProcessGroup } : {}),
             ...(seed.processOwner ? { processOwner: seed.processOwner }
                 : seed.session ? { processOwner: { kind: 'session', sessionId: seed.session.id } } : {}),
-            allowedExecutables: binding.processExecutables!,
-            allowedEnvKeys: binding.processEnvKeys,
-            allowedCwdScopes: binding.filesystemScopes,
             signal: seed.signal,
             isOccurrenceCurrent: seed.isOccurrenceCurrent,
             ...(binding.execOutputObserver ? { observeProcessOutput: binding.execOutputObserver } : {}),
@@ -1062,7 +1072,6 @@ export function createPluginInvocationServicesFromDescriptors(
                 ),
             } : {}),
             resolvePath: params.exec!.resolvePath,
-            recordDisclosureMismatch: createHostAccessDisclosureMismatchRecorder(seed, params),
             ...(params.exec!.agentCli ? { agentCli: params.exec!.agentCli } : {}),
             ...(systemTools ? { systemTools } : {}),
             ...(params.exec!.environment ? { environment: params.exec!.environment } : {}),

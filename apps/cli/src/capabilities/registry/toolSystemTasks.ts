@@ -36,7 +36,7 @@ type SystemTasksRunnerAdapter = Readonly<{
   start: (params: Record<string, unknown>) => Promise<unknown>;
   poll: (params: Record<string, unknown>) => Promise<unknown>;
   wait: (params: Readonly<{ taskId: string }>) => Promise<unknown>;
-  respond: (params: Record<string, unknown>) => Promise<void>;
+  respond: (params: Record<string, unknown>) => Promise<SystemTaskJsonValue | undefined>;
 }>;
 
 function createUnsupportedRunner(): SystemTasksRunnerAdapter {
@@ -61,7 +61,7 @@ export function createProtocolSystemTasksRunnerAdapter(
     start: (params: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>) => Promise<unknown>;
     poll: (params: Readonly<{ taskId: string; cursor: number }>) => Promise<unknown>;
     wait: (params: Readonly<{ taskId: string }>) => Promise<unknown>;
-    respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<void>;
+    respond: (params: Readonly<{ taskId: string; answer: unknown; delivery?: unknown; responseAuthorization?: unknown; expectedPromptKind?: unknown; expectedPromptId?: unknown }>) => Promise<SystemTaskJsonValue | undefined>;
   }>,
   params: Readonly<{
     createTaskId?: () => string;
@@ -87,9 +87,13 @@ export function createProtocolSystemTasksRunnerAdapter(
       });
     },
     respond: async (input) => {
-      await runner.respond({
+      return await runner.respond({
         taskId: String((input as { taskId?: unknown }).taskId ?? '').trim(),
         answer: (input as { answer?: unknown }).answer,
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+        ...(input.responseAuthorization !== undefined ? { responseAuthorization: input.responseAuthorization } : {}),
+        ...(input.expectedPromptKind !== undefined ? { expectedPromptKind: input.expectedPromptKind } : {}),
+        ...(input.expectedPromptId !== undefined ? { expectedPromptId: input.expectedPromptId } : {}),
       });
     },
   };

@@ -1,3 +1,4 @@
+import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -328,4 +329,12 @@ test('a pre-existing error in an unchanged file stays attributed to the base whe
     checkCommitTypeCoherence({ repo, base: broken, tree: commit }).fresh.length,
     0,
   );
+});
+
+test('retains the nested cause in native compiler diagnostic messages', () => {
+  const diagnostic = { text: 'Types are incompatible.', messageChain: [
+    { text: 'The return value is incompatible.', messageChain: [{ text: 'Property revision is missing.' }] },
+  ] };
+  assert.equal(diagnosticMessages.diagnosticMessageText(diagnostic),
+    'Types are incompatible.\n  The return value is incompatible.\n    Property revision is missing.');
 });

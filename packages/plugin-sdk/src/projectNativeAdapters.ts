@@ -1,3 +1,4 @@
+import type { ProjectToolchainSelectionV1 as CanonicalToolchain } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ManagedExecutableRef } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
 import type { ProjectNativeAdapterRoleV1 as CanonicalAdapterRole } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ProjectDefinitionDetectionV1 as CanonicalDetection, ProjectNativeRefV1 as CanonicalNativeRef, ProjectEnvironmentSelectionV1 as CanonicalEnvironment } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -26,6 +27,8 @@ export type PluginProjectNativeFailureV1 = Readonly<{
     code: string;
 }>;
 export type PluginProjectNativeCommandV1 = Readonly<{
+toolchainApplied?: ProjectToolchainSelectionV1;
+
     executable: ManagedExecutableRef;
     args: readonly string[];
     cwd: string;
@@ -55,6 +58,8 @@ export type PluginProjectNativeEnvironmentResultV1 = Readonly<{
 
 /** Passive detection receives no host services or launch capability. */
 export interface PluginProjectNativeAdapterRuntimeV1 {
+prepareToolchain?(request: PluginProjectNativeToolchainRequestV1, context: PluginInvocationContext, options?: PluginCancellationOptions): Promise<PluginProjectNativeToolchainResultV1>;
+
     detect?(request: PluginProjectNativeInspectionV1, options?: PluginCancellationOptions): Promise<ProjectDefinitionDetectionV1>;
     resolveCommand?(request: PluginProjectNativeCommandRequestV1, context: PluginInvocationContext, options?: PluginCancellationOptions): Promise<PluginProjectNativeCommandResultV1>;
     /** Returns the complete native environment, not a patch over the original host environment. */
@@ -65,3 +70,17 @@ export type PluginProjectNativeAdapterDefinitionV1 = Readonly<{
     declaration: PluginProjectNativeAdapterDeclarationV1;
     runtime: PluginProjectNativeAdapterRuntimeV1;
 }>;
+
+export type ProjectToolchainSelectionV1 = CanonicalToolchain;
+
+export type PluginProjectNativeToolchainRequestV1 = PluginProjectNativeInspectionV1 & Readonly<{
+    selection: Extract<ProjectToolchainSelectionV1, { kind: 'pluginToolchain' }>;
+    /** Absent for toolchain-only preparation; wrapper-only adapters refuse that intent. */
+    launch?: Readonly<{ command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>> }>;
+}>;
+export type PluginProjectNativeToolchainResultV1 = Readonly<{
+    kind: 'ready';
+    env: Readonly<Record<string, string>>;
+    launch?: PluginProjectNativeCommandV1;
+    reviewInputs: readonly PluginProjectNativeFileFactV1[];
+}> | PluginProjectNativeFailureV1;

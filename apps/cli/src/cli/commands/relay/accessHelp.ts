@@ -1,4 +1,6 @@
 import { renderHelpPage } from '@happier-dev/cli-common/output';
+import { filterRelayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
 export function showRelayAccessHelp(): void {
     console.log(renderHelpPage({
@@ -18,3 +20,10 @@ export function showRelayAccessHelp(): void {
     }));
 }
 
+
+export function readAvailableRelayAccessDescriptors() {
+    return filterRelayAccessProviderDescriptors({
+        allowTailscale: resolveCliFeatureDecision({ featureId: 'setup.relayAccess.allowTailscale', env: process.env }).state === 'enabled',
+        allowCloudflareTunnel: resolveCliFeatureDecision({ featureId: 'setup.relayAccess.allowCloudflareTunnel', env: process.env }).state === 'enabled',
+    }).filter(descriptor => descriptor.definition.targets.includes('homeRelay'));
+}

@@ -1,3 +1,6 @@
+import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
+import { createCLIProxyAPIManagedHealthResponse } from '../../../../../packages/plugins/cliproxyapi/src/provider/managedHealth.testkit';
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -206,13 +209,8 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
   it('projects proven downstream endpoints for the bound OpenAI upstream before endpoint publication', async () => {
     const boundPurposes = ['openai-upstream'] as const;
     const dispose = vi.fn(async () => undefined);
-    const request = vi.fn<ManagedServiceHandle['request']>(async () => Object.freeze({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: Object.freeze({ 'content-type': 'application/json' }),
-      body: new Response(JSON.stringify(healthyIdentityFor(boundPurposes))).body,
-    }) satisfies ManagedServiceResponse);
+    let launch: ManagedServiceSpec | undefined;
+    const request = vi.fn<ManagedServiceHandle['request']>(async () => createCLIProxyAPIManagedHealthResponse(launch));
     const service = Object.freeze({
       snapshot: () => healthySnapshot,
       observe: vi.fn(() => Object.freeze({ dispose() {} })),
@@ -221,7 +219,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       stop: vi.fn(async () => Object.freeze({ status: 'stopped' as const })),
       dispose,
     }) satisfies ManagedServiceHandle;
-    const supervise = vi.fn<ManagedServices['supervise']>(async () => service);
+    const supervise = vi.fn<ManagedServices['supervise']>(async spec => { launch = spec; return service; });
     const runtime = await captureCliProxyApiRuntime();
     const resolved = Object.freeze({
       runtime,
@@ -313,13 +311,14 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
         expectedConnectionSecurityFingerprint: source.expectedConnectionSecurityFingerprint,
         expectedManagedRuntimeBindingFingerprint: source.expectedManagedRuntimeBindingFingerprint,
         signal: new AbortController().signal, openBroker: async () => opened,
-        admitConsumer: async () => current ? { ok: true } : { ok: false, reasonCode: 'operation_not_current' },
+        // Home admission is the network boundary; broker routing beneath it stays real.
+        admitConsumer: async () => ({ ok: true }),
         openTunnel: async () => ({ localPort: 45124, localCapability: 'c'.repeat(64), observedPath: 'relay',
           retire: async () => {}, close: async () => {} }),
         fetchImpl: async (url, init) => {
           const response = await handler({ context, request: { method: 'GET', pathAndQuery: new URL(String(url)).pathname,
             signal: init?.signal ?? undefined } });
-          return response.ok ? new Response(response.response.body, { status: response.response.status, headers: response.response.headers })
+          return response.ok ? new Response(await readProviderBrokerResponseBody(response.response.body), { status: response.response.status, headers: response.response.headers })
             : new Response(null, { status: 403 });
         },
       });

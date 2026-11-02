@@ -1,3 +1,4 @@
+import { type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import axios from '@/api/client/credentialAxios';
 import {
@@ -268,7 +269,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         : receipt.state === 'cancelled' ? 'cancelled' : 'outcome_unknown', error: receipt.state, details: receipt };
     }
     const settled = await (actionId === 'deployments.teardown'
-      ? params.dispatchReceipt({ actionId, input: DeploymentActionInputSchemasV1[actionId].parse(input), receipt, context })
+      ? params.dispatchReceipt({ actionId, input: DeploymentTeardownInputV1Schema.parse(input), receipt, context })
       : actionId === 'deployments.promote'
         ? params.dispatchReceipt({ actionId, input: DeploymentActionInputSchemasV1[actionId].parse(input), receipt, context })
         : actionId === 'deployments.rollback'
@@ -284,3 +285,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     return settled;
   } };
 }
+
+export type CliDeploymentEnvironmentAccessObserve = (input: Readonly<{ serverId: string }>, context: ActionExecutorContext,
+  listener: (event: RequesterEnvironmentAccessObservation) => void,
+) => Promise<Readonly<{ dispose(): Promise<void> }> | ActionExecuteFailure>;

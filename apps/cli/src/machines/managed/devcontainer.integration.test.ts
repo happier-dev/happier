@@ -42,11 +42,11 @@ describe('Devcontainer consumes ordinary managed enrollment', () => {
     { title: 'cancelled creation', row: { ...machine, creationState: 'canceled' as const }, code: 'enrollment_retired' },
     { title: 'rebuild revision', row: { ...machine, intentRevision: 3, desired: 'rebuild' as const }, code: 'enrollment_retired' },
     { title: 'replaced container', row: { ...machine, resource: { ...resource, value: { ...resource.value, containerId: 'b'.repeat(64) } } }, code: 'resource_mismatch' },
-    { title: 'different physical controller', row: { ...machine, controller: { ...machine.controller, machineId: 'other-host' } }, code: 'enrollment_retired' },
+    { title: 'different physical controller', row: { ...machine, controller: { ...correlation.controller, machineId: 'other-host' } }, code: 'enrollment_retired' },
   ])('rejects $title before child credential or binary delivery', async ({ row, code }) => {
     let delivered = false;
     await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
-      readCurrentManagedRow: async () => row,
+      readCurrentManagedRow: async () => ManagedMachineV1Schema.parse(row),
       // Native IO is the external boundary. Host currentness and enrollment
       // admission execute unchanged; no enrollment or policy helper is mocked.
       native: { exec: async () => { delivered = true; return { status: 0, stdout: '', stderr: '' }; },

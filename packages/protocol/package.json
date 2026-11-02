@@ -8859,6 +8859,51 @@
       "happier-source": "./src/actions/settings/sessionAutoFollowSettingsAction.ts",
       "types": "./dist/actions/settings/sessionAutoFollowSettingsAction.d.ts",
       "default": "./dist/actions/settings/sessionAutoFollowSettingsAction.js"
+    },
+    "./machines/adminAccessV1": {
+      "happier-source": "./src/machines/adminAccessV1.ts",
+      "types": "./dist/machines/adminAccessV1.d.ts",
+      "default": "./dist/machines/adminAccessV1.js"
+    },
+    "./deployments/storedAppInputV1": {
+      "happier-source": "./src/deployments/storedAppInputV1.ts",
+      "types": "./dist/deployments/storedAppInputV1.d.ts",
+      "default": "./dist/deployments/storedAppInputV1.js"
+    },
+    "./deployments/deploymentActionsV1": {
+      "happier-source": "./src/deployments/deploymentActionsV1.ts",
+      "types": "./dist/deployments/deploymentActionsV1.d.ts",
+      "default": "./dist/deployments/deploymentActionsV1.js"
+    },
+    "./deployments/deploymentDomainV1": {
+      "happier-source": "./src/deployments/deploymentDomainV1.ts",
+      "types": "./dist/deployments/deploymentDomainV1.d.ts",
+      "default": "./dist/deployments/deploymentDomainV1.js"
+    },
+    "./machines/reachability/machineReachabilityPostureV1": {
+      "happier-source": "./src/machines/reachability/machineReachabilityPostureV1.ts",
+      "types": "./dist/machines/reachability/machineReachabilityPostureV1.d.ts",
+      "default": "./dist/machines/reachability/machineReachabilityPostureV1.js"
+    },
+    "./machines/managed/machineSetupV1": {
+      "happier-source": "./src/machines/managed/machineSetupV1.ts",
+      "types": "./dist/machines/managed/machineSetupV1.d.ts",
+      "default": "./dist/machines/managed/machineSetupV1.js"
+    },
+    "./machines/setup/machineSetupSourcesV1": {
+      "happier-source": "./src/machines/setup/machineSetupSourcesV1.ts",
+      "types": "./dist/machines/setup/machineSetupSourcesV1.d.ts",
+      "default": "./dist/machines/setup/machineSetupSourcesV1.js"
+    },
+    "./actions/sessionSections": {
+      "happier-source": "./src/actions/sessionSections.ts",
+      "types": "./dist/actions/sessionSections.d.ts",
+      "default": "./dist/actions/sessionSections.js"
+    },
+    "./crypto/ed25519": {
+      "happier-source": "./src/crypto/ed25519.ts",
+      "types": "./dist/crypto/ed25519.d.ts",
+      "default": "./dist/crypto/ed25519.js"
     }
   },
   "files": [

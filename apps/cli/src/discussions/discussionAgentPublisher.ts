@@ -1,3 +1,4 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { z } from 'zod/mini';
 import axios from 'axios';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -12,7 +13,7 @@ import { AgentRuntimeDaemonServiceTurnWitnessV1Schema, projectAgentRuntimeDaemon
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
-import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

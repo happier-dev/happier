@@ -22,7 +22,7 @@ import type { SavedSecretCatalogResourceInputV1, SavedSecretCatalogState, SavedS
 /** Invocation-owned Account custody; it never publishes to the daemon Account. */
 export type SavedSecretOperationContextV1 = Readonly<{
   /** Existing authenticated Machine ingress, retained only in host-private invocation custody. */
-  machineAdmission?: Readonly<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'actorAccountId' | 'custodianAccountId'>>;
+  machineAdmission?: Readonly<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'actorAccountId' | 'custodianAccountId'> & Partial<Pick<NonNullable<RpcHandlerContext['machineAdmission']>, 'role'>>>;
   credentials: StoredCredentials;
   serverHttpBaseUrl: string;
   readSnapshot(): ActiveAccountSettingsSnapshot | null;

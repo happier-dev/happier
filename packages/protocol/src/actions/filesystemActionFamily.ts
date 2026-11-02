@@ -244,3 +244,5 @@ export const FilesystemCopyOutputSchema = lazyZodSchema(() => z.union([
 ]));
 export type FilesystemCopyOutput = z.infer<typeof FilesystemCopyOutputSchema>;
 export type FilesystemEntryTreeDescriptor = z.infer<typeof FilesystemEntryTreeDescriptorSchema>;
+
+export { type FilesystemEffectFailureDetailsV1 } from '../machines/filesystemFailure.js';

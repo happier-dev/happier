@@ -1,17 +1,18 @@
+import type { AccountE2eeCustody } from '@happier-dev/sync-client';
 /**
  * Minimal persistence functions for Happier CLI
  * 
  * Handles settings and private key storage in ~/.happier/ or local .happier/
  */
 
-import { randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { isDeepStrictEqual } from 'node:util';
-import { FileHandle } from 'node:fs/promises'
-import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
-import { constants } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { FileHandle } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises';
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { constants } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
 import { configuration } from './configuration';
 import { resolveCliApiToken } from './auth/cliApiToken';
@@ -1590,4 +1591,25 @@ export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
   if (!ownRaw) return;
   daemonLockRawByHandle.delete(lockHandle);
   await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, ownRaw).catch(() => undefined);
+}
+
+export type AccountE2eeCustodyHolder = Readonly<{ encryption: unknown; accountE2eeCustody?: 'historical' }>;
+
+export function readAccountE2eeCustody(credentials: AccountE2eeCustodyHolder): AccountE2eeCustody {
+  if (!credentials.encryption) return 'absent';
+  return credentials.accountE2eeCustody === 'historical' ? 'historical' : 'active';
+}
+
+export async function readAccountE2eeCustodyForToken(token: string): Promise<AccountE2eeCustody> {
+  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined || resolveCliApiToken()) {
+    const scoped = await readStoredCredentials().catch(() => null);
+    if (scoped?.token === token) return readAccountE2eeCustody(scoped);
+    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) return 'absent';
+  }
+  const serverIds = await readdir(configuration.serversDir).catch(() => [] as string[]);
+  for (const serverId of new Set([configuration.activeServerId, ...serverIds, 'cloud'])) {
+    const stored = await readStoredCredentialsForServerId(serverId).catch(() => null);
+    if (stored?.token === token) return readAccountE2eeCustody(stored);
+  }
+  return 'absent';
 }

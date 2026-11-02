@@ -158,7 +158,7 @@ function responseHeaders(
 }
 
 function bindResponseBody(
-  body: ReadableStream<Uint8Array> | null,
+  body: ManagedServiceResponse['body'],
   signal: AbortSignal | undefined,
   cleanup: () => void,
   sanitizer: Readonly<{ push(chunk: Uint8Array): string; flush(): string }>,

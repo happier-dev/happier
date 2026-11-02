@@ -1,3 +1,4 @@
+import { createCanonicalJsonSigningInput } from './canonicalJson.js';
 import tweetnacl from 'tweetnacl';
 import { hmac } from '@noble/hashes/hmac';
 import { sha512 } from '@noble/hashes/sha512';
@@ -400,4 +401,21 @@ export function openAccountScopedBlobCiphertext(params: {
   // cross-domain substitution. Reject them here; any future recovery mechanism
   // requires an explicit, independently authenticated owner discriminator.
   return null;
+}
+
+export function deriveDeploymentEnvironmentCreateCommitmentV1(params: Readonly<{
+  accountId: string;
+  mode: 'plain' | 'e2ee';
+  material: AccountScopedCryptoMaterial | null;
+  intent: unknown;
+}>): string {
+  const domain = 'happier:deployment-environment-create-commitment:v1';
+  const parts = [params.accountId, createCanonicalJsonSigningInput(params.intent)];
+  if (params.mode === 'plain') {
+    if (params.material !== null) throw new Error('account_mode_mismatch');
+    return computeCanonicalDomainSeparatedDigest(domain, parts);
+  }
+  if (!params.material) throw new Error('client_required');
+  return encodeBase64(hmacSha512(resolveMachineKey(params.material),
+    encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
 }

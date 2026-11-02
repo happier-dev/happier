@@ -310,7 +310,9 @@ export function createDaemonMachineBootstrapRuntime(
         DaemonProviderBrokerRuntime['checkRunnerCredentialSelectionCurrentness'];
       close(): Promise<void>;
     }>>;
-  }>,
+
+agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
+}>,
 ): BootstrapRuntime & Pick<ApiMachineClient, 'retireProjectFiniteExecution'> {
   // The same authenticated constructor facts used by Machine work-summary
   // composition. A later claim cannot choose its Account, Home or installation.
@@ -459,6 +461,8 @@ export function createDaemonMachineBootstrapRuntime(
             serviceManaged: params.startupSource === 'background-service',
             ...(params.serviceLabel ? { serviceLabel: params.serviceLabel } : null),
           }, {
+agentIsolation: params.agentIsolation,
+
             controlPort: params.controlPort,
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
             readSpawnFailureLimits: params.readSpawnFailureLimits,

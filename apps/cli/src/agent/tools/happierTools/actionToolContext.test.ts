@@ -114,7 +114,7 @@ describe('session-bound Action tool context', () => {
       try {
       const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: handle.instanceId,
         workspaceId: workspace.id, cwd: workspace.rootPath, declaration };
-      const resource = LocalServicePreviewResourceV1Schema.parse({ previewId: 'actual-preview', machineId: 'machine_1', serviceTarget,
+      const resource = LocalServicePreviewResourceV1Schema.parse({ previewId: handle.instanceId, machineId: 'machine_1', serviceTarget,
         owner: { kind: 'user', id: 'starter' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
         initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host' });
       const registry = createLocalServicePreviewRegistry();

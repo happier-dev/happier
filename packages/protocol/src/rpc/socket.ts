@@ -1,3 +1,5 @@
+import { deploymentChildEffectActionIdForRootV1 } from '../deployments/deploymentActionIdsV1.js';
+import { isMachineSetupPlanRpcChildV1 } from '../machines/managed/actionIdsV1.js';
 import * as zMini from 'zod/mini';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -175,7 +177,14 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
   || value.externalActionExecution.authorization.binding.actionId === 'discussion.second_opinion.start'
     && value.externalActionExecution.effectActionId === 'session.spawn_new'
     && (value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
-      || value.method.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)))));
+      || value.method.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
+  || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
+    effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
+  || value.externalActionExecution.deploymentChildRouting !== undefined
+    && value.method === `${value.externalActionExecution.deploymentChildRouting.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
+    && value.externalActionExecution.effectActionId === value.externalActionExecution.deploymentChildRouting.actionId
+    && deploymentChildEffectActionIdForRootV1(value.externalActionExecution.authorization.binding.actionId,
+      value.externalActionExecution.authorization.binding.deploymentPreparationAdmission) === value.externalActionExecution.deploymentChildRouting.actionId)));
 export type WorkspaceSyncSourceExecutionV1 = Readonly<z.infer<typeof WorkspaceSyncSourceExecutionV1Schema>>;
 
 /** Target custody has its own phase binding; the moved Session need not live on this child. */

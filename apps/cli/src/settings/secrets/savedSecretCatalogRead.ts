@@ -1,3 +1,9 @@
+import type { SavedSecretMaterializerV1 } from './savedSecretCatalog';
+import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
+import type { SavedSecretExternalAcquisitionV1 } from './savedSecretCatalog';
+import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol';
+import type { SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import axios from 'axios';
 
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
@@ -309,4 +315,15 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   }
   return { referencedSavedSecretIds: references, savedSecretRevisions: [...captured.resourcesByRef.values()]
     .map(({ resourceId, revision }) => ({ resourceId, expectedRevision: revision })) };
+}
+
+export async function readSavedSecretMaterializerForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<Readonly<{
+  snapshot: ActiveAccountSettingsSnapshot;
+  materializer: SavedSecretMaterializerV1;
+}>> {
+  const snapshot = await readSavedSecretCatalogForOperation(input);
+  const context = input.operationContext;
+  const materializer = createSavedSecretMaterializerFromSnapshotV1(snapshot,
+    context ? { isCurrent: () => context.readSnapshot() === snapshot } : undefined);
+  return { snapshot, materializer };
 }

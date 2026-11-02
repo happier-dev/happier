@@ -28,8 +28,7 @@ describe('runner native launch authority', () => {
                     io: { resolveTool: async () => ({ executablePath: '/native/mise', version: '2026.10.4' }), run: nativeRun },
                 } } };
             });
-            const exec = createStablePluginExecService({
-                allowedExecutables: [executable], allowedEnvKeys: ['REMOVE'], environment: { REMOVE: 'old' },
+            const exec = createStablePluginExecService({ environment: { REMOVE: 'old' },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath, release: resolvedRelease }), resolvePath: async () => root,
             });

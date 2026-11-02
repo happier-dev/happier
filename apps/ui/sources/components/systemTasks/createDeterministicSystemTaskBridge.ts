@@ -1,3 +1,7 @@
+import { parseRelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
+import { getRelayAccessProviderDescriptor, readBuiltinRelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { normalizeRelayAccessCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess/normalizePublicServerUrl';
+import { projectRelayAccessConfigV1 } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 import {
     SYSTEM_TASK_PROTOCOL_VERSION,
     type SystemTaskResult,
@@ -50,6 +54,7 @@ function buildDisabledRelayAccessSnapshot(): RelayAccessTaskSnapshot {
     return {
         configured: false,
         providerId: null,
+        selection: null,
         status: {
             state: 'disabled',
             shareUrl: null,
@@ -59,28 +64,22 @@ function buildDisabledRelayAccessSnapshot(): RelayAccessTaskSnapshot {
 }
 
 function resolveRelayAccessShareUrl(config: RelayAccessConfig): string | null {
-    switch (config.providerId) {
-        case 'lan': {
-            const url = typeof config.url === 'string' ? config.url.trim() : '';
-            return url.length > 0 ? url : null;
-        }
-        case 'cloudflareNamed': {
-            const hostname = typeof config.hostname === 'string' ? config.hostname.trim() : '';
-            return hostname.length > 0 ? `https://${hostname}` : null;
-        }
-        default:
-            return null;
-    }
+    const descriptor = getRelayAccessProviderDescriptor(config.provider);
+    const field = descriptor.homeUi?.configStep?.fields.find(candidate => candidate.format === 'url' || candidate.format === 'hostname');
+    if (!field || !config.config || typeof config.config !== 'object' || Array.isArray(config.config)) return null;
+    const value = (config.config as Readonly<Record<string, unknown>>)[field.id];
+    if (typeof value !== 'string' || !value.trim()) return null;
+    return normalizeRelayAccessCanonicalPublicServerUrl(field.format === 'hostname' ? `https://${value.trim()}` : value.trim());
 }
 
 function buildConfiguredRelayAccessSnapshot(
-    providerId: RelayAccessProviderId,
     config: RelayAccessConfig,
 ): RelayAccessTaskSnapshot {
     const shareUrl = resolveRelayAccessShareUrl(config);
     return {
         configured: true,
-        providerId,
+        providerId: readBuiltinRelayAccessProviderId(config.provider),
+        selection: projectRelayAccessConfigV1(config),
         status: {
             state: shareUrl ? 'enabled' : 'unknown',
             shareUrl,
@@ -123,11 +122,12 @@ function buildRelayAccessScenario(
     }
 
     if (spec.kind === 'relay.access.configure.v1') {
-        const params = (spec as { params?: { providerId?: RelayAccessProviderId; config?: RelayAccessConfig } }).params;
-        if (!params?.providerId || !params.config) {
+        const params = spec.params;
+        const config = parseRelayAccessConfig(params && typeof params === 'object' && 'config' in params ? params.config : null);
+        if (!config) {
             return null;
         }
-        const snapshot = buildConfiguredRelayAccessSnapshot(params.providerId, params.config);
+        const snapshot = buildConfiguredRelayAccessSnapshot(config);
         relayAccessSnapshotsByTarget.set(readRelayAccessTargetKey(spec), snapshot);
         return [
             {

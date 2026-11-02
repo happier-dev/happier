@@ -1,5 +1,7 @@
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import * as credentialPersistence from '@/persistence';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
@@ -27,6 +29,17 @@ import {
   registerAutomationReplyHandoffRpcHandler,
   type AutomationReplyHandoffRpcRegistrationOptions,
 } from './automationReplyHandoff';
+
+let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+beforeAll(async () => {
+  const credentials = vi.spyOn(credentialPersistence, 'readStoredCredentials').mockResolvedValue(null);
+  try {
+    runtimeFixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+      contributes: emptyContributions, pluginIds: [],
+    } });
+  } finally { credentials.mockRestore(); }
+});
+afterAll(async () => { await runtimeFixture?.dispose(); });
 
 const emptyContributions = createResolvedContributionRegistry({});
 
@@ -194,6 +207,7 @@ function createRegistrar(): Readonly<{
 function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
   const unavailableDependency = async () => { throw new Error('No native dependency installation is available in this fixture'); };
   return {
+    ...runtimeFixture.registry,
     claimReleaseLessDeclarations: async () => undefined,
     projectManagedServices: createManagedServicesOwner({
       processSupervisorHost: { custodyOwner: 'daemon', bind: () => { throw new Error('No native service process is available in this fixture'); } },

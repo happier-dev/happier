@@ -51,3 +51,9 @@ export function newDiagnostics(baseRows, headRows, hunksByFile) {
     return index < 0 || !consume(ambiguous, JSON.stringify([index, messageOf(row)]));
   });
 }
+
+/** Native diagnostics keep the deciding incompatibility in nested messages. */
+export function diagnosticMessageText(diagnostic, indent = '') {
+  return [indent + diagnostic.text, ...(diagnostic.messageChain ?? [])
+    .map(message => diagnosticMessageText(message, indent + '  '))].join('\n');
+}

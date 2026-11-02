@@ -1,5 +1,18 @@
 import { MachineSetupExclusionsV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema } from './credentialDeliveryV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+
+import { MachineSetupExclusionV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { MachineSetupSourceFactsMapV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { MachineSetupAppOriginV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
+import { MachineRecipeReferenceV1Schema } from '../setup/machineRecipeReferenceV1.js';
+import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
+import { MachineSetupObservationStatusV1Schema } from '../setup/machineSetupObservationV1.js';
+import { MachineSetupObservationReasonV1Schema } from '../setup/machineSetupObservationV1.js';
+import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
+import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workflowStartPreparationV1.js';
 import { z } from 'zod/mini';
 import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupEffectPlanV1Schema } from '../setup/machineRecipeV1.js';
@@ -49,6 +62,8 @@ export const MachineSetupAppChildV1Schema = lazyZodSchema(() => z.discriminatedU
 export type MachineSetupAppChildV1 = z.infer<typeof MachineSetupAppChildV1Schema>;
 export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
   desiredRevision: revision(), recipePlans: z.array(MachineSetupRecipePlanV1Schema),
+  exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
+  removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
 }));
 export type MachineSetupApplyTargetV1 = z.infer<typeof MachineSetupApplyTargetV1Schema>;
@@ -157,18 +172,29 @@ export const ProvisionersListInputV1Schema = lazyZodSchema(() => z.strictObject(
 export const ProvisionerProbeInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), controller: ManagedControllerV1Schema, contribution: asProtocolZod(PluginContributionIdentityV1Schema), credentials: mini.optional(ManagedCredentialSelectionsV1Schema) }));
 export const ProvisionerOptionsInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), controller: ManagedControllerV1Schema, contribution: asProtocolZod(PluginContributionIdentityV1Schema), credentials: mini.optional(ManagedCredentialSelectionsV1Schema), selectors: PluginJsonValueV2Schema }));
 
+export const MachineSetupRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), sources: MachineSetupSourceV1Schema,
+  desiredRevision: revision(), removeItemKeys: removalKeys(), removalPlans: z.array(MachineSetupRemovalPlanV1Schema),
+  exclusions: z.optional(MachineSetupExclusionsV1Schema),
+}));
+export const MachineSetupApplyResultV1Schema = lazyZodSchema(() => z.strictObject({ operationId: id(), terminalId: mini.optional(id()), runId: mini.optional(id()) }));
 export const ManagedMachineActionInputSchemasV1 = {
+'machines.environment.apply': MachineEnvironmentApplyInputV1Schema,
+
   'machines.provisioners.list': ProvisionersListInputV1Schema,
   'machines.provisioners.check': ProvisionerProbeInputV1Schema,
   'machines.provisioners.options': ProvisionerOptionsInputV1Schema,
   'machines.managed.acquire': ManagedAcquireInputV1Schema,
+  'machines.managed.credentials.install': ManagedCredentialInstallInputV1Schema,
   'machines.managed.list': ManagedListInputV1Schema,
   'machines.managed.get': ManagedGetInputV1Schema,
   'machines.managed.references.get': ManagedGetInputV1Schema,
   'machines.managed.inspect': ManagedGetInputV1Schema,
   'machines.managed.bootstrap.retry': ManagedMutationInputV1Schema,
   'machines.managed.setup.skip': ManagedMutationInputV1Schema,
-  'machines.environment.apply': MachineEnvironmentApplyInputV1Schema,
+  'machines.setup.plan': lazyZodSchema(() => z.union([MachineSetupPlanInputV1Schema, MachineSetupCombinedPlanInputV1Schema])),
+  'machines.setup.apply': MachineSetupApplyInputV1Schema,
+  'machines.setup.remove': MachineSetupRemoveInputV1Schema,
   'machines.managed.cancel': ManagedCancelInputV1Schema,
   'machines.managed.power.set': ManagedPowerInputV1Schema,
   'machines.managed.rebuild': ManagedRebuildInputV1Schema,
@@ -178,17 +204,22 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.retire': ManagedRetireInputV1Schema,
 } as const;
 export const ManagedMachineActionOutputSchemasV1 = {
+'machines.environment.apply': MachineEnvironmentApplyResultV1Schema,
+
   'machines.provisioners.list': MachineProvisionersListResultV1Schema,
   'machines.provisioners.check': lazyZodSchema(() => z.lazy(() => MachineProvisionerCheckResultV1Schema)),
   'machines.provisioners.options': lazyZodSchema(() => z.lazy(() => MachineProvisionerOptionsResultV1Schema)),
   'machines.managed.acquire': ManagedAcceptedV1Schema,
+  'machines.managed.credentials.install': ManagedCredentialDeliveryResultV1Schema,
   'machines.managed.list': ManagedListOutputV1Schema,
   'machines.managed.get': ManagedGetOutputV1Schema,
   'machines.managed.references.get': lazyZodSchema(() => z.lazy(() => MachineReferenceCensusV1Schema)),
   'machines.managed.inspect': ManagedInspectOutputV1Schema,
   'machines.managed.bootstrap.retry': ManagedAcceptedV1Schema,
   'machines.managed.setup.skip': ManagedGetOutputV1Schema,
-  'machines.environment.apply': MachineEnvironmentApplyResultV1Schema,
+  'machines.setup.plan': lazyZodSchema(() => z.union([MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema])),
+  'machines.setup.apply': MachineSetupApplyResultV1Schema,
+  'machines.setup.remove': MachineSetupApplyResultV1Schema,
   'machines.managed.cancel': ManagedCancelOutputV1Schema,
   'machines.managed.power.set': lazyZodSchema(() => z.lazy(() => ManagedIntentResultSchema)),
   'machines.managed.rebuild': lazyZodSchema(() => z.lazy(() => ManagedIntentResultSchema)),
@@ -225,6 +256,11 @@ export type ManagedBootstrapCredentialCreateV1 = z.infer<typeof ManagedBootstrap
 export type ManagedMachineActionInputV1<T extends ManagedMachineActionIdV1> = z.infer<(typeof ManagedMachineActionInputSchemasV1)[T]>;
 export type ManagedMachineActionOutputV1<T extends keyof typeof ManagedMachineActionOutputSchemasV1> = z.infer<(typeof ManagedMachineActionOutputSchemasV1)[T]>;
 
+export const MachineSetupCombinedPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), selectedMachineId: z.optional(id()), targets: z.array(MachineSetupPlanInputV1Schema).check(z.minLength(1)),
+}).check(z.refine(input => new Set(input.targets.map(target => JSON.stringify([target.homeId, target.machineId]))).size === input.targets.length,
+  { message: 'Setup targets must be unique.' })));
+
 const removalKeys = () => z.array(id()).check(z.refine(keys => new Set(keys).size === keys.length));
 
 export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -233,10 +269,136 @@ export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject(
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
 }));
+
+export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject({
+  desiredRevision: revision(), sources: MachineSetupSourceV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
+  sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
+  appOrigins: z.optional(z.array(MachineSetupAppOriginV1Schema)),
+  removeItemKeys: z.optional(removalKeys()), removalOffers: z.optional(z.array(MachineSetupRemovalOfferV1Schema)),
+  removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
+  /** Presentation only: exact referenced declarations already read by this target Plan. */
+  recipeTitles: z.optional(z.array(z.strictObject({ ref: MachineRecipeReferenceV1Schema, title: PluginLocalizedStringV2Schema }))),
+  support: z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
+    status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema) })),
+  recipePlans: z.optional(z.array(MachineSetupRecipePlanV1Schema)),
+  appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
+  appReviews: z.optional(z.array(MachineSetupAppReviewV1Schema)),
+  review: z.optional(MachineSetupPlanReviewV1Schema),
+}));
+
+export const MachineSetupRemovalOfferV1Schema = lazyZodSchema(() => {
+  const item = { itemKey: id(), item: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('setupRecipe'), selection: MachineRecipeSelectionV1Schema }),
+    z.strictObject({ kind: z.literal('softwareRecipe'), selection: MachineRecipeSelectionV1Schema }),
+  ]) };
+  return z.discriminatedUnion('status', [
+    z.strictObject({ ...item, status: z.literal('eligible'), selected: z.boolean() }),
+    z.strictObject({ ...item, status: z.literal('notEligible'), selected: z.literal(false),
+      reason: z.enum(['preExisting', 'unknownOrigin', 'needsCheck', 'unsupported']) }),
+  ]);
+});
+
+export const MachineSetupRemovalPlanV1Schema = lazyZodSchema(() => z.strictObject({
+  itemKey: id(), plan: MachineSetupEffectPlanV1Schema,
+}));
+
+export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.templates.instantiate'),
+  review: DeploymentTemplateInstantiationReviewV1Schema,
+}));
+
+export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  target: z.strictObject({ homeId: id(), machineId: id() }),
+  administratorRequired: z.nullable(z.boolean()),
+  downtime: z.enum(['none', 'possible', 'unknown']),
+  apps: z.optional(z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
+    kind: z.enum(['new', 'completed', 'not_completed', 'failed', 'unknown']), environmentId: z.optional(id()),
+  }))),
+  host: z.optional(WorkflowCombinedActionHostReviewV1Schema),
+}));
+
 export type MachineSetupPlanInputV1 = z.infer<typeof MachineSetupPlanInputV1Schema>;
 
-export const MachineSetupCombinedPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), selectedMachineId: z.optional(id()), targets: z.array(MachineSetupPlanInputV1Schema).check(z.minLength(1)),
-}).check(z.refine(input => new Set(input.targets.map(target => JSON.stringify([target.homeId, target.machineId]))).size === input.targets.length,
-  { message: 'Setup targets must be unique.' })));
+export type MachineSetupPlanResultV1 = z.infer<typeof MachineSetupPlanResultV1Schema>;
+
+export type MachineSetupRemovalOfferV1 = z.infer<typeof MachineSetupRemovalOfferV1Schema>;
+
+export type MachineSetupRemovalPlanV1 = z.infer<typeof MachineSetupRemovalPlanV1Schema>;
+
+export const MachineSetupCombinedPlanResultV1Schema = lazyZodSchema(() => z.strictObject({
+  targets: z.array(z.union([z.strictObject({ homeId: id(), machineId: id(), plan: MachineSetupPlanResultV1Schema,
+    appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)) }), MachineSetupPlanUnavailableTargetV1Schema])).check(
+      z.refine(targets => new Set(targets.map(target => JSON.stringify([target.homeId, target.machineId]))).size === targets.length,
+        { message: 'Each selected setup target has one result.' })),
+  review: WorkflowCombinedActionHostReviewV1Schema,
+}));
+
+export const MachineSetupPlanUnavailableTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), status: z.literal('unavailable'), reason: z.literal('offline'), errorCode: z.literal('machine_offline'),
+}));
+
+export type MachineSetupCombinedPlanResultV1 = z.infer<typeof MachineSetupCombinedPlanResultV1Schema>;
+
+export type MachineSetupPlanReviewV1 = z.infer<typeof MachineSetupPlanReviewV1Schema>;
+
+export { ManagedCredentialInstallInputV1Schema } from './credentialDeliveryV1.js';
+
 export type MachineSetupCombinedPlanInputV1 = z.infer<typeof MachineSetupCombinedPlanInputV1Schema>;
+
+export function readMachineSetupPlanChildInputV1(params: Readonly<{
+  rootActionId: string; rootInput: unknown; machineId: string; input: unknown;
+}>): MachineSetupPlanInputV1 | null {
+  const child = MachineSetupPlanInputV1Schema.safeParse(params.input);
+  if (!child.success || child.data.machineId !== params.machineId) return null;
+  if (params.rootActionId === 'machines.setup.plan') {
+    const root = MachineSetupCombinedPlanInputV1Schema.safeParse(params.rootInput);
+    const target = root.success && root.data.targets.find(target => target.machineId === params.machineId
+      && target.homeId === child.data.homeId);
+    if (!target) return null;
+    return sameStrictJsonValue(target, child.data) ? child.data : null;
+  }
+  if (params.rootActionId === 'machines.setup.apply') {
+    const root = MachineSetupApplyInputV1Schema.safeParse(params.rootInput);
+    const target = root.success && root.data.targets.find(target => target.machineId === params.machineId
+      && target.homeId === child.data.homeId);
+    return target && sameStrictJsonValue(child.data, { homeId: target.homeId, machineId: target.machineId,
+      sources: target.sources, ...(target.exclusions === undefined ? {} : { exclusions: target.exclusions }),
+      ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
+      ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }), mode: 'effects' }) ? child.data : null;
+  }
+  if (params.rootActionId === 'machines.setup.remove') {
+    const root = MachineSetupRemoveInputV1Schema.safeParse(params.rootInput);
+    return root.success && root.data.machineId === params.machineId && sameStrictJsonValue(child.data, {
+      homeId: root.data.homeId, machineId: root.data.machineId, sources: root.data.sources,
+      removeItemKeys: root.data.removeItemKeys, ...(root.data.exclusions === undefined ? {} : { exclusions: root.data.exclusions }),
+      mode: 'effects',
+    }) ? child.data : null;
+  }
+  return null;
+}
+
+export const MachineSetupResolveResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ sources: MachineSetupSourceV1Schema, creation: z.optional(MachineSetupCreationOriginV1Schema) }),
+  z.strictObject({ purpose: z.literal('creationOrigin'), creation: z.optional(MachineSetupCreationOriginV1Schema) }),
+]));
+
+const MachineSetupCreationOriginV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(),
+  preset: z.strictObject({ id: id(), revision: revision() }),
+}));
+
+export const MachineSetupReportInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineSetupPresetApplyInputV1Schema, {
+  managedId: id(), state: z.enum(['running', 'succeeded', 'failed']),
+  operation: z.strictObject({ operationId: id() }), errorCode: z.optional(z.string().check(z.minLength(1))),
+})));
+
+export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), presetId: id(), presetRevision: revision(),
+}));
+
+export type MachineSetupRemoveInputV1 = z.infer<typeof MachineSetupRemoveInputV1Schema>;
+
+export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Schema>;
+
+export { isMachineSetupPlanRpcChildV1 } from './actionIdsV1.js';
+
+export { ManagedInstallationServerOriginV1Schema } from './managedInstallationV1.js';

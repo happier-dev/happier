@@ -22,8 +22,7 @@ async function withNativeLaunchFixture(run: (fixture: Readonly<{
         // Native CLI IO is a genuine external process boundary.
         const activate = vi.fn(async () => ({ exitCode: 0, stdout: 'FINAL_NATIVE=active\0TERM=xterm-256color\0' }));
         const controller = new AbortController();
-        const exec = createStablePluginExecService({
-            allowedExecutables: [], signal: controller.signal,
+        const exec = createStablePluginExecService({ signal: controller.signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => { throw new Error('Agent identity must not be re-resolved'); },
             resolvePath: async () => root,

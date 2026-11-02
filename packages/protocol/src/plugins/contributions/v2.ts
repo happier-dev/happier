@@ -1,4 +1,5 @@
 import { DeploymentTargetContributionV1Schema, validateDeploymentTargetContributionsV1 } from './deploymentTargets.js';
+import { PluginSecretSourceContributionV1Schema } from './secretSources.js';
 import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
 export * from './healthCheckKinds.js';
 import { MachineRecipeV1Schema } from './machineRecipes.js';
@@ -937,6 +938,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'voiceProviders', schema: VoiceProviderContributionSchema }),
   definePluginContributionFamilyV2({ family: 'backgroundServices', schema: BackgroundServiceContributionSchema }),
   definePluginContributionFamilyV2({ family: 'captureSources', schema: PluginCaptureSourceContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'secretSources', schema: PluginSecretSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'projectNativeAdapters', schema: PluginProjectNativeAdapterContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'daemonDatabases', schema: PluginDaemonDatabaseContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'composerReferences', schema: PluginComposerReferenceProviderContributionV1Schema }),
@@ -1124,3 +1126,4 @@ export * from './deploymentTargets.js';
 export * from './deploymentTargetRolesV1.js';
 
 export { DeploymentStepV1Schema } from '../../deployments/deploymentStateV1.js';
+export { PluginSecretSourceContributionV1Schema, type PluginSecretSourceContributionV1 } from './secretSources.js';

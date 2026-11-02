@@ -1,3 +1,5 @@
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { createAccountPluginSecretReadCustody, type AccountPluginSecretReadCustody } from './accountPluginSecretReadCustody';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
@@ -122,6 +124,7 @@ function savedSecretName(pluginId: string, secretId: string): string {
  * settings projections.
  */
 export function createAccountPluginSecretCustodyRouter(params: Readonly<{
+    operationContext?: SavedSecretOperationContextV1;
     owner?: AccountSettingsMutationOwner;
     /** Exact authenticated Account reader selected by the enclosing runtime. */
     readCredentials?: typeof readStoredCredentials;
@@ -149,11 +152,14 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         expectedRevision?: string;
         assertCurrent?: () => void;
     }>): Promise<Readonly<{ revision: string }>>;
+    bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): AccountPluginSecretReadCustody | null;
+
 }> {
-    const readCredentials = params.readCredentials ?? readStoredCredentials;
+    const readCredentials = params.readCredentials ?? (params.operationContext
+        ? async () => params.operationContext!.credentials : readStoredCredentials);
     const readBoundSnapshot = (): AccountSecretSnapshot | null => {
         if (params.accountScopeKey === null) return null;
-        const snapshot = getActiveAccountSettingsSnapshot();
+        const snapshot = params.operationContext?.readSnapshot() ?? (params.operationContext ? null : getActiveAccountSettingsSnapshot());
         if (params.accountScopeKey === undefined) return snapshot;
         return snapshot?.scopeKey === params.accountScopeKey
             ? snapshot
@@ -161,11 +167,12 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
     };
     const owner: AccountSettingsMutationOwner = params.owner ?? Object.freeze({
         readSnapshot: readBoundSnapshot,
-        readLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken,
+        ...(!params.operationContext ? { readLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken } : {}),
         async admitSharedSecretForOperation(input: Readonly<{ ref: string; expectedScopeKey: string }>) {
             await refreshSavedSecretCatalogForOperation({
                 expectedScopeKey: input.expectedScopeKey,
                 references: [{ ref: input.ref }],
+                ...(params.operationContext ? { operationContext: params.operationContext } : {}),
             });
         },
         async updateOnce(input): Promise<AccountSettingsMutationResult> {
@@ -660,5 +667,57 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         return Object.freeze({ revision: state(after, target).revision });
     }
 
-    return Object.freeze({ resolve, bindExisting, unbind });
+    return Object.freeze({ resolve, bindExisting, unbind ,
+bindReadCustody(input: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>) {
+            const reader = bindAccountSnapshotReader();
+            if (!reader) return null;
+            return createReadCustody(() => {
+                if (input.signal.aborted || !input.isCurrent()) {
+                    throw custodyError('plugin_generation_stale', 'Plugin secret invocation retired');
+                }
+                return reader();
+            });
+        }
+});
+
+function createReadCustody(
+        readSnapshot: () => AccountSecretSnapshot,
+        admitSharedReferences: Parameters<typeof createAccountPluginSecretReadCustody>[0]['admitSharedReferences'] = async input => {
+            await refreshSavedSecretCatalogForOperation({ ...input,
+                references: input.references.map(reference => ({ ref: reference.ref })),
+                ...(params.operationContext ? { operationContext: params.operationContext } : {}),
+            });
+        },
+    ): AccountPluginSecretReadCustody {
+        return createAccountPluginSecretReadCustody({ readSnapshot, admitSharedReferences,
+            ...(params.operationContext ? { isCurrent: (signal?: AbortSignal) => params.operationContext!.isCurrent(signal) } : {}),
+        });
+    }
+
+function bindAccountSnapshotReader(): (() => AccountSecretSnapshot) | null {
+        const boundAccount: AccountSecretSnapshot | null = owner.readSnapshot();
+        if (!boundAccount) return null;
+        const boundAccountSnapshot: AccountSecretSnapshot = boundAccount;
+        const boundLifetimeToken = owner.readLifetimeToken?.();
+        function requireBoundAccountSnapshot(): AccountSecretSnapshot {
+            if (
+                boundLifetimeToken !== undefined
+                && owner.readLifetimeToken?.() !== boundLifetimeToken
+            ) {
+                throw custodyError(
+                    'plugin_secret_custody_unavailable',
+                    'The Account lifetime ended after plugin secret custody was resolved',
+                );
+            }
+            const snapshot = requireSnapshot();
+            if (!sameAccount(boundAccountSnapshot, snapshot)) {
+                throw custodyError(
+                    'plugin_secret_custody_unavailable',
+                    'The active Account changed after plugin secret custody was resolved',
+                );
+            }
+            return snapshot;
+        }
+        return requireBoundAccountSnapshot;
+    }
 }

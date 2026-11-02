@@ -1,3 +1,9 @@
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { onTestFinished } from 'vitest';
+import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -22,8 +28,20 @@ describe('original CLI Account finite Project admission', () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 7,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-    const input = { homeId: 'srv_finite_home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };
+    const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    // This is ordinary Account custody, not a runtime-only policy override:
+    // the receiving Account retains the same default Ask requirement.
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({
+      actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }),
+    }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    onTestFinished(() => resetActiveAccountSettingsSnapshotForTests());
+    const input = { homeId: 'srv_finite_home', machineId: 'guest', sources: [
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] };
     const machine = { id: 'guest', kind: 'persistent', active: true, installationId: 'guest-installation', revokedAt: null,
+      installationPublicKey: encodeBase64(installation.publicKey),
       replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
       access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
     vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
@@ -37,20 +55,25 @@ describe('original CLI Account finite Project admission', () => {
       if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'exact-home-root', binding: {
         accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 7 }, accountEncryptionMode: 'plain',
         serverIdentityId: input.homeId, custodianAccountId: 'owner', machineId: 'guest', installationId: 'guest-installation',
-        actionId: 'machines.environment.apply', requestId: envelope.requestId, target: envelope.target,
+        actionId: 'machines.setup.apply', requestId: envelope.requestId, target: envelope.target,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
       } } };
-      expect(url).toBe('https://home-a.test/v1/actions/machines.environment.apply');
+      expect(url).toBe('https://home-a.test/v1/actions/machines.setup.apply');
       expect(carrier.executionAuthorization?.token).toBe('exact-home-root');
+      if (!carrier.executionAuthorization) throw new Error('Missing admitted requester custody');
+      expect(openExternalActionRequesterAccountContextV1({ authorization: carrier.executionAuthorization,
+        purpose: { kind: 'external_action' }, machineId: 'guest', installationId: 'guest-installation',
+        serverIdentityId: input.homeId, installationPrivateKey: installation.secretKey, includeInvocation: true })).toMatchObject({ credentials: encodeStoredCredentials(credentials),
+        invocation: { caller: { kind: 'host' }, surface: 'cli' } });
       delivered = true;
-      return { status: 200, data: { v: 1, actionId: 'machines.environment.apply', requestId: envelope.requestId,
+      return { status: 200, data: { v: 1, actionId: 'machines.setup.apply', requestId: envelope.requestId,
         execution: { ok: true, result: { operationId: 'actual-environment-operation' } } } };
     });
     const owner = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
       externalActionClient: true, serverId: 'home-a', serverIdentityId: input.homeId, serverApiUrl: 'https://home-a.test',
-      actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
-    expect(await owner.execute('machines.environment.apply', input, { surface: 'cli', actionRequestId: 'environment-request',
-      presentUserConfirmation: { actionId: 'machines.environment.apply' } })).toEqual({ ok: true, result: { operationId: 'actual-environment-operation' } });
+      actionsSettingsProvider: createActionSettingsProvider({ scopeKey }) });
+    expect(await owner.execute('machines.setup.apply', input, { surface: 'cli', actionRequestId: 'environment-request',
+      presentUserConfirmation: { actionId: 'machines.setup.apply' } })).toEqual({ ok: true, result: { operationId: 'actual-environment-operation' } });
     expect(delivered).toBe(true);
   });
   it('keeps hosted finite work on its existing typed Session transport and refuses an unbound ambient caller', async () => {

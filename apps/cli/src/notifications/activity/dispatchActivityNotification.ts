@@ -1,8 +1,9 @@
+import { isDeepStrictEqual } from 'node:util';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { guardStopWarningNotificationIdV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
-import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { AccountNoticeWriteReceipt, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { AttentionDeliveryDecision, AttentionDeliveryEventId, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
@@ -55,6 +56,7 @@ function isTopicEnabled(channel: {
 }, event: ActivityNotificationEvent): boolean {
   const topic = event.topic;
   if (channel.enabled !== true) return false;
+  if (topic === 'service_health') return channel.topics.machines === true;
   if (topic === 'follow_update') return event.follow.event.kind === 'needs_you'
     ? event.follow.event.type === 'approval' ? channel.topics.permissionRequest === true : channel.topics.userActionRequest === true
     : channel.topics.ready === true;
@@ -155,7 +157,7 @@ function recordDeliveredNotificationForDedupe(input: Readonly<{
 
 export function resolveActivityNotificationPolicyEvent(
   event: ActivityNotificationEvent,
-): AttentionDeliveryEventId {
+): string {
   if (event.topic === 'connected_service_credential_health') {
     return 'connected_service_account_switch';
   }
@@ -180,6 +182,7 @@ function resolveChannelDecision(params: Readonly<{
     channel: params.channel,
     now: params.now,
     follow: params.follow,
+    ...(params.event.topic === 'service_health' && params.event.type ? { inboxItemType: params.event.type } : {}),
   });
 }
 
@@ -293,12 +296,17 @@ export async function listActivityNotificationChannels(params: Readonly<{
 
 export async function dispatchActivityNotificationAsync(params: Readonly<{
   settings: AccountSettings | null | undefined;
+  signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
   notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
   savedSecretMaterializer?: SavedSecretMaterializerV1;
-  isCurrent?: () => boolean | Promise<boolean>;
+  isCurrent?: (signal?: AbortSignal) => boolean | Promise<boolean>;
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   event: ActivityNotificationEvent;
+  /** Current local-controller native delivery only; external destinations need source opt-in. */
+  serviceHealthCommit?: Readonly<{
+    receipt: AccountNoticeWriteReceipt; machineId: string; controllerMachineId: string | null | undefined;
+  }>;
   expoPushSender?: ExpoPushActivityNotificationSender | null;
   liveActivityRemoteSender?: LiveActivityRemoteUpdateSender | null;
   nowMs?: () => number;
@@ -316,7 +324,24 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   /** Existing source-owned personal Follow CAS before outward delivery. Inbox rows stay derived. */
   acceptSourceFollowDelivery?: () => Promise<boolean>;
 }>): Promise<Readonly<{ attemptedChannels: number; deliveredChannels: number }>> {
+  params.signal?.throwIfAborted();
+  const serviceHealth = params.event.topic === 'service_health';
+  if (serviceHealth) {
+    const admission = params.serviceHealthCommit;
+    const receipt = admission?.receipt;
+    const opening = receipt?.changed ? ServiceHealthNoticeNotificationV1Schema.safeParse(receipt.healthOpening) : null;
+    // No catalog hydration, credential materialization or delivery may precede
+    // a committed opening and fresh proof that this daemon is its controller.
+    if (!admission || !receipt?.changed || !receipt.revision || !opening?.success
+      || receipt.artifactId !== opening.data.data.artifactId || !isDeepStrictEqual(opening.data, params.event)
+      || !admission.controllerMachineId || admission.controllerMachineId !== admission.machineId
+      || !params.isCurrent || !await params.isCurrent(params.signal)) {
+      return { attemptedChannels: 0, deliveredChannels: 0 };
+    }
+    params.signal?.throwIfAborted();
+  }
   const admission = await resolveSessionActivityNotificationAdmission(params);
+  params.signal?.throwIfAborted();
   if (!admission.eligible) {
     return { attemptedChannels: 0, deliveredChannels: 0 };
   }
@@ -361,9 +386,12 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   });
   let attemptedChannels = 0;
   let deliveredChannels = 0;
-  const selectedChannelIds = params.channels ? new Set(params.channels) : null;
+  const selectedChannelIds = serviceHealth
+    ? new Set(channels.filter(channel => channel.kind === 'expo_push' && (!params.channels || params.channels.includes(channel.id)))
+      .map(channel => channel.id))
+    : params.channels ? new Set(params.channels) : null;
   const selects = (id: string) => !selectedChannelIds || selectedChannelIds.has(id);
-  const pluginNotifications = params.pluginNotifications === undefined
+  const pluginNotifications = serviceHealth ? null : params.pluginNotifications === undefined
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
 

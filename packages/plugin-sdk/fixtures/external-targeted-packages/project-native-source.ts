@@ -1,3 +1,4 @@
+import { type ProjectToolchainSelectionV1 } from '@happier-dev/plugin-sdk';
 import {
     definePlugin,
     type ProjectNativeRefV1,
@@ -125,3 +126,7 @@ export async function createPixiPrivatePreview(actions: ActionsService, input: P
 export async function readPixiPublicPreview(actions: ActionsService, input: PluginActionInputById['localServices.publicPreview.status']) {
     return await actions.execute('localServices.publicPreview.status', input);
 }
+
+export const importedPixiToolchain: ProjectToolchainSelectionV1 = {
+    kind: 'pluginToolchain', adapter: pixiAdapter, configPath: 'pixi.toml',
+};

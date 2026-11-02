@@ -4,7 +4,7 @@ import { SERVERS_SETTINGS } from '@/components/settings/server/serverSettings';
 
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { parseRelayAccessConfig, relayAccessProviderDescriptors, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
@@ -24,24 +24,33 @@ import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { getBlurViewComponent } from '@/components/ui/glass/blurMaterial';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { Text } from '@/components/ui/text/Text';
-import { Modal } from '@/modal';
 import type { AccessChannel } from '@/sync/domains/accessEndpoints/channels/model';
 import type { AccessEndpointRemediationAction } from '@/sync/domains/accessEndpoints/model';
-import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { setActiveShareableServerUrl, setServerProfileShareableUrl } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import {
+    relayAccessConfigStepCatalog,
+    type RelayAccessConfigStepDraft,
+    type RelayAccessCredentialRefs,
+} from '@/components/onboarding/steps/relayAccess/relayAccessConfigStepCatalog';
+
+import {
+    getAvailableRelayAccessProviderDescriptors,
     relayAccessProviderSupportsTarget,
     relayAccessProviderUiCatalog,
     relayAccessProviderUsesPrerequisitesStep,
 } from './relayAccessUiCatalog';
+import { RelayAccessCredentialFields } from './RelayAccessCredentialFields';
 import { useRelayAccessControl, type RelayAccessControlOptions } from './useRelayAccessControl';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+
+const EMPTY_DRAFT: RelayAccessConfigStepDraft = Object.freeze({});
+const EMPTY_CREDENTIAL_REFS: RelayAccessCredentialRefs = Object.freeze([]);
 
 function resolveStatusSubtitle(state: string | null | undefined): string {
     switch (state) {
@@ -99,13 +108,13 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     const onWizardPrimaryChange = props.onWizardPrimaryChange;
     const onRequestAdvance = props.onRequestAdvance;
     const { theme } = useUnistyles();
-    const setupPolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
     const normalizedUpstreamUrl = React.useMemo(() => {
         const value = typeof props.upstreamUrl === 'string' ? props.upstreamUrl.trim() : '';
         return value.length > 0 ? value : null;
     }, [props.upstreamUrl]);
     const {
         activeTaskSnapshot,
+        actionScope,
         actionServerId,
         approval,
         cancelTask,
@@ -131,9 +140,9 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                 ? (props.wizardSelectedProviderId ?? 'localOnly')
                 : 'lan')
     ));
-    const [lanUrlDraft, setLanUrlDraft] = React.useState('');
-    const [cloudflareHostnameDraft, setCloudflareHostnameDraft] = React.useState('');
-    const [cloudflareTokenDraft, setCloudflareTokenDraft] = React.useState('');
+    // Drafts are kept per provider, so switching method and back keeps what was typed or chosen.
+    const [drafts, setDrafts] = React.useState<Readonly<Record<string, RelayAccessConfigStepDraft>>>({});
+    const [credentialDrafts, setCredentialDrafts] = React.useState<Readonly<Record<string, RelayAccessCredentialRefs>>>({});
     const [advanceAfterSaveRequested, setAdvanceAfterSaveRequested] = React.useState(false);
     const latestPromptSnapshot = actionSnapshot ?? activeTaskSnapshot;
     const latestPrompt = React.useMemo(
@@ -164,21 +173,28 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         if (props.forcedProviderId) {
             return relayAccessProviderSupportsTarget(props.forcedProviderId, target)
                 ? [props.forcedProviderId]
-                : relayAccessProviderIds.filter((providerId) => relayAccessProviderSupportsTarget(providerId, target));
+                : [];
         }
-        return relayAccessProviderIds.filter((providerId) => {
-            if (!relayAccessProviderSupportsTarget(providerId, target)) {
-                return false;
-            }
-            if (providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel') {
-                return setupPolicy.relayAccess.allowTailscale;
-            }
-            if (providerId === 'cloudflareNamed') {
-                return setupPolicy.relayAccess.allowCloudflareTunnel;
-            }
-            return true;
-        });
-    }, [props.forcedProviderId, setupPolicy.relayAccess.allowCloudflareTunnel, setupPolicy.relayAccess.allowTailscale, target]);
+        return getAvailableRelayAccessProviderDescriptors().map((descriptor) => descriptor.id);
+    }, [props.forcedProviderId, target]);
+
+    const selectedDescriptor = visibleProviderIds.includes(selectedProviderId)
+        ? relayAccessProviderDescriptors.find((descriptor) => descriptor.id === selectedProviderId)
+        : undefined;
+    const selectedDefinition = selectedDescriptor ? relayAccessConfigStepCatalog[selectedDescriptor.id] : undefined;
+    const configuredDraft = React.useMemo(
+        () => selectedDefinition?.readConfiguredDraft(snapshot ?? null) ?? EMPTY_DRAFT,
+        [selectedDefinition, snapshot],
+    );
+    const draft = drafts[selectedProviderId] ?? configuredDraft;
+    const normalizedDraft = React.useMemo(
+        () => selectedDefinition?.normalizeDraft(draft) ?? EMPTY_DRAFT,
+        [selectedDefinition, draft],
+    );
+    const configuredCredentialRefs = snapshot?.providerId === selectedProviderId
+        ? snapshot.selection?.credentialRefs ?? EMPTY_CREDENTIAL_REFS
+        : EMPTY_CREDENTIAL_REFS;
+    const credentialRefs = credentialDrafts[selectedProviderId] ?? configuredCredentialRefs;
 
     React.useEffect(() => {
         if (visibleProviderIds.includes(selectedProviderId)) {
@@ -241,44 +257,20 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     }, [normalizedUpstreamUrl, props.serverProfileId, resolvedShareUrl, snapshot]);
 
     const save = React.useCallback(async (): Promise<boolean> => {
-        if (isUnavailable) {
+        if (isUnavailable || !selectedDescriptor) {
             return false;
         }
-
-        let config: RelayAccessConfig;
-        if (selectedProviderId === 'lan') {
-            const normalized = lanUrlDraft.trim();
-            if (!normalized) {
-                await Modal.alert(t('common.error'), t('settings.relayAccess.missingUrl'));
-                return false;
-            }
-            config = { providerId: 'lan', url: normalized };
-        } else if (selectedProviderId === 'cloudflareNamed') {
-            const hostname = cloudflareHostnameDraft.trim();
-            const token = cloudflareTokenDraft.trim();
-            if (!hostname) {
-                await Modal.alert(t('common.error'), t('settings.relayAccess.missingHostname'));
-                return false;
-            }
-            if (!token) {
-                await Modal.alert(t('common.error'), t('settings.relayAccess.missingToken'));
-                return false;
-            }
-            config = { providerId: 'cloudflareNamed', hostname, token };
-        } else {
-            config = { providerId: selectedProviderId } as RelayAccessConfig;
+        // A provider with declared fields builds its config through its step definition; one without
+        // fields is selected as it is.
+        const config: RelayAccessConfig | null = selectedDefinition
+            ? await selectedDefinition.createConfig({ normalizedDraft, credentialRefs })
+            : parseRelayAccessConfig({ provider: selectedDescriptor.provider, config: {}, credentialRefs: [] });
+        if (!config) {
+            return false;
         }
-
-        const taskId = await configure({ providerId: selectedProviderId, config });
+        const taskId = await configure({ config });
         return Boolean(taskId);
-    }, [
-        cloudflareHostnameDraft,
-        cloudflareTokenDraft,
-        configure,
-        isUnavailable,
-        lanUrlDraft,
-        selectedProviderId,
-    ]);
+    }, [configure, credentialRefs, isUnavailable, normalizedDraft, selectedDefinition, selectedDescriptor]);
 
     const cancel = React.useCallback(() => {
         if (!activeTaskSnapshot) {
@@ -296,17 +288,13 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         if (!snapshot) return true;
         if (snapshot.configured !== true) return true;
         if (snapshot.providerId !== selectedProviderId) return true;
-        if (selectedProviderId === 'lan') {
-            return lanUrlDraft.trim().length > 0;
-        }
-        if (selectedProviderId === 'cloudflareNamed') {
-            return cloudflareHostnameDraft.trim().length > 0 || cloudflareTokenDraft.trim().length > 0;
-        }
-        return false;
+        return selectedDefinition?.isSaveNeeded({ configuredDraft, normalizedDraft, configuredCredentialRefs, credentialRefs }) ?? false;
     }, [
-        cloudflareHostnameDraft,
-        cloudflareTokenDraft,
-        lanUrlDraft,
+        configuredCredentialRefs,
+        configuredDraft,
+        credentialRefs,
+        normalizedDraft,
+        selectedDefinition,
         selectedProviderId,
         snapshot,
     ]);
@@ -330,7 +318,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                 primaryAction={{
                     label: t('common.open'),
                     onPress: async () => {
-                        await openExternalUrl(promptUrl, { platformOS: Platform.OS });
+                        await openExternalUrl(promptUrl);
                     },
                 }}
                 secondaryAction={canRetry
@@ -352,22 +340,12 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         );
     }, [activeTaskSnapshot, cancel, latestPrompt, latestPromptSnapshot?.result, save]);
 
-    const selectedProviderDraftValid = React.useMemo(() => {
-        if (!selectedProviderNeedsDraftConfig) return true;
-        if (selectedProviderId === 'lan') {
-            return lanUrlDraft.trim().length > 0;
-        }
-        if (selectedProviderId === 'cloudflareNamed') {
-            return cloudflareHostnameDraft.trim().length > 0 && cloudflareTokenDraft.trim().length > 0;
-        }
-        return true;
-    }, [
-        cloudflareHostnameDraft,
-        cloudflareTokenDraft,
-        lanUrlDraft,
-        selectedProviderId,
-        selectedProviderNeedsDraftConfig,
-    ]);
+    // Whether the chosen method can be saved as drafted: its step definition owns completeness.
+    const selectedProviderDraftValid = selectedDescriptor !== undefined && (
+        !selectedProviderNeedsDraftConfig
+        || !selectedDefinition
+        || !selectedDefinition.isPrimaryDisabled({ needsSave: true, normalizedDraft, credentialRefs })
+    );
 
     const handleWizardPrimaryPress = React.useCallback(async () => {
         if (presentation === 'wizard' && allowWizardDetailsRedirect && relayAccessProviderUsesPrerequisitesStep(selectedProviderId)) {
@@ -467,66 +445,44 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         })
     ), [isBusy, isUnavailable, selectedProviderId, theme.colors.text.primary, theme.colors.text.secondary, visibleProviderIds]);
 
-    const providerConfigFields = (
+    const providerConfigFields = selectedDescriptor ? (
         <>
-            {selectedProviderId === 'lan' ? (
-                <SettingAnchor setting={SERVERS_SETTINGS.settings.lanUrl}>
+            {selectedDefinition?.fields.map((field) => {
+                const declared = selectedDescriptor.homeUi?.configStep?.fields.find((entry) => entry.id === field.id);
+                const row = (
                     <Item
-                        title={t(SERVERS_SETTINGS.settings.lanUrl.titleKey)}
+                        title={field.label}
                         accessoryLayout="adaptive"
                         showChevron={false}
                         rightElement={(
                             <FieldTextInput
-                                testID="settings.server.relayAccess.lanUrl"
-                                accessibilityLabel={t('settings.relayAccess.fields.urlLabel')}
-                                placeholder={t('settings.relayAccess.fields.urlLabel')}
-                                value={lanUrlDraft}
-                                onChangeText={setLanUrlDraft}
+                                testID={declared?.testID ?? `settings.server.relayAccess.${declared?.settingKey ?? field.id}`}
+                                accessibilityLabel={field.label}
+                                placeholder={field.placeholder}
+                                value={draft[field.id] ?? ''}
+                                onChangeText={(value) => setDrafts((current) => ({
+                                    ...current,
+                                    [selectedProviderId]: { ...draft, [field.id]: value },
+                                }))}
                             />
                         )}
                     />
-                </SettingAnchor>
-            ) : null}
-
-            {selectedProviderId === 'cloudflareNamed' ? (
-                <>
-                    <SettingAnchor setting={SERVERS_SETTINGS.settings.cloudflareHostname}>
-                        <Item
-                            title={t(SERVERS_SETTINGS.settings.cloudflareHostname.titleKey)}
-                            accessoryLayout="adaptive"
-                            showChevron={false}
-                            rightElement={(
-                                <FieldTextInput
-                                    testID="settings.server.relayAccess.cloudflareHostname"
-                                    accessibilityLabel={t('settings.relayAccess.fields.hostnameLabel')}
-                                    placeholder={t('settings.relayAccess.fields.hostnameLabel')}
-                                    value={cloudflareHostnameDraft}
-                                    onChangeText={setCloudflareHostnameDraft}
-                                />
-                            )}
-                        />
-                    </SettingAnchor>
-                    <SettingAnchor setting={SERVERS_SETTINGS.settings.cloudflareToken}>
-                        <Item
-                            title={t(SERVERS_SETTINGS.settings.cloudflareToken.titleKey)}
-                            accessoryLayout="adaptive"
-                            showChevron={false}
-                            rightElement={(
-                                <FieldTextInput
-                                    testID="settings.server.relayAccess.cloudflareToken"
-                                    accessibilityLabel={t('settings.relayAccess.fields.tokenLabel')}
-                                    placeholder={t('settings.relayAccess.fields.tokenLabel')}
-                                    value={cloudflareTokenDraft}
-                                    onChangeText={setCloudflareTokenDraft}
-                                    secureTextEntry
-                                />
-                            )}
-                        />
-                    </SettingAnchor>
-                </>
-            ) : null}
+                );
+                return declared?.settingKey
+                    ? <SettingAnchor key={field.id} setting={SERVERS_SETTINGS.settings[declared.settingKey]}>{row}</SettingAnchor>
+                    : <React.Fragment key={field.id}>{row}</React.Fragment>;
+            })}
+            <RelayAccessCredentialFields
+                key={selectedDescriptor.id}
+                descriptor={selectedDescriptor}
+                value={credentialRefs}
+                accountScope={actionScope}
+                disabled={isBusy || isUnavailable}
+                testIDPrefix="settings.server.relayAccess"
+                onChange={(value) => setCredentialDrafts((current) => ({ ...current, [selectedProviderId]: value }))}
+            />
         </>
-    );
+    ) : null;
 
     if (presentation === 'wizard') {
         const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface.base;
@@ -658,7 +614,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                     testID="settings.server.relayAccess.method"
                     title={t('settings.relayAccess.methodTitle')}
                     subtitle={resolvedProviderId
-                        ? t(relayAccessProviderUiCatalog[resolvedProviderId].titleKey)
+                        ? t(relayAccessProviderUiCatalog[resolvedProviderId]?.titleKey ?? 'settings.relayAccess.statusUnknown')
                         : (resolvedConfigured ? '' : t('settings.relayAccess.statusNotConfigured'))}
                     showChevron={false}
                 />
@@ -702,7 +658,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                             onPress={() => {
                                 void save();
                             }}
-                            disabled={isBusy || isUnavailable}
+                            disabled={isBusy || isUnavailable || !selectedProviderDraftValid}
                         />
                         <RoundButton
                             testID="settings.server.relayAccess.disable"

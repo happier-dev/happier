@@ -249,3 +249,13 @@ export const WORKSPACE_ACTION_SPECS = [
 export function isWorkspaceActionId(value: string): value is WorkspaceActionId {
   return (WORKSPACE_ACTION_IDS as readonly string[]).includes(value);
 }
+
+export const PaneTabAddressSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('paneTab'), ...tabOwner, scopeId: id, tabKey: id,
+}));
+
+const tabOwner = { serverId: id, accountId: id, layoutId: id };
+
+export const WorkspaceOwnedTabAddressSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('workspaceTab'), ...tabOwner, tabId: id,
+}));

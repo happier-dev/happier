@@ -1,3 +1,4 @@
+import { getRelayAccessProviderDescriptor as relayDescriptor } from '@happier-dev/cli-common/relayAccess';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSecureAccessTailscaleHandler } from './secureAccessTailscale.js';
@@ -153,12 +154,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareUrl: 'https://relay.tailf00.ts.net',
         }));
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure,
             status,
             disable: vi.fn(),
@@ -169,6 +165,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             authUrl: null,
             dnsName: 'relay.tailf00.ts.net',
             tailnetName: 'example-tailnet',
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
             running: true,
@@ -195,7 +194,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             context: { signal: abortController.signal },
         });
 
-        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith('tailscaleServe');
+        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith({ kind: 'builtin', id: 'tailscaleServe' });
         expect(configure).toHaveBeenCalledTimes(1);
         expect(configure).toHaveBeenCalledWith(expect.objectContaining({
             signal: abortController.signal,
@@ -223,12 +222,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareUrl: 'https://relay.tailf00.ts.net',
         }));
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleFunnel',
-                title: 'Tailscale Funnel',
-                exposure: 'public',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleFunnel' }),
             configure,
             status,
             disable: vi.fn(),
@@ -254,7 +248,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             },
         });
 
-        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith('tailscaleFunnel');
+        expect(relayAccessMocks.getRelayAccessProvider).toHaveBeenCalledWith({ kind: 'builtin', id: 'tailscaleFunnel' });
         expect(configure).toHaveBeenCalledTimes(1);
         expect(status).toHaveBeenCalledTimes(1);
         expect(result).toEqual(expect.objectContaining({
@@ -267,12 +261,7 @@ describe('createSecureAccessTailscaleHandler', () => {
     it('appends the serve path to the relay access share URL', async () => {
 
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure: vi.fn(),
             status: vi.fn(async () => ({
                 state: 'enabled' as const,
@@ -301,12 +290,7 @@ describe('createSecureAccessTailscaleHandler', () => {
     it('polls for serve approval and completes when the expected https URL becomes available', async () => {
 
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure: vi.fn(async () => ({
                 state: 'needs_auth' as const,
                 details: {
@@ -374,12 +358,7 @@ describe('createSecureAccessTailscaleHandler', () => {
         const slept: number[] = [];
 
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure: vi.fn(async () => ({
                 state: 'needs_auth' as const,
                 details: {
@@ -458,12 +437,7 @@ describe('createSecureAccessTailscaleHandler', () => {
         const inspectDeadlines: Array<unknown> = [];
 
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure: vi.fn(async () => ({
                 state: 'needs_auth' as const,
                 details: {
@@ -545,6 +519,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             authUrl: null,
             dnsName: 'my-machine.tailnet.ts.net',
             tailnetName: 'tailnet.ts.net',
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             tailscaleIps: [],
             loggedIn: true,
             running: true,
@@ -616,6 +593,9 @@ describe('createSecureAccessTailscaleHandler', () => {
                 authUrl: 'https://login.tailscale.com/a/example',
                 dnsName: null,
                 tailnetName: null,
+                magicDnsEnabled: null,
+                interfaceName: null,
+                sourceRanges: [],
                 tailscaleIps: [],
                 loggedIn: false,
                 running: false,
@@ -626,6 +606,9 @@ describe('createSecureAccessTailscaleHandler', () => {
                 authUrl: null,
                 dnsName: 'relay.tailf00.ts.net',
                 tailnetName: 'example-tailnet',
+                magicDnsEnabled: null,
+                interfaceName: null,
+                sourceRanges: [],
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
                 running: true,
@@ -645,12 +628,7 @@ describe('createSecureAccessTailscaleHandler', () => {
         });
 
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
-            descriptor: {
-                id: 'tailscaleServe',
-                title: 'Tailscale Serve',
-                exposure: 'private',
-                prerequisites: [],
-            },
+            descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
             configure: vi.fn(),
             status: vi.fn(async () => ({
                 state: 'enabled' as const,
@@ -689,6 +667,9 @@ describe('createSecureAccessTailscaleHandler', () => {
                 authUrl: null,
                 dnsName: 'relay.tailf00.ts.net',
                 tailnetName: 'example-tailnet',
+                magicDnsEnabled: null,
+                interfaceName: null,
+                sourceRanges: [],
                 tailscaleIps: ['100.64.0.10'],
                 loggedIn: true,
                 running: true,
@@ -701,6 +682,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             authUrl: null,
             dnsName: 'relay.tailf00.ts.net',
             tailnetName: 'example-tailnet',
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             tailscaleIps: ['100.64.0.10'],
             loggedIn: true,
             running: true,
@@ -729,12 +713,7 @@ describe('createSecureAccessTailscaleHandler', () => {
             handler: createSecureAccessTailscaleHandler({
                 relayAccess: {
                     getProvider: vi.fn(() => ({
-                        descriptor: {
-                            id: 'tailscaleServe' as const,
-                            title: 'Tailscale Serve',
-                            exposure: 'private' as const,
-                            prerequisites: [],
-                        },
+                        descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
                         configure,
                         status,
                         disable: vi.fn(),

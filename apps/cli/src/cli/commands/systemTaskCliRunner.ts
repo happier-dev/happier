@@ -1,6 +1,7 @@
 import {
   type SystemTaskEvent,
   type SystemTaskJsonObject,
+  type SystemTaskJsonValue,
   type SystemTaskResult,
   type SystemTaskSpec,
 } from '@happier-dev/protocol';
@@ -13,7 +14,7 @@ export type CliSystemTasksRunnerAdapter = Readonly<{
     result: SystemTaskResult | null;
     pendingPrompt: Readonly<{ kind: string; data: SystemTaskJsonObject }> | null;
   }>>;
-  respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<void>;
+  respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<SystemTaskJsonValue | void>;
   cancel?: (params: Readonly<{ taskId: string }>) => Promise<void>;
 }>;
 

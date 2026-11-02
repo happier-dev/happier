@@ -200,7 +200,9 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         systemToolsForPlugin?: (pluginId: string) => ExecSystemToolServiceV1;
         resolveExecutable: ResolvePluginExecutable;
         resolvePath: Parameters<typeof createStablePluginExecService>[0]['resolvePath'];
-    }>;
+
+agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+}>;
     managedServices?: ManagedServicesInvocationOwner;
     providers?: PluginProviderOperationsSource;
     managedServiceCredentialFiles?: ManagedServiceCredentialFileOwner;
@@ -265,6 +267,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         pluginId: string,
         signal?: AbortSignal,
     ): Promise<import('@happier-dev/protocol').PluginMachineExecutionOriginV1 | null>;
+
+healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['healthChecks'];
 }>) {
     const attachCurrentPluginCallerResolvers = (
         seed: PluginInvocationServicesSeed,
@@ -454,6 +458,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         });
     const connectedAccountsHost = params?.connectedAccounts ? createConnectedAccountsHost(params.connectedAccounts) : null;
     const createServicesFactory = createPluginInvocationServicesFactory({
+...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
+
         loggerSink,
         resolveLogger: resolveInvocationLogger,
         secretRedactor,
@@ -633,6 +639,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
                 })
                 : admittedConnectedAccountsHost;
         return createPluginInvocationServicesFactory({
+...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
+
             loggerSink,
             resolveLogger: resolveInvocationLogger,
             secretRedactor,
@@ -645,6 +653,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
             filesystemRoots: roots,
             ...(params?.exec ? {
                 exec: {
+...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
+
                     readSpawnFailureLimits: params.exec.readSpawnFailureLimits,
                     ...(params.exec.agentCli ? { agentCli: params.exec.agentCli } : {}),
                     ...(systemTools

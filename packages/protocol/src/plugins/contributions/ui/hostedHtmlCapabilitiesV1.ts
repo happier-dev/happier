@@ -265,3 +265,12 @@ export function admitCallerAuthoredUiSurfaceCapabilitiesV1(
     ),
   } as const);
 }
+
+export function uiSurfaceNetworkAccessWidensV1(
+  next: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
+  previous: UiSurfaceNetworkRequestV1 | UiSurfaceNetworkPolicyV1,
+): boolean {
+  if (next.network === 'none' || next.network !== 'open' && !next.networkOrigins?.length) return false;
+  return previous.network !== 'open' && (next.network === 'open'
+    || next.networkOrigins?.some(origin => !previous.networkOrigins?.includes(origin)) === true);
+}

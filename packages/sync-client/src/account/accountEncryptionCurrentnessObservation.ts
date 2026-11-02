@@ -134,3 +134,41 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         dispose() { disposed = true; connected = false; retirement.abort(); invalidate(); },
     };
 }
+
+export class AccountModeDowngradeUnverifiedError extends Error {
+    readonly code = ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
+    readonly canTryAgain = false;
+    readonly retryable = false;
+
+    constructor(message = 'The Home reports this Account as unencrypted while this device holds its active encryption keys') {
+        super(message);
+        this.name = 'AccountModeDowngradeUnverifiedError';
+    }
+}
+
+export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
+
+export function admitMachineRowPlainMode(input: Readonly<{
+    access: unknown;
+    viewerAccountId: string | undefined;
+    custody: AccountE2eeCustody;
+}>): void {
+    if (input.access !== undefined && readMachineRowCustodianAccountId(input.access) !== input.viewerAccountId) return;
+    admitReportedAccountMode({ reported: 'plain', custody: input.custody });
+}
+
+export type AccountE2eeCustody = 'active' | 'historical' | 'absent';
+
+function readMachineRowCustodianAccountId(access: unknown): unknown {
+    if (typeof access !== 'object' || access === null || !('custodian' in access)) return undefined;
+    const custodian = access.custodian;
+    return typeof custodian === 'object' && custodian !== null && 'accountId' in custodian ? custodian.accountId : undefined;
+}
+
+export function admitReportedAccountMode<Mode extends 'plain' | 'e2ee'>(input: Readonly<{
+    reported: Mode;
+    custody: AccountE2eeCustody;
+}>): Mode {
+    if (input.reported === 'plain' && input.custody === 'active') throw new AccountModeDowngradeUnverifiedError();
+    return input.reported;
+}

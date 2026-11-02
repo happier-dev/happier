@@ -1312,8 +1312,7 @@ describe('native Agent session host adapter', () => {
                 }
                 const binding = buildPluginSessionBindingInput({ credentials, directory, startedBy: 'terminal', startingMode: selectedMode === 'unified' ? 'terminal' : 'remote', ...(selectedMode === 'sdk' ? { resume: 'exact-sdk-native-conversation' } : {}), environmentVariables: { HAPPIER_CLAUDE_PATH: nativePath, HERDR_BIN_PATH: herdrPath, CLAUDE_CONFIG_DIR: join(directory, 'claude-home') }, backendTarget: { kind: 'backend', backendId: 'claude' } });
                 const launchPreparation = selectedMode === 'unified' ? await createNativeAgentLaunchPreparationFixture() : null;
-                const terminalExec = launchPreparation ? createStablePluginExecService({
-                    allowedExecutables: [], signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted,
+                const terminalExec = launchPreparation ? createStablePluginExecService({ signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted,
                     resolveExecutable: async () => { throw new Error('Terminal transport already resolved its native executable'); },
                     resolvePath: async () => directory,
                     prepareAgentNativeLaunch: launchPreparation.prepare(directory, generation.signal),
@@ -4901,7 +4900,7 @@ describe('native Agent session host adapter', () => {
             lease: { ...createLease(agentId), isCurrent: () => current },
             backend: contributions.backend, agent: contributions.agent,
             createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
-                exec: createStablePluginExecService({ allowedExecutables: [], signal, isOccurrenceCurrent: () => current,
+                exec: createStablePluginExecService({ signal, isOccurrenceCurrent: () => current,
                     resolveExecutable: async () => { throw new Error('Terminal transport already resolved its native executable'); },
                     resolvePath: async () => '/tmp', prepareAgentNativeLaunch: launchPreparation.prepare('/tmp', signal) }),
             }),
@@ -8968,10 +8967,6 @@ describe('native Agent session host adapter', () => {
                 finishPreparingServices = resolve;
             });
             const exec = createStablePluginExecService({
-                allowedExecutables: [{
-                    kind: 'managedDependency',
-                    id: 'codex-acp',
-                }],
                 signal: generationController.signal,
                 prepareAgentNativeLaunch: launchPreparation.prepare(directory, generationController.signal),
                 isOccurrenceCurrent: () => !generationController.signal.aborted,

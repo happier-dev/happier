@@ -1,3 +1,4 @@
+import type { SessionFollowOriginalOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { z } from 'zod/mini';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { RunFollowOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
@@ -33,3 +34,12 @@ export const SessionActivityChangedResponseSchema = z.strictObject({
     ok: z.literal(true),
     ...SessionActivityChangedResultSchema.shape,
 });
+
+export function projectSessionFollowOccurrenceDiagnostic(occurrence: SessionFollowOriginalOccurrenceV1): Readonly<{
+    sourceSessionId: string; sourceMessageSeq?: number; sourceTurnId?: string; agentStateVersion?: number;
+}> {
+    return { sourceSessionId: occurrence.sourceSessionId,
+        ...('sourceMessage' in occurrence ? { sourceMessageSeq: occurrence.sourceMessage.seq }
+            : 'sourceTurn' in occurrence ? { sourceTurnId: occurrence.sourceTurn.id }
+                : { agentStateVersion: occurrence.sourceRequests.agentStateVersion }) };
+}

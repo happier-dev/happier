@@ -163,7 +163,6 @@ describe('managed SVC09 Windows job custody', () => {
             throw new Error('must not resolve');
         });
         const exec = createStablePluginExecService({
-            allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable,
@@ -206,7 +205,6 @@ describe('managed SVC09 Windows job custody', () => {
         const processTreeSystemBoundary = createWindowsProcessTreeBoundary(root, helperPath, () => censusAvailable, nativeObservations);
         const exec = createStablePluginExecService({
             processTreeSystemBoundary,
-            allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -295,7 +293,6 @@ describe('managed SVC09 Windows job custody', () => {
 
         const exec = createStablePluginExecService({
             processTreeSystemBoundary: createWindowsProcessTreeBoundary(root, helperPath),
-            allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {

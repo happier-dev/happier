@@ -40,6 +40,7 @@ function createAgentContribution(catalogEntry: ResolvedCatalogEntry): ResolvedAg
 function createContributionRegistry(catalogEntry: ResolvedCatalogEntry): ResolvedContributionRegistry {
     const agent = createAgentContribution(catalogEntry);
     return {
+        backupDestinations: [],
         voiceProviders: [],
         connectedAccountDescriptorsById: new Map(),
         providersByContributionKey: new Map(),

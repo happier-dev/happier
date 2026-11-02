@@ -1,3 +1,4 @@
+import type { ActionExecutorContext, ActionMachineRuntimeDemandV1 } from '../executor/types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
@@ -145,6 +146,9 @@ export function actionInputServerId<TSchema extends z.ZodMiniType>(schema: TSche
 }
 
 export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
+machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: ActionExecutorContext) => ActionMachineRuntimeDemandV1 | null>(
+    (value) => typeof value === 'function')),
+
   id: ActionIdSchema,
   title: z.string().check(z.minLength(1)),
   /** Presentation only: a localized verb; omission uses the host's generic approval label. */
@@ -307,6 +311,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     accountRoot: z.optional(z.enum(['allowed', 'separate'])),
     terminalRoot: z.optional(z.enum(['allowed', 'host'])),
     nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start'])),
+    /** Origin hosts that delegate admission to the receiving daemon. Never serialized. */
+    daemonIngressSurfaces: z.optional(z.readonly(z.array(z.enum(['cli', 'ui'])))),
   })),
   /** Explicit host-stamped caller authority for a Plugin Action. */
   pluginCallerPolicy: z.optional(ActionPluginCallerPolicySchema),
@@ -518,6 +524,8 @@ export function isPluginActionCallerPolicySatisfied(
 
 export type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;
 export type ActionSpecWithoutApproval = Readonly<{
+machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
+
   id: ParsedActionSpec['id'];
   approval: ParsedActionSpec['approval'];
   approvalPolicy?: ParsedActionSpec['approvalPolicy'];

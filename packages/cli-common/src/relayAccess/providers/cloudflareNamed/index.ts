@@ -1,3 +1,6 @@
+import type { RelayAccessConfig } from '../../types.js';
+import { parseRelayAccessConfig } from '../../catalog.js';
+import { readBuiltinRelayAccessProviderId } from '../../catalog.js';
 import type { RelayAccessProvider, RelayAccessProviderDescriptor, RelayAccessStatus } from '../../types.js';
 
 import { relayAccessProviderDescriptorsById } from '../../catalog.js';
@@ -121,3 +124,31 @@ export const cloudflareNamedRelayAccessProvider: RelayAccessProvider = {
         return undefined;
     },
 };
+
+export function readCloudflareNamedControllerSelection(value: unknown): Readonly<{
+    selection: RelayAccessConfig;
+    controller: CloudflareNamedControllerConfig;
+}> | null {
+    const selection = parseRelayAccessConfig(value);
+    if (!selection || !hasController(selection)) return null;
+    return { selection, controller: selection.config.controller };
+}
+
+export type CloudflareNamedControllerConfig = Readonly<{
+    accountId: string;
+    zoneId: string;
+    tunnel: Readonly<{ kind: 'create'; name: string }> | Readonly<{ kind: 'adopt'; tunnelId: string; name: string }>;
+    owned: readonly Readonly<{ hostname: string; path?: string; expectedService: string }>[];
+    dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[];
+    connector: Readonly<{ imageRef: string; version: string }>;
+}>;
+
+function hasController(selection: RelayAccessConfig): selection is ControllerSelection {
+    return readBuiltinRelayAccessProviderId(selection.provider) === 'cloudflareNamed'
+        && selection.config !== null && typeof selection.config === 'object'
+        && 'controller' in selection.config;
+}
+
+type ControllerSelection = RelayAccessConfig & Readonly<{
+    config: Readonly<{ controller: CloudflareNamedControllerConfig }>;
+}>;

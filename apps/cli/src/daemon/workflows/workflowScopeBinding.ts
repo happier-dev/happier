@@ -5,8 +5,8 @@ import type { WorkflowCoordinatorInvocation, WorkflowCoordinatorStore } from './
 import { WorkflowInputResolutionError } from './input';
 export type WorkflowScopeFrame = WorkflowScopeFrameV1;
 
-export type WorkflowProducerBinding = Readonly<{
-  resolve: (producer: WorkflowAuthoredProducerRef) => Promise<WorkflowCoordinatorInvocation | undefined>;
+export type WorkflowProducerBinding<T extends ProducerInvocation = WorkflowCoordinatorInvocation> = Readonly<{
+  resolve: (producer: WorkflowAuthoredProducerRef) => Promise<T | undefined>;
 }>;
 
 export type WorkflowInvocationBindingRow = WorkflowInvocationBindingRowV1;
@@ -36,12 +36,12 @@ export async function resolveWorkflowInvocationStep(params: WorkflowInvocationBi
 }
 
 /** Read one named structural slot, including a branch's exported body frame. */
-export async function resolveWorkflowProducerInFrame(params: Readonly<{
+export async function resolveWorkflowProducerInFrame<T extends ProducerInvocation>(params: Readonly<{
   runId: string;
-  store: WorkflowCoordinatorStore;
+  store: ProducerStore<T>;
   frame: WorkflowScopeFrame;
   blockId: string;
-}>): Promise<WorkflowCoordinatorInvocation | undefined> {
+}>): Promise<T | undefined> {
   const { frame, store, runId, blockId } = params;
   const ordinal = frame.blocks.findIndex((block) => block.id === blockId);
   if (ordinal >= 0) {
@@ -63,9 +63,9 @@ export async function resolveWorkflowProducerInFrame(params: Readonly<{
 }
 
 /** Load only the immediately named body slot of the same exact loop occurrence. */
-export async function readWorkflowLoopBodyFrame(params: Readonly<{
+export async function readWorkflowLoopBodyFrame<T extends ProducerInvocation>(params: Readonly<{
   runId: string;
-  store: WorkflowCoordinatorStore;
+  store: ProducerStore<T>;
   frame: WorkflowScopeFrame;
   index: number;
 }>): Promise<WorkflowScopeFrame | undefined> {
@@ -77,11 +77,11 @@ export async function readWorkflowLoopBodyFrame(params: Readonly<{
     loop: { ...frame.loop, index } } : undefined;
 }
 
-export function createWorkflowProducerBinding(params: Readonly<{
+export function createWorkflowProducerBinding<T extends ProducerInvocation>(params: Readonly<{
   runId: string;
-  store: WorkflowCoordinatorStore;
+  store: ProducerStore<T>;
   frame: WorkflowScopeFrame;
-}>): WorkflowProducerBinding {
+}>): WorkflowProducerBinding<T> {
   return { resolve: async (producer) => {
     const levels: WorkflowScopeFrame[] = [];
     for (let frame: WorkflowScopeFrame | undefined = params.frame; frame; frame = frame.parent) levels.unshift(frame);
@@ -94,3 +94,8 @@ export function createWorkflowProducerBinding(params: Readonly<{
     return frame ? await resolveWorkflowProducerInFrame({ ...params, frame, blockId: producer.blockId }) : undefined;
   } };
 }
+
+type ProducerInvocation = Pick<WorkflowCoordinatorInvocation, 'key' | 'path'>;
+type ProducerStore<T extends ProducerInvocation> = Readonly<{
+  readCurrent: (params: Parameters<WorkflowCoordinatorStore['readCurrent']>[0]) => T | undefined | Promise<T | undefined>;
+}>;

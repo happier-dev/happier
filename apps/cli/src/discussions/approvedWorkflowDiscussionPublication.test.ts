@@ -1,3 +1,6 @@
+import { createApprovedWorkflowDiscussionPublisher } from './approvedWorkflowDiscussionPublisher';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createServer } from 'node:http';
 import { expect, it, onTestFinished } from 'vitest';
 import { accountSettingsParse, API_TOKEN_FULL_GRANT_V1, createWorkflowAccountRunActionOwner,
@@ -135,7 +138,7 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
   if (!currentness) throw new Error('Missing bound approval currentness');
   const store = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: serverUrl });
   const sent: DiscussionWorkflowPostPublicationV1[] = [];
-  const rejectedVariants: (DiscussionWorkflowPostPublicationV1 | null)[] = [];
+  const rejectedVariants: Awaited<ReturnType<typeof readApprovedWorkflowDiscussionPublication>>[] = [];
   let verificationFailure: unknown;
   const verify = async (input: Parameters<typeof readApprovedWorkflowDiscussionPublication>[0]) => {
     try { return await readApprovedWorkflowDiscussionPublication(input); }
@@ -181,11 +184,12 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
       rejectedVariants.push(await verify({ ...verification,
         request: { ...request, request: { ...request.request, content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'FORGED' }] } } } } }));
       const accepted = await verify(verification);
-      if (!accepted) return { v: 1, ok: false, error: 'discussion_post_denied' };
-      sent.push(accepted);
-      return { v: 1, ok: true, value: { messageSeq: 2, message: { id: 'answer', discussionId: 'discussion', localId: accepted.request.localId,
-        seq: 2, authorAccountId: accountId, accountActor: { v: 1, accountId, profile: null }, producerV1: accepted.producer,
-        content: accepted.request.content, mentionedAccountIds: [], replyTarget: accepted.request.replyTarget, createdAt: 2 } } };
+      if (!accepted.ok) return accepted;
+      const publication = accepted.value;
+      sent.push(publication);
+      return { v: 1, ok: true, value: { messageSeq: 2, message: { id: 'answer', discussionId: 'discussion', localId: publication.request.localId,
+        seq: 2, authorAccountId: accountId, accountActor: { v: 1, accountId, profile: null }, producerV1: publication.producer,
+        content: publication.request.content, mentionedAccountIds: [], replyTarget: publication.request.replyTarget, createdAt: 2 } } };
     } }, { isApprovalExecutionOriginCurrent: currentness });
   tokenCurrent = mode !== 'revoked';
   const replay = () => runWithServerHttpBaseUrl(serverUrl, () => executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' }));
@@ -195,7 +199,11 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
     expect(sent).toEqual([]);
   } else if (mode === 'foreign_delivery' || mode === 'unknown_delivery') {
     expect(replayed).toMatchObject({ ok: true, result: { status: 'failed' } });
-    expect(rejectedVariants).toEqual([null, null, null]);
+    expect(rejectedVariants).toMatchObject([
+      { ok: false, errorCode: 'discussion_replay_local_id_mismatch' },
+      { ok: false, errorCode: 'discussion_replay_reply_target_mismatch' },
+      { ok: false, errorCode: 'discussion_replay_sealed_content_mismatch' },
+    ]);
     expect(sent).toEqual([]);
   } else {
     expect(replayed, JSON.stringify({ replayed, verificationFailure: String(verificationFailure) }))
@@ -213,4 +221,14 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
     expect(artifacts.size).toBe(1);
   }
   expect(resourceWrites).toBe(0);
+});
+
+it.each([undefined, {}])('refuses Workflow publication without a persisted approval Artifact (%j)', async approvedActionReplay => {
+  const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'answer' }] };
+  const publish = createApprovedWorkflowDiscussionPublisher({
+    credentials: { token: 'fixture', encryption: null }, machineId: 'machine', serverId: 'profile', serverUrl: 'https://home.invalid',
+    callerAuthority: 'present_user', executeSourceAction: createActionExecutor(createUnavailableActionTransportDeps()).execute, getClient: () => null,
+  });
+  expect(await publish({ discussionId: 'discussion', request: { localId: 'reply', content: { t: 'plain', v: content }, mentionedAccountIds: [] } },
+    { context: { approvedActionReplay }, content })).toMatchObject({ ok: false, errorCode: 'discussion_replay_approval_missing' });
 });

@@ -1576,6 +1576,8 @@ export async function startDaemonSessionControlRuntime(
     refreshBrowserRouteOwners: () => Promise<void>;
     purgeBrowserStorageForSessionDeleted: (sessionId: string) => Promise<void>;
     purgeBrowserStorageForLogout: () => Promise<void>;
+daemonWorkSignal: AbortSignal;
+
   }>
 > {
   let notifySessionLiveWorkChanged: () => void = () => {};
@@ -16053,6 +16055,7 @@ export async function startDaemonSessionControlRuntime(
     },
     controlPort,
     controlToken,
+    daemonWorkSignal: shutdownCancellationDomains.daemonWorkSignal,
     stopControlServer: stopControlServerWithConnectedServiceDeferralCleanup,
     // K2: FSM-routed proactive quota pre-turn switch coordinator (consumed by the quotas
     // coordinator via startDaemonRuntimeBootstrap — replaces the old raw-signal coordinator).

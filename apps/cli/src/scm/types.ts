@@ -216,6 +216,10 @@ export type ScmWorkspaceIntegrationAdministrativePathInput = Readonly<{
 export type ScmWorkspaceIntegrationPortableWorkspacePathInput = ScmWorkspaceIntegrationPortableWorkspacePathRequest;
 
 export type ScmWorkspaceIntegration = Readonly<{
+fetchCommitRef?: WorkspaceIntegrationHandlers['fetchCommitRef'];
+resolveCommitRef?: WorkspaceIntegrationHandlers['resolveCommitRef'];
+exportCommit?: WorkspaceIntegrationHandlers['exportCommit'];
+
     classifyDirectoryIgnores?: WorkspaceIntegrationHandlers['classifyDirectoryIgnores'];
     inspectWorkspaceLocation?: (input: Readonly<{
         context: ScmBackendContext;

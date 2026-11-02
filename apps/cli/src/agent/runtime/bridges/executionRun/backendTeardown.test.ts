@@ -52,8 +52,6 @@ describe('native Codex bounded backend process lifetime', () => {
         // JSON-RPC, Codex runtime and host lifecycle all remain real.
         const launch = { kind: 'binary' as const, executablePath: process.execPath, args: [fixturePath, statePath, requestsPath] };
         const exec = createStablePluginExecService({
-          allowedExecutables: [{ kind: 'systemTool', id: 'codex-cli' }],
-          allowedCwdScopes: [{ root: 'workspace', pathPrefix: '', access: ['read'] }],
           signal: lifetime.signal,
           isOccurrenceCurrent: () => true,
           resolveExecutable: async () => ({ command: launch.executablePath, args: launch.args }),

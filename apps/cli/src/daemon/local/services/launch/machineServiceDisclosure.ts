@@ -7,6 +7,7 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 export type MachineServiceDisclosureRequest = Readonly<{
     requesterAccountId?: string | null;
     context?: Pick<ActionExecutorContext, 'externalActionExecutionAuthorization'>;
+    observeEnvironmentAccessChanges?: (listener: Parameters<import('@/deployments/createCliDeploymentActionDeps').CliDeploymentEnvironmentAccessObserve>[2]) => ReturnType<import('@/deployments/createCliDeploymentActionDeps').CliDeploymentEnvironmentAccessObserve>;
     canReadEnvironments?: (environmentIds: readonly string[]) => Promise<ReadonlySet<string>>;
 }>;
 

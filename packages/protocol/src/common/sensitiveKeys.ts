@@ -123,3 +123,8 @@ export function isUnsafeTelemetryDataKey(input: string): boolean {
     || compact.endsWith('body')
   );
 }
+
+export function isExactBaseCredentialKey(input: string): boolean {
+  return BASE_CREDENTIAL_SINGLE_SEGMENTS.has(normalizeTelemetryDataKey(input))
+    || BASE_CREDENTIAL_COMPACT_KEYS.has(splitSensitiveDiagnosticKeySegments(input).join(''));
+}

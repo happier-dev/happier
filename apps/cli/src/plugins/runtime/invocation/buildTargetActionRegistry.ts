@@ -126,6 +126,7 @@ function invokeCapturedActionHandler(
         invokedAtMs: context.invokedAtMs, signal: context.signal,
         ...(context.caller ? { caller: context.caller } : {}),
         services: Object.freeze({
+            ...(context.services.machineConnectorSecrets ? { machineConnectorSecrets: context.services.machineConnectorSecrets } : {}),
             storage: Object.freeze({ get account() {
                 const accountStorage = context.services.storage.account;
                 if (!accountStorage) throw new PluginError({ code: PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE, message: 'Account storage is unavailable' });

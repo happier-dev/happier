@@ -1,3 +1,5 @@
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { onTestFinished } from 'vitest';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,20 +41,24 @@ function mockProviderCatalogReadHttp(catalog: ProviderConnectionsCatalogV1) {
   });
 }
 
-function runtimeRegistry(
+async function runtimeRegistry(
   activateContributionsOnDemand: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'],
-): ResolvedExecutablePluginRuntimeRegistry {
+): Promise<ResolvedExecutablePluginRuntimeRegistry> {
   const managedOwner = createManagedServicesOwner({
     processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
     dependencies: createUnavailablePluginServices().managedServices.dependencies,
     resolveScope: () => null,
   });
+  const base = await resolveExecutablePluginRuntimeRegistry({ pluginIds: [], contributes: createResolvedContributionRegistry({}) });
+  onTestFinished(() => base.dispose());
   return {
+    ...base,
     declarationContributes: createResolvedContributionRegistry({}),
     claimReleaseLessDeclarations: async () => undefined,
     projectManagedServices: managedOwner,
     readSharedProviderGatewayRuntime: managedOwner.readSharedProviderGatewayRuntime,
     contributes: {
+      backupDestinations: [],
       agents: Object.freeze([]),
       actions: Object.freeze([]),
       resources: Object.freeze([]),
@@ -137,7 +143,7 @@ describe('runtime Provider connection composition', () => {
 
   it('reads admitted gateway custody without activation and leaves unavailable authority unchecked', async () => {
     const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
-    const activeRegistry = runtimeRegistry(async () => { throw new Error('Description cannot activate plugins'); });
+    const activeRegistry = await runtimeRegistry(async () => { throw new Error('Description cannot activate plugins'); });
     const { pluginReloadController: controller } = await import('@/plugins/runtime/reload/singleton');
     await controller.adoptPreparedRuntimeRegistry({ registry: activeRegistry, changedPluginIds: [], durableRevision: 1,
       runningSessionDisposition: 'retainRunningSessions' });
@@ -163,7 +169,7 @@ describe('runtime Provider connection composition', () => {
     const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
     const services = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
       happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: () => true }, resolveSharedGateway,
-      runtimeSummary: async () => ({ status: 'error' }),
+      runtimeSummary: async () => ({ status: 'error', error: createProviderErrorV1('provider_secret_missing') }),
       resolveRegistry: async () => ({ providersByContributionKey: new Map([['acme.gateway/gateway', {
         provenance: 'first_party' as const, source: { kind: 'bundled' as const }, pluginId: 'acme.gateway',
         identity: { pluginId: 'acme.gateway', localId: 'gateway' }, definition,
@@ -311,8 +317,8 @@ describe('runtime Provider connection composition', () => {
     const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
     const neverSettles = new Promise<never>(() => {});
     const activateContributionsOnDemand = vi.fn(() => neverSettles);
-    const activeRegistry = runtimeRegistry(activateContributionsOnDemand);
-    const replacementRegistry = runtimeRegistry(async () => []);
+    const activeRegistry = await runtimeRegistry(activateContributionsOnDemand);
+    const replacementRegistry = await runtimeRegistry(async () => []);
     const controller = createPluginReloadController();
     await controller.adoptPreparedRuntimeRegistry({
       registry: activeRegistry,
@@ -351,7 +357,7 @@ describe('runtime Provider connection composition', () => {
       featureGate: {
         isEnabled: (featureId) => featureId === 'providers',
       },
-      runtimeSummary: async () => ({ status: 'error' }),
+      runtimeSummary: async () => ({ status: 'error', error: createProviderErrorV1('provider_secret_missing') }),
       resolveRegistry: async () => ({ providersByContributionKey: new Map() }),
     });
     const timeout = Symbol('timeout');

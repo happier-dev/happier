@@ -1,3 +1,4 @@
+import { projectRelayAccessConfigV1 } from '../../system/tasks/relayAccessConfigV1.js';
 import { REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1 as inputs, REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1 as outputs, RemoteHostCredentialSelectionV1Schema,
   type RemoteHostActionIdV1 } from '../../remoteHosts/remoteHostActionsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
@@ -9,7 +10,6 @@ function projectRemoteHostObservation(value: unknown): unknown {
   const record = readRecord(value);
   const host = readRecord(record.host);
   const operation = readRecord(record.operation);
-  const config = readRecord(operation.config);
   const target = readRecord(record.target);
   const key = readRecord(record.key);
   const projectKey = (value: unknown) => {
@@ -27,11 +27,7 @@ function projectRemoteHostObservation(value: unknown): unknown {
     ...(typeof record.taskId === 'string' ? { taskId: record.taskId } : {}),
     ...(typeof record.revision === 'number' ? { revision: record.revision } : {}),
     ...(operation.kind === 'disable' ? { operation: { kind: 'disable' } }
-      : operation.kind === 'configure' ? { operation: { kind: 'configure', config: {
-        ...(typeof config.providerId === 'string' ? { providerId: config.providerId } : {}),
-        ...(config.providerId === 'lan' && typeof config.url === 'string' ? { url: stripBrowserDiagnosticUrlValues(config.url) } : {}),
-        ...(config.providerId === 'cloudflareNamed' && typeof config.hostname === 'string' ? { hostname: config.hostname } : {}),
-      } } } : {}),
+      : operation.kind === 'configure' ? { operation: { kind: 'configure', config: projectRelayAccessConfigV1(operation.config) } } : {}),
   };
 }
 

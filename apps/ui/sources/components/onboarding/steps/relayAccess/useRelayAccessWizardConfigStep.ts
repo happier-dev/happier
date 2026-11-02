@@ -25,7 +25,7 @@ export type UseRelayAccessWizardConfigStepParams = Readonly<{
     isPrimaryDisabled: boolean;
     createConfig: () => CreateConfigResult;
     control: Readonly<{
-        configure: (payload: Readonly<{ providerId: RelayAccessProviderId; config: RelayAccessConfig }>) => Promise<string | null>;
+        configure: (payload: Readonly<{ config: RelayAccessConfig }>) => Promise<string | null>;
         isBusy: boolean;
         isUnavailable: boolean;
         lastErrorMessage?: string | null;
@@ -69,16 +69,13 @@ export function useRelayAccessWizardConfigStep(params: UseRelayAccessWizardConfi
             return;
         }
 
-        const taskId = await control.configure({
-            providerId,
-            config,
-        });
+        const taskId = await control.configure({ config });
         if (!taskId) {
             setAdvanceAfterSaveRequested(false);
             return;
         }
         setAdvanceAfterSaveRequested(true);
-    }, [control, createConfig, isSaveNeeded, onRequestAdvance, providerId]);
+    }, [control, createConfig, isSaveNeeded, onRequestAdvance]);
 
     React.useEffect(() => {
         if (!onWizardPrimaryChange) return;

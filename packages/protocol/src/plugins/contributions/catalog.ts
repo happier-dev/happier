@@ -1,3 +1,4 @@
+import { type AccessProviderContributionV1 } from './accessProviders.js';
 import type { MachineSetupPresetContributionV1 } from './machineSetupPresets.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { z } from 'zod/mini';
@@ -197,6 +198,8 @@ type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
   Readonly<{ registrationHost?: Exclude<PluginContributionCatalogEntryV2['registrationHost'], null> }>;
 const FAMILY_POLICIES = {
   deploymentTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'deploymentTargets', allowedRuntimeRegistration: null, consumer: 'deployment-target-catalog', platforms: ALL_PLATFORMS },
+secretSources: { identityField: 'id', disposition: 'retained', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'secretSources', registrationHost: 'daemon', consumer: 'saved-secret-acquisition', platforms: CLI_PLATFORMS },
+
   healthCheckKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'healthCheckKinds', allowedRuntimeRegistration: null, consumer: 'health-check-source-catalog', platforms: ALL_PLATFORMS },
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
@@ -1274,3 +1277,13 @@ export function listDeclaredPluginContributionFamilies(
 }
 
 export { AccessProviderRefV1Schema, type AccessProviderRefV1 } from './accessProviders.js';
+
+export { AccessProviderContributionV1 } from './accessProviders.js';
+
+export { AccessProviderSelectionV1Schema } from './accessProviders.js';
+
+export { accessProviderRefsEqualV1 } from './accessProviders.js';
+
+export type { AccessProviderSelectionV1 } from './accessProviders.js';
+
+export type { AccessCredentialPurposeRefV1 } from './accessProviders.js';

@@ -28,6 +28,8 @@ import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/s
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+
 
 // Only the Account server's HTTP boundary is replaced. The real Action executor,
 // the real approval Artifact store and its codecs, and the server's versioned
@@ -331,7 +333,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
       const decided = await executor.execute('approval.request.decide', {
         artifactId, decision: outcome === 'rejected' ? 'reject' : 'approve',
       }, uiContext);
-      const persisted = await store.approvalsGet({ artifactId, serverId: null });
+      const persisted = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
       expect(persisted).toMatchObject({ status: outcome === 'succeeded' ? 'executed' : outcome === 'rejected' ? 'rejected' : 'failed',
         executionOriginV1: { actionRequestAttributionV1: attribution },
       });
@@ -478,7 +480,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
             signal, assertCurrent() {},
             projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed-stop-worker',
               environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
-                io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
             launch: { command: process.execPath, args: [], cwd: workspace.rootPath, env: {} },
           }),
           processSpec: { mode: { kind: 'native',

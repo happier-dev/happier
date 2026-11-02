@@ -232,6 +232,7 @@ export const ActivityWebhookTopicSchema = lazyZodSchema(() => z.enum([
   'guard_attention',
   'machine_guard_activity',
   'resource_limit',
+  'service_health',
 ]));
 
 export type ActivityWebhookTopic = z.infer<typeof ActivityWebhookTopicSchema>;

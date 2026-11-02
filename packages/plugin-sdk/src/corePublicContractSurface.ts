@@ -73,6 +73,7 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'storage'
     | 'settings'
     | 'secrets'
+    | 'machineConnectorSecrets'
     | 'events'
     | 'http'
     | 'healthChecks'

@@ -1,3 +1,5 @@
+import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
+import { MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
@@ -32,7 +34,7 @@ export function createCliMachineResourceActionDeps(
     deploymentStorage: NonNullable<ActionExecutorDeps['deploymentAction']>;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
-): Pick<ActionExecutorDeps, 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineResourcesPolicyAction' | 'machineGuardAction' | 'usageSourceAction'> {
+): Pick<ActionExecutorDeps, 'machineReachabilityAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineResourcesPolicyAction' | 'machineGuardAction' | 'usageSourceAction'> {
   // The incumbent log reader and inventory projection consume one captured Account read.
   // Keep log refusal codes unchanged; inventory receives only the resulting read fact.
   const canReadServiceEnvironment = async (serverId: string, environmentId: string,
@@ -429,5 +431,34 @@ export function createCliMachineResourceActionDeps(
         },
       })(request, { ...context, serverId: request.input.serverId });
     },
-  };
+
+machineReachabilityAction: async ({ actionId, input, context, signal }) => {
+      const parsed = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
+      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const serverId = parsed.data.serverId ?? context.serverId ?? projectHomeId;
+      const denied = await projectAccountAdmission(serverId, context);
+      if (denied) return denied;
+      const assertCurrent = async () => {
+        signal?.throwIfAborted();
+        const scopeDenied = await projectAccountAdmission(serverId, context);
+        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
+        await assertProjectRequesterCurrent(context);
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        signal?.throwIfAborted();
+      };
+      return withProjectHome(async () => {
+        const raw = await executeCapturedMachineAction({ actionId, assertCurrent,
+          invoke: options => callMachineAction({ machineId: parsed.data.machineId, serverId,
+            method: getActionSpec(actionId).bindings!.rpcMethod!, request: { ...parsed.data, serverId },
+            authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+            ...(signal ? { signal } : {}), ...options }) });
+        const failure = ActionExecuteFailureSchema.safeParse(raw);
+        if (failure.success) return failure.data;
+        const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(raw);
+        if (deferred.success && deferred.data.actionId === actionId) return deferred.data;
+        const output = MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(raw);
+        return output.success ? output.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+      });
+    }
+};
 }

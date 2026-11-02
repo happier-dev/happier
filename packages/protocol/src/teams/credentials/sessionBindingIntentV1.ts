@@ -1,3 +1,7 @@
+import { ProviderAgentTargetKeySchema } from '../../providers/ids.js';
+import { ProviderModelIdSchema } from '../../providers/ids.js';
+import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
+import { ProviderMachineIdSchema } from '../../providers/ids.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -58,3 +62,33 @@ export type SessionTeamCredentialBindingIntentListV1 = z.infer<typeof SessionTea
 export function encodeSessionTeamCredentialSlotKeyV1(slot: SessionTeamCredentialSlotV1): Uint8Array {
   return new TextEncoder().encode(sessionTeamCredentialSlotKeyV1(slot));
 }
+
+export const SessionTeamCredentialNativeDeliveryV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: z.string().check(z.minLength(1)),
+  controllerInstallationId: z.string().check(z.minLength(1)),
+  guestInstallationId: z.string().check(z.minLength(1)),
+  bindingKey: z.string().check(z.minLength(1)),
+  placeholderRef: z.string().check(z.minLength(1)),
+  sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
+  providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+
+export const SessionTeamCredentialProviderModelSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  agentTargetKey: ProviderAgentTargetKeySchema,
+  modelId: ProviderModelIdSchema,
+  application: z.optional(ProviderBrokerApplicationBindingV1Schema),
+  executionMachineId: z.optional(ProviderMachineIdSchema),
+  nativeSource: z.optional(SessionTeamCredentialNativeSourceV1Schema),
+}).check(z.superRefine((selection, context) => {
+  if (selection.application && selection.application.agentTargetKey !== selection.agentTargetKey) {
+    context.addIssue({ code: 'custom', path: ['application'], message: 'Application must match the selected Agent target' });
+  }
+  if ((selection.application === undefined) !== (selection.executionMachineId === undefined)) {
+    context.addIssue({ code: 'custom', message: 'Application and execution Machine must be accepted together' });
+  }
+})));
+
+export const SessionTeamCredentialNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
+  providerTicket: SessionTeamCredentialNativeDeliveryV1Schema.shape.providerTicket,
+}));

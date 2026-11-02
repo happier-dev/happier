@@ -70,8 +70,8 @@ function composeSignals(
   return AbortSignal.any(signals);
 }
 
-function toNativeResponse(response: ManagedServiceResponse): Response {
-  return new Response(response.body, {
+export function toNativeResponse(response: Pick<ManagedServiceResponse, 'body' | 'status' | 'statusText' | 'headers'>): Response {
+  return new Response(toNativeResponseBody(response.body), {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
@@ -123,5 +123,34 @@ export function createOpenCodeServerTransport(params: Readonly<{
   return Object.freeze({
     request,
     fetch: fetchBound,
+  });
+}
+
+function toNativeResponseBody(body: ManagedServiceResponse['body']): ReadableStream<Uint8Array> | null {
+  // Hosts still return native streams. Adapt only structural/cross-realm bodies.
+  if (body === null || body instanceof ReadableStream) return body;
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          controller.close();
+          reader.releaseLock();
+        } else {
+          controller.enqueue(chunk.value);
+        }
+      } catch (error) {
+        controller.error(error);
+        reader.releaseLock();
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
+    },
   });
 }

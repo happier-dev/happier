@@ -341,3 +341,10 @@ export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
   'secrets.shared.update': SharedSavedSecretMutationOutputV1Schema,
   'secrets.shared.delete': SharedSavedSecretDeleteOutputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
+
+export type SharedSavedSecretRevealInputV1 = z.infer<typeof SharedSavedSecretRevealInputV1Schema>;
+
+export const SharedSavedSecretRevealInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ref: SharedResourceReferenceSchema,
+  expectedRevision: z.number().check(z.int(), z.positive()),
+}));

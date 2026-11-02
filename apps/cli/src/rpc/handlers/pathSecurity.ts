@@ -9,19 +9,19 @@ export function validateWorkspaceInspectionPath(targetPath: string): PathValidat
     const trimmedPath = typeof targetPath === 'string' ? targetPath.trim() : '';
     if (!trimmedPath) {
         return {
-            valid: false,
+            valid: false, errorCode: 'access_denied',
             error: 'candidatePath is required',
         };
     }
     if (trimmedPath.includes('\0')) {
         return {
-            valid: false,
+            valid: false, errorCode: 'access_denied',
             error: 'Attached workspace candidate path contains invalid characters',
         };
     }
     if (!isAbsolute(trimmedPath)) {
         return {
-            valid: false,
+            valid: false, errorCode: 'access_denied',
             error: 'Attached workspace candidate path must be absolute',
         };
     }
@@ -55,7 +55,7 @@ export function validatePath(
     }
 
     if (!workingDirectory || typeof workingDirectory !== 'string') {
-        return { valid: false, error: 'Access denied: Invalid working directory' };
+        return { valid: false, errorCode: 'access_denied', error: 'Access denied: Invalid working directory' };
     }
 
     return authorizeFilesystemPath({

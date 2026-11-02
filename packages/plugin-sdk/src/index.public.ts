@@ -219,3 +219,39 @@ export { redactBugReportSensitiveText } from './diagnostics.js';
 export { trimBugReportTextToMaxBytes } from './diagnostics.js';
 export type { PluginCaptureFrameV1, PluginCaptureReceiptV1, PluginCaptureCodecIdV1, PluginCaptureSourceDeclaration } from './captureSources.js';
 export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';
+
+export type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from './services/deployments.js';
+
+export { BackupDestinationOpenV1ProtocolSchema } from './backupDestinations.js';
+
+export type { BackupDestinationOpenV1 } from './backupDestinations.js';
+
+
+
+export type { PluginSecretSourceAcquisitionV1, PluginSecretSourceRuntimeV1 } from './secretSources.js';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export type { ProjectToolchainSelectionV1 } from './projectNativeAdapters.js';
+
+export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
+
+export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';

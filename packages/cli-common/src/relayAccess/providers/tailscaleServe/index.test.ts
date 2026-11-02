@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as selection } from '../../registry.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { tailscaleServeRelayAccessProvider } from './index.js';
@@ -18,6 +19,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
   it('returns needs_auth when tailscale is not logged in', async () => {
     const { runTailscaleStatusJson } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: 'Stopped',
       authUrl: 'https://login.tailscale.com/a/example',
       dnsName: null,
@@ -29,7 +33,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
 
     await expect(
-      tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } }),
+      tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } }),
     ).resolves.toEqual({
       state: 'needs_auth',
       details: {
@@ -45,6 +49,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
     // relay is reachable from another device while nothing is listening.
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: 'Stopped',
       authUrl: null,
       dnsName: 'machine.tailnet.ts.net',
@@ -56,7 +63,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue('https://machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005');
 
-    const res = await tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } });
+    const res = await tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } });
 
     expect(res.state).toBe('disabled');
     expect(res.shareUrl).toBeUndefined();
@@ -65,6 +72,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
   it('does not ask for re-authentication when tailscaled never answered', async () => {
     const { runTailscaleStatusJson } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: null,
       authUrl: null,
       dnsName: null,
@@ -75,7 +85,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
       daemonReachable: false,
     });
 
-    const res = await tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } });
+    const res = await tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } });
 
     expect(res.state).toBe('disabled');
     expect(res.shareUrl).toBeUndefined();
@@ -84,6 +94,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
   it('returns enabled with the serve https url when serve is configured', async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: 'Running',
       authUrl: null,
       dnsName: 'machine.tailnet.ts.net',
@@ -95,7 +108,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
     vi.mocked(runTailscaleServeStatus).mockResolvedValue('https://machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005');
 
-    const res = await tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } });
+    const res = await tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } });
     expect(res).toMatchObject({
       state: 'enabled',
       shareUrl: 'https://machine.tailnet.ts.net',
@@ -105,6 +118,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
   it('returns the share url for the requested upstream even when serve status includes other mappings first', async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: 'Running',
       authUrl: null,
       dnsName: 'machine.tailnet.ts.net',
@@ -123,7 +139,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     ].join('\n'));
 
     const res = await tailscaleServeRelayAccessProvider.status({
-      config: { providerId: 'tailscaleServe' },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
     });
 
@@ -136,6 +152,9 @@ describe('tailscaleServeRelayAccessProvider', () => {
   it('returns disabled when serve is not configured', async () => {
     const { runTailscaleStatusJson, runTailscaleServeStatus } = await import('../../../tailscale/index.js');
     vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       backendState: 'Running',
       authUrl: null,
       dnsName: 'machine.tailnet.ts.net',
@@ -148,7 +167,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     vi.mocked(runTailscaleServeStatus).mockResolvedValue('No serve config');
 
     await expect(
-      tailscaleServeRelayAccessProvider.status({ config: { providerId: 'tailscaleServe' }, ctx: { env: process.env, upstreamUrl: null } }),
+      tailscaleServeRelayAccessProvider.status({ config: selection('tailscaleServe'), ctx: { env: process.env, upstreamUrl: null } }),
     ).resolves.toEqual({
       state: 'disabled',
     });
@@ -164,7 +183,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     });
 
     const ctx = { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' };
-    const res = await tailscaleServeRelayAccessProvider.configure?.({ config: { providerId: 'tailscaleServe' }, ctx });
+    const res = await tailscaleServeRelayAccessProvider.configure?.({ config: selection('tailscaleServe'), ctx });
     expect(runTailscaleServeEnable).toHaveBeenCalledTimes(1);
     expect(res).toEqual({
       state: 'enabled',
@@ -183,7 +202,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     ].join('\n'));
 
     const result = await tailscaleServeRelayAccessProvider.configure?.({
-      config: { providerId: 'tailscaleServe' },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
     });
 
@@ -203,7 +222,7 @@ describe('tailscaleServeRelayAccessProvider', () => {
     vi.mocked(runTailscaleServeDisable).mockResolvedValue(undefined);
 
     await tailscaleServeRelayAccessProvider.disable?.({
-      config: { providerId: 'tailscaleServe' },
+      config: selection('tailscaleServe'),
       ctx: { env: process.env, upstreamUrl: 'http://127.0.0.1:3005' },
     });
 

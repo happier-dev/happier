@@ -1,3 +1,4 @@
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -153,8 +154,7 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
       resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [] }),
     resolveHostPolicy: createTargetActionHostPolicyResolver(),
     resolveHostBinding: createTargetActionHostBindingResolver(firstPartyNativeRun ? {
-      createServiceBinding: (occurrence, id, requests) => addExecServiceBinding(
-        createLoggerAvailablePluginInvocationServiceBinding(occurrence, id), requests ?? [], true),
+      createServiceBinding: (occurrence, id) => createPluginInvocationServiceBinding(occurrence, id),
     } : undefined),
     createServices(seed, binding) {
       const services = invocationServices(seed, binding);
@@ -179,7 +179,8 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
   let row = ManagedMachineV1Schema.parse({ id: 'retained-child', homeId, custodianAccountId: 'owner', controller,
     launch: { provider: contributionRef, schemaVersion: 1, name: 'Child', choices: { name: 'native-original' } },
     allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
-    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } });
   const requests: string[] = [];
   const approvals: unknown[] = [];
   let stopBeforeEnrollment: AbortController | undefined;
@@ -203,13 +204,13 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
       row = ManagedMachineV1Schema.parse({ ...row, enrolledMachineId: registration.id });
       return { status: 200, data: { machine: { id: registration.id, metadata: registration.metadata, metadataVersion: 1,
         daemonState: null, daemonStateVersion: 0, storageMode: 'plain', dataEncryptionKey: null,
-        devcontainerChild: deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id, controllerMachineId: row.controller.machineId,
+        devcontainerChild: deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id, controllerMachineId: controller.machineId,
           enrolledMachineId: row.enrolledMachineId, resource: row.resource }) ?? null } } };
     }
     if (path.endsWith('/admit')) {
       const admission = ManagedAdmissionInputV1Schema.parse(body);
       if (admission.input.selection.kind !== 'one-off') throw new Error('This boundary accepts only the reviewed one-off selection');
-      row = ManagedMachineV1Schema.parse({ ...row, launch: admission.input.selection.launch });
+      row = ManagedMachineV1Schema.parse({ ...row, launch: admission.input.selection.launch, enrollmentIdentity: admission.input.enrollmentIdentity });
       return { status: 200, data: { machine: row, replayed: false } };
     }
     if (path.endsWith('/context')) return { status: 200, data: { machine: row, requestId: 'approved-create' } };

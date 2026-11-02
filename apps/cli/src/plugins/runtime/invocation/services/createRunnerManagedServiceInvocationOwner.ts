@@ -187,7 +187,7 @@ type RemoteRunnerManagedServiceEndpointProjectionOwner = Readonly<{
 const MANAGED_SERVICE_ENDPOINT_MAX_CHUNK_BYTES = 64 * 1024;
 
 function boundManagedServiceEndpointResponseBody(
-    body: ReadableStream<Uint8Array> | null,
+    body: ManagedServiceResponse['body'],
 ): ReadableStream<Uint8Array> | null {
     if (!body) return null;
     const reader = body.getReader();

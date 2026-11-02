@@ -1,3 +1,9 @@
+import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import { readManagedServiceResponseJson } from '@/plugins/testkit/managedServiceResponse';
+import { request as requestHttp } from 'node:http';
+import { SignedProviderBrokerRouteGrantV2Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderBrokerRequestHandler } from '@/providers/broker/providerBrokerRequestHandler';
 import { createServer } from 'node:http';
 
 import { describe, expect, it } from 'vitest';
@@ -15,6 +21,7 @@ import { createUnavailablePluginServices } from './unavailable';
 describe('managed Provider attached endpoint lifetime', () => {
     it('keeps retired access unavailable when a fresh attachment uses the same URL and null start time', async () => {
         const requests: string[] = [];
+        const modelHeaders: Array<Readonly<{ nominated: string | string[] | undefined; trace: string | string[] | undefined }>> = [];
         const unexpectedRequests: string[] = [];
         const server = createServer((request, response) => {
             const route = `${request.method} ${request.url}`;
@@ -23,6 +30,7 @@ describe('managed Provider attached endpoint lifetime', () => {
                 response.writeHead(200, { 'content-type': 'application/json' });
                 response.end(JSON.stringify({ ready: true }));
             } else if (route === 'GET /v1/models') {
+                modelHeaders.push({ nominated: request.headers['x-remove'], trace: request.headers['x-request-trace'] });
                 response.writeHead(200, { 'content-type': 'application/json' });
                 response.end(JSON.stringify({ models: [] }));
             } else {
@@ -47,6 +55,7 @@ describe('managed Provider attached endpoint lifetime', () => {
         let freshProjection: ManagedProviderEndpointAccessProjection | null = null;
         let original: ManagedServiceHandle | undefined;
         let fresh: ManagedServiceHandle | undefined;
+        let consumer: Awaited<ReturnType<typeof startManagedProviderConsumerApplication>> | undefined;
         let mainFailure: unknown;
         let hasMainFailure = false;
         const cleanupFailures: unknown[] = [];
@@ -103,7 +112,63 @@ describe('managed Provider attached endpoint lifetime', () => {
             expect(originalProjection.access.endpointUrl('models')).toBe(`${baseUrl}/v1`);
             const originalResponse = await originalProjection.access.request({ pathAndQuery: '/v1/models' });
             expect(originalResponse.status).toBe(200);
-            expect(await new Response(originalResponse.body).json()).toEqual({ models: [] });
+            expect(await readManagedServiceResponseJson(originalResponse)).toEqual({ models: [] });
+
+            // These are the two personal forwarding entries that receive
+            // transport headers, not caller-authored Provider public headers.
+            // Keep their real strict managed transport and HTTP destination.
+            const projection = originalProjection;
+            consumer = await startManagedProviderConsumerApplication({ signal: lifetime.signal,
+                endpointUrl: `${baseUrl}/v1`, credentialTransport: { id: 'bearer', protocols: ['openai-responses'],
+                    uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+                request: async request => ({ ok: true, response: await projection.access.request(request) }),
+            });
+            const localConsumer = consumer;
+            const local = await new Promise<Readonly<{ status: number; body: string }>>((resolve, reject) => {
+                const request = requestHttp(`${localConsumer.endpointUrl}/models`, { headers: {
+                    authorization: `Bearer ${localConsumer.credential}`, connection: 'close, X-Remove',
+                    'x-remove': 'connection-scoped', 'x-request-trace': 'local-consumer',
+                } }, response => {
+                    const chunks: Buffer[] = [];
+                    response.on('data', (chunk: Buffer) => chunks.push(chunk));
+                    response.once('error', reject);
+                    response.once('end', () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }));
+                });
+                request.once('error', reject);
+                request.end();
+            });
+            expect(local.status, local.body).toBe(200);
+            expect(JSON.parse(local.body)).toEqual({ models: [] });
+            expect(modelHeaders.at(-1)).toEqual({ nominated: undefined, trace: 'local-consumer' });
+            expect((await fetch(`${consumer.endpointUrl}/models`, { headers: { authorization: 'Bearer wrong-consumer' } })).status).toBe(403);
+
+            const authority = SignedProviderBrokerRouteGrantV2Schema.parse({ payload: {
+                v: 2, grantId: 'attached-http', aud: 'happier-provider-broker-route-v2', issuedAt: 1, expiresAt: 2,
+                homeId: 'home', accountId: 'account', initiatorTokenEpoch: 0,
+                source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('attached-http'),
+                    expectedConnectionSecurityFingerprint: 'connection-security:v1:attached',
+                    expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:attached' },
+                initiator: { accountId: 'account', machineId: 'peer', endpointId: 'a'.repeat(64) },
+                target: { custodianAccountId: 'account', machineId: 'machine', endpointId: 'b'.repeat(64) },
+                consumer: { kind: 'session', sessionId: 'attached-consumer' },
+                application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+                    implementationIdentity: { pluginId: 'acme.attach', localId: 'gateway' }, endpointTemplateId: 'models',
+                    protocol: 'openai-responses' },
+            }, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.alloc(64).toString('base64url') } });
+            const unexpectedTeamRequest = async (): Promise<never> => { throw new Error('Personal forwarding entered Team policy'); };
+            const broker = createProviderBrokerRequestHandler({ resolveTrustRoots: () => [], nowMs: Date.now,
+                resolveRequestPolicy: unexpectedTeamRequest, createRequestId: () => 'attached-http', admit: unexpectedTeamRequest });
+            // Authenticated machine-stream admission is the external boundary;
+            // the personal handler, sanitizer, managed access and HTTP stay real.
+            const remote = await broker({ context: { kind: 'account_connection', authority,
+                authenticatedRemoteEndpointId: authority.payload.initiator.endpointId,
+                acquireSource: async () => projection.access, streamLifetime: { close: async () => {}, retire: async () => {} } },
+                request: { pathAndQuery: '/v1/models', method: 'GET', headers: { host: 'carrier.example', connection: 'X-Remove',
+                    'x-remove': 'connection-scoped', 'x-request-trace': 'personal-peer' }, signal: lifetime.signal } });
+            expect(remote).toMatchObject({ ok: true, response: { status: 200 } });
+            if (!remote.ok) throw new Error('Expected personal HTTP forwarding');
+            expect(await readManagedServiceResponseJson(remote.response)).toEqual({ models: [] });
+            expect(modelHeaders.at(-1)).toEqual({ nominated: undefined, trace: 'personal-peer' });
 
             await expect(original.stop()).resolves.toEqual({ status: 'detached' });
             expect(original.snapshot().state).toBe('stopped');
@@ -124,7 +189,7 @@ describe('managed Provider attached endpoint lifetime', () => {
             expect(freshProjection.isCurrent()).toBe(true);
             const freshResponse = await freshProjection.access.request({ pathAndQuery: '/v1/models' });
             expect(freshResponse.status).toBe(200);
-            expect(await new Response(freshResponse.body).json()).toEqual({ models: [] });
+            expect(await readManagedServiceResponseJson(freshResponse)).toEqual({ models: [] });
 
             // The caller and URL are still current. Only the exact old handle
             // retired, so neither a URL lookup nor a nullable timestamp may
@@ -139,12 +204,13 @@ describe('managed Provider attached endpoint lifetime', () => {
             await expect(originalProjection.access.request({ pathAndQuery: '/v1/models' }))
                 .rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
             expect(requests.filter((route) => route === 'GET /v1/models')).toHaveLength(requestsBeforeRefusal);
-            expect(requests.filter((route) => route === 'GET /v1/models')).toHaveLength(2);
+            expect(requests.filter((route) => route === 'GET /v1/models')).toHaveLength(4);
         } catch (error) {
             hasMainFailure = true;
             mainFailure = error;
         } finally {
             const outcomes = await Promise.allSettled([
+                Promise.resolve().then(() => consumer?.cleanup()),
                 Promise.resolve().then(() => originalProjection?.cleanup()),
                 Promise.resolve().then(() => freshProjection?.cleanup()),
                 owner.dispose(),

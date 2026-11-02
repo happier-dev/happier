@@ -1675,14 +1675,9 @@ function createProviderScopedStableExecService(params: Readonly<{
     const workspaceRoot = resolve(params.cwd);
     const systemTools = createProviderScopedSystemToolResolver(params);
     return createStablePluginExecService({
-        allowedExecutables: [...params.systemTools.map((tool) => Object.freeze({ kind: 'systemTool' as const, id: tool.id })), ...(params.managedExecutableRefs ?? [])],
-        allowedEnvKeys: Object.freeze([...new Set([...Object.keys(params.environment), ...(params.additionalAllowedEnvironmentKeys ?? []), 'CI'])]),
+
+
         environment: Object.freeze({}),
-        allowedCwdScopes: Object.freeze([{
-            root: 'workspace' as const,
-            pathPrefix: '',
-            access: Object.freeze(['read' as const]),
-        }]),
         signal: params.signal ?? new AbortController().signal,
         isOccurrenceCurrent: params.isOccurrenceCurrent ?? (() => true),
         async resolveExecutable(executable) {

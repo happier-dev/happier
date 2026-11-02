@@ -428,3 +428,20 @@ export type PluginWebhookEndpointCredentialRotateInputV1 = z.infer<typeof Plugin
 export type PluginWebhookEndpointCredentialRotateResultV1 = z.infer<typeof PluginWebhookEndpointCredentialRotateResultV1Schema>;
 export type PluginWebhookEndpointCredentialFinishRotationInputV1 = z.infer<typeof PluginWebhookEndpointCredentialFinishRotationInputV1Schema>;
 export type PluginWebhookEndpointCredentialFinishRotationResultV1 = z.infer<typeof PluginWebhookEndpointCredentialFinishRotationResultV1Schema>;
+
+export const PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/ensure' as const;
+
+export const PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/read' as const;
+
+export const PluginWebhookHeartbeatReadInputV1Schema = lazyZodSchema(() => z.strictObject({
+  webhookEndpointId: PluginWebhookEndpointIdV1Schema,
+  sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
+  checkId: DeploymentIdentifierV1Schema,
+}));
+
+export const PluginWebhookHeartbeatReadResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('ready'), lastAcceptedAt: z.nullable(PluginWebhookTimestampMsV1Schema) }),
+  z.strictObject({ kind: z.literal('unavailable'), code: z.literal('endpoint_unavailable') }),
+]));
+
+export type PluginWebhookHeartbeatReadResultV1 = z.infer<typeof PluginWebhookHeartbeatReadResultV1Schema>;

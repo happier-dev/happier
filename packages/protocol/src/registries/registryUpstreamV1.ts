@@ -54,3 +54,13 @@ export function compareRegistryContentRefV1(current: RegistryContentRefV1, lates
       && current.repo === latest.repo && current.path === latest.path && current.treeSha === latest.treeSha;
   return equal ? 'current' : 'update_available';
 }
+
+export function registryContentRefEqualV1(a: RegistryContentRefV1, b: RegistryContentRefV1): boolean {
+  return a.kind === 'version' && b.kind === 'version' ? a.version === b.version
+    : a.kind === 'content' && b.kind === 'content' ? a.digest === b.digest
+    : a.kind === 'packageContent' && b.kind === 'packageContent' ? a.pluginId === b.pluginId && a.pluginVersion === b.pluginVersion
+      && a.path === b.path && a.digest === b.digest
+    : a.kind === 'wellKnown' && b.kind === 'wellKnown' ? a.indexUrl === b.indexUrl && a.name === b.name && a.digest === b.digest && a.publishedDigest === b.publishedDigest
+    : a.kind === 'gitTree' && b.kind === 'gitTree' && a.repo === b.repo && a.path === b.path
+      && a.commit === b.commit && a.treeSha === b.treeSha;
+}

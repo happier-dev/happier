@@ -1,3 +1,5 @@
+import type { ParsedApprovalArtifactBodyV1 } from '../../approvals/approvalArtifactHeaderV1.js';
+import type { ApprovalTranscriptVisualPublicationV1 } from '../messages/transcriptObservationV1.js';
 import { maybeParseJson } from '../../activity/parseJson.js';
 import { createHappierActionToolNameIndex, isRecord, readHappierActionExecuteActionId, readHappierActionId, readHappierActionToolName, readHappierActionToolPayload, readHappierActionToolResultCandidates } from '../../actions/happierActionToolResult.js';
 import { SESSION_BOARD_ACTION_IDS_V1, SESSION_BOARD_ACTION_MCP_TOOL_NAMES_V1 } from './actionIds.js';
@@ -106,4 +108,23 @@ export function isPublishedTranscriptSessionBoardItemReferenceCorrespondingV1(in
     return published.sourceAddress.sessionId === input.publishedSessionId
         && acknowledged.itemRevision !== null && acknowledged.itemDestination !== 'board'
         && acknowledged.itemId === published.itemId && acknowledged.itemRevision === published.itemRevision;
+}
+
+export function readApprovalTranscriptVisualPublicationV1(input: Readonly<{
+    artifactId: string; approval: ParsedApprovalArtifactBodyV1 | null;
+}>): ApprovalTranscriptVisualPublicationV1 | null {
+    if (input.approval?.family !== 'built_in') return null;
+    const { request } = input.approval;
+    if (request.actionId !== 'session.board.item.upsert' || request.origin?.kind !== 'transcript_tool_call'
+        || request.status !== 'executed' || request.execution?.ok === false) return null;
+    const result = request.execution?.result;
+    if (!isRecord(result) || typeof result.serverId !== 'string') return null;
+    const reference = resolveTranscriptSessionBoardItemReferenceV1({ toolName: 'session_board_item_upsert',
+        state: 'completed', input: request.actionArgs, result,
+        address: { serverId: result.serverId, sessionId: request.origin.sessionId } });
+    if (!reference?.itemRevision || reference.itemDestination === 'board') return null;
+    return { v: 1, sessionId: reference.address.sessionId, surfaceItemReference: { v: 1, references: [{
+        v: 1, itemId: reference.itemId, itemRevision: reference.itemRevision,
+        sourceAddress: reference.address, sourceItemId: reference.itemId, sourceItemRevision: reference.itemRevision,
+    }] } };
 }

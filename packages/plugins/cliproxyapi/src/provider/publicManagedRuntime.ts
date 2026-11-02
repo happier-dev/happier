@@ -1,3 +1,4 @@
+import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import type {
   ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';
 import type {
@@ -132,7 +133,7 @@ function readContentType(
 }
 
 async function cancelBody(
-  body: ReadableStream<Uint8Array> | null,
+  body: ManagedServiceResponse['body'],
 ): Promise<void> {
   if (!body) return;
   try {
@@ -143,7 +144,7 @@ async function cancelBody(
 }
 
 async function readBoundedBody(
-  body: ReadableStream<Uint8Array>,
+  body: NonNullable<ManagedServiceResponse['body']>,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
   const reader = body.getReader();

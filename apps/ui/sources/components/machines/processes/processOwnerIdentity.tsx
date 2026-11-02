@@ -66,11 +66,16 @@ export function describeOwnerFallbackTitle(owner: OwnerRowV1): string {
         ? t('machineProcesses.owners.someonesSession', { name: owner.requester.displayName })
         : t('machineProcesses.owners.anotherAccount');
     case 'terminal':
-      return t('machineProcesses.owners.terminal', { name: root?.name ?? '' });
+      // A census without the shell's name says just "Terminal", never "Terminal · ".
+      return root?.name
+        ? t('machineProcesses.owners.terminal', { name: root.name })
+        : t('machineDetailPage.subPages.terminal');
     case 'service':
       return name
         ? t('machineProcesses.owners.service', { name })
         : owner.owner.serviceId;
+    case 'container':
+      return t('machineProcesses.owners.service', { name: owner.owner.composeService });
     case 'run':
       return t('machineProcesses.owners.run', { name });
     case 'browser_sidecar':
@@ -118,6 +123,7 @@ const OWNER_ICONS: Readonly<
 > = {
   terminal: 'terminal',
   service: 'cube',
+  container: 'cube',
   run: 'play',
   browser_sidecar: 'globe',
   workspace_sync: 'arrows-clockwise',

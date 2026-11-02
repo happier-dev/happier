@@ -619,6 +619,7 @@ const GROUP_OF: Readonly<
   session: 'sessions',
   browser_sidecar: 'browser',
   service: 'services',
+  container: 'services',
   terminal: 'services',
   run: 'other',
   workspace_sync: 'other',

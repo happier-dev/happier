@@ -164,6 +164,8 @@ function createRuntimeRegistry(
     );
     const currentContributes = { ...contributes, occurrenceIdsByPluginId };
     return {
+        generation: managedServicesFixture.registry.generation,
+        targetActionInvocations: managedServicesFixture.registry.targetActionInvocations,
         contributes: currentContributes,
         declarationContributes: currentContributes,
         projectManagedServices: managedServicesFixture.registry.projectManagedServices,

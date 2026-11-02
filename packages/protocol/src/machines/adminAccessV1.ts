@@ -84,7 +84,9 @@ export type MachineFirewallRestorationV1 = z.infer<typeof MachineFirewallRestora
 export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('applied'), observation: MachineAdminAccessObservationV1Schema }),
   z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.enum(['mode_none', 'not_preauthorized',
-    'denied', 'platform_unsupported', 'plan_stale', 'cancelled']),
+    'denied', 'platform_unsupported', 'plan_stale', 'cancelled', 'managed_cli_unavailable']),
+    recovery: z.optional(z.strictObject({ kind: z.literal('install_managed_cli'),
+      executablePath: z.string().check(z.minLength(1)) })),
     restoration: z.optional(MachineFirewallRestorationV1Schema) }),
   z.strictObject({ outcome: z.literal('needs_attendance'), operationId: z.string().check(z.minLength(1)),
     prompt: MachineSudoPasswordPromptV1Schema }),

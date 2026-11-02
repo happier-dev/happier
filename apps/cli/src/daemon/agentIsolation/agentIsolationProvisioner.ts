@@ -1,0 +1,288 @@
+import { lstat, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute } from 'node:path';
+import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
+  type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
+import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { checkElevatedMachineSetupPlan, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
+import { buildAgentIsolationProvisioningSteps, buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetirementSteps,
+  deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
+import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
+import { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding,
+  type AgentIsolationMemberBindingScope } from './memberBindings';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
+import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
+import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+export { ensureAgentIsolationMember, type EnsureAgentIsolationMemberInput,
+  type EnsureAgentIsolationMemberResult } from './ensureAgentIsolationMember';
+export { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAccount, readAgentIsolationMemberLaunchIdentity,
+  readProvisionedRequesterAccounts, writeAgentIsolationMemberBinding,
+  projectAgentIsolationMemberBinding, type AgentIsolationMemberBinding, type AgentIsolationMemberBindingScope } from './memberBindings';
+
+export type AgentIsolationEffectDependencies = Readonly<{
+  platform: NodeJS.Platform;
+  installedCli: string;
+  readRoots(): readonly Readonly<{ rootId: string; path: string }>[] | null;
+  readSessionsToReplace(): number;
+  protectedRoots?: readonly string[];
+  /** The native setup adapter is the OS boundary, shared with root APPLY. */
+  backend?: MachineSetupBackend;
+  /** Present only at the daemon composition; optional OS override is for native boundary tests. */
+  nativeReadiness?: Readonly<{ privateRoots: readonly string[]; system?: AgentIsolationReadinessSystem }>;
+  elevation: Omit<MachineElevationDependencies, 'verifyCurrent'>;
+  /** Incumbent observer's held fact for read-only status qualification. */
+  readDaemonObservation?(): AgentIsolationDaemonObservation | null;
+  publishStatus(status: MachineAgentIsolationStatusV1): Promise<void>;
+}>;
+export type PreparedAgentIsolationEffects = Readonly<{
+  preview: Extract<MachineAgentIsolationPreviewResultV1, { kind: 'ready' }>;
+  setupPlan: MachineSetupEffectPlanV1;
+  daemonObservation?: AgentIsolationDaemonObservation;
+}>;
+
+export async function resolveAgentIsolationEffectIntent(enabled: boolean, effects: AgentIsolationEffectDependencies,
+  requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number) {
+  const sessionsToReplace = effects.readSessionsToReplace();
+  if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return null;
+  // Off changes future admission, not permissions or ownership. Its actual
+  // filesystem effect is empty; a missing checkout must not block recovery.
+  if (!enabled) return { roots: [], ancestorAcls: [], sessionsToReplace, steps: [] };
+  const daemon = await effects.elevation.observe();
+  if (daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) return null;
+  if (requesterIdentity) return { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
+    steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, requesterIdentity, retainedMemberUid }) };
+  const admitted = effects.readRoots();
+  // A newly created server may have no Workspace yet. Only an unavailable
+  // census is unknown; a known empty census still needs account/RunAs setup.
+  if (!admitted) return null;
+  const protectedRoots = await Promise.all((effects.protectedRoots ?? []).map(async path => {
+    try { return await realpath(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path; throw error; }
+  }));
+  const roots = await Promise.all(admitted.map(async root => {
+    if (!isAbsolute(root.path) || !root.rootId) throw new Error('workspace_not_ready');
+    const path = await realpath(root.path);
+    if (path === dirname(path) || !(await lstat(path)).isDirectory()
+      || protectedRoots.some(protectedRoot => isCanonicalAbsolutePathInsideRoot(protectedRoot, path)
+        || isCanonicalAbsolutePathInsideRoot(path, protectedRoot))) throw new Error('workspace_not_ready');
+    return { rootId: root.rootId, path };
+  }));
+  roots.sort((left, right) => left.rootId.localeCompare(right.rootId) || left.path.localeCompare(right.path));
+  const ancestors = new Set<string>();
+  for (const root of roots) for (let path = dirname(root.path); path !== dirname(path); path = dirname(path)) {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('workspace_not_ready');
+    if (!(stat.mode & 0o001)) ancestors.add(path);
+  }
+  const ancestorAcls = [...ancestors].sort().map(path => ({ path, add: 'x' as const }));
+  const steps = [
+    ...buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli }),
+    ...ancestorAcls.map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
+    ...roots.map(root => ({ id: `workspace-${root.rootId}`, kind: 'workspaceAccess' as const, path: root.path,
+      group: 'happier-workspace', agentUsername: 'happier-agent' })),
+    buildUserManagerGroupRefreshStep({ uid: daemon.daemonUid, username: daemon.daemonUsername }),
+  ];
+  return { roots, ancestorAcls, sessionsToReplace, steps, daemonObservation: daemon };
+}
+
+/** One review/digest owner, reused before every CAS and inside elevated APPLY. */
+export async function prepareAgentIsolationEffects(input: Readonly<{
+  machineId: string; enabled: boolean; port: MachineMetadataFieldPortV1;
+  status: MachineAgentIsolationStatusV1; expectedPolicy?: MachineAgentIsolationPolicyV1;
+  operationId?: string; signal?: AbortSignal; verifyCurrent?: () => Promise<boolean>;
+  memberProvisioning?: 'linuxUsersV1';
+  requesterIdentity?: AgentIsolationMemberRequester;
+}>, effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects | null> {
+  if (effects.platform !== 'linux') return null;
+  if (input.requesterIdentity && (input.requesterIdentity.requester.machineId !== input.machineId
+    || input.requesterIdentity.requester.installationId !== effects.elevation.installationId)) return null;
+  const snapshot = await input.port.read();
+  if (snapshot.status !== 'ready') return null;
+  const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
+  if (policy.status !== 'ready') return null;
+  const intent = await resolveAgentIsolationEffectIntent(input.enabled, effects, input.requesterIdentity);
+  if (!intent) return null;
+  const { roots, ancestorAcls, sessionsToReplace, steps } = intent;
+  const memberReview = input.enabled && input.memberProvisioning === 'linuxUsersV1'
+    ? { memberProvisioning: 'linuxUsersV1' as const } : {};
+  const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.machineId, enabled: input.enabled,
+    expectedPolicy: input.expectedPolicy ?? policy.policy, review: { roots, ancestorAcls, sessionsToReplace, ...memberReview } };
+  const setupPlan = !effects.backend && input.enabled && input.operationId && input.verifyCurrent
+    ? await checkElevatedMachineSetupPlan({ machineId: input.machineId, operationId: input.operationId,
+      basis, steps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent })
+    : await checkMachineSetupEffectPlan({ basis, steps, backend: effects.backend ?? createMachineSetupNativeBackend() });
+  if (!setupPlan) return null;
+  if (setupPlan.nativeFacts.some(fact => fact.status === 'unavailable' || fact.status === 'unsupported')) return null;
+  const plan: AgentIsolationEffectPlanV1 = { ...memberReview, roots: roots.map(root => ({ ...root,
+    changes: input.enabled && setupPlan.nativeFacts.find(fact => fact.stepId === `workspace-${root.rootId}`)?.status !== 'satisfied'
+      ? ['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'] : [] })), ancestorAcls, sessionsToReplace,
+    requiresAdmin: setupPlan.nativeFacts.some(fact => fact.status !== 'satisfied'), planDigest: setupPlan.planDigest };
+  return { setupPlan, ...('daemonObservation' in intent ? { daemonObservation: intent.daemonObservation } : {}),
+    preview: { kind: 'ready', plan, policy: policy.policy,
+    metadataVersion: snapshot.metadataVersion, status: input.status } };
+}
+
+export type ApplyAgentIsolationMemberEffectsInput = Readonly<{
+  machineId: string; requesterIdentity: AgentIsolationMemberRequester; operationId: string; activeServerDir: string;
+  port: MachineMetadataFieldPortV1; status?: MachineAgentIsolationStatusV1;
+  /** Omitted only by the owner-reviewed lazy setup/recovery operation. Public
+   * preview/set and explicit prepared callers retain exact digest admission. */
+  expectedPlanDigest?: string;
+  signal?: AbortSignal;
+  /** Local operation/installation/cancellation custody after Home admission. */
+  verifyCurrent(): Promise<boolean>;
+  nativeEffectContext: MachineNativeEffectContext;
+}>;
+export type ApplyAgentIsolationMemberEffectsResult = Readonly<{
+  kind: 'ready'; identity: AgentIsolationMemberNativeIdentity; daemonObservation: AgentIsolationDaemonObservation;
+}> | Readonly<{ kind: 'not_ready'; result: Exclude<MachineElevatedResultV1, { outcome: 'applied' }> }>;
+
+/** The single member mutation owner, consumed by both explicit reviewed plans
+ * and owner-authorized first use/recovery. Callers never mint an approval or
+ * upgrade the requester's role; the existing setup operation encloses binding
+ * commit as well as native CHECK/APPLY.
+ */
+export async function applyAgentIsolationMemberEffects(input: ApplyAgentIsolationMemberEffectsInput,
+  effects: AgentIsolationEffectDependencies): Promise<ApplyAgentIsolationMemberEffectsResult> {
+  const refused = (reasonCode: 'cancelled' | 'plan_stale' | 'denied'): ApplyAgentIsolationMemberEffectsResult =>
+    ({ kind: 'not_ready', result: { outcome: 'not_applied', reasonCode } });
+  if (input.nativeEffectContext.operation.operationId !== input.operationId
+    || input.requesterIdentity.requester.machineId !== input.machineId
+    || input.requesterIdentity.requester.installationId !== effects.elevation.installationId) return refused('plan_stale');
+  if (input.signal?.aborted) return refused('cancelled');
+  if (!await input.verifyCurrent()) return refused('plan_stale');
+  if (effects.platform !== 'linux') return { kind: 'not_ready', result: { outcome: 'not_applied', reasonCode: 'platform_unsupported' } };
+  try {
+    const snapshot = await input.port.read();
+    if (snapshot.status !== 'ready') return refused('denied');
+    const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
+    if (policy.status !== 'ready' || !policy.policy.enabled || policy.policy.memberProvisioning !== 'linuxUsersV1') return refused('denied');
+    const scope = { activeServerDir: input.activeServerDir, homeServerIdentityId: input.requesterIdentity.homeServerIdentityId,
+      machineId: input.machineId, installationId: input.requesterIdentity.requester.installationId };
+    const binding = await readAgentIsolationMemberBindingForAccount(scope, input.requesterIdentity.requester.accountId);
+    const verify = async () => !input.signal?.aborted && await input.verifyCurrent();
+    const acceptPlan = async (plan: MachineSetupEffectPlanV1) => {
+      const retained = binding ?? await readAgentIsolationMemberBindingForAccount(scope, input.requesterIdentity.requester.accountId);
+      if (!retained) return true;
+      // Root CHECK already proves full provenance. Retained private data also
+      // reserves its numeric UID/home before any native mutation or RunAs grant.
+      const account = plan.nativeFacts.find(fact => fact.stepId === 'agent-account');
+      const accountStep = plan.steps.find(step => step.id === 'agent-account');
+      if (account?.facts.present === false) return accountStep?.kind === 'user' && accountStep.uid === retained.uid
+        && account.facts.availableUid === retained.uid;
+      return account?.facts.present === true && account.facts.uid === retained.uid
+        && account.facts.username === retained.username && account.facts.home === retained.home;
+    };
+    let daemonObservation: AgentIsolationDaemonObservation | undefined;
+    if (input.expectedPlanDigest !== undefined) {
+      const prepared = await prepareAgentIsolationEffects({ ...input, enabled: true,
+        status: input.status ?? { kind: 'unavailable', code: 'provisioning_unavailable' } }, effects);
+      if (!prepared || prepared.setupPlan.planDigest !== input.expectedPlanDigest) return refused('plan_stale');
+      if (!await acceptPlan(prepared.setupPlan)) return refused('denied');
+      daemonObservation = prepared.daemonObservation;
+      if (!await verify()) return refused('plan_stale');
+      if (prepared.preview.plan.requiresAdmin) {
+        if (effects.backend) {
+          const result = await applyMachineSetupEffectPlan({ plan: prepared.setupPlan,
+            backend: effects.backend, signal: input.signal });
+          if (result.status !== 'applied') return result.status === 'outcome_unknown'
+            ? { kind: 'not_ready', result: { outcome: 'outcome_unknown' } } : refused(result.status === 'cancelled' ? 'cancelled' : 'denied');
+        } else {
+          const result = await runElevatedEffect({ machineId: input.machineId, operationId: input.operationId, signal: input.signal,
+            effect: { kind: 'setupOperation', plans: [{ plan: prepared.setupPlan }] } },
+          { ...effects.elevation, verifyCurrent: verify });
+          if (result.outcome !== 'applied') return { kind: 'not_ready', result };
+          daemonObservation = result.observation;
+        }
+      }
+    } else {
+      const intent = await resolveAgentIsolationEffectIntent(true, effects, input.requesterIdentity, binding?.uid);
+      if (!intent) return refused('denied');
+      const result = await runElevatedMachineSetupIntent({ machineId: input.machineId, operationId: input.operationId,
+        signal: input.signal, basis: { kind: 'agentIsolation', machineId: input.machineId, enabled: true,
+          expectedPolicy: policy.policy, review: { roots: intent.roots, ancestorAcls: intent.ancestorAcls,
+            sessionsToReplace: intent.sessionsToReplace, memberProvisioning: 'linuxUsersV1' } }, steps: intent.steps, acceptPlan },
+      { ...effects.elevation, verifyCurrent: verify });
+      if (result.outcome !== 'applied') return { kind: 'not_ready', result };
+      daemonObservation = result.observation;
+    }
+    if (!daemonObservation || !await verify()) return refused('plan_stale');
+    const identity = await readAgentIsolationNativeIdentity({ requesterIdentity: input.requesterIdentity,
+      ...(binding ? { expectedUid: binding.uid } : {}), signal: input.signal }, effects.backend);
+    if (!await verify()) return refused('plan_stale');
+    await writeAgentIsolationMemberBinding(input.activeServerDir, identity);
+    if (!await verify()) return refused('plan_stale');
+    return { kind: 'ready', identity, daemonObservation };
+  } catch { return refused(input.signal?.aborted ? 'cancelled' : 'denied'); }
+}
+
+/** Exact server-authorized loss is serialized by its existing setup-operation owner. */
+export async function retireAgentIsolationMemberIdentity(input: Readonly<{
+  scope: AgentIsolationMemberBindingScope; accountId: string; operationId: string; signal?: AbortSignal;
+  nativeEffectContext: MachineNativeEffectContext;
+  /** Local custody after the receiver's one Home admission, never another Home read. */
+  isCurrentInstallation(): boolean;
+  /** Existing lifecycle boundary: admitted finite work finishes before this settles. */
+  waitForNaturalBoundary(): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>>;
+  /** Exact physical socket/material cleanup, independent of launch withdrawal. */
+  cleanupOwnedWork(): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>>;
+}>, effects: AgentIsolationEffectDependencies): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>> {
+  let nativeSettled = false;
+  let boundarySettled = false;
+  const current = () => !input.signal?.aborted && input.isCurrentInstallation();
+  const verifyCurrent = async () => current();
+  try {
+    if (current() && input.nativeEffectContext.operation.operationId === input.operationId
+      && input.scope.installationId === effects.elevation.installationId) {
+      // The existing lifecycle owner closes open-ended work immediately and
+      // lets admitted finite work finish. Never withdraw RunAs/material while
+      // that owner still reports work before its natural boundary.
+      boundarySettled = (await input.waitForNaturalBoundary()).kind === 'settled';
+      if (!boundarySettled || !current()) return { kind: 'incomplete' };
+      const requesterIdentity: AgentIsolationMemberRequester = { kind: 'isolated', separationRequired: true,
+        homeServerIdentityId: input.scope.homeServerIdentityId, requester: { serverId: input.scope.homeServerIdentityId,
+          accountId: input.accountId, machineId: input.scope.machineId, installationId: input.scope.installationId } };
+      const identity = deriveAgentIsolationMemberIdentity(requesterIdentity);
+      const binding = await readAgentIsolationMemberBindingForAccount(input.scope, input.accountId);
+      const backend = effects.backend ?? createMachineSetupNativeBackend({ signal: input.signal });
+      const account = buildAgentIsolationMemberAccountStep(identity);
+      const { locked: _locked, ...publicAccount } = account;
+      const presence = await backend.observe(publicAccount);
+      const accountAbsent = presence.facts.present === false;
+      let observed: AgentIsolationMemberNativeIdentity | undefined;
+      if (!accountAbsent) {
+        try {
+          observed = await readAgentIsolationNativeIdentity({ requesterIdentity, ...(binding ? { expectedUid: binding.uid } : {}), signal: input.signal }, backend);
+          if (binding) await readAgentIsolationMemberBinding(input.scope.activeServerDir, observed);
+        } catch { /* Withdrawal can still remove only its exact owned rule. */ }
+      }
+      {
+        const daemon = await effects.elevation.observe();
+        if (daemon.daemonIdentity !== 'nonRoot' || !daemon.daemonUsername) throw new Error('daemon_identity_unavailable');
+        // Root CHECK observes the reserved account's password lock in the same
+        // attended invocation as exact RunAs withdrawal. A present account step
+        // is accepted only when already satisfied; retirement cannot recreate
+        // a missing account or repair a foreign/changed identity.
+        const steps = [...(observed ? [account] : []),
+          ...buildAgentIsolationMemberRetirementSteps({ daemonUsername: daemon.daemonUsername, binaryPath: effects.installedCli, requesterIdentity })];
+        const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.scope.machineId,
+          enabled: true, expectedPolicy: { enabled: true }, review: { roots: [], ancestorAcls: [], sessionsToReplace: 0 } };
+        const result = await runElevatedMachineSetupIntent({ machineId: input.scope.machineId, operationId: input.operationId,
+          basis, steps, signal: input.signal, acceptPlan: async plan => {
+            if (!current()) return false;
+            if (!observed) return true;
+            const locked = plan.nativeFacts.find(fact => fact.stepId === account.id);
+            return locked?.status === 'satisfied' && locked.facts.uid === observed.agentUid;
+          } }, { ...effects.elevation, verifyCurrent });
+        nativeSettled = result.outcome === 'applied' && (accountAbsent && !binding || !!observed);
+      }
+    }
+  } catch { /* Exact resource cleanup remains independent of native setup success. */ }
+  try {
+    if (!boundarySettled || !current()) return { kind: 'incomplete' };
+    const cleanup = await input.cleanupOwnedWork();
+    return nativeSettled && cleanup.kind === 'settled' && current() ? { kind: 'settled' } : { kind: 'incomplete' };
+  } catch { return { kind: 'incomplete' }; }
+}

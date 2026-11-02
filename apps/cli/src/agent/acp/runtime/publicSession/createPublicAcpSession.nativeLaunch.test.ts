@@ -50,7 +50,7 @@ it.each(['declared', 'account'] as const)('finalizes the complete cold %s ACP la
           } },
       } },
     }));
-    const exec = createStablePluginExecService({ allowedExecutables: [], signal, isOccurrenceCurrent: () => true,
+    const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
       prepareAgentNativeLaunch, resolveExecutable: async () => { throw new Error('Unexpected executable resolution'); },
       resolvePath: async () => dir });
     const systemTools = { resolve: async () => ({ toolId: 'fixture', launch: {
@@ -100,7 +100,7 @@ it.each(['child', 'cancel'] as const)('refuses %s before opening the cold ACP pr
     const controller = new AbortController();
     const signal = controller.signal;
     const release = vi.fn();
-    const exec = createStablePluginExecService({ allowedExecutables: [], signal, isOccurrenceCurrent: () => true,
+    const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
       prepareAgentNativeLaunch: async () => {
         if (failure === 'cancel') {
           controller.abort();
@@ -144,7 +144,7 @@ it('opens a remote ACP transport without preparing a local native launch', async
     if (!address || typeof address === 'string') throw new Error('Expected TCP server address');
     const signal = new AbortController().signal;
     const prepareAgentNativeLaunch = vi.fn(async () => { throw new Error('Remote transport must stay passive'); });
-    const exec = createStablePluginExecService({ allowedExecutables: [], signal, isOccurrenceCurrent: () => true,
+    const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
       prepareAgentNativeLaunch, resolveExecutable: async () => { throw new Error('Unexpected executable'); }, resolvePath: async () => process.cwd() });
     const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'session', cwd: process.cwd() },
       { transport: { kind: 'tcp', host: '127.0.0.1', port: address.port } }, {

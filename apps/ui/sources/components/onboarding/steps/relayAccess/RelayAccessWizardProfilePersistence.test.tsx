@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import renderer from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +17,8 @@ let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | undefin
 let previousServerId = '';
 let activeProfileId = '';
 let candidateProfileId = '';
+const cloudflareCredentialRefs = [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const,
+    account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } } }];
 
 (
     globalThis as typeof globalThis & {
@@ -72,7 +75,7 @@ afterEach(async () => {
 
 function createRunnerHarness() {
     return import('@/components/systemTasks/createSystemTaskRunner').then(async ({ createSystemTaskRunner }) => {
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         let nextTaskId = 1;
         const listeners = new Map<string, {
             onEvent: (payload: unknown) => void;
@@ -111,14 +114,16 @@ function createRunnerHarness() {
 
 describe('relay access wizard detail steps', () => {
     it('prefills the existing LAN URL and advances without rerunning configure when relay access is already configured', async () => {
-        const { SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
-        const { RelayAccessLanUrlStep } = await import('./RelayAccessLanUrlStep');
+        const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
+        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
+        const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
         const onRequestAdvance = vi.fn();
 
         const screen = await renderScreen(
-            React.createElement(RelayAccessLanUrlStep, {
+            React.createElement(RelayAccessConfigFieldsStep, {
+                definition,
                 runner: harness.runner,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 serverProfileId: candidateProfileId,
@@ -138,6 +143,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: true,
                     providerId: 'lan',
+                    selection: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.lan.example.test',
@@ -160,13 +166,15 @@ describe('relay access wizard detail steps', () => {
     });
 
     it('persists the LAN share URL onto the candidate relay profile', async () => {
-        const { SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
-        const { RelayAccessLanUrlStep } = await import('./RelayAccessLanUrlStep');
+        const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
+        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
+        const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
 
         const screen = await renderScreen(
-            React.createElement(RelayAccessLanUrlStep, {
+            React.createElement(RelayAccessConfigFieldsStep, {
+                definition,
                 runner: harness.runner,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 serverProfileId: candidateProfileId,
@@ -186,6 +194,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: false,
                     providerId: null,
+                    selection: null,
                     status: {
                         state: 'disabled',
                         shareUrl: null,
@@ -213,11 +222,7 @@ describe('relay access wizard detail steps', () => {
             kind: 'relay.access.configure.v1',
             params: {
                 target: { kind: 'local' },
-                providerId: 'lan',
-                config: {
-                    providerId: 'lan',
-                    url: 'https://relay.lan.example.test',
-                },
+                config: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                 upstreamUrl: 'http://127.0.0.1:3005/',
             },
         });
@@ -231,6 +236,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: true,
                     providerId: 'lan',
+                    selection: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.lan.example.test',
@@ -250,14 +256,16 @@ describe('relay access wizard detail steps', () => {
     });
 
     it('advances after saving the LAN relay access URL', async () => {
-        const { SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
-        const { RelayAccessLanUrlStep } = await import('./RelayAccessLanUrlStep');
+        const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
+        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
+        const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
         const onRequestAdvance = vi.fn();
 
         const screen = await renderScreen(
-            React.createElement(RelayAccessLanUrlStep, {
+            React.createElement(RelayAccessConfigFieldsStep, {
+                definition,
                 runner: harness.runner,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 serverProfileId: candidateProfileId,
@@ -276,6 +284,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: false,
                     providerId: null,
+                    selection: null,
                     status: {
                         state: 'disabled',
                         shareUrl: null,
@@ -302,6 +311,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: true,
                     providerId: 'lan',
+                    selection: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.lan.example.test',
@@ -316,14 +326,16 @@ describe('relay access wizard detail steps', () => {
     });
 
     it('prefills the existing Cloudflare hostname and advances without rerunning configure when relay access is already configured', async () => {
-        const { SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
-        const { RelayAccessCloudflareNamedTunnelStep } = await import('./RelayAccessCloudflareNamedTunnelStep');
+        const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
+        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
+        const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.cloudflareNamed;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
         const onRequestAdvance = vi.fn();
 
         const screen = await renderScreen(
-            React.createElement(RelayAccessCloudflareNamedTunnelStep, {
+            React.createElement(RelayAccessConfigFieldsStep, {
+                definition,
                 runner: harness.runner,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 serverProfileId: candidateProfileId,
@@ -343,6 +355,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: true,
                     providerId: 'cloudflareNamed',
+                    selection: createBuiltinRelayAccessSelection('cloudflareNamed', { hostname: 'relay.example.com' }, cloudflareCredentialRefs),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.example.com',
@@ -356,7 +369,7 @@ describe('relay access wizard detail steps', () => {
         await renderer.act(async () => {});
 
         expect(screen.findByTestId('relay-access-cloudflare-hostname')?.props.value).toBe('relay.example.com');
-        expect(screen.findByTestId('relay-access-cloudflare-token')?.props.value).toBe('');
+        expect(screen.findByTestId('relay-access-cloudflare-token')).toBeNull();
         expect((primary as WizardPrimaryState)?.disabled).toBe(false);
 
         await renderer.act(async () => {
@@ -368,13 +381,15 @@ describe('relay access wizard detail steps', () => {
     });
 
     it('persists the Cloudflare share URL onto the candidate relay profile', async () => {
-        const { SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
-        const { RelayAccessCloudflareNamedTunnelStep } = await import('./RelayAccessCloudflareNamedTunnelStep');
+        const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
+        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
+        const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.cloudflareNamed;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
 
         const screen = await renderScreen(
-            React.createElement(RelayAccessCloudflareNamedTunnelStep, {
+            React.createElement(RelayAccessConfigFieldsStep, {
+                definition,
                 runner: harness.runner,
                 upstreamUrl: 'http://127.0.0.1:3005/',
                 serverProfileId: candidateProfileId,
@@ -392,8 +407,9 @@ describe('relay access wizard detail steps', () => {
                 taskId: 'task_1:relay.access.status.v1',
                 ok: true,
                 data: {
-                    configured: false,
-                    providerId: null,
+                    configured: true,
+                    providerId: 'cloudflareNamed',
+                    selection: createBuiltinRelayAccessSelection('cloudflareNamed', { hostname: 'previous.example.com' }, cloudflareCredentialRefs),
                     status: {
                         state: 'disabled',
                         shareUrl: null,
@@ -406,7 +422,6 @@ describe('relay access wizard detail steps', () => {
 
         await renderer.act(async () => {
             screen.findByTestId('relay-access-cloudflare-hostname')?.props.onChangeText?.('relay.example.com');
-            screen.findByTestId('relay-access-cloudflare-token')?.props.onChangeText?.('token-123');
         });
         await renderer.act(async () => {});
 
@@ -420,12 +435,7 @@ describe('relay access wizard detail steps', () => {
             kind: 'relay.access.configure.v1',
             params: {
                 target: { kind: 'local' },
-                providerId: 'cloudflareNamed',
-                config: {
-                    providerId: 'cloudflareNamed',
-                    hostname: 'relay.example.com',
-                    token: 'token-123',
-                },
+                config: createBuiltinRelayAccessSelection('cloudflareNamed', { hostname: 'relay.example.com' }, cloudflareCredentialRefs),
                 upstreamUrl: 'http://127.0.0.1:3005/',
             },
         });
@@ -439,6 +449,7 @@ describe('relay access wizard detail steps', () => {
                 data: {
                     configured: true,
                     providerId: 'cloudflareNamed',
+                    selection: createBuiltinRelayAccessSelection('cloudflareNamed', { hostname: 'relay.example.com' }, cloudflareCredentialRefs),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.example.com',

@@ -17,14 +17,14 @@ import {
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
 
-import { relayAccessProviderDescriptorsById } from '../../catalog.js';
+import { readBuiltinRelayAccessProviderId, relayAccessProviderDescriptorsById } from '../../catalog.js';
 
 const descriptor = relayAccessProviderDescriptorsById.tailscaleServe;
 
 export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
     descriptor,
     configure: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config.providerId !== 'tailscaleServe') {
+        if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleServe') {
             return { state: 'unknown' };
         }
 
@@ -109,7 +109,7 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         return { state: 'unknown' };
     },
     disable: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config.providerId !== 'tailscaleServe') {
+        if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleServe') {
             return;
         }
         const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
@@ -119,10 +119,10 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
                 ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                 ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
             },
-        ).catch(() => undefined);
+        );
     },
     status: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config?.providerId !== 'tailscaleServe') {
+        if (!config || readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleServe') {
             return { state: 'unknown' };
         }
 

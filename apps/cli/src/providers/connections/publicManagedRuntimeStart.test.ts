@@ -1,3 +1,4 @@
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -497,7 +498,7 @@ function managedServices(): ManagedServices {
   });
 }
 
-function runtimeRegistry(input: Readonly<{
+async function runtimeRegistry(input: Readonly<{
   pluginId: string;
   localId: string;
   runtime: ManagedProviderRuntime;
@@ -511,8 +512,11 @@ function runtimeRegistry(input: Readonly<{
   runManagedProviderExplicitStart?: (
     operation: ManagedProviderExplicitStartJoinInput,
   ) => Promise<ManagedProviderExplicitStartJoinResult>;
-}>): ResolvedExecutablePluginRuntimeRegistry {
+}>): Promise<ResolvedExecutablePluginRuntimeRegistry> {
+  const base = await resolveExecutablePluginRuntimeRegistry({ pluginIds: [], contributes: createResolvedContributionRegistry({}) });
+  onTestFinished(() => base.dispose());
   return {
+    ...base,
     declarationContributes: createResolvedContributionRegistry({}),
     claimReleaseLessDeclarations: async () => undefined,
     projectManagedServices: createManagedServicesOwner({
@@ -521,6 +525,7 @@ function runtimeRegistry(input: Readonly<{
       resolveScope: () => null,
     }),
     contributes: {
+      backupDestinations: [],
       agents: Object.freeze([]),
       voiceProviders: Object.freeze([]),
       connectedAccountDescriptorsById: new Map(),
@@ -656,7 +661,7 @@ describe('public managed Provider explicit-start production operation', () => {
         await disposable.dispose();
       }
     });
-    const registry = runtimeRegistry({
+    const registry = await runtimeRegistry({
       pluginId,
       localId,
       runtime,
@@ -820,7 +825,7 @@ describe('public managed Provider explicit-start production operation', () => {
       runtimeDisposables.push(disposable);
       return disposable;
     });
-    const registry = runtimeRegistry({
+    const registry = await runtimeRegistry({
       pluginId,
       localId,
       runtime: acquiredRuntime.runtime,
@@ -920,7 +925,7 @@ describe('public managed Provider explicit-start production operation', () => {
       runtimeDisposables.push(disposable);
       return disposable;
     });
-    const registry = runtimeRegistry({
+    const registry = await runtimeRegistry({
       pluginId,
       localId,
       runtime: acquiredRuntime.runtime,
@@ -979,7 +984,7 @@ describe('public managed Provider explicit-start production operation', () => {
   it('uses the admitted registry lease instead of reacquiring a replacement generation', async () => {
     const pluginId = 'acme.provider.generation-atomic';
     const localId = 'managed';
-    const createGeneration = (generation: string) => {
+    const createGeneration = async (generation: string) => {
       const serviceDispose = vi.fn(async () => undefined);
       const service = managedServiceHandle(serviceDispose);
       const start = vi.fn<ManagedProviderRuntime['start']>(async () => Object.freeze({
@@ -1015,7 +1020,7 @@ describe('public managed Provider explicit-start production operation', () => {
         disposables.push(disposable);
         return disposable;
       });
-      const registry = runtimeRegistry({
+      const registry = await runtimeRegistry({
         pluginId,
         localId,
         runtime,
@@ -1035,8 +1040,8 @@ describe('public managed Provider explicit-start production operation', () => {
       return { registry, start };
     };
 
-    const admitted = createGeneration('G');
-    const replacement = createGeneration('H');
+    const admitted = await createGeneration('G');
+    const replacement = await createGeneration('H');
     const controller = createPluginReloadController();
     await controller.adoptPreparedRuntimeRegistry({
       registry: admitted.registry,
@@ -1082,7 +1087,7 @@ describe('public managed Provider explicit-start production operation', () => {
   it('maps a permanently unavailable managed runtime to the existing restore-plugin Provider outcome', async () => {
     const pluginId = 'acme.provider.missing-runtime';
     const localId = 'managed';
-    const registry = runtimeRegistry({
+    const registry = await runtimeRegistry({
       pluginId,
       localId,
       runtime: Object.freeze({ start: vi.fn() }),
@@ -1173,7 +1178,7 @@ describe('public managed Provider explicit-start production operation', () => {
       authorizationCurrent = false;
       return disposable;
     });
-    const registry = runtimeRegistry({
+    const registry = await runtimeRegistry({
       pluginId,
       localId,
       runtime: acquiredRuntime.runtime,

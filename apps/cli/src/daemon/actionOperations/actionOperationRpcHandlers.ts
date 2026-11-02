@@ -10,7 +10,8 @@ import { ProjectServiceMoveStartClaimV1Schema, ProjectServiceMoveStartClaimResul
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export type ActionOperationRpcContext = Readonly<Partial<Pick<RpcHandlerContext,
-  'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap'>>>;
+  'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap'
+  | 'callerInputAuthorization' | 'workspaceSyncSourceExecution' | 'originalActionEnvelope' | 'callerAuthority' | 'callerInputConstraints'>>>;
 
 /** Admission is transport-owned; no Action input can select the owning Account. */
 export async function resolveActionOperationScope(

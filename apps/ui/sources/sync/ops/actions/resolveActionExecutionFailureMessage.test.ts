@@ -5,6 +5,27 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('explains how to recover a Domain add when the managed Happier CLI is unavailable', () => {
+        const refused = { ok: false, errorCode: 'managed_cli_unavailable', error: 'managed_cli_unavailable',
+            errorDetails: { recovery: { kind: 'install_managed_cli', executablePath: '/private/managed/happier' } } };
+        for (const result of [refused, { ok: true, result: refused }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Could not add domain'))
+                .toBe(t('errors.machineManagedCliUnavailable'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Could not add domain'))
+            .toBe(t('errors.machineManagedCliUnavailable'));
+    });
+
+    it('explains the administrator-access remedy for a refused Domain add at each Action envelope', () => {
+        const refused = { ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required' };
+        for (const result of [refused, { ok: true, result: refused }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Could not add domain'))
+                .toBe(t('errors.machineAdminAccessRequired'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: refused.errorCode }, 'Could not add domain'))
+            .toBe(t('errors.machineAdminAccessRequired'));
+    });
+
     it('uses the existing permission denial for credential scope refusals', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }, 'Fallback'))
             .toBe(t('errors.permissionDenied'));

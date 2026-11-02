@@ -341,6 +341,27 @@ import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendi
 import type { SessionPendingExecutionRunEnqueueByMachineRequestV2, MachineOperationProtocolCapabilitiesV1, MachineSessionTerminalAuthorityV1, MachineSessionTerminalCaptureResponseV1, MachineSessionTerminalFinalizeResponseV1, SessionPendingEnqueueByMachineRequestV1, SessionServerStartDispatchResultV1, SessionServerStartIngressRequestV1 } from '@happier-dev/protocol';
 import type { SessionInputEnqueueResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ACCOUNT_STORED_CONTENT_SESSION_SPAWN_PLACEMENT_ORIGIN_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { registerDaemonCommittedServiceHealthDeliveryRpcHandler } from '@/notifications/activity/committedServiceHealthDelivery';
+import { type AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
+import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
+/**
+ * WebSocket client for machine/daemon communication with Happy server
+ * Similar to ApiSessionClient but for machine-scoped connections
+ */
+import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
+import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
+import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationInput } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { registerDaemonMachineAdminAccessRpcHandlers, type DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
+import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
+import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1, getMachineAdminAccessV1 } from '@happier-dev/protocol';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDeploymentChildRpc';
+import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepareNativeFilesystemEffect';
+import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
 
@@ -502,6 +523,10 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     workspaceSyncHandoffAdapter?: WorkspaceSyncHandoffAdapter;
     /** Daemon-owned workspace-sync controller and target-local RPC authority. */
     workspaceSync?: MachineRpcHandlerDeps['workspaceSync'];
+
+resolveCurrentServerIdentityId?: () => string | null;
+
+agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
 }>;
 
 export type ApiMachineDaemonStatePublicationOptions = Readonly<{
@@ -704,8 +729,44 @@ export class ApiMachineClient {
     private readonly machineRuntimeServerHttpBaseUrl: string;
     private readonly machineRuntimeServerId = configuration.activeServerId;
     private machineServicesBinding: ReturnType<typeof createApiMachineServicesBinding> | null = null;
+
+    private readonly filesystemEffectAdmission = createFilesystemEffectAdmission({
+        readAgentIsolation: () => this.lifecycleDependencies.agentIsolation?.read(),
+        // Filesystem effects consume the receiving connection's authenticated
+        // Home, like generic Machine admission, not an advisory saved descriptor.
+        resolveHomeServerIdentityId: () => this.machineRpcAdmissionBoundary.resolveHomeServerIdentityId?.()
+            ?? Promise.resolve(null),
+        resolveHostIdentity: async signal => {
+            const installationId = this.machineRpcAdmissionBoundary.resolveInstallationId();
+            const custodianAccountId = await this.machineRpcAdmissionBoundary.resolveCustodianAccountId(signal);
+            return installationId && custodianAccountId ? { machineId: this.machine.id, installationId, custodianAccountId } : null;
+        },
+        resolveSessionRequester: async (sessionId, signal) => {
+            const owner = this.lifecycleDependencies.requesterSessionRuntime;
+            if (!owner || owner.serverId !== this.machineRuntimeServerId) return null;
+            const runtime = await owner.resolve(sessionId, undefined, signal);
+            if (!runtime) return null;
+            const birth = runtime.bootstrap;
+            if (birth.getBoundSessionId() !== sessionId || birth.attribution.machineId !== this.machine.id
+                || birth.attribution.installationId !== this.machineRuntimeInstallationId
+                || signal?.aborted) { await owner.release(runtime); return null; }
+            return { bootstrap: birth, dispose: () => owner.release(runtime) };
+        },
+        executeNativeRpc: async ({ method, input, context, requester, identity }) => {
+            const channel = await this.openNativeFilesystemChannel({ requester, identity,
+                operationKey: context.localActionContext?.operationAcceptance?.operationId
+                    ?? context.localActionContext?.actionRequestId ?? context.transportRequestId ?? '',
+                signal: context.signal, ingress: context });
+            try { return await channel.request({ kind: 'filesystem.rpc', method, input }); }
+            finally { await channel.dispose(); }
+        },
+    });
     private readonly machineRuntimeInstallationId = readInstallationIdentityIfExistsSync()?.installationId ?? null;
     private managedActivityPublicationCleanup: (() => void) | null = null;
+
+
+
+    private localServiceStartObservationCleanup: (() => void) | null = null;
     private readonly liveWorkProducer = createLiveWorkProducerGroup(() => {
         const registration = this.rpcLifecycleRegistrations.at(-1);
         return registration?.liveWorkProducers
@@ -765,20 +826,19 @@ export class ApiMachineClient {
         return this.resolveInstalledMachineAccountRuntime(ingress);
     }
 
-    private async resolveInstalledMachineAccountRuntime(ingress: RpcHandlerContext): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+    private async resolveInstalledMachineAccountRuntime(ingress: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{ signal?: AbortSignal }>): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
         const admission = ingress.machineAdmission;
         if (!admission || !ingress.verifyMachineAdmissionCurrent
             || admission.machineId !== this.machine.id
             || !this.machineRuntimeInstallationId
             || admission.installationId !== this.machineRuntimeInstallationId) return null;
         try {
-            if (ingress.signal.aborted || !await ingress.verifyMachineAdmissionCurrent()) return null;
+            if (!ingress.signal || ingress.signal.aborted) return null;
             const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, admission.custodianAccountId);
-            if (!runtime) return null;
-            const isCurrent = async () => await runtime.isCurrent() && await ingress.verifyMachineAdmissionCurrent!()
-                && await runtime.isCurrent();
-            if (!await isCurrent()) return null;
-            return { ...runtime, isCurrent };
+            if (!runtime || !await runtime.isCurrent()) return null;
+            // The ingress already admitted this finite operation. Retain local
+            // lifetime/installation pins without re-reading Home admission.
+            return runtime;
         } catch { return null; }
     }
 
@@ -793,11 +853,12 @@ export class ApiMachineClient {
                 () => this.getAccountId(signal));
             if (!accountId || !ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;
             const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
-            if (!credentials || credentials.token !== this.token) return null;
+            // Credentials are admitted once for this finite operation. Effects
+            // that require current installed custody use isCustodyCurrent.
+            if (!credentials || credentials.token !== this.token || signal.aborted || !ownerCurrent()) return null;
             const credentialsCurrent = async () => ownerCurrent() && sameStoredCredentials(credentials,
                 await readStoredCredentialsForServerId(this.machineRuntimeServerId).catch(() => null)) && ownerCurrent();
-            const isCurrent = async () => !signal.aborted && await credentialsCurrent() && !signal.aborted;
-            if (!await isCurrent()) return null;
+            const isCurrent = async () => !signal.aborted && ownerCurrent();
             return { serverId: this.machineRuntimeServerId, machineId: this.machine.id, accountId,
                 credentials, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, isCurrent, isCustodyCurrent: credentialsCurrent };
         } catch { return null; }
@@ -848,6 +909,10 @@ export class ApiMachineClient {
     private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
     private readonly projectAgentInventoryPublication = createMachineAgentInventoryPublication();
     private activeTransportGeneration = 0;
+
+    private machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
+
+    private machineAdminAccessInspectedTransport: Readonly<{ generation: number; codec: MachineContentCodec }> | null = null;
     private sessionMessageReplyRecovery: {
         socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
         generation: number;
@@ -897,6 +962,24 @@ export class ApiMachineClient {
     private get machineContentCodec(): MachineContentCodec { return this.machineContentContext.codec; }
     private get machineContentReady(): boolean { return this.machineContentContext.ready; }
     private readonly actionOperationRuntime: HostActionOperationRuntime;
+
+    async resolveDeploymentSourceRequesterIdentity(context: import('@happier-dev/protocol').ActionExecutorContext): Promise<HostRequesterExecutionIdentity> {
+        if (!this.filesystemEffectAdmission.resolveActionRequester) {
+            throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+        }
+        const requester = await this.filesystemEffectAdmission.resolveActionRequester(context);
+        try { return requester.identity; } finally { await requester.dispose(); }
+    }
+
+    async prepareNativeOperation(input: PrepareRequesterNativeOperationInput) {
+        return prepareRequesterNativeOperation(input, {
+            machine: this.lifecycleDependencies.agentIsolation,
+            homeServerIdentityId: this.lifecycleDependencies.resolveCurrentServerIdentityId?.(),
+            machineId: this.machine.id,
+            installationId: this.machineRpcAdmissionBoundary.resolveInstallationId(),
+            reloadController: pluginReloadController,
+        });
+    }
 
     observeActionExecution(request: Parameters<HostActionOperationRuntime['observeExecution']>[0]) {
         return this.actionOperationRuntime.observeExecution(request);
@@ -1395,6 +1478,21 @@ export class ApiMachineClient {
                         this.retryMachineControlReadinessPublication({ socket, transportGeneration });
                     }
                 });
+            },
+        });
+        registerDaemonCommittedServiceHealthDeliveryRpcHandler(this.rpcHandlerManager, {
+            target: () => {
+                const custodianAccountId = readAccountIdFromToken(this.token);
+                const installationId = this.machineRuntimeInstallationId;
+                return custodianAccountId && installationId ? { serverId: this.machineRuntimeServerId,
+                    machineId: this.machine.id, installationId, custodianAccountId } : null;
+            },
+            resolveRuntime: async ingress => {
+                const runtime = await this.resolveOwnSessionRuntime(ingress);
+                const isCurrent = runtime?.isCurrent;
+                return runtime?.credentials && isCurrent ? { credentials: runtime.credentials, accountId: runtime.accountId,
+                    serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                    machineId: runtime.machineId, isCurrent } : null;
             },
         });
         const operationInstallation = readInstallationIdentityIfExistsSync();
@@ -2084,6 +2182,27 @@ export class ApiMachineClient {
         }
     }
 
+    private openNativeFilesystemChannel(input: Readonly<{ requester: FilesystemEffectRequester;
+        identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>; operationKey: string;
+        signal: AbortSignal; ingress?: RpcHandlerContext }>) {
+        if (!input.operationKey) throw Object.assign(new Error('Filesystem operation custody is unavailable'),
+            { code: 'filesystem_identity_custody_unavailable' });
+        const account = readRequesterAccountActionContext(input.ingress?.callerInputAuthorization
+            ?? input.ingress?.localActionContext?.externalActionExecutionAuthorization);
+        const releaseAccount = account?.retain();
+        return prepareNativeFilesystemEffect({ prepareNativeOperation: args => this.prepareNativeOperation(args),
+            identity: input.identity, operationKey: input.operationKey, signal: input.signal,
+            ...(input.ingress ? { ingress: input.ingress } : {}),
+            configuration: { machineId: this.machine.id, requesterAccountId: input.identity.requester.accountId,
+                workingDirectory: this.machineRpcWorkingDirectory,
+                ...(input.ingress?.callerAuthority ? { callerAuthority: input.ingress.callerAuthority } : {}),
+                accessPolicy: this.filesystemAccessPolicy, additionalAllowedReadDirs: [...this.additionalAllowedReadDirs],
+                additionalAllowedWriteDirs: [...this.additionalAllowedWriteDirs],
+                additionalAllowedReadFiles: [...this.transientSessionMediaReadAllowance.readAllowedReadFiles()],
+                sessionRpcTransferMaxBytes: resolveServerRoutedTransferMaxBytes() },
+            releaseRequester: async () => { await input.requester.dispose(); await releaseAccount?.(); } });
+    }
+
     /** Preview reads locally after admission rather than re-entering its registered RPC. */
     createWorkspaceFileReplacePreviewActionExecutor(serverId: string): NonNullable<ActionExecutorDeps['workspaceFilesReplacePreview']> {
         return async ({ machineId, ...request }, context) => {
@@ -2355,6 +2474,8 @@ export class ApiMachineClient {
         });
     }
 
+    private hostResourceRoutes: DaemonLocalServicesMachineRpcRoutes | null = null;
+
     registerLocalServicesRoutes(localServices: DaemonLocalServicesMachineRpcRoutes): void {
         registerDaemonLocalServicesMachineRpcHandlers(this.rpcHandlerManager, localServices);
         if (!this.projectionSchedulingClosed) this.getMachineServicesBinding().start();
@@ -2405,8 +2526,38 @@ export class ApiMachineClient {
         return await this.getMachineServicesBinding().execute(request);
     }
 
+
+
+
+
     registerMachineVitalsRoutes(options: DaemonMachineVitalsRoutes): void {
         registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, options);
+    }
+
+    registerDeploymentChildRoutes(daemonWorkSignal: AbortSignal): void {
+        registerDaemonDeploymentChildRpcHandler(this.rpcHandlerManager, {
+            machineId: this.machine.id, signal: daemonWorkSignal,
+            captureNativeSetup: () => {
+                const desired = this.captureMachineSetupDesired();
+                const elevation = this.captureMachineAdminAccess();
+                const port = this.captureMachineMetadataFieldPort();
+                return { readDesired: desired.read, elevation,
+                    settleCaddyFirewall: input => settleMachineCaddyFirewallForHost({ ...input, port,
+                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, signal: input.signal }) }),
+                };
+            },
+            resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
+            resolveRequesterRuntime: async ingress => {
+                if (!this.machineRuntimeInstallationId) return null;
+                return resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,
+                    machineId: this.machine.id, installationId: this.machineRuntimeInstallationId,
+                    isInstalledCurrent: () => !this.projectionSchedulingClosed
+                        && configuration.activeServerId === this.machineRuntimeServerId
+                        && readInstallationIdentityIfExistsSync()?.installationId === this.machineRuntimeInstallationId });
+            },
+            resolveInstalledRuntime: (signal, accountId) => this.resolveInstalledAccountRuntime(signal, accountId),
+            acquirePluginRuntimeRegistryLease: () => acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir }),
+        });
     }
 
     registerMachineProcessesRoutes(options: DaemonProcessesRoutes): void {
@@ -2415,6 +2566,31 @@ export class ApiMachineClient {
 
     registerMachineResourcesPolicyRoutes(options: DaemonMachineResourcesPolicyRoutes): void {
         registerDaemonMachineResourcesPolicyRpcHandlers(this.rpcHandlerManager, options);
+    }
+
+    registerMachineAdminAccessRoutes(options: DaemonMachineAdminAccessRoutes): void {
+        if (this.machineAdminAccessRoutes !== options) this.machineAdminAccessInspectedTransport = null;
+        this.machineAdminAccessRoutes = options;
+        registerDaemonMachineAdminAccessRpcHandlers(this.rpcHandlerManager, { ...options,
+            runActionOperation: request => this.runActionOperation(request),
+            target: () => {
+                const target = options.target();
+                return target?.machineId === this.machine.id && target.serverId === this.machineRuntimeServerId ? target : null;
+            },
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            observer: { ...options.observer, inspect: () => this.inspectMachineAdminAccess(options) },
+        });
+    }
+
+    private async inspectMachineAdminAccess(options: DaemonMachineAdminAccessRoutes) {
+        const generation = this.activeTransportGeneration;
+        const codec = this.machineContentCodec;
+        this.machineAdminAccessInspectedTransport = null;
+        const result = await options.observer.inspect();
+        if (this.machineAdminAccessRoutes === options && this.activeTransportGeneration === generation
+            && this.machineContentCodec === codec && this.machineContentReady && this.socket?.connected
+            && !this.projectionSchedulingClosed) this.machineAdminAccessInspectedTransport = { generation, codec };
+        return result;
     }
 
     registerMachineGuardRoutes(options: DaemonMachineGuardRoutes): void {
@@ -4137,6 +4313,44 @@ export class ApiMachineClient {
         return readOpenedMachineMetadataSnapshot(this.machine, this.machineContentReady);
     }
 
+    captureMachineAdminAccess(): Readonly<Pick<MachineElevationDependencies, 'readPolicy' | 'observe'>> {
+        const port = this.captureMachineMetadataFieldPort();
+        const routes = this.machineAdminAccessRoutes;
+        const unavailable = () => Object.assign(new Error('admin_access_unavailable'), { code: 'admin_access_unavailable' });
+        const assertCurrent = async () => {
+            if (!routes || this.machineAdminAccessRoutes !== routes || (await port.read()).status !== 'ready') throw unavailable();
+        };
+        return {
+            readPolicy: async () => {
+                await assertCurrent();
+                const current = await getMachineAdminAccessV1(port);
+                if (current.status !== 'ready') throw unavailable();
+                return current.policy;
+            },
+            observe: async () => {
+                await assertCurrent();
+                const result = await this.inspectMachineAdminAccess(routes!);
+                await assertCurrent();
+                return result.observation;
+            },
+        };
+    }
+
+    captureMachineSetupDesired(): Readonly<{
+        read(): ReturnType<typeof getMachineSetupDesiredV1>;
+        apply(input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
+            options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]): ReturnType<typeof mutateMachineSetupDesiredV1>;
+    }> {
+        const port = this.captureMachineMetadataFieldPort();
+        return {
+            read: () => getMachineSetupDesiredV1(port),
+            apply: (input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
+                options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]) => mutateMachineSetupDesiredV1(input, port, options),
+        };
+    }
+
+
+
     async compareAndSwapMachineMetadata(
         input: Parameters<MachineMetadataFieldPortV1['compareAndSwap']>[0],
     ): Promise<Awaited<ReturnType<MachineMetadataFieldPortV1['compareAndSwap']>>> {
@@ -5733,4 +5947,45 @@ export class ApiMachineClient {
             }
         }, { runImmediately: true });
     }
+
+async resolveMachineSetupRuntime(ingress: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{ signal?: AbortSignal }>): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+        return this.resolveInstalledMachineAccountRuntime(ingress);
+    }
+
+preparePendingDeploymentObservation(request: Parameters<HostActionOperationRuntime['preparePendingDeploymentObservation']>[0]) {
+        return this.actionOperationRuntime.preparePendingDeploymentObservation(request);
+    }
+
+
+
+
+
+getAgentIsolationSnapshot(): AgentIsolationSnapshot {
+        // Ingress already admitted these blobs. Launch reads only the isolation
+        // leaf instead of reparsing unrelated Machine fields on every spawn.
+        const metadata: MachineMetadataFieldReadV1 = !this.machineContentReady ? { status: 'locked' }
+            : this.machine.metadata === null ? { status: 'unavailable' }
+            : { status: 'ready', metadata: this.machine.metadata, metadataVersion: this.machine.metadataVersion };
+        return readAgentIsolationSnapshot({ metadata, daemonState: this.machine.daemonState,
+            runtimeId: this.ownershipMetadata.runtimeId, platform: process.platform,
+            publicationFailed: this.agentIsolationPublicationFailed });
+    }
+
+
+
+private agentIsolationPublicationFailed = false;
+
+
+
+getMachineSetupDesiredSnapshot(): ReturnType<typeof getMachineSetupDesiredV1> {
+        return getMachineSetupDesiredV1(this.captureMachineMetadataFieldPort());
+    }
+
+
+
+
+
+
+
+
 }

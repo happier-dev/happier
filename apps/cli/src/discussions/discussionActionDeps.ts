@@ -1,3 +1,5 @@
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios, { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
 import { ApprovalRequestOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -122,7 +124,7 @@ export function createDiscussionActionDeps(options: Readonly<{
   /** Exact accepted Workflow custody, supplied only by its host publication owner. */
   postWorkflowMessage?: (request: Readonly<{ discussionId: string; request: import('@happier-dev/protocol/discussions/api').DiscussionPostRequestV1 }>,
     options: Readonly<{ signal?: AbortSignal; context: ActionExecutorContext;
-      content: import('@happier-dev/protocol/discussions/content').DiscussionMessageContentV1 }>) => Promise<import('@happier-dev/protocol/discussions/api').DiscussionAgentPostResponseV1>;
+      content: import('@happier-dev/protocol/discussions/content').DiscussionMessageContentV1 }>) => Promise<import('@happier-dev/protocol/discussions/api').DiscussionAgentPostResponseV1 | ActionExecuteFailure>;
 }> & ExternalActionHomeBinding & DiscussionActionFixedHome): DiscussionActionDeps {
   if ((options.serverId === undefined) !== (options.serverHttpBaseUrl === undefined)
     || (options.serverId !== undefined && !options.serverId.trim())
@@ -488,8 +490,13 @@ export function createDiscussionActionDeps(options: Readonly<{
         if (options.postWorkflowMessage && workflowReturn) {
           if (readDiscussionAttachmentReferencesV1(args.content).length) return failure('discussion_attachment_source_unavailable');
           let response;
-          try { response = DiscussionAgentPostResponseV1Schema.parse(await options.postWorkflowMessage({
-            discussionId: args.discussionId, request: postRequest }, { context, content: args.content, ...(signal ? { signal } : {}) })); }
+          try {
+            const raw = await options.postWorkflowMessage({ discussionId: args.discussionId, request: postRequest },
+              { context, content: args.content, ...(signal ? { signal } : {}) });
+            const refusal = ActionExecuteFailureSchema.safeParse(raw);
+            if (refusal.success) return failure(refusal.data.errorCode);
+            response = DiscussionAgentPostResponseV1Schema.parse(raw);
+          }
           catch { return failure('outcome_unknown'); }
           if (!response.ok) return failure(response.error);
           value = response.value;

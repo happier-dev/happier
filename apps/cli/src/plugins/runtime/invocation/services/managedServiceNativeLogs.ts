@@ -2,6 +2,8 @@ import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { sanitizeExecDiagnosticText } from '../../exec/errors';
+import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
+import { projectVerifiedExternalActionHostInvocation } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from './managedServiceNativeLogBudget';
 
@@ -10,6 +12,11 @@ export type ManagedServiceNativeLogReadForHost = ManagedServiceNativeLogReadV1 &
     allowIncompleteSecretMasking?: true;
 }>;
 export type ManagedServiceNativeLogReadOptionsForHost = Omit<ManagedServiceNativeLogReadForHost, 'kind' | 'maxBytes'>;
+
+export function canReadIncompleteSecretMaskingForHost(context: Parameters<typeof projectVerifiedExternalActionHostInvocation>[0]): boolean {
+    const invocation = projectVerifiedExternalActionHostInvocation(context);
+    return !!invocation && isPresentUserHostInvocation(invocation) && !context.approvedActionReplay;
+}
 
 /** Read and push share the supervisor's generation, redaction and byte boundary.
  * Subscriptions are cleanup custody of this process observation, never a registry. */

@@ -1,3 +1,5 @@
+import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { PluginProjectionBrandAssetV2 } from '@happier-dev/protocol';
 import { assertPluginProjectionFamilyIdsV2, listPluginProjectionFamilyIdsV2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginProjectedFamilyV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginContributionCatalogEntryV2, PluginMachineExecutionOriginV1, PluginProjectedFamilyEntryV2, PluginProjectedFamilyV2 } from '@happier-dev/protocol';
@@ -31,6 +33,10 @@ export type PluginProjectionFamilyContextV2 = Readonly<{
      * narrowing", which is the shape an older client receives.
      */
     requestedLocale?: string;
+    /** Exact cold recipe demand; [] selects no declaration bodies. */
+    machineRecipeRefs?: readonly MachineRecipeReferenceV1[];
+    /** Existing Resource owner fact, read only for plugins in this family's demand. */
+    readPluginBrandAsset?: (pluginId: string) => PluginProjectionBrandAssetV2 | undefined;
     /** Invalid wire entries are omitted; the describe owner publishes their attributed diagnostics. */
     onInvalidEntry?: (failure: Readonly<{
         family: string;

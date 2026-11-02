@@ -1,3 +1,9 @@
+import type { z } from 'zod/mini';
+import { MachineServiceExecInputV1Schema } from '../../specs/machine/services.js';
+import { MachineServiceExecResultV1Schema } from '../../specs/machine/services.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
+import { MachineReachabilityActionIdV1Schema } from '../../specs/machineReachability.js';
+import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '../../../machines/reachability/actionsV1.js';
 import { MachineWorkSummaryGetInputV1Schema } from '../../../machines/machineWorkSummaryV1.js';
 import { MachineRebootInputV1Schema, MachineRebootResultV1Schema } from '../../specs/machine/reboot.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
@@ -36,8 +42,17 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, parsed, ctx, isSameHome, approvalScope, executeHostChild } = inv;
+      if (actionId === 'machines.services.exec') {
+        const input = parsed.data as z.infer<typeof MachineServiceExecInputV1Schema>;
+        if (ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx))
+          return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineServiceExec) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const result = await deps.machineServiceExec({ input, context: ctx,
+          ...(approvalScope ? { approvalScope } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result: MachineServiceExecResultV1Schema.parse(result) };
+      }
       if (actionId === 'machines.reboot') {
-        const input = MachineRebootInputV1Schema.parse(parsed.data);
+        const input = parsed.data as AdmittedActionInputById['machines.reboot'];
         if (ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx))
           return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineReboot) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -46,14 +61,14 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
       }
       if (actionId === 'machines.work.summary.get') {
         if (!deps.machineWorkSummaryGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const target = MachineWorkSummaryGetInputV1Schema.parse(parsed.data);
+        const target = parsed.data as AdmittedActionInputById['machines.work.summary.get'];
         if (ctx.serverId && !isSameHome(target.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         const result = await deps.machineWorkSummaryGet({ input: target, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       const machineServiceActionId = isActionFamilyId(actionId, MachineServiceActionIdSchema) ? actionId : null;
       if (machineServiceActionId !== null) {
-        const input = MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[machineServiceActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_SERVICE_ACTION_INPUT_SCHEMAS)[typeof machineServiceActionId]>;
         if (ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineServiceAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineServiceAction({ actionId: machineServiceActionId, input, context: ctx,
@@ -63,20 +78,20 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
       const machineVitalsActionId = isActionFamilyId(actionId, MachineVitalsActionIdSchema) ? actionId : null;
       if (actionId === 'machines.services.control') {
         if (!deps.machineServiceControl) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.machineServiceControl({ input: MachineServiceControlInputV1Schema.parse(parsed.data),
+        const result = await deps.machineServiceControl({ input: parsed.data as z.infer<typeof MachineServiceControlInputV1Schema>,
           context: ctx, ...(approvalScope ? { approvalScope } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result: MachineServiceControlResultV1Schema.parse(result) };
       }
       if (actionId === 'machines.services.logs.read') {
         if (!deps.machineServiceLogsRead) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.machineServiceLogsRead({ input: MachineServiceLogsReadInputV1Schema.parse(parsed.data),
+        const result = await deps.machineServiceLogsRead({ input: parsed.data as z.infer<typeof MachineServiceLogsReadInputV1Schema>,
           context: ctx, ...(approvalScope ? { approvalScope } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedServiceNativeLogResultV1Schema.parse(result) };
       }
       const machineStorageActionId = isActionFamilyId(actionId, MachineStorageActionIdSchema) ? actionId : null;
       const machineProcessesActionId = isActionFamilyId(actionId, MachineProcessesActionIdSchema) ? actionId : null;
       if (machineProcessesActionId !== null) {
-        const input = MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS[machineProcessesActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS)[typeof machineProcessesActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineProcessesAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineProcessesAction({ actionId: machineProcessesActionId, input, context: ctx,
@@ -84,16 +99,24 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machineStorageActionId !== null) {
-        const input = MACHINE_STORAGE_ACTION_INPUT_SCHEMAS[machineStorageActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[typeof machineStorageActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineStorageAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineStorageAction({ actionId: machineStorageActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       const machineResourcesActionId = isActionFamilyId(actionId, MachineResourcesActionIdSchema) ? actionId : null;
+      const machineReachabilityActionId = isActionFamilyId(actionId, MachineReachabilityActionIdV1Schema) ? actionId : null;
+      if (machineReachabilityActionId !== null) {
+        const input = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[machineReachabilityActionId].parse(parsed.data);
+        if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineReachabilityAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.machineReachabilityAction({ actionId: machineReachabilityActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return completeActionResult(result);
+      }
       const machineAdminAccessActionId = isActionFamilyId(actionId, MachineAdminAccessActionIdSchema) ? actionId : null;
       if (machineAdminAccessActionId !== null) {
-        const input = MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS[machineAdminAccessActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS)[typeof machineAdminAccessActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineAdminAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineAdminAccessAction({ actionId: machineAdminAccessActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
@@ -101,7 +124,7 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
       }
       const machineAgentIsolationActionId = isActionFamilyId(actionId, MachineAgentIsolationActionIdSchema) ? actionId : null;
       if (machineAgentIsolationActionId !== null) {
-        const input = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[machineAgentIsolationActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS)[typeof machineAgentIsolationActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineAgentIsolationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineAgentIsolationAction({ actionId: machineAgentIsolationActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
@@ -109,7 +132,7 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
       }
       const machineGuardActionId = isActionFamilyId(actionId, MachineGuardActionIdSchema) ? actionId : null;
       if (machineGuardActionId !== null) {
-        const input = MACHINE_GUARD_ACTION_INPUT_SCHEMAS[machineGuardActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_GUARD_ACTION_INPUT_SCHEMAS)[typeof machineGuardActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineGuardAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineGuardAction({ actionId: machineGuardActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -131,14 +154,14 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machineResourcesActionId !== null) {
-        const input = MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS[machineResourcesActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS)[typeof machineResourcesActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineResourcesPolicyAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineResourcesPolicyAction({ actionId: machineResourcesActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machineVitalsActionId !== null) {
-        const input = MACHINE_VITALS_ACTION_INPUT_SCHEMAS[machineVitalsActionId].parse(parsed.data);
+        const input = parsed.data as z.infer<(typeof MACHINE_VITALS_ACTION_INPUT_SCHEMAS)[typeof machineVitalsActionId]>;
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) {
           return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         }

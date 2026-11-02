@@ -113,3 +113,7 @@ export function createPluginExecClientExitError(
         },
     );
 }
+
+export function isProjectNativeProcessUncertain(error: unknown): boolean {
+    return !!error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete';
+}

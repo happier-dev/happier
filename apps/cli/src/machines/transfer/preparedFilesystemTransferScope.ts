@@ -1,3 +1,4 @@
+import type { FileHandle } from 'node:fs/promises';
 import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 /** Host-private admission stamped onto the incumbent prepared transfer record. */
@@ -25,3 +26,11 @@ export function assertPreparedFilesystemTransferScope(
     errorCode: 'FILESYSTEM_TRANSFER_SCOPE_MISMATCH',
   });
 }
+
+export type PreparedFilesystemReadFile = Readonly<{
+  handle: FileHandle;
+  rootPath: string;
+  path: string;
+  sizeBytes: number;
+  sha256: string;
+}>;

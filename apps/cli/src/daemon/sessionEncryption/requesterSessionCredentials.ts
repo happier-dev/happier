@@ -232,6 +232,8 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   allowNativeAccountCredentials: boolean;
   preparedSessionId?: string;
   attribution: RequesterWorkAttributionV1;
+  /** Actual Home observed at admission; the saved profile remains attribution.serverId. */
+  homeServerIdentityId?: string;
   serverHttpBaseUrl: string;
   accountSettingsContext: AccountSettingsContext;
   savedSecretOperationContext: SavedSecretOperationContextV1;
@@ -257,7 +259,8 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
 
 export async function admitRequesterSessionBootstrap(input: Readonly<{
   bootstrap: SessionRequesterBootstrapV1;
-  boundary: Readonly<{ serverId: string; serverHttpBaseUrl: string; happyHomeDir: string }>;
+  boundary: Readonly<{ serverId: string; serverHttpBaseUrl: string; happyHomeDir: string;
+    getObservedServerIdentityId?(): string | null | Promise<string | null> }>;
   context: RpcHandlerContext;
   /** Existing ordinary Session received by the host handoff ingress, never a creation recipe rewrite. */
   existingSessionId?: string;
@@ -266,17 +269,22 @@ export async function admitRequesterSessionBootstrap(input: Readonly<{
   const verify = input.context.verifyMachineAdmissionCurrent;
   const credentials = decodeStoredCredentials(input.bootstrap.credentials);
   if (!admission || !verify || !credentials || input.context.signal.aborted) return null;
+  const signedHome = input.context.callerInputAuthorization?.binding.serverIdentityId;
+  const homeServerIdentityId = input.boundary.getObservedServerIdentityId
+    ? await input.boundary.getObservedServerIdentityId() : signedHome;
+  if (signedHome && homeServerIdentityId !== signedHome) return null;
   const attribution = RequesterWorkAttributionV1Schema.parse({ serverId: input.boundary.serverId,
     accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId });
   const preparedSessionId = 'sessionId' in input.bootstrap ? input.bootstrap.sessionId : undefined;
   return await readRequesterHomeWithinActionLifetime(() => prepareRequesterSessionBootstrap({ credentials, attribution, boundary: input.boundary,
-    machineAdmission: admission,
+    machineAdmission: admission, ...(homeServerIdentityId ? { homeServerIdentityId } : {}),
     verifyMachineAdmissionCurrent: verify, signal: input.context.signal,
     ...(input.existingSessionId ? { preparedSessionId: input.existingSessionId, boundSessionId: input.existingSessionId } : {}),
     ...(preparedSessionId ? { preparedSessionId } : {}) }), input.context.signal);
 }
 
 export async function prepareRequesterSessionBootstrap(input: Readonly<{
+  homeServerIdentityId?: string;
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   credentials: StoredCredentials;
   attribution: RequesterWorkAttributionV1;
@@ -409,7 +417,8 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       if (!await verifyRequesterSessionCredentialBinding(binding)) return null;
       await bindRequesterSessionMachineControl(binding);
       if (!await verifyRequesterSessionCredentialBinding(binding)) return null;
-      return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir });
+      return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir,
+        ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}) });
     };
     const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (sessionId, sessionCreationTag) => {
       if (!verifyRuntime || preparedSessionId && preparedSessionId !== sessionId || bound && (bound.sessionId !== sessionId
@@ -447,7 +456,8 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
     return { admitted: Object.freeze({ credentials, ...(preparedSessionId ? { preparedSessionId } : {}),
       allowNativeAccountCredentials: machineAdmission?.actorAccountId === attribution.accountId
         && isCustodianMachineAdmission(machineAdmission),
-      attribution, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, accountSettingsContext,
+      attribution, ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
+      serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, accountSettingsContext,
       savedSecretOperationContext, isCurrent, dispose, getBoundSessionId: () => bound?.sessionId ?? null, bindSession, bindExistingSession,
       ensureAccountSettingsCurrent: settingsPublication.ensureCurrent, subscribeAccountSettings: settingsPublication.subscribe,
       subscribeSessionFollowRules: accountObservation.subscribeSessionFollowRules,
@@ -588,9 +598,10 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
       machineAdmission = current ?? undefined;
       return current !== null;
     };
-    const credentials = await resolveRequesterSessionCredentials({ ...input, verifyMachineAdmissionCurrent: verify(stored) });
+    const credentials = await resolveRequesterSessionCredentials({ ...input, verifyMachineAdmissionCurrent: verify(stored.credentials) });
     if (!credentials) return null;
     const result = await prepareRequesterSessionBootstrap({ credentials, attribution: input.attribution, machineAdmission,
+      ...(stored.homeServerIdentityId ? { homeServerIdentityId: stored.homeServerIdentityId } : {}),
       boundary: { serverId: input.attribution.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl, happyHomeDir: input.happyHomeDir },
       preparedSessionId: input.sessionId, boundSessionId: input.sessionId, verifyMachineAdmissionCurrent: verify(credentials), signal: input.signal });
     return result?.admitted ?? null;
@@ -672,6 +683,7 @@ const CustodySchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   attribution: RequesterWorkAttributionV1Schema,
   credentials: SessionRequesterBootstrapCredentialsV1Schema,
+  homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
 });
 const CustodyStoredReadSchema = createStoredReadSchema(CustodySchema);
 
@@ -691,7 +703,8 @@ export function requesterSessionCredentialPath(binding: RequesterSessionCredenti
 async function readBoundCustody(path: string, expected: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>) {
   const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
   if (value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
-  return decodeStoredCredentials(value.credentials);
+  const credentials = decodeStoredCredentials(value.credentials);
+  return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId } : null;
 }
 
 export type RequesterSessionCredentialBindingsResult =
@@ -797,17 +810,20 @@ export async function verifyRequesterSessionCredentialBinding(input: Readonly<{
 
 export async function createRequesterSessionCredentialCustody(input: RequesterSessionCredentialBinding & Readonly<{
   credentials: StoredCredentials;
+  homeServerIdentityId?: string;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
   const path = requesterSessionCredentialPath(input);
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
-    attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials) }));
+    attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
+    ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}) }));
   let created = true;
   try { await writePrivateOwnerFile({ path, contents }); }
   catch (error) {
     if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST') throw error;
     // Rejoin may refresh this exact requester's sign-in; never adopt a file
     // from a different Account, Home, Machine, or installation.
-    if (!await readBoundCustody(path, input)) throw new Error('requester_session_custody_mismatch');
+    const existing = await readBoundCustody(path, input);
+    if (!existing || existing.homeServerIdentityId !== input.homeServerIdentityId) throw new Error('requester_session_custody_mismatch');
     created = false;
     await replacePrivateBearerFile({ path, contents });
   }
@@ -835,8 +851,8 @@ export async function resolveRequesterSessionCredentials(input: RequesterSession
 }>): Promise<StoredCredentials | null> {
   try {
     if (input.signal?.aborted || !await input.verifyMachineAdmissionCurrent(input.signal)) return null;
-    const credentials = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    return credentials && await verifyRequesterSessionCredentialBinding({ ...input, credentials }) ? credentials : null;
+    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
+    return stored && await verifyRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials }) ? stored.credentials : null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
 }
 

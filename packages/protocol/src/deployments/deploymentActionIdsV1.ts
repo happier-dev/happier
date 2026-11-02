@@ -5,16 +5,17 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',
+  'deployments.restart', 'deployments.backups.restore',
   'deployments.teardown',
   'deployments.cancel',
   'deployments.environments.get', 'deployments.receipts.get', 'deployments.bindings.set',
   'deployments.environments.list', 'deployments.receipts.list',
   'deployments.publish', 'deployments.publish.prepare', 'deployments.prepare', 'deployments.templates.instantiate',
-  'deployments.health.read', 'deployments.drift.read', 'deployments.logs.read',
+  'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
 /** Semantic composition/handoff have their own typed ports, never storage HTTP transports. */
-export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.publish' | 'deployments.prepare' | 'deployments.templates.instantiate'>;
+export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.publish' | 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.backups.restore'>;
 const ids: ReadonlySet<string> = new Set(DEPLOYMENT_ACTION_IDS_V1);
 export function isDeploymentActionIdV1(value: string): value is DeploymentActionIdV1 { return ids.has(value); }
 

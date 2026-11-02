@@ -21,7 +21,6 @@ export function createOwnServerNativeRuntime(input: Readonly<{
     const tools = createPluginExecSystemToolResolver({ baseEnv,
         definitions: [{ toolId: 'docker', displayName: 'Docker', lookupNames: ['docker'] }], registerGrant() {} });
     const exec = createStablePluginExecService({
-        allowedExecutables: [],
         environment: baseEnv, signal: input.signal,
         isOccurrenceCurrent: input.isCurrent, systemTools: tools,
         async resolveExecutable() { throw new PluginError({ code: 'plugin_exec_executable_denied', message: 'A resolved Docker tool is required' }); },

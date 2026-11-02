@@ -221,3 +221,5 @@ export function deriveSessionMessageReplyAnswerLocalIdV1(params: Readonly<{
     PendingLocalIdSchema.parse(params.localId), TurnIdSchema.parse(params.acceptedTurnId)]);
   return PendingLocalIdSchema.parse(`answer-v1:${encodeBase64(sha256(new TextEncoder().encode(identity)), 'base64url')}`);
 }
+
+export { classifySessionMessageReplyPublicationFailureV1 } from './sessionMessageReplyPublicationV1.js';

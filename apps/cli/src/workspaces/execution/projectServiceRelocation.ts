@@ -1,3 +1,4 @@
+import type { WorkspaceProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -10,7 +11,7 @@ import { isLocalServiceStateRunningV1, type DaemonLocalServiceLauncherStartRespo
 
 import type { ManagedServiceProcessStopResult } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ActionOperationProgressUpdate, ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
-import type { WorkspaceProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 
@@ -89,8 +90,8 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
           workspaceId: current.workspace.id, rootPath: current.workspace.rootPath },
         declaration: current.currentTarget.declaration, currentTarget: current.currentTarget } });
       if (!sameTarget) {
-        // Definitive target admission belongs before the irreversible old Stop.
-        // Later checks still detect changes during Stop and clean preparation.
+        // Destination selection admitted the target once. Keep the exact
+        // domain operands current before the irreversible old Stop.
         const admitted = await ports.revalidateDestination(input, selected, signal);
         if (admitted.status === 'refused') return failure(admitted.reasonCode, admitted.error);
         if (signal?.aborted) return failure('cancelled');
@@ -140,7 +141,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       if (stopped.status !== 'stopped') {
         return failure(stopped.status === 'unsupported' ? 'service_control_unsupported' : 'stop_unconfirmed');
       }
-      // Retain the native Stop fact even if cancellation or admission prevents copy.
+      // Retain the native Stop fact even if cancellation or changed operands prevent copy.
       progress('stopped', 'Service stopped');
       if (signal?.aborted) return failure('cancelled');
       const currentDestination = await ports.revalidateDestination(input, selected, signal);

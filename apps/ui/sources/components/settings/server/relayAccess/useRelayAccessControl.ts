@@ -1,13 +1,16 @@
 import * as React from 'react';
-import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
-import type { TailscaleSecureAccessTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { TailscaleSecureAccessTaskResult } from '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract';
+import { RelayAccessTaskSnapshotV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 import { REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
-import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { getRelayAccessProviderDescriptor, readBuiltinRelayAccessProviderId, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskSnapshot, RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import {
     buildRelayAccessDisableSystemTaskSpec,
     buildRelayAccessExecutionSystemTaskSpec,
@@ -23,33 +26,31 @@ function readRelayAccessSnapshot(result: SystemTaskResult | null): RelayAccessTa
     if (!result?.ok) {
         return null;
     }
-    const data = result.data as Partial<RelayAccessTaskSnapshot> | null | undefined;
-    if (!data || typeof data !== 'object') {
-        return null;
-    }
-    if (typeof data.configured !== 'boolean') {
-        return null;
-    }
-    if (!data.status || typeof data.status !== 'object') {
-        return null;
-    }
-    return data as RelayAccessTaskSnapshot;
+    const parsed = RelayAccessTaskSnapshotV1Schema.safeParse(result.data);
+    return parsed.success ? parsed.data : null;
 }
 
 function readErrorMessage(result: SystemTaskResult | null): string | null {
     if (!result || result.ok) {
         return null;
     }
-    const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
-    return message || null;
+    return result.error ? resolveSystemTaskFailureMessage(result.error) ?? null : null;
 }
 
-function isTailscaleRelayAccessProviderId(providerId: RelayAccessProviderId | null): providerId is 'tailscaleServe' | 'tailscaleFunnel' {
-    return providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel';
+function readRelayAccessFailure(snapshot: RelayAccessTaskSnapshot) {
+    const details = snapshot.status.details;
+    if (snapshot.status.state !== 'error' || !isRecord(details)) return null;
+    return {
+        message: resolveSystemTaskFailureMessage({
+            code: typeof details.code === 'string' ? details.code : null,
+            message: typeof details.message === 'string' ? details.message : null,
+        }) ?? null,
+        retryable: typeof details.retryable === 'boolean' ? details.retryable : undefined,
+    };
 }
 
 function readTailscaleSecureAccessSnapshot(
-    providerId: 'tailscaleServe' | 'tailscaleFunnel',
+    selection: RelayAccessConfig,
     result: SystemTaskResult | null,
 ): RelayAccessTaskSnapshot | null {
     if (!result?.ok) {
@@ -66,7 +67,8 @@ function readTailscaleSecureAccessSnapshot(
 
     return {
         configured: true,
-        providerId,
+        providerId: readBuiltinRelayAccessProviderId(selection.provider),
+        selection,
         status: {
             state: requiresApproval ? 'needs_auth' : (shareUrl ? 'enabled' : 'unknown'),
             shareUrl: shareUrl.length > 0 ? shareUrl : null,
@@ -91,7 +93,23 @@ export type RelayAccessControlOptions = Readonly<{
     runWithTarget?: <T>(run: (target: RelayAccessTaskTarget, startSpec?: (spec: SystemTaskSpec) => Promise<string>, admittedUpstreamUrl?: string | null) => Promise<T>) => Promise<T>;
 }>;
 
-export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
+export type RelayAccessControl = Readonly<{
+    actionScope: ServerAccountScope | null;
+    actionServerId: string;
+    approval: ReturnType<typeof useLocalRuntimeActionExecution>['approval'];
+    cancelTask: (taskId: string) => Promise<void>;
+    activeTaskSnapshot: SystemTaskRunState | null;
+    actionSnapshot: SystemTaskRunState | null;
+    configure: (payload: Readonly<{ config: RelayAccessConfig }>) => Promise<string | null>;
+    disable: () => Promise<string | null>;
+    isBusy: boolean;
+    isUnavailable: boolean;
+    lastErrorMessage: string | null;
+    refreshStatus: () => Promise<string | null>;
+    snapshot: RelayAccessTaskSnapshot | null;
+}>;
+
+export function useRelayAccessControl(options: RelayAccessControlOptions = {}): RelayAccessControl {
     const runner = options.runner ?? getDefaultSystemTaskRunner();
     const mountedAction = useLocalRuntimeActionExecution(options.actionScope ?? options.remoteHost?.scope, { runner });
     const runtimeAction = React.useMemo(() => createUiHomeRuntimeActionClient(runner, mountedAction.execute), [runner, mountedAction.execute]);
@@ -108,14 +126,13 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
     const [lastErrorMessage, setLastErrorMessage] = React.useState<string | null>(null);
     const autoRefreshRequestedRef = React.useRef(false);
     const handledActionTaskIdRef = React.useRef<string | null>(null);
-    const lastActionProviderIdRef = React.useRef<RelayAccessProviderId | null>(null);
+    const lastActionSelectionRef = React.useRef<RelayAccessConfig | null>(null);
     const actionExecutorRef = React.useRef<Promise<ReturnType<typeof createDefaultActionExecutor>> | null>(null);
 
     const statusSnapshot = useSystemTaskSnapshot(runner, statusTaskId);
     const actionSnapshot = useSystemTaskSnapshot(runner, actionTaskId);
 
     const startTask = React.useCallback(async (kind: 'relay.access.status.v1' | RelayAccessActionKind, params?: Readonly<{
-        providerId?: RelayAccessProviderId;
         config?: RelayAccessConfig;
     }>) => {
         try {
@@ -162,7 +179,6 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
                         ? await startSpec(buildRelayAccessDisableSystemTaskSpec({ target }))
                         : await startSpec(buildRelayAccessExecutionSystemTaskSpec({
                             target,
-                            providerId: params?.providerId as RelayAccessProviderId,
                             config: params?.config as RelayAccessConfig,
                             // Catalog admission supplies the execution target, including
                             // explicit absence; display/focused state cannot replace it.
@@ -194,13 +210,12 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
     }, [isUnavailable, startTask]);
 
     const runAction = React.useCallback(async (kind: RelayAccessActionKind, payload?: Readonly<{
-        providerId: RelayAccessProviderId;
         config: RelayAccessConfig;
     }>) => {
         if (isUnavailable) {
             return null;
         }
-        lastActionProviderIdRef.current = payload?.providerId ?? null;
+        lastActionSelectionRef.current = payload?.config ?? null;
         const taskId = await startTask(kind, payload);
         if (!taskId) return null;
         handledActionTaskIdRef.current = null;
@@ -220,7 +235,7 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
         const nextSnapshot = readRelayAccessSnapshot(statusSnapshot?.result ?? null);
         if (nextSnapshot) {
             setLastSnapshot(nextSnapshot);
-            setLastErrorMessage(null);
+            setLastErrorMessage(readRelayAccessFailure(nextSnapshot)?.message ?? null);
             return;
         }
         const errorMessage = readErrorMessage(statusSnapshot?.result ?? null);
@@ -239,9 +254,9 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
             return;
         }
 
-        const providerId = lastActionProviderIdRef.current;
-        if (isTailscaleRelayAccessProviderId(providerId)) {
-            const inlineSnapshot = readTailscaleSecureAccessSnapshot(providerId, actionSnapshot.result);
+        const selection = lastActionSelectionRef.current;
+        if (selection && getRelayAccessProviderDescriptor(selection.provider).homeSetupTaskKind === 'secureAccess.tailscale.v1') {
+            const inlineSnapshot = readTailscaleSecureAccessSnapshot(selection, actionSnapshot.result);
             if (inlineSnapshot) {
                 setLastSnapshot(inlineSnapshot);
                 setLastErrorMessage(null);
@@ -253,7 +268,9 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
         const inlineSnapshot = readRelayAccessSnapshot(actionSnapshot.result);
         if (inlineSnapshot) {
             setLastSnapshot(inlineSnapshot);
-            setLastErrorMessage(null);
+            const failure = readRelayAccessFailure(inlineSnapshot);
+            setLastErrorMessage(failure?.message ?? null);
+            if (failure?.retryable === false) return;
         }
         void refreshStatus().catch(() => {});
     }, [actionSnapshot, refreshStatus]);
@@ -266,6 +283,7 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
     const isBusy = !mountedAction.ready || mountedAction.approval.approvalPending || (activeTaskSnapshot != null && activeTaskSnapshot.result == null);
 
     return {
+        actionScope: mountedAction.binding?.scope ?? null,
         actionServerId: mountedAction.binding?.serverId ?? '',
         approval: mountedAction.approval,
         cancelTask: React.useCallback(async (taskId: string) => {
@@ -282,7 +300,7 @@ export function useRelayAccessControl(options: RelayAccessControlOptions = {}) {
         }, [mountedAction.requiresAction, mountedAction.runSignedOutDraft, runner, runtimeAction]),
         activeTaskSnapshot,
         actionSnapshot,
-        configure: React.useCallback(async (payload: Readonly<{ providerId: RelayAccessProviderId; config: RelayAccessConfig }>) => {
+        configure: React.useCallback(async (payload: Readonly<{ config: RelayAccessConfig }>) => {
             return await runAction('relay.access.configure.v1', payload);
         }, [runAction]),
         disable: React.useCallback(async () => {

@@ -605,7 +605,13 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     }).state === 'enabled';
 
     const launcherHistory = createLocalServiceLauncherHistoryStore();
-    const scannedLauncherFeed = createLocalServiceLauncherFeed({
+const readStartOperations = () => startOperations?.store.list({ accountId: startOperations.accountId,
+        machineId: params.machineId, states: ['accepted', 'running'] }).items ?? [];
+let unsubscribeStartOperations: (() => void) | undefined;
+let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLauncherRoutes['bindStartOperations']>>[0];
+        accountId: string }> | undefined;
+    const scannedLauncherFeed = createLocalServiceLauncherFeed({startOperations: readStartOperations,
+
         machineId: params.machineId,
         accountId: params.accountId,
         inventoryRegistry,
@@ -686,7 +692,31 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         history: launcherHistory,
     });
     const declarationStarter = params.projectServiceStarter ? createProjectServiceDeclarationStarter(params.projectServiceStarter) : undefined;
-    const launcherRoutes = createLocalServiceLauncherRoutes({
+    const launcherRoutes = createLocalServiceLauncherRoutes({bindStartOperations(store, accountId) {
+            unsubscribeStartOperations?.();
+            const binding = { store, accountId };
+            startOperations = binding;
+            const publish = () => {
+                // An unrelated operation must not discover Services nobody has opened.
+                // The existing published projection also carries the terminal clearing edge.
+                if (!publishedLauncherTargets.some(target => target.state === 'starting')
+                    && !readStartOperations().some(operation => operation.actionId === 'localServices.launcher.start'
+                        && operation.domainRef?.kind === 'projectService' && operation.domainRef.purpose === 'start')) return;
+                void publishInventorySnapshot().catch(params.onError ?? (error => {
+                    logger.debug('[DAEMON RUN] Service Start inventory publication failed', error);
+                }));
+            };
+            const unsubscribe = store.subscribe(publish);
+            unsubscribeStartOperations = unsubscribe;
+            return () => {
+                unsubscribe();
+                if (startOperations !== binding) return;
+                startOperations = undefined;
+                unsubscribeStartOperations = undefined;
+                publish();
+            };
+        },
+
         feed: launcherFeed,
         history: launcherHistory,
         leaves: launcherLeafRoutes,
@@ -742,6 +772,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             await hostedWebStaticAssets?.stop();
         },
         async stop() {
+unsubscribeStartOperations?.();
+startOperations = undefined;
+
             endpointCancellation.abort();
             declarationWatch.setDemand(false);
             loop?.stop();

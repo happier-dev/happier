@@ -1,5 +1,5 @@
 import { SYSTEM_TASK_PROTOCOL_VERSION, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
-import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { getRelayAccessProviderDescriptor, parseRelayAccessConfig, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import { buildRelayAccessTailscaleSecureAccessSystemTaskSpec as buildTailscaleSecureAccessRelayAccessSystemTaskSpec } from './buildRelayAccessTailscaleSecureAccessSystemTaskSpec';
@@ -31,37 +31,39 @@ export function buildRelayAccessDisableSystemTaskSpec(params: Readonly<{
 
 export function buildRelayAccessConfigureSystemTaskSpec(params: Readonly<{
     target?: RelayAccessTaskTarget;
-    providerId: RelayAccessProviderId;
     config: RelayAccessConfig;
     upstreamUrl?: string | null;
 }>): SystemTaskSpec {
     const upstreamUrl = typeof params.upstreamUrl === 'string' ? params.upstreamUrl.trim() : '';
+    const config = parseRelayAccessConfig(params.config);
+    if (!config) throw new Error('invalid_access_provider_selection');
     return {
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         kind: 'relay.access.configure.v1',
         params: {
             target: serializeRelayAccessTaskTarget(params.target),
             ...(upstreamUrl ? { upstreamUrl } : {}),
-            providerId: params.providerId,
-            config: params.config,
+            config,
         },
     };
 }
 
 export function buildRelayAccessExecutionSystemTaskSpec(params: Readonly<{
     target?: RelayAccessTaskTarget;
-    providerId: RelayAccessProviderId;
     config: RelayAccessConfig;
     upstreamUrl?: string | null;
 }>): SystemTaskSpec {
     const target = params.target ?? { kind: 'local' as const };
-    if (params.providerId === 'tailscaleServe' || params.providerId === 'tailscaleFunnel') {
+    const config = parseRelayAccessConfig(params.config);
+    if (!config) throw new Error('invalid_access_provider_selection');
+    const descriptor = getRelayAccessProviderDescriptor(config.provider);
+    if (descriptor.homeSetupTaskKind === 'secureAccess.tailscale.v1') {
         return buildTailscaleSecureAccessRelayAccessSystemTaskSpec({
-            providerId: params.providerId,
+            providerId: descriptor.id,
             upstreamUrl: params.upstreamUrl ?? '',
             target,
         });
     }
 
-    return buildRelayAccessConfigureSystemTaskSpec(params);
+    return buildRelayAccessConfigureSystemTaskSpec({ ...params, config });
 }

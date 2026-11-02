@@ -1,3 +1,9 @@
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { isReviewedMachineSetupPlanChild, isReviewedDeploymentChild, type DeploymentArchiveOriginForHost, type DeploymentChildDerivationRefusal } from '@/api/externalActionExecutionAuthorization';
+import { readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, readDeploymentArchiveRpcEffectV1, isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol';
+import { WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
+import { assertDeploymentArchiveChildCurrentForHost } from '@/api/deploymentChildExecutionAuthorization';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -134,8 +140,9 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
 export class MachineRpcTargetNotCurrentError extends Error {
   readonly code = 'machine_target_not_current' as const;
 
-  constructor(readonly machineId: string) {
-    super(`Machine ${machineId} is revoked or has been replaced`);
+  constructor(readonly machineId: string, readonly reason: MachineRpcTargetNotCurrentReason,
+    readonly derivationReason?: DeploymentChildDerivationRefusal) {
+    super(`Machine ${machineId} RPC target refused: ${reason}${derivationReason ? `/${derivationReason}` : ''}`);
     this.name = 'MachineRpcTargetNotCurrentError';
   }
 }
@@ -170,12 +177,11 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   expectedRunnerMachineContentKeyBinding?: ExpectedRunnerMachineContentKeyBindingScope;
   requireCurrentMachine?: boolean;
   requiredMachineKind?: 'persistent' | 'ephemeral_session_runner';
-  externalAction?: Readonly<{
-    context: ActionExecutorContext;
-    effectActionId: string;
-    installationId: string;
-    privateKey: ExternalActionMachineRequestSigningKey;
-  }>;
+  deploymentChild?: Readonly<{ machineId: string; installationId: string }>;
+  deploymentSetupExecution?: WorkspaceSyncSourceExecutionV1;
+  deploymentArchiveExecution?: WorkspaceSyncSourceExecutionV1;
+  expectedInstallationId?: string;
+  externalAction?: MachineRpcExternalAction;
 }>) {
   const path = `/v1/machines/${encodeURIComponent(params.machineId)}`;
   const externalAuthorization = params.externalAction?.context.externalActionExecutionAuthorization;
@@ -183,23 +189,35 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   const moveChildRead = (externalAuthorization?.binding.actionId === 'projects.service.relocate'
     && params.externalAction?.effectActionId !== externalAuthorization.binding.actionId)
     || externalAuthorization?.binding.actionId === 'discussion.second_opinion.start'
-      && params.externalAction?.effectActionId === 'session.spawn_new';
+      && params.externalAction?.effectActionId === 'session.spawn_new'
+    || isMachineSetupPlanRpcChildV1({ rootActionId: externalAuthorization?.binding.actionId,
+      effectActionId: params.externalAction?.effectActionId, method: RPC_METHODS.MACHINE_SETUP_PLAN })
+    || params.deploymentChild !== undefined;
   if (params.externalAction && (!externalAuthorization || !externalTarget)) {
     throw new Error('External Action Machine HTTP authorization is unavailable');
   }
+  // Only the already-verified finite archive branch may use its original
+  // requester's private codec custody. Socket authentication stays receiver-owned.
+  const contentCredentials = params.deploymentArchiveExecution
+    ? readRequesterAccountActionContext(externalAuthorization)?.credentials
+    : params.credentials;
+  if (!contentCredentials) throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
   const response = await axios.get(
     `${params.serverUrl ?? resolveServerHttpBaseUrl()}${path}`,
     {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-        ...(params.externalAction && externalAuthorization && externalTarget && !moveChildRead
+        ...(params.externalAction && externalAuthorization && externalTarget && (!moveChildRead || params.deploymentArchiveExecution || params.deploymentSetupExecution)
           ? createExternalActionAuthorizedRequestHeaders({
               authorization: externalAuthorization,
-              effectActionId: externalAuthorization.binding.actionId === 'projects.service.relocate'
+              effectActionId: params.deploymentArchiveExecution || externalAuthorization.binding.actionId === 'projects.service.relocate'
                 ? externalAuthorization.binding.actionId : params.externalAction.effectActionId,
               target: externalTarget,
-              installationId: isOriginalRequesterSource(params.externalAction)
+              installationId: !params.deploymentArchiveExecution && isOriginalRequesterSource(params.externalAction)
                 ? externalAuthorization.binding.installationId : params.externalAction.installationId,
+              ...(params.deploymentArchiveExecution ? { deploymentChildExecution: params.deploymentArchiveExecution,
+                deploymentArchiveOrigin: params.externalAction.deploymentArchiveOrigin } : {}),
+              ...(params.deploymentSetupExecution ? { deploymentChildExecution: params.deploymentSetupExecution } : {}),
               method: 'GET',
               path,
               privateKey: params.externalAction.privateKey,
@@ -235,16 +253,23 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
       || (typeof raw?.replacedByMachineId === 'string' && raw.replacedByMachineId.trim().length > 0)
     )
   ) {
-    throw new MachineRpcTargetNotCurrentError(params.machineId);
+    throw new MachineRpcTargetNotCurrentError(params.machineId, 'machine_revoked_or_replaced');
   }
   const actualMachineKind = raw?.kind ?? 'persistent';
   if (params.requiredMachineKind && actualMachineKind !== params.requiredMachineKind) {
     throw new MachineRpcMachineKindMismatchError(params.machineId, params.requiredMachineKind);
   }
   const access = raw?.access === undefined ? undefined : AccessibleMachineAccessV1Schema.parse(raw.access);
+  if (isMachineSetupPlanRpcChildV1({ rootActionId: externalAuthorization?.binding.actionId,
+    effectActionId: params.externalAction?.effectActionId, method: RPC_METHODS.MACHINE_SETUP_PLAN }) && access?.role !== 'manage') {
+    throw new MachineRpcTargetNotCurrentError(params.machineId, 'setup_manage_required');
+  }
   if (access && access.accessState !== 'ready') throw new MachineRpcEncryptionModeMismatchError(params.machineId);
+  if (params.expectedInstallationId && raw?.installationId !== params.expectedInstallationId) {
+    throw new MachineRpcTargetNotCurrentError(params.machineId, 'installation_mismatch');
+  }
   let expectedAccountMode: 'plain' | 'e2ee' | 'unknown' = access?.resourceMode ?? raw?.storageMode ?? 'unknown';
-  if (expectedAccountMode === 'unknown') {
+  if (expectedAccountMode === 'unknown' && !params.deploymentArchiveExecution && !params.deploymentSetupExecution) {
     const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(
       `${params.serverUrl ?? resolveServerHttpBaseUrl()}/v1/account/encryption`, {
         headers: { Authorization: `Bearer ${params.credentials.token}` },
@@ -255,7 +280,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
     if (mode.kind === 'resolved') expectedAccountMode = mode.mode;
   }
   const codec = resolvePublishedMachineContentCodec({
-    credentials: params.credentials,
+    credentials: contentCredentials,
     machineId: params.machineId,
     expectedAccountMode,
     access: raw?.access,
@@ -296,12 +321,7 @@ export async function callExactMachineRpc(params: Readonly<{
   /** Only read-only observations may be repeated after transport reconnect. */
   reattachOnReconnect?: true | RpcObservationOptions;
   signal?: AbortSignal;
-  externalAction?: Readonly<{
-    context: ActionExecutorContext;
-    effectActionId: string;
-    installationId: string;
-    privateKey: ExternalActionMachineRequestSigningKey;
-  }>;
+  externalAction?: MachineRpcExternalAction;
 }> & (
   | Readonly<{ request: unknown; prepareRequest?: never }>
   | Readonly<{ request?: never; prepareRequest: () => unknown }>
@@ -316,19 +336,50 @@ export async function callExactMachineRpc(params: Readonly<{
     const moveAuthorization = params.externalAction?.context.externalActionExecutionAuthorization;
     const opinionChild = moveAuthorization?.binding.actionId === 'discussion.second_opinion.start'
       && params.externalAction?.effectActionId === 'session.spawn_new' && isDiscussionSecondOpinionModelRpcMethodV1(params.method);
+    const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: moveAuthorization?.binding.actionId,
+      effectActionId: params.externalAction?.effectActionId, method: params.method });
+    const reviewedChild = readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined;
+    const deploymentChild = moveAuthorization && params.externalAction ? readDeploymentChildRpcV1({
+      rootActionId: moveAuthorization.binding.actionId, effectActionId: params.externalAction.effectActionId,
+      rootPreparationAdmission: moveAuthorization.binding.deploymentPreparationAdmission, reviewedChild,
+      method: params.method, params: params.request }) : null;
+    const archiveEffect = readDeploymentArchiveRpcEffectV1(params.method);
+    const archiveRequester = moveAuthorization ? readRequesterAccountActionContext(moveAuthorization) : null;
+    const archiveJob = archiveRequester?.deploymentChild;
+    const deploymentArchive = params.externalAction && archiveEffect === params.externalAction.effectActionId
+      && archiveJob && (archiveJob.kind === 'build' || archiveJob.kind === 'member')
+      ? await assertDeploymentArchiveChildCurrentForHost({ context: params.externalAction.context,
+          machineId: archiveJob.machineId, installationId: params.externalAction.installationId }) : null;
+    if (moveAuthorization && isDeploymentChildRootActionIdV1(moveAuthorization.binding.actionId, moveAuthorization.binding.deploymentPreparationAdmission)
+      && archiveEffect && !deploymentArchive) throw new MachineRpcTargetNotCurrentError(machineId, 'archive_child_unavailable');
+    const archiveOrigin = params.externalAction?.deploymentArchiveOrigin;
+    const archiveInstallationId = deploymentArchive && archiveOrigin
+      ? machineId === archiveOrigin.holderMachineId ? archiveOrigin.holderInstallationId
+        : machineId === deploymentArchive.job.machineId ? deploymentArchive.job.installationId : null
+      : undefined;
+    if (deploymentArchive && (!archiveOrigin || !archiveInstallationId
+      || archiveEffect === 'daemon.filesystem.download' && machineId !== archiveOrigin.holderMachineId
+      || archiveEffect === 'daemon.filesystem.copy' && machineId !== deploymentArchive.job.machineId)) {
+      throw new MachineRpcTargetNotCurrentError(machineId, 'archive_origin_mismatch');
+    }
     const moveChild = (moveAuthorization?.binding.actionId === 'projects.service.relocate'
-      && params.externalAction?.effectActionId !== moveAuthorization.binding.actionId) || opinionChild;
+      && params.externalAction?.effectActionId !== moveAuthorization.binding.actionId) || opinionChild || setupPlanChild || deploymentChild !== null;
     if (moveChild && params.externalAction && moveAuthorization) {
       const requester = readRequesterAccountActionContext(moveAuthorization);
-      if (!requester || requester.credentials.token !== params.credentials.token || !await requester.isCurrent()) {
-        throw new MachineRpcTargetNotCurrentError(machineId);
-      }
-      const review = opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
-      if (!await review({ authorization: moveAuthorization,
+      if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
+      if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
+      if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');
+      const review = setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild
+        : opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
+      let derivationReason: DeploymentChildDerivationRefusal | undefined;
+      const reviewInput = { authorization: moveAuthorization,
         envelope: params.externalAction.context.originalActionEnvelope, signal,
         actionId: params.externalAction.effectActionId, machineId, params: params.request,
-        ...(opinionChild ? { method: params.method } : {}) })) {
-        throw new MachineRpcTargetNotCurrentError(machineId);
+        ...(opinionChild || deploymentChild || setupPlanChild ? { method: params.method } : {}),
+        ...(deploymentChild ? { reviewedChild, onRefused: (reason: DeploymentChildDerivationRefusal) => { derivationReason = reason; } } : {}),
+      };
+      if (!await review(reviewInput)) {
+        throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
       }
     }
     const timeoutMs = params.timeoutMs === null ? null
@@ -338,6 +389,44 @@ export async function callExactMachineRpc(params: Readonly<{
       ? setupTimeoutMs : resolveSessionControlSocketConnectTimeoutMs();
     const deadlineAtMs = timeoutMs === null ? null : Date.now() + timeoutMs;
     const remainingTimeoutMs = () => deadlineAtMs === null ? null : Math.max(1, deadlineAtMs - Date.now());
+    const externalAction = params.externalAction;
+    const createExecution = (transportAuthorization = externalAction?.context.externalActionExecutionAuthorization): Parameters<typeof callSocketRpc>[0]['createExternalActionExecution'] => externalAction
+      ? (request) => {
+        const authorization = transportAuthorization;
+        const target = externalAction.context.externalActionTarget;
+        const sourceMachineId = authorization ? readExternalActionSourceMachineRpcSigner(authorization)?.machineId : undefined;
+        const execution = !deploymentArchive && isOriginalRequesterSource(externalAction) && authorization && target && sourceMachineId
+          ? createExternalActionSourceMachineRpcExecution({ authorization, target, sourceMachineId, context: externalAction.context,
+            sourceInstallationId: externalAction.installationId, effectActionId: externalAction.effectActionId,
+            ...(deploymentChild ? { deploymentChildRouting: projectDeploymentChildRoutingV1(deploymentChild) } : {}),
+            ...request, privateKey: externalAction.privateKey })
+          : createExternalActionMachineRpcExecution({
+          context: { ...externalAction.context, externalActionExecutionAuthorization: authorization },
+          effectActionId: externalAction.effectActionId,
+          installationId: externalAction.installationId,
+          ...(deploymentChild ? { deploymentChildRouting: projectDeploymentChildRoutingV1(deploymentChild) } : {}),
+          ...(deploymentArchive ? { deploymentChildExecution: deploymentArchive.execution,
+            deploymentArchiveOrigin: archiveOrigin } : {}),
+          ...request,
+          privateKey: externalAction.privateKey,
+        });
+        if (!execution) throw new Error('External Action Machine RPC authorization is unavailable');
+        return execution;
+      } : undefined;
+    let deploymentChildRequestId: string | undefined;
+    let deploymentSetupExecution: WorkspaceSyncSourceExecutionV1 | undefined;
+    if (deploymentChild) {
+      deploymentChildRequestId = params.requestId ?? randomUUID();
+      const method = `${machineId}:${params.method}`;
+      // The exact known job is source-signed before its destination codec can
+      // be opened. Its final encrypted RPC is separately signed below.
+      deploymentSetupExecution = WorkspaceSyncSourceExecutionV1Schema.parse({ method,
+        requestId: deploymentChildRequestId, params: deploymentChild,
+        originalActionEnvelope: externalAction?.context.originalActionEnvelope,
+        externalActionExecution: await createExecution()?.({ method,
+          requestId: deploymentChildRequestId, params: deploymentChild }),
+      });
+    }
     const operation = withUserScopedRpcSocket({
       token: params.credentials.token,
       ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
@@ -356,9 +445,15 @@ export async function callExactMachineRpc(params: Readonly<{
         ...(params.requireCurrentMachine ? { requireCurrentMachine: true } : {}),
         ...(params.requiredMachineKind ? { requiredMachineKind: params.requiredMachineKind } : {}),
         ...(params.externalAction ? { externalAction: params.externalAction } : {}),
+        ...(deploymentChild ? { deploymentChild } : {}),
+        ...(deploymentSetupExecution ? { deploymentSetupExecution } : {}),
+        ...(deploymentArchive ? { deploymentArchiveExecution: deploymentArchive.execution } : {}),
+        ...(archiveInstallationId ? { expectedInstallationId: archiveInstallationId } : {}),
         ...(attemptSignal ? { signal: attemptSignal } : {}),
       });
       const machineCodec = machineTarget.codec;
+      if (deploymentChild && (deploymentChild.machineId !== machineId
+        || deploymentChild.installationId !== machineTarget.installationId)) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
       if (params.expectedEncryptionMode !== undefined && machineCodec.mode !== params.expectedEncryptionMode) {
         throw new MachineRpcEncryptionModeMismatchError(machineId);
       }
@@ -377,17 +472,17 @@ export async function callExactMachineRpc(params: Readonly<{
             ? RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
         const targetMachineId = privateRequest.kind === 'requester_session_bootstrap_v1'
           ? privateRequest.input.executionTarget.machineId : privateRequest.input.targetMachineId;
-        if (params.method !== expectedMethod || targetMachineId !== machineId) throw new MachineRpcTargetNotCurrentError(machineId);
+        if (params.method !== expectedMethod || targetMachineId !== machineId) throw new MachineRpcTargetNotCurrentError(machineId, 'private_target_mismatch');
         const bootstrap = privateRequest.requesterBootstrap;
         if ('kind' in bootstrap) {
-          if (bootstrap.installationId !== machineTarget.installationId) throw new MachineRpcTargetNotCurrentError(machineId);
+          if (bootstrap.installationId !== machineTarget.installationId) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
         } else if (privateRequest.kind === 'requester_session_handoff_preflight_bootstrap_v1'
           || machineCodec.mode === 'plain' && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) {
           const installationId = machineTarget.installationId;
           const encodedKey = machineTarget.installationPublicKey;
-          if (!installationId || typeof encodedKey !== 'string') throw new MachineRpcTargetNotCurrentError(machineId);
+          if (!installationId || typeof encodedKey !== 'string') throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_unavailable');
           const publicKey = decodeBase64(encodedKey, 'base64');
-          if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId);
+          if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_invalid');
           const sealing = { installationId, installationPublicKey: publicKey,
             randomBytes: (length: number) => new Uint8Array(randomBytes(length)) };
           request = privateRequest.kind === 'requester_session_bootstrap_v1'
@@ -405,26 +500,6 @@ export async function callExactMachineRpc(params: Readonly<{
           decryptRaw: async (ciphertext) => machineCodec.decodeRpc(ciphertext),
         },
       };
-      const externalAction = params.externalAction;
-      const createExecution = (transportAuthorization = externalAction?.context.externalActionExecutionAuthorization): Parameters<typeof callSocketRpc>[0]['createExternalActionExecution'] => externalAction
-        ? (request) => {
-          const authorization = transportAuthorization;
-          const target = externalAction.context.externalActionTarget;
-          const sourceMachineId = authorization ? readExternalActionSourceMachineRpcSigner(authorization)?.machineId : undefined;
-          const execution = isOriginalRequesterSource(externalAction) && authorization && target && sourceMachineId
-            ? createExternalActionSourceMachineRpcExecution({ authorization, target, sourceMachineId,
-              sourceInstallationId: externalAction.installationId, effectActionId: externalAction.effectActionId,
-              ...request, privateKey: externalAction.privateKey })
-            : createExternalActionMachineRpcExecution({
-            context: { ...externalAction.context, externalActionExecutionAuthorization: authorization },
-            effectActionId: externalAction.effectActionId,
-            installationId: externalAction.installationId,
-            ...request,
-            privateKey: externalAction.privateKey,
-          });
-          if (!execution) throw new Error('External Action Machine RPC authorization is unavailable');
-          return execution;
-        } : undefined;
       return await readRpcObservation({ request, signal: attemptSignal,
         observation: params.reattachOnReconnect === true ? undefined : params.reattachOnReconnect,
         read: async request => {
@@ -434,14 +509,17 @@ export async function callExactMachineRpc(params: Readonly<{
             && (Reflect.get(request, 'kind') === 'requester_session_bootstrap_v1'
               || Reflect.get(request, 'kind') === 'requester_session_handoff_bootstrap_v1'
               || Reflect.get(request, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1');
-          if (seal && transportAuthorization && !hasPrivateBootstrap) {
+          if (deploymentArchive) await assertDeploymentArchiveChildCurrentForHost({ context: externalAction!.context,
+            machineId: deploymentArchive.job.machineId, installationId: externalAction!.installationId });
+          if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive) {
             const encodedKey = machineTarget.installationPublicKey;
-            if ((!moveChild && (machineTarget.installationId !== transportAuthorization.binding.installationId
-              || transportAuthorization.binding.machineId !== machineId)) || !machineTarget.installationId || typeof encodedKey !== 'string') {
-              throw new MachineRpcTargetNotCurrentError(machineId);
+            if (!moveChild && (machineTarget.installationId !== transportAuthorization.binding.installationId
+              || transportAuthorization.binding.machineId !== machineId)) {
+              throw new MachineRpcTargetNotCurrentError(machineId, 'root_target_mismatch');
             }
+            if (!machineTarget.installationId || typeof encodedKey !== 'string') throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_unavailable');
             const publicKey = decodeBase64(encodedKey, 'base64');
-            if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId);
+            if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_invalid');
             const sealed = await seal({ authorization: transportAuthorization,
               purpose: { kind: 'machine_rpc', method: params.method, params: request,
                 ...(moveChild ? { recipient: { machineId, installationId: machineTarget.installationId } } : {}) }, installationPublicKey: publicKey });
@@ -456,7 +534,7 @@ export async function callExactMachineRpc(params: Readonly<{
             method: params.method,
             params: request,
             content,
-            requestId: params.requestId ?? randomUUID(),
+            requestId: deploymentChildRequestId ?? params.requestId ?? randomUUID(),
             timeoutMs: remainingTimeoutMs(),
             onIssued: () => { issued = true; },
             signal: attemptSignal,
@@ -546,3 +624,17 @@ export async function callMachineRpc(params: Parameters<typeof callExactMachineR
     return await callExactMachineRpc({ ...params, machineId: successorMachineId });
   }
 }
+
+type MachineRpcExternalAction = Readonly<{
+  context: ActionExecutorContext;
+  effectActionId: string;
+  installationId: string;
+  privateKey: ExternalActionMachineRequestSigningKey;
+  deploymentArchiveOrigin?: DeploymentArchiveOriginForHost;
+}>;
+export type MachineRpcTargetNotCurrentReason =
+  | 'requester_unavailable' | 'requester_credentials_mismatch' | 'requester_not_current'
+  | 'child_not_derived' | 'machine_revoked_or_replaced' | 'installation_mismatch'
+  | 'installation_key_unavailable' | 'installation_key_invalid' | 'root_target_mismatch'
+  | 'archive_child_unavailable' | 'archive_origin_mismatch' | 'setup_manage_required'
+  | 'private_target_mismatch';

@@ -70,6 +70,20 @@ export const MACHINE_POOL_INPUT_FIELDS = {
 } satisfies Record<MachinePoolActionIdV1, ActionInputFieldHint[]>;
 
 export const MANAGED_MACHINE_INPUT_FIELDS = {
+  'machines.environment.apply': [home,
+    { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+    { path: 'presetId', title: 'Preset id', widget: 'text', required: true },
+    { path: 'presetRevision', title: 'Preset revision', widget: 'integer', required: true }],
+'machines.setup.remove': [home,
+    { path: 'machineId', title: 'Machine id', widget: 'text', required: true }],
+'machines.managed.credentials.install': [home, managed,
+    { path: 'operation', title: 'Binding operation', widget: 'select', options: [{ value: 'install', label: 'Install' }, { value: 'release', label: 'Release' }] },
+    { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+    { path: 'executionRunId', title: 'Attached Run id', widget: 'text' },
+    { path: 'bindingKey', title: 'Accepted binding', widget: 'text', required: true },
+    { path: 'expectedResourceRevision', title: 'Credential revision', widget: 'number', required: true },
+    { path: 'expectedSourceRevision', title: 'Source revision', widget: 'text', required: true },
+    { path: 'expectedProviderTicket', title: 'Accepted source reference', widget: 'text', required: true }],
   'machines.provisioners.list': [home, { ...controller, required: false }, { ...contribution, required: false }],
   'machines.provisioners.check': [home, controller, contribution, credentials],
   'machines.provisioners.options': [home, controller, contribution, credentials,

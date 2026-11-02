@@ -1,3 +1,5 @@
+
+import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import type { ApiMachineClient } from '@/api/apiMachine';
 
 import type { BrowserDaemonControlRoutes } from './browser/control/routes';
@@ -24,6 +26,7 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerMachineVitalsRoutes'
   | 'registerMachineProcessesRoutes'
   | 'registerMachineResourcesPolicyRoutes'
+  | 'registerMachineAdminAccessRoutes'
   | 'registerMachineGuardRoutes'
   | 'registerStorageRoutes'
   | 'registerComputerRoutes'
@@ -50,6 +53,7 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachMachineVitalsRoutes(routes: DaemonMachineVitalsRoutes): void;
   attachMachineProcessesRoutes(routes: DaemonProcessesRoutes): void;
   attachMachineResourcesPolicyRoutes(routes: DaemonMachineResourcesPolicyRoutes): void;
+  attachMachineAdminAccessRoutes(routes: DaemonMachineAdminAccessRoutes): void;
   attachMachineGuardRoutes(routes: DaemonMachineGuardRoutes): void;
   attachStorageRoutes(routes: DaemonStorageRoutes): void;
   attachComputerRoutes(resolveComputer: () => ComputerRoutes | null): void;
@@ -65,6 +69,8 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   ): void;
   prepareApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar): void;
   attachApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar | null): void;
+
+
 }>;
 
 export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
@@ -76,6 +82,8 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let machineVitalsRoutes: DaemonMachineVitalsRoutes | null = null;
   let machineProcessesRoutes: DaemonProcessesRoutes | null = null;
   let machineResourcesPolicyRoutes: DaemonMachineResourcesPolicyRoutes | null = null;
+  let machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
+
   let machineGuardRoutes: DaemonMachineGuardRoutes | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
   let resolveComputer: (() => ComputerRoutes | null) | null = null;
@@ -163,6 +171,11 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       machineResourcesPolicyRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineResourcesPolicyRoutes(routes);
     },
+    attachMachineAdminAccessRoutes(routes) {
+      machineAdminAccessRoutes = routes;
+      input.getApiMachineForSessions()?.registerMachineAdminAccessRoutes(routes);
+    },
+
     attachMachineGuardRoutes(routes) {
       machineGuardRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineGuardRoutes(routes);
@@ -268,6 +281,10 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (machineResourcesPolicyRoutes) {
         apiMachineForSessions.registerMachineResourcesPolicyRoutes(machineResourcesPolicyRoutes);
       }
+      if (machineAdminAccessRoutes) {
+        apiMachineForSessions.registerMachineAdminAccessRoutes(machineAdminAccessRoutes);
+      }
+
       if (machineGuardRoutes) {
         apiMachineForSessions.registerMachineGuardRoutes(machineGuardRoutes);
       }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import {
     buildRelayAccessConfigureSystemTaskSpec,
@@ -32,16 +33,14 @@ describe('buildRelayAccessSystemTaskSpec', () => {
 
         expect(buildRelayAccessConfigureSystemTaskSpec({
             target,
-            providerId: 'tailscaleServe',
-            config: { providerId: 'tailscaleServe' },
+            config: createBuiltinRelayAccessSelection('tailscaleServe'),
             upstreamUrl: 'http://127.0.0.1:3005/',
         })).toEqual({
             protocolVersion: 1,
             kind: 'relay.access.configure.v1',
             params: {
                 target,
-                providerId: 'tailscaleServe',
-                config: { providerId: 'tailscaleServe' },
+                config: createBuiltinRelayAccessSelection('tailscaleServe'),
                 upstreamUrl: 'http://127.0.0.1:3005/',
             },
         });
@@ -66,8 +65,7 @@ describe('buildRelayAccessSystemTaskSpec', () => {
 
         expect(buildRelayAccessExecutionSystemTaskSpec({
             target: { kind: 'local' },
-            providerId: 'tailscaleServe',
-            config: { providerId: 'tailscaleServe' },
+            config: createBuiltinRelayAccessSelection('tailscaleServe'),
             upstreamUrl: 'http://127.0.0.1:3005/',
         })).toEqual({
             protocolVersion: 1,
@@ -85,8 +83,7 @@ describe('buildRelayAccessSystemTaskSpec', () => {
 
         expect(buildRelayAccessExecutionSystemTaskSpec({
             target,
-            providerId: 'tailscaleServe',
-            config: { providerId: 'tailscaleServe' },
+            config: createBuiltinRelayAccessSelection('tailscaleServe'),
             upstreamUrl: 'http://127.0.0.1:3005/',
         })).toEqual({
             protocolVersion: 1,

@@ -185,6 +185,9 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   }),
   z.strictObject({
     t: z.literal('account-change'),
+    // Advisory commit routing only; unknown kinds remain coarse at the reader.
+    changeKinds: z.optional(z.array(z.string())),
+    entityIds: z.optional(z.array(z.string())),
   }),
   z.looseObject({
     t: z.literal('delete-session'),

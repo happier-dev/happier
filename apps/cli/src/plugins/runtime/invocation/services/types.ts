@@ -69,6 +69,8 @@ export type PluginExternalActionContext = Readonly<{
 }>;
 
 export type PluginInvocationServicesSeed = Readonly<{
+    /** Bound by the actual Domain admission, never by plugin-authored operands. */
+    machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     /** Bound only by the canonical daemon background-service lifecycle. */
     demandBackgroundService?: PluginServices['backgroundServices']['demand'];
     /** Host invocation identity; never projected into the public plugin context. */

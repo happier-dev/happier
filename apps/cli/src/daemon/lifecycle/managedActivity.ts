@@ -1,6 +1,8 @@
 import type { RequesterWorkAttributionV1 } from './requesterWorkAttribution';
 import type { ActivityDecisionV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
+import type { MachineServiceIdentityV1 } from '@happier-dev/protocol';
+
 
 /** Private composition of incumbent work owners; never a persisted liveness store. */
 export type LiveWorkCategoryV1 = 'session' | 'finite' | 'terminal' | 'service'

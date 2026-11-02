@@ -25,6 +25,19 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 
 describe('action operation detail presentation', () => {
     it.each([
+        ['machine_admin_access_required', 'errors.machineAdminAccessRequired'],
+        ['managed_cli_unavailable', 'errors.machineManagedCliUnavailable'],
+    ] as const)('explains refused Domain setup %s while keeping its typed code in Technical details', (errorCode, messageKey) => {
+        const detail = projectActionOperationDetail(operation({ actionId: 'deployments.domains.add', state: 'failed',
+            settledAt: 2_000, error: { errorCode, error: errorCode },
+        }), 'available');
+        expect(detail.failure).toEqual({
+            reason: t(messageKey),
+            technicalLines: [{ key: 'failure-code', label: t('common.error'), value: errorCode }],
+        });
+    });
+
+    it.each([
         ['projects.script.run', 'script', 'project_command_step_failed'],
         ['projects.setup.apply', 'setup', 'project_setup_step_failed'],
     ] as const)('presents the observed process exit for %s', (actionId, purpose, errorCode) => {

@@ -1,3 +1,23 @@
+import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
+import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
+import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
+import { DeploymentRestoreNativeAdmissionV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
+import { isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { deploymentPreparationOperationForActionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
+import { isDeploymentPreparationActionIdV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
+import { isDeploymentReadActionIdV1 } from '../deployments/deploymentReadAdmissionV1.js';
+import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 } from '../auth/apiTokenGrant.js';
+import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DiscussionIdSchema } from '../discussions/references.js';
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentReadAdmissionV1Schema } from '../deployments/deploymentReadAdmissionV1.js';
+import { DeploymentPreparationAdmissionV1Schema } from '../deployments/deploymentPreparationAdmissionV1.js';
+import { DeploymentCandidatePublicationV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
+import { DeploymentDomainNativeAdmissionV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
+import { DeploymentRestartNativeAdmissionV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
+import { RegistryAppUpdateAdmissionV1Schema } from '../registries/registryAppUpdateAdmissionV1.js';
+import { DeploymentChildRoutingV1Schema } from '../deployments/deploymentChildRoutingV1.js';
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
@@ -1045,6 +1065,10 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     /** Exact run-now operand, stamped from the admitted plaintext request. */
     automationId: z.optional(ExternalActionTargetIdV1Schema),
+    /** Exact non-content Discussion root admitted by the encrypted or plaintext request. */
+    discussionId: z.optional(DiscussionIdSchema),
+    /** Exact admitted Environment; no controller-wide Machine authority is implied. */
+    environmentId: z.optional(DeploymentIdentifierV1Schema),
     idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
     target: ExternalActionTargetV1Schema,
     managedContinuation: z.optional(ExternalActionManagedContinuationV1Schema),
@@ -1062,21 +1086,25 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
     workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
     pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
+    approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
+    deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
+    deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
+    deploymentCandidatePublication: z.optional(DeploymentCandidatePublicationV1Schema),
+    deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema])),
+    registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionApiTokenServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
-  if (value.automationId !== undefined && value.actionId !== 'workflow.trigger.run_now') {
-    context.addIssue({ code: 'custom', path: ['automationId'], message: 'Automation admission binds only run-now' });
-  }
-  if (value.idempotencyKey !== undefined && value.actionId !== 'workflow.trigger.run_now') {
-    context.addIssue({ code: 'custom', path: ['idempotencyKey'], message: 'Manual retry identity binds only run-now' });
-  }
-  if (value.pendingResetStartAdmission && (value.actionId !== 'session.pending.resetStart.set'
-    || value.target.kind === 'session' && projectExternalActionPendingResetStartSessionDigestV1(value.target.sessionId) !== value.pendingResetStartAdmission.sessionDigest)) {
-    context.addIssue({ code: 'custom', path: ['pendingResetStartAdmission'], message: 'Reset admission binds only its exact Session set input' });
+  const native = value.deploymentNativeAdmission;
+  if (isDeploymentDomainChildActionIdV1(value.actionId) || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore'
+    ? !native || native.actionId !== value.actionId || native.environmentId !== value.environmentId
+      || (value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore') && (native.kind !== (value.actionId === 'deployments.restart' ? 'restart' : 'restore') || native.machineId !== value.machineId
+        || native.installationId !== value.installationId || value.target.kind !== 'machine' || value.target.machineId !== native.machineId)
+    : native !== undefined) {
+    context.addIssue({ code: 'custom', path: ['deploymentNativeAdmission'], message: 'Domain execution binds its exact original public input.' });
   }
   if (value.managedAdmission && (value.managedAdmission.actionId !== value.actionId
     || value.managedAdmission.input.homeId !== value.serverIdentityId
@@ -1086,6 +1114,55 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (value.managedAccountExecutor && (!value.managedAdmission
     || value.managedAdmission.actionId !== 'machines.managed.power.set' && value.managedAdmission.actionId !== 'machines.managed.delete')) {
     context.addIssue({ code: 'custom', path: ['managedAccountExecutor'], message: 'Account executor binds an exact managed control admission.' });
+  }
+  if (value.registryAppUpdateAdmission && (value.actionId !== 'registries.updates.check'
+    || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {
+    context.addIssue({ code: 'custom', path: ['registryAppUpdateAdmission'], message: 'Registry app demand binds only its exact read receiver.' });
+  }
+  if (value.deploymentPreparationAdmission
+    ? value.deploymentPreparationAdmission.operation !== deploymentPreparationOperationForActionV1(value.actionId)
+    : isDeploymentPreparationActionIdV1(value.actionId)) {
+    context.addIssue({ code: 'custom', path: ['deploymentPreparationAdmission'], message: 'Deployment preparation binds only its reviewed operation.' });
+  }
+  const preparation = value.deploymentPreparationAdmission;
+  if (value.deploymentCandidatePublication && (!['deployments.deploy', 'deployments.rollback', 'deployments.promote'].includes(value.actionId)
+    || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    || (value.deploymentCandidatePublication.environmentContentArtifactId !== undefined) !== (value.actionId === 'deployments.promote'))) {
+    context.addIssue({ code: 'custom', path: ['deploymentCandidatePublication'], message: 'Candidate publication binds its exact native root.' });
+  }
+  if (preparation?.operation === 'catalog' && (value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    || preparation.machineId !== value.machineId || preparation.installationId !== value.installationId)) {
+    context.addIssue({ code: 'custom', path: ['deploymentPreparationAdmission'], message: 'Catalog preparation binds the exact executing installation.' });
+  }
+  if (preparation?.operation === 'template' && (value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    || preparation.machineId !== value.machineId || preparation.target.installationId !== value.installationId)) {
+    context.addIssue({ code: 'custom', path: ['deploymentPreparationAdmission'], message: 'Template admission binds the exact executing installation.' });
+  }
+  if (isDeploymentReadActionIdV1(value.actionId) ? !value.deploymentReadAdmission
+    || value.deploymentReadAdmission.actionId !== value.actionId || value.target.kind !== 'machine'
+    || value.target.machineId !== value.machineId || value.deploymentReadAdmission.machineId !== value.machineId
+    || (value.deploymentReadAdmission.actionId !== 'deployments.health.current'
+      && value.deploymentReadAdmission.installationId !== value.installationId) : value.deploymentReadAdmission !== undefined) {
+    context.addIssue({ code: 'custom', path: ['deploymentReadAdmission'], message: 'Deployment reads bind their exact authenticated receiver and operation.' });
+  }
+  if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
+    context.addIssue({ code: 'custom', path: ['approvalDecisionAdmission'], message: 'Approval admission binds only its decision Action' });
+  }
+  if (value.automationId !== undefined && value.actionId !== 'workflow.trigger.run_now') {
+    context.addIssue({ code: 'custom', path: ['automationId'], message: 'Automation admission binds only run-now' });
+  }
+  if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
+    && !('authentication' in value && (isDeploymentChildRootActionIdV1(value.actionId) || value.actionId === 'deployments.teardown'
+      || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore')))
+    || value.target.kind !== 'machine')) {
+    context.addIssue({ code: 'custom', path: ['environmentId'], message: 'Environment admission binds only CI deploy and operation reads on their admitted host' });
+  }
+  if (value.idempotencyKey !== undefined && value.actionId !== 'workflow.trigger.run_now') {
+    context.addIssue({ code: 'custom', path: ['idempotencyKey'], message: 'Manual retry identity binds only run-now' });
+  }
+  if (value.pendingResetStartAdmission && (value.actionId !== 'session.pending.resetStart.set'
+    || value.target.kind === 'session' && projectExternalActionPendingResetStartSessionDigestV1(value.target.sessionId) !== value.pendingResetStartAdmission.sessionDigest)) {
+    context.addIssue({ code: 'custom', path: ['pendingResetStartAdmission'], message: 'Reset admission binds only its exact Session set input' });
   }
   if (value.workflowActionOrigin && (value.sessionActionOrigin || value.managedContinuation || value.handoffAdmission
     || value.workflowActionOrigin.requestId !== value.requestId
@@ -1121,6 +1198,11 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
   v: z.literal(1),
   token: z.string().check(z.minLength(1)),
   binding: ExternalActionExecutionAuthorizationBindingV1Schema,
+  /** Installed SCM owner resolves its protected saved result before any child input. */
+  scmRefineSession: z.optional(z.strictObject({
+    sessionId: ExternalActionTargetIdV1Schema,
+    signature: z.string().check(z.regex(/^[A-Za-z0-9_-]{86}$/u)),
+  })),
   /** Private installed-key custody on this same carrier; never principal authority. */
   requesterAccountContext: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
   /** Home-proved finite placement hint and private custody; neither retargets the root. */
@@ -1175,8 +1257,11 @@ export type ExternalActionRequesterAccountProjectionV1 = Readonly<{
   }>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null>;
   isCurrent(): Promise<boolean>;
   readArtifact(ref: PromptArtifactRefV1 & Readonly<{ serverId: string }>,
-    options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{
+    options?: Readonly<{ signal?: AbortSignal; authorization?: ExternalActionExecutionAuthorizationV1 }>): Promise<Readonly<{
       artifactId: string; header: unknown; promptLibraryArtifact?: PromptLibraryStoredArtifact;
+      /** Only documents within the root's admitted signed purpose; never an unrelated root's full-content port. */
+      document?: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>;
+        body: ArtifactBodyV1 | null; revision: ArtifactRevisionV1 }>;
     }> | null>;
 }>;
 /** Host-local HTTP authority; no bearer or private Account material is exposed. */
@@ -1194,6 +1279,7 @@ export type ExternalActionRequesterHttpProjectionV1 = Readonly<{
     body?: unknown;
     signal?: AbortSignal;
     reviewedChild?: ReviewedActionChildHttpProofV1;
+    nativeIncumbentSource?: z.infer<typeof DeploymentChildExecutionProofV1Schema>['nativeIncumbentSource'];
   }>): Promise<Readonly<Record<string, string>> | null>;
 }>;
 export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActionExecutionAuthorizationV1Schema>
@@ -1207,6 +1293,10 @@ export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActi
 
 /** Optional authenticated auxiliary arm of the incumbent socket RPC request. */
 export const ExternalActionMachineRpcSourceExecutionV1Schema = lazyZodSchema(() => z.strictObject({
+  deploymentChildRouting: z.optional(DeploymentChildRoutingV1Schema),
+
+  reviewedChild: z.optional(ReviewedActionChildHttpProofV1Schema),
+
   v: z.literal(1),
   authorization: ExternalActionExecutionAuthorizationV1Schema,
   effectActionId: ExternalActionActionIdV1Schema,
@@ -1214,7 +1304,10 @@ export const ExternalActionMachineRpcSourceExecutionV1Schema = lazyZodSchema(() 
   installationId: z.string().check(z.trim(), z.minLength(1)),
   machineSignature: z.string().check(z.regex(/^[A-Za-z0-9_-]{86}$/u)),
 }));
-export const ExternalActionMachineRpcExecutionV1Schema = ExternalActionMachineRpcSourceExecutionV1Schema;
+export const ExternalActionMachineRpcExecutionV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ExternalActionMachineRpcSourceExecutionV1Schema.shape,
+  deploymentChildExecution: z.optional(DeploymentChildExecutionProofV1Schema),
+}));
 export type ExternalActionMachineRpcExecutionV1 = z.infer<typeof ExternalActionMachineRpcExecutionV1Schema>;
 
 export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER = 'x-happier-action-execution-authorization';
@@ -1413,3 +1506,18 @@ export const ReviewedActionChildHttpProofV1Schema = lazyZodSchema(() => z.strict
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
 export type ReviewedActionChildHttpProofV1 = Readonly<z.infer<typeof ReviewedActionChildHttpProofV1Schema>>;
+
+export function projectExternalActionApprovalDecisionAdmissionV1(input: unknown): ExternalActionApprovalDecisionAdmissionV1 {
+  const fields = z.looseObject(ExternalActionApprovalDecisionAdmissionV1Schema.shape).parse(input);
+  return { artifactId: fields.artifactId, decision: fields.decision };
+}
+export type ExternalActionApprovalDecisionAdmissionV1 = z.infer<typeof ExternalActionApprovalDecisionAdmissionV1Schema>;
+export const ExternalActionApprovalDecisionAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  artifactId: z.string().check(z.minLength(1)),
+  decision: z.enum(['approve', 'reject', 'cancel']),
+}));
+
+export { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+export { createDeploymentCandidatePublicationV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+export { isDeploymentNativeReadActionIdV1 } from '../deployments/deploymentReadAdmissionV1.js';
+export { deploymentPreparationOperationForActionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';

@@ -1,3 +1,6 @@
+import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
+import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
+import { MachineSetupV1Schema } from './machineSetupV1.js';
 import * as z from 'zod/mini';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -121,3 +124,17 @@ export type RetentionV1 = z.infer<typeof RetentionV1Schema>;
 export type ManagedControllerV1 = z.infer<typeof ManagedControllerV1Schema>;
 export type ValidatedLaunchSnapshotV1 = z.infer<typeof ValidatedLaunchSnapshotV1Schema>;
 export type RetainedManagedLaunchSnapshotV1 = z.infer<typeof RetainedManagedLaunchSnapshotV1Schema>;
+
+export const ManagedControllerAccessV1Schema = lazyDefinition(() => z.strictObject({
+  installationPublicKey: MachineInstallationPublicKeySchema,
+  custodian: z.strictObject({ accountId: id() }),
+}));
+
+export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
+  setup: MachineSetupV1Schema,
+  state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
+  operation: z.optional(z.strictObject({ operationId: id() })),
+  errorCode: z.optional(id()),
+}).check(z.superRefine((value, context) => {
+  if (value.state !== 'failed' && value.errorCode !== undefined) context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
+})));

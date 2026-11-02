@@ -1,3 +1,7 @@
+import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
+import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -41,10 +45,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 export type RequesterAccountActionAuthorizationInput = Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   invocation?: ExternalActionRequesterInvocationV1;
-  /** Observed stable identity for the admitted bootstrap's exact Home. */
+  /** Observed stable identity for the captured custody's exact Home. */
   serverIdentityId: string;
-  bootstrap: Pick<AdmittedRequesterSessionBootstrap,
-    'credentials' | 'attribution' | 'serverHttpBaseUrl' | 'isCurrent'> & Partial<Pick<AdmittedRequesterSessionBootstrap, 'getBoundSessionId'>>;
+  /** Existing port name; an admitted private bootstrap or qualified ordinary
+   * owner supplies the same Account ports without fabricating Session birth. */
+  bootstrap: RequesterAccountActionCustody;
   signal?: AbortSignal;
 }>;
 
@@ -174,12 +179,40 @@ async function projectAdmittedAccountCustody(
       readArtifact: async (ref, options) => {
         if (!await isServerProfileHomeIdentity(stamp.serverId, ref.serverId) || options?.signal?.aborted || !await isCurrent()) return null;
         try {
+          const root = parsed.data.binding;
+          const publish = root.actionId === 'deployments.publish';
+          const appUpdate = root.actionId === 'registries.updates.check' && root.registryAppUpdateAdmission !== undefined;
+          const preparation = root.deploymentPreparationAdmission;
+          const setup = deploymentPreparationOperationForActionV1(root.actionId) === 'setup' && preparation?.operation === 'setup';
+          const signedDocument = publish || appUpdate || setup;
+          const candidate = publish && preparation?.operation === 'publish' ? preparation.candidate : undefined;
+          const supplied = ExternalActionExecutionAuthorizationV1Schema.safeParse(options?.authorization);
+          const http = options?.authorization?.requesterHttpProjection;
+          if (publish && (!candidate || candidate.contentArtifactId !== ref.artifactId)) return null;
+          if (signedDocument && (!supplied.success || supplied.data.token !== parsed.data.token || !sameStrictJsonValue(supplied.data.binding, root)
+            || !http || http.accountId !== stamp.accountId || http.serverId !== stamp.serverId
+            || http.serverIdentityId !== input.serverIdentityId
+            || normalizeServerHttpBaseUrl(http.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(bootstrap.serverHttpBaseUrl)
+            || !await http.isCurrent())) return null;
+          const authorizationHeaders: import('@/api/artifacts/accountArtifactStore').ArtifactRequestAuthorizationHeaders | undefined = signedDocument
+            ? async request => {
+              const headers = http && await http.createRequestHeaders({ ...request, effectActionId: root.actionId,
+                ...(options?.signal ? { signal: options.signal } : {}) });
+              if (!headers || headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== parsed.data.token)
+                throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
+              return { ...headers };
+            } : undefined;
           const artifact = await runWithServerHttpBaseUrl(bootstrap.serverHttpBaseUrl,
-            () => artifacts.read(ref.artifactId, { ...options, includeSharedAudience: false }));
+            () => artifacts.read(ref.artifactId, { ...(options?.signal ? { signal: options.signal } : {}), includeSharedAudience: false,
+              ...(authorizationHeaders ? { authorizationHeaders, prepareRecipients: false } : {}) }));
           if (!artifact || artifact.artifactId !== ref.artifactId
-            || options?.signal?.aborted || !await isCurrent()) return null;
+            || options?.signal?.aborted || !await isCurrent() || signedDocument && !await http!.isCurrent()) return null;
+          if (candidate && (artifact.revision.headerVersion !== candidate.contentHeaderVersion
+            || artifact.revision.bodyVersion !== candidate.contentBodyVersion)) return null;
           const promptLibraryArtifact = projectAccountArtifactToPromptLibraryStoredArtifact(artifact);
           return { artifactId: artifact.artifactId, header: artifact.header,
+            ...(signedDocument ? { document: { artifactId: artifact.artifactId, header: artifact.header,
+              body: artifact.body, revision: artifact.revision } } : {}),
             ...(promptLibraryArtifact ? { promptLibraryArtifact } : {}) };
         } catch (error) { refuseExternalActionPhase('requester_artifact_read', stamp.machineId, error); return null; }
       },
@@ -247,6 +280,8 @@ export async function resolveAdmittedRequesterAccountReadRuntime(input: Readonly
 
 export async function admitRequesterAccountActionContext(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
+  deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
+  deploymentChild?: import('@happier-dev/protocol').DeploymentChildRpcV1;
   purpose?: ExternalActionRequesterAccountContextPurposeV1;
   invocation?: ExternalActionRequesterInvocationV1;
   credentials: StoredCredentials;
@@ -306,7 +341,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
       trace('requester.profile', () => runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () =>
         fetchAccountProfile({ token: input.credentials.token, ...(input.signal ? { signal: input.signal } : {}) }))),
       trace('requester.settings_currentness', () => fetchAccountEncryptionCurrentness({
-        token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
+        credentials: input.credentials, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
         allowCredentialRecovery: false,
         ...(input.signal ? { signal: input.signal } : {}),
       })),
@@ -339,6 +374,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
       || !observation.isCurrent(currentness)) return refused('settings_identity');
     const accountSettingsContext = await trace('requester.settings', () => runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => bootstrapAccountSettingsContext({
       credentials: input.credentials, mode: 'blocking', refresh: 'force', publication: 'invocation',
+      caller: 'requester_action_admission',
       allowCacheFallback: false,
       ...(input.signal ? { signal: input.signal } : {}),
       expectedAccountEncryptionMode: currentness.mode, honorAccountSettingsModeEnv: false,
@@ -366,7 +402,11 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
     // observation before constructing subscriptions or publishing private ports.
     if (sourcePreparation && !await authorization.requesterAccountProjection!.isCurrent()) return refused('currentness');
     phase = 'requester_saved_secret_context';
+    const binding = parsed.data.binding;
     const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({ credentials: input.credentials,
+      // The Home-signed Machine grant; native-source acquisition owns its Manage rule.
+      machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+        role: binding.admittedMachineRole },
       snapshot: accountSettingsContext, serverHttpBaseUrl: input.serverHttpBaseUrl,
       isCurrent: authorization.requesterAccountProjection!.isCurrent });
     savedSecrets = savedSecretOperationContext;
@@ -387,12 +427,18 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
       requesterAccountProjection: { value: projection, enumerable: false },
     });
     const context: RequesterAccountActionContext = Object.freeze({ credentials: input.credentials, accountSettingsContext, savedSecretOperationContext,
+      ...(input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
+      ...(input.deploymentChild ? { deploymentChild: input.deploymentChild } : {}),
       ...(input.invocation ? { invocation: input.invocation } : {}),
       authorization: carrier, resolveEncryption,
       refreshAccountSettings,
+      subscribeEnvironmentAccess: observation.subscribeEnvironmentAccess,
       serverHttpBaseUrl: input.serverHttpBaseUrl,
-      isCurrent: input.isCustodyCurrent && !sourcePreparation ? async () => await authorization.requesterAccountProjection!.isCurrent()
-        && await input.isCurrent() && await authorization.requesterAccountProjection!.isCurrent()
+      // input.isCurrent spent Home admission above. Finite work keeps installed
+      // custody; only a forwarded receiver retains its own child proof.
+      isCurrent: input.purpose?.kind === 'machine_rpc' && input.purpose.recipient
+        ? async () => await authorization.requesterAccountProjection!.isCurrent()
+          && await input.isCurrent() && await authorization.requesterAccountProjection!.isCurrent()
         : authorization.requesterAccountProjection!.isCurrent,
       ...(input.isCustodyCurrent && !sourcePreparation ? { isCustodyCurrent: authorization.requesterAccountProjection!.isCurrent } : {}),
       retain,
@@ -625,3 +671,21 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
 
 export type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 export { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+
+export type RequesterAccountActionCustody = Readonly<{
+  credentials: StoredCredentials;
+  attribution: RequesterWorkAttributionV1;
+  serverHttpBaseUrl: string;
+  isCurrent(): Promise<boolean>;
+  getBoundSessionId?(): string | null;
+}>;
+
+export function readApiTokenDeploymentArtifactStore(authorization?: ExternalActionExecutionAuthorizationV1) {
+  return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[tokenDeploymentArtifacts] ?? null;
+}
+
+type TokenProjection = ExternalActionRequesterAccountProjectionV1 & {
+  [tokenDeploymentArtifacts]?: ReturnType<typeof createAccountArtifactStore>;
+};
+
+const tokenDeploymentArtifacts = Symbol('tokenDeploymentArtifacts');

@@ -62,14 +62,15 @@ describe('daemon managed policy census transport', () => {
     ] as const)(
         'retires held accepted work after its own %s origin changes (retargeted: %s), ignoring other origins', async (kind, retargeted) => {
         const signing = nacl.sign.keyPair();
+        const controller = { machineId: 'controller', installationId: 'installation' };
         const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
-            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            controller, enrolledMachineId: 'guest',
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
         const target = ManagedWakeTargetV1Schema.parse({ homeId: 'home', managedId: machine.id,
-            enrolledMachineId: 'guest', expectedIntentRevision: 0, controller: machine.controller, reason: 'admitted-work',
+            enrolledMachineId: 'guest', expectedIntentRevision: 0, controller, reason: 'admitted-work',
             origin: kind === 'session-input' ? { kind, session: { homeId: 'home', sessionId: 'session' }, pendingRequestId: 'pending', requestedAt: 1 }
                 : kind === 'workflow-assignment' ? { kind, runId: 'run', revision: 1, assignment: { machineId: 'guest' } }
                 : { kind, session: { homeId: 'home', sessionId: 'session' }, delivery: { runId: 'run', revision: 1 } } });
@@ -84,7 +85,7 @@ describe('daemon managed policy census transport', () => {
         const transport = apiMachine as unknown as { dispatchUpdate(update: Update): boolean };
         let held: AbortSignal | undefined;
         const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
-            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller: machine.controller,
+            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
                 custodianAccountId: 'owner', privateKey: signing.secretKey, token: 'token', serverUrl: 'https://policy.example', signal }),
             // The native operation's outstanding lifetime is the boundary observed by the scheduler.
             executePolicy: async input => {

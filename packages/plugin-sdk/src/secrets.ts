@@ -1,3 +1,4 @@
+import type { AccessProviderRefV1 } from './accessProviders.js';
 /** @moduleRealm daemon */
 /** @realm any */
 export { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
@@ -21,4 +22,21 @@ export interface SecretsService {
         id: string,
         options?: { expectedRevision?: string; signal?: AbortSignal },
     ): Promise<SecretMutationResult>;
+}
+
+export type SharedSecretAudience = Readonly<{
+    accountGrants?: string[] | undefined;
+    teamGrants?: string[] | undefined;
+    groupGrants?: string[] | undefined;
+}>;
+
+export type SharedSecretSaveResult = Readonly<{ ref: string; resourceRevision: number }>;
+
+export interface MachineConnectorSecretsService {
+    write(input: Readonly<{
+        token: Uint8Array;
+        subject: Readonly<{ provider: AccessProviderRefV1; connectorId: string }>;
+    }>): Promise<Readonly<{
+        grants: readonly Readonly<{ machineId: string; installationId: string; grantRef: string }>[];
+    }>>;
 }

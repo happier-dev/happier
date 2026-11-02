@@ -44,6 +44,8 @@ import {
 } from './invocation/services/exec';
 import type { WorkspaceProjectManagedServiceSupervisionInput } from './invocation/services/managedServicesOwner';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from './invocation/services/managedServiceSpecNormalization';
+import { createProjectNativeToolchainIoForHost } from './invocation/services/exec';
+
 
 async function loadInstalledManagedServiceFixture(input: Readonly<{
     happyHomeDir: string;
@@ -110,7 +112,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
                 projectLaunch: {
                     status: 'ready', reviewedEffectDigest: 'reviewed-native-effect',
                     environment: { selection: { kind: 'host' }, root: happyHomeDir, platform: process.platform,
-                        io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) },
+                        io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) },
                 },
                 launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: happyHomeDir, env: {}, release() {} },
             }),

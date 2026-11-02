@@ -234,7 +234,7 @@ describe('current-session presentation publication composition', () => {
       }),
       resolveAcpHostLaunch: async () => ({ command: process.execPath, args: [executable], env: {}, unsetEnv: [], timeouts: {} }),
       createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
-        exec: createStablePluginExecService({ allowedExecutables: [], signal,
+        exec: createStablePluginExecService({  signal,
           isOccurrenceCurrent: () => !controller.signal.aborted,
           resolveExecutable: async () => { throw new Error('The host-owned ACP fixture already resolved its executable'); },
           resolvePath: async () => directory,

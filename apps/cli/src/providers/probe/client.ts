@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
@@ -78,7 +79,7 @@ export type ProviderProbeManagedServiceRequest = (
 ) => Promise<Readonly<{
   status: number;
   headers: Readonly<Record<string, string>>;
-  body: ReadableStream<Uint8Array> | null;
+  body: ManagedServiceResponse['body'];
 }>>;
 
 export type ProviderCatalogGetRequest = Readonly<{
@@ -375,7 +376,7 @@ async function readManagedServiceResponseWithProviderProbeDeadlines(input: Reado
         for (;;) {
           resetIdle();
           let next: Awaited<ReturnType<
-            ReadableStreamDefaultReader<Uint8Array>['read']
+            typeof reader.read
           >>;
           try {
             next = await Promise.race([reader.read(), aborted.promise]);

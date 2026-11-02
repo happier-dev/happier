@@ -1,3 +1,4 @@
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
 import { type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
@@ -367,4 +368,22 @@ export function isApprovalRequestActionReplayAdmitted(request: ApprovalRequest, 
 
 export function isBlockingApprovalRequest(request: ApprovalRequest): boolean {
   return request.approval?.flow === 'blocking';
+}
+
+export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
+  context: ActionExecutorContext;
+  artifactId: string;
+  origin: ApprovalExecutionOriginV1;
+}>): boolean {
+  const { context, artifactId, origin } = input;
+  if (isPresentUserHostInvocation(context)) return true;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  return context.authority === 'present_user'
+    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+    && context.actionCaller?.kind === 'host' && !context.externalActionCredential && !context.rpcSessionAuthorization
+    && binding !== undefined && 'authentication' in binding && binding.authentication.kind === 'account'
+    && binding.actionId === 'approval.request.decide'
+    && binding.approvalDecisionAdmission?.artifactId === artifactId && binding.approvalDecisionAdmission.decision === 'approve'
+    && binding.accountId === origin.accountId && binding.serverIdentityId === origin.serverIdentityId
+    && binding.machineId === origin.machineId;
 }

@@ -1,15 +1,16 @@
+import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
+import { MachineInstallationProofV1Schema } from '../machines/identity/installationIdentity.js';
+import { type MachineInstallationProofPayloadV1 } from '../machines/identity/installationIdentity.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { verifyEd25519Signature } from '../crypto/ed25519.js';
+import { decodeBase64 } from '../crypto/base64.js';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
     DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
-import { MachineInstallationProofV1Schema, type MachineInstallationProofPayloadV1 } from '../machines/identity/installationIdentity.js';
-import { decodeBase64 } from '../crypto/base64.js';
-import { verifyEd25519Signature } from '../crypto/ed25519.js';
-import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
-import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
-import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
-import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 
 /** Finite installed observations remain inside the private controller-to-target payload. */
 export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.strictObject({
@@ -90,10 +91,12 @@ export const DeploymentDomainStateV1Schema = lazyZodSchema(() => z.enum([
 
 /** Source-admitted metadata records a reference, not current private-body access. */
 export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject({
+placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
+
     v: z.literal(1), id, environmentId: id, targetLinkId: id, revision,
     state: DeploymentDomainStateV1Schema, ...DeploymentArtifactContentReferenceV1Schema.shape,
     createdByAccountId: id, observedAtMs: z.optional(timestamp),
-    placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
+
     createdAtMs: timestamp, updatedAtMs: timestamp, deletedAtMs: z.optional(timestamp),
 }));
 export type DeploymentDomainHeaderV1 = z.infer<typeof DeploymentDomainHeaderV1Schema>;
@@ -154,3 +157,15 @@ export type DeploymentDomainPreparedContentInputV1 = z.infer<typeof DeploymentDo
 export type DeploymentDomainObservationBodyV1 = z.infer<typeof DeploymentDomainObservationBodyV1Schema>;
 
 /** The incumbent installation-proof envelope signs exact material, native evidence and Domain CAS. */
+
+export function deploymentDomainObservationProofPayloadV1(input: Readonly<{
+    expectedDomainRevision: number; observation: DeploymentDomainObservationBodyV1;
+}>): MachineInstallationProofPayloadV1 {
+    const observation = DeploymentDomainObservationBodyV1Schema.parse(input.observation);
+    const placement = observation.capture.placement;
+    return { version: 1, machineId: placement.machineId, installationId: placement.installationId, accountId: placement.accountId,
+        deploymentDomainTransition: { serverId: placement.serverId, environmentId: placement.environmentId, domainId: placement.domainId,
+            actionOperationId: placement.actionOperationId, expectedRevision: input.expectedDomainRevision,
+            requestBodyDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-domain-observation-v1',
+                [createCanonicalJsonSigningInput(observation)]) } };
+}

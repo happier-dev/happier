@@ -459,7 +459,7 @@ describe('ApiMachineClient machine admission transport', () => {
           installedIdentities: new Map([['source-parent', parentIdentity], ['target-child', targetIdentity]]) });
         return await targetTransport.withInstalledMachine('source-parent', async () => {
           await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
-            credentials: fixture.credentials, serverId: fixture.serverId }));
+            credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
           await fixture.settleProjects();
           try {
             return { ok: true, result: await sourceReceiver!.handleRequest({ ...raw, method: packet.method,
@@ -469,7 +469,7 @@ describe('ApiMachineClient machine admission transport', () => {
               callerInputAuthorization: root }) };
           } finally {
             await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
-              credentials: actorCredentials, serverId: fixture.serverId }));
+              credentials: actorCredentials, serverId: fixture.serverId, publication: 'installed' }));
             await fixture.settleProjects();
           }
         });

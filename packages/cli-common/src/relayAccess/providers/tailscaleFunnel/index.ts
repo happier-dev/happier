@@ -11,19 +11,19 @@ import {
     extractTailscaleServeHttpsUrl,
     tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
     runTailscaleFunnelEnable,
-    runTailscaleFunnelReset,
+    runTailscaleFunnelDisable,
     runTailscaleFunnelStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
 
-import { relayAccessProviderDescriptorsById } from '../../catalog.js';
+import { readBuiltinRelayAccessProviderId, relayAccessProviderDescriptorsById } from '../../catalog.js';
 
 const descriptor = relayAccessProviderDescriptorsById.tailscaleFunnel;
 
 export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
     descriptor,
     configure: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config.providerId !== 'tailscaleFunnel') {
+        if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleFunnel') {
             return { state: 'unknown' };
         }
 
@@ -80,20 +80,20 @@ export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
         return { state: 'unknown' };
     },
     disable: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config.providerId !== 'tailscaleFunnel') {
+        if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleFunnel') {
             return;
         }
         const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
-        await runTailscaleFunnelReset(
+        await runTailscaleFunnelDisable(
             resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
             {
                 ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
                 ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
             },
-        ).catch(() => undefined);
+        );
     },
     status: async ({ config, ctx, timeoutMs, deadline, signal }) => {
-        if (config?.providerId !== 'tailscaleFunnel') {
+        if (!config || readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleFunnel') {
             return { state: 'unknown' };
         }
 

@@ -1,3 +1,4 @@
+import { type StoredCredentials } from '@/persistence';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, opendir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -2455,3 +2456,8 @@ export async function acknowledgeExternalSessionOperationProgressProjection(
     return acknowledged;
   });
 }
+
+export type ExternalSessionOperationAccountAdmission = Readonly<{
+  credentials: StoredCredentials;
+  accountScope?: ExternalSessionOperationAccountScope;
+}>;

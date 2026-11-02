@@ -1,3 +1,4 @@
+import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
@@ -7,7 +8,7 @@ import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/o
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
-import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent, pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginActionPresentUserGatePolicy, PluginActionInputParser } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
@@ -78,6 +79,7 @@ import {
 export type TargetActionDefinition = Readonly<{
     id: string;
     dangerLevel: PluginActionDangerLevelV2;
+    readOnly?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['readOnly'];
     scopes: readonly string[];
     surfaces: readonly string[];
     inputSchema?: object;
@@ -129,6 +131,8 @@ type TargetActionConnectedAccountOperationBinding = Readonly<{
 }>;
 
 export type InvokeTargetActionParams = Readonly<{
+    /** Host-private sink captured from an admitted Domain's controller and receiver. */
+    machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     pluginId: string;
     localId: string;
     input: unknown;
@@ -165,6 +169,7 @@ export type InvokeTargetActionParams = Readonly<{
     messageAction?: MessageActionAvailableSnapshotV1;
     sessionId?: string;
     signal?: AbortSignal;
+    requiredReadOnly?: true;
     facts?: ContributionPolicyFacts;
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
     /** Host-stamped durable target for exact API approval replay. */
@@ -387,6 +392,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             const definition: TargetActionDefinition = Object.freeze({
                 id: registration.definition.id,
                 dangerLevel: registration.definition.dangerLevel,
+                ...(registration.definition.readOnly === undefined ? {} : { readOnly: registration.definition.readOnly }),
                 scopes: Object.freeze([...registration.definition.scopes]),
                 surfaces: Object.freeze([...registration.definition.surfaces]),
                 ...(registration.definition.confirmation === undefined
@@ -524,6 +530,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ? Object.freeze({ ...invocation.messageAction })
                     : undefined;
                 const seed = Object.freeze({
+                    ...(invocation.machineConnectorSecrets ? { machineConnectorSecrets: invocation.machineConnectorSecrets } : {}),
                     plugin: Object.freeze({ id: registration.pluginId, version: registration.pluginVersion }),
                     contribution: Object.freeze({ id: registration.localId, qualifiedId }),
                     occurrenceId: registration.occurrenceId,
@@ -789,6 +796,12 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             ? value => params.redactDiagnosticText!(diagnosticScope, value) : undefined,
                             rawInput.success ? { input: rawInput.data, secretInputPaths: indexed.registration.definition.secretInputPaths ?? [] } : undefined) });
                 } finally { await complete(); }
+            }
+            if (invocation.requiredReadOnly
+                && !pluginActionDeclarationIsReadOnlyForInput(indexed.registration.definition, preparedInput.input)) {
+                await complete();
+                return Object.freeze({ kind: 'settled' as const,
+                    result: { ...unavailable('plugin_action_read_only_required', 'This Resource requires an explicitly declared read operand'), actionHandlerInvocation: 'notStarted' as const } });
             }
             beginDiagnosticScope(preparedInput.input);
             const resolveCurrentAction = (): ResolvedTargetAction | null => {

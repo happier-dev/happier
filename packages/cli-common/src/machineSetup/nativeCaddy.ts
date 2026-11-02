@@ -30,17 +30,14 @@ export const nativeCaddyProfile = {
 } as const;
 
 export function createNativeCaddySetupInput(input: Readonly<{
-    daemonGroup: string; daemonGroupId: number; routedNetworks: readonly string[];
+    daemonGroup: string; daemonGroupId: number; routedNetworks: readonly string[]; initialConfig: string;
     bindings: Pick<NativeCaddySetupInput, 'privateBinding' | 'publicBindings'>;
 }>): NativeCaddySetupInput {
     const profile = nativeCaddyProfile;
     return { containerName: profile.containerName, stateDirectory: profile.stateDirectory, adminDirectory: profile.adminDirectory,
         daemonGroup: input.daemonGroup, daemonGroupId: input.daemonGroupId,
         originPort: profile.portRequirement.containerPort, routedNetworks: input.routedNetworks, ...input.bindings,
-        initialConfig: JSON.stringify({ admin: { listen: 'unix//run/happier-caddy/admin.sock|0660' },
-            apps: { http: { servers: { 'happier-private-origin': {
-                listen: [`:${profile.portRequirement.containerPort}`], automatic_https: { disable: true }, routes: [],
-            } } } } }),
+        initialConfig: input.initialConfig,
     };
 }
 

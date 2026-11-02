@@ -1,3 +1,5 @@
+import { type SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { randomUUID } from 'node:crypto';
 import {
   clearSessionExplicitStopV1FromMetadata,
@@ -100,5 +102,42 @@ export async function clearSessionExplicitStopIntentAfterResume(input: Readonly<
       return headers;
     } } : {}),
     updater: metadata => clearSessionExplicitStopV1FromMetadata(metadata, stop.requestId),
+  });
+}
+
+export async function recordSessionStopIntent(input: Readonly<{
+  credentials: StoredCredentials;
+  rawSession: RawSessionRecord;
+  sessionId: string;
+  requestId?: string;
+  actionContext?: ActionExecutorContext;
+  stopIntent: SessionStopIntent;
+  resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
+  accountEncryptionCurrentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['accountEncryptionCurrentness'];
+  currentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['currentness'];
+  signal?: AbortSignal;
+}>): Promise<void> {
+  const hold = buildSessionStopHoldV1({ ...input, requestId: input.requestId ?? randomUUID(), requestedAtMs: Date.now() });
+  if (hold.kind === 'refused') throw new Error('Explicit Stop caller unavailable');
+  // A lifecycle Stop never writes or clears a hold, including an existing
+  // person's hold. Physical Stop/currentness remains with the caller's owner.
+  if (hold.kind === 'no_hold') return;
+  await updateSessionMetadataWithRetry({
+    token: input.credentials.token,
+    credentials: input.credentials,
+    sessionId: input.sessionId,
+    rawSession: input.rawSession,
+    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: (
+      request: Parameters<NonNullable<Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders']>>[0],
+    ) => {
+      const headers = input.resolveAuthorizationHeaders?.(request);
+      if (!headers) throw new Error('Explicit Stop metadata authorization unavailable');
+      return headers;
+    } } : {}),
+    ...(input.accountEncryptionCurrentness ? { accountEncryptionCurrentness: input.accountEncryptionCurrentness } : {}),
+    ...(input.currentness || input.signal ? { currentness: { ...input.currentness,
+      ...(input.signal ? { signal: input.signal } : {}),
+    } } : {}),
+    updater: metadata => writeSessionExplicitStopV1ToMetadata(metadata, hold.stop),
   });
 }

@@ -1,3 +1,5 @@
+import { readTransferPayloadChunk, resolveTransferPayloadManifestHash, resolveTransferPayloadSizeBytes, type TransferPayloadSource } from './transferPayloadSource';
+import { resolveDirectPeerTransferChunkBytes } from './transferRuntimeConfig';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat, type FileHandle } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -88,4 +90,24 @@ export async function createTransferPayloadFileSink(input: Readonly<{
       await rm(temporaryPath, { force: true }).catch(() => {});
     },
   };
+}
+
+export async function writeTransferPayloadSourceToFile(input: Readonly<{
+  source: TransferPayloadSource; destinationPath: string;
+}>): Promise<TransferPayloadFileResult> {
+  const sizeBytes = await resolveTransferPayloadSizeBytes(input.source);
+  const manifestHash = await resolveTransferPayloadManifestHash(input.source);
+  const sink = await createTransferPayloadFileSink({ destinationPath: input.destinationPath });
+  try {
+    let offset = 0;
+    const chunkSizeBytes = resolveDirectPeerTransferChunkBytes();
+    while (offset < sizeBytes) {
+      const bytes = await readTransferPayloadChunk({ source: input.source, offset,
+        length: Math.min(chunkSizeBytes, sizeBytes - offset) });
+      if (bytes.length === 0) throw new Error('Transfer source ended before its admitted size');
+      await sink.appendChunk(bytes);
+      offset += bytes.length;
+    }
+    return await sink.finalize(manifestHash);
+  } catch (error) { await sink.abort(); throw error; }
 }

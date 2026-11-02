@@ -619,8 +619,8 @@ describe('TerminalPtySessionManager', () => {
     });
     const tuple = { terminalKey: 'shell', cwd: custody.rootPath, custody, authorizedProjectLaunch } as const;
     try {
-      expect(manager.ensure({ ...tuple, requesterAccountId: 'cara' })).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-      const admitted = manager.ensure(tuple);
+      expect(await manager.ensure({ ...tuple, requesterAccountId: 'cara' })).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      const admitted = await manager.ensure(tuple);
       expect(admitted).toMatchObject({ ok: true, reused: false });
       if (!admitted.ok) throw new Error('Finalized interactive tuple must launch');
       expect(manager.getCustody(admitted.terminalId)).toEqual(custody);
@@ -629,7 +629,7 @@ describe('TerminalPtySessionManager', () => {
         options: { cwd: authorizedProjectLaunch.cwd, env: { PATH: '/native/bin' } } });
       expect(provider.spawned[0]!.params.options.env).not.toHaveProperty('OMITTED_BY_NATIVE_ENV');
       expect(manager.list()).toMatchObject([{ terminalId: admitted.terminalId, cwd: authorizedProjectLaunch.cwd }]);
-      expect(manager.ensure({ terminalKey: tuple.terminalKey, cwd: custody.rootPath, custody }))
+      expect(await manager.ensure({ terminalKey: tuple.terminalKey, cwd: custody.rootPath, custody }))
         .toEqual({ ok: true, terminalId: admitted.terminalId, reused: true });
       expect(provider.spawned).toHaveLength(1);
     } finally { manager.dispose(); await authorizedProjectLaunch.release(); }

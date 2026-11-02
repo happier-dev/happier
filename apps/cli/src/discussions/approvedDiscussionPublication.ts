@@ -47,8 +47,12 @@ async function readExecutingDiscussionApproval(params: Readonly<{
 }>) {
   const store = createCliApprovalsArtifactStore({ credentials: params.credentials, serverId: params.serverId, serverHttpBaseUrl: params.serverUrl });
   const parsed = StoredApprovalRequestSchema.safeParse(await store.approvalsGet({ artifactId: params.artifactId, serverId: null }));
-  return parsed.success && parsed.data.v === 2 && parsed.data.status === 'executing'
-    && parsed.data.decision?.kind === 'approve' && parsed.data.execution === undefined ? parsed.data : null;
+  if (!parsed.success) return publicationRefusal('approval_invalid');
+  if (parsed.data.v !== 2) return publicationRefusal('discussion_replay_approval_version_unsupported');
+  if (parsed.data.status !== 'executing') return publicationRefusal('discussion_replay_approval_not_executing');
+  if (parsed.data.decision?.kind !== 'approve') return publicationRefusal('discussion_replay_approval_not_approved');
+  if (parsed.data.execution !== undefined) return publicationRefusal('discussion_replay_approval_already_executed');
+  return { ok: true as const, approval: parsed.data };
 }
 
 /** Same approved Artifact and accepted-result owner, without inventing Session custody. */
@@ -60,61 +64,86 @@ export async function readApprovedWorkflowDiscussionPublication(params: Readonly
   callerAuthority?: ActionExecutorContext['authority'];
   executeSourceAction: ApprovedDiscussionSourceActionExecute;
   isApprovalExecutionOriginCurrent: NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>;
-}>): Promise<DiscussionWorkflowPostPublicationV1 | null> {
-  if (params.callerAuthority !== 'present_user') return null;
+}>): Promise<ApprovedWorkflowDiscussionPublicationResult> {
+  if (params.callerAuthority !== 'present_user') return publicationRefusal('present_user_required');
   return await runWithServerHttpBaseUrl(params.serverUrl, async () => {
-    const approval = await readExecutingDiscussionApproval(params);
-    if (!approval || approval.actionId !== 'discussion.reply' || approval.decision?.authority !== 'present_user') return null;
+    const executing = await readExecutingDiscussionApproval(params);
+    if (!executing.ok) return executing;
+    const approval = executing.approval;
+    if (approval.actionId !== 'discussion.reply') return publicationRefusal('discussion_replay_action_mismatch');
+    if (approval.decision?.authority !== 'present_user') return publicationRefusal('discussion_replay_decision_authority_mismatch');
     const origin = approval.executionOriginV1;
     const marker = origin.discussionReplyReturn;
-    if (!marker || !('kind' in marker) || origin.caller.kind !== 'workflowRun' || origin.caller.runId !== marker.producer.runId || origin.serverId !== params.serverId
-      || origin.machineId !== params.machineId || marker.serverId !== origin.serverIdentityId
-      || origin.accountId !== readAccountIdFromToken(params.credentials.token)
-      || !await params.isApprovalExecutionOriginCurrent({ origin, request: approval, ...(params.signal ? { signal: params.signal } : {}) })) return null;
+    if (!marker) return publicationRefusal('discussion_replay_return_missing');
+    if (!('kind' in marker)) return publicationRefusal('discussion_replay_return_invalid');
+    if (origin.caller.kind !== 'workflowRun') return publicationRefusal('discussion_replay_caller_mismatch');
+    if (origin.caller.runId !== marker.producer.runId) return publicationRefusal('discussion_replay_run_mismatch');
+    if (origin.serverId !== params.serverId) return publicationRefusal('discussion_replay_server_mismatch');
+    if (origin.machineId !== params.machineId) return publicationRefusal('discussion_replay_machine_mismatch');
+    if (marker.serverId !== origin.serverIdentityId) return publicationRefusal('discussion_replay_home_mismatch');
+    if (origin.accountId !== readAccountIdFromToken(params.credentials.token)) return publicationRefusal('discussion_replay_account_mismatch');
+    if (!await params.isApprovalExecutionOriginCurrent({ origin, request: approval, ...(params.signal ? { signal: params.signal } : {}) })) {
+      return publicationRefusal('approval_stale');
+    }
     const approved = DiscussionReplyInputV1Schema.safeParse(approval.actionArgs);
     const localId = deriveWorkflowDiscussionReplyLocalIdV1(marker.producer);
-    if (!approved.success || origin.requestId !== localId || approved.data.localId !== localId
-      || params.request.request.localId !== localId || params.request.discussionId !== marker.origin.discussion.discussionId
-      || approved.data.discussionId !== params.request.discussionId
-      || approved.data.replyTarget.kind !== 'message' || approved.data.replyTarget.messageId !== marker.origin.messageId
-      || !sameStrictJsonValue(params.request.request.replyTarget, approved.data.replyTarget)
-      || !sameStrictJsonValue(params.content, approved.data.content)
-      || params.request.request.mentionedAccountIds.length !== 0 || (params.request.request.mentionedSessionIds?.length ?? 0) !== 0) return null;
+    if (!approved.success) return publicationRefusal('discussion_replay_approved_input_invalid');
+    if (origin.requestId !== localId || approved.data.localId !== localId || params.request.request.localId !== localId) {
+      return publicationRefusal('discussion_replay_local_id_mismatch');
+    }
+    if (params.request.discussionId !== marker.origin.discussion.discussionId || approved.data.discussionId !== params.request.discussionId) {
+      return publicationRefusal('discussion_replay_discussion_mismatch');
+    }
+    if (approved.data.replyTarget.kind !== 'message' || approved.data.replyTarget.messageId !== marker.origin.messageId
+      || !sameStrictJsonValue(params.request.request.replyTarget, approved.data.replyTarget)) {
+      return publicationRefusal('discussion_replay_reply_target_mismatch');
+    }
+    if (!sameStrictJsonValue(params.content, approved.data.content)) return publicationRefusal('discussion_replay_content_mismatch');
+    if (params.request.request.mentionedAccountIds.length !== 0 || (params.request.request.mentionedSessionIds?.length ?? 0) !== 0) {
+      return publicationRefusal('discussion_replay_mentions_not_empty');
+    }
     const workflow = marker.producer;
     const result = await params.executeSourceAction('workflow.run.invocations.get', { runId: workflow.runId, invocationId: workflow.invocationRecordId },
       { surface: 'cli', authority: 'account_automation', serverId: params.serverId, ...(params.signal ? { signal: params.signal } : {}) });
-    const opened = result.ok ? WorkflowInvocationGetResultV1Schema.safeParse(result.result) : null;
-    if (!opened?.success) return null;
+    if (!result.ok) return publicationRefusal(result.errorCode);
+    const opened = WorkflowInvocationGetResultV1Schema.safeParse(result.result);
+    if (!opened.success) return publicationRefusal('discussion_replay_source_invalid');
     const { index, progress } = opened.data.invocation;
-    if (index.id !== workflow.invocationRecordId || index.runId !== workflow.runId
-      || index.attempt !== workflow.invocationAttempt || progress.attempt !== workflow.invocationAttempt
-      || progress.review && index.lifecycle !== 'completed' && progress.review.decision?.kind !== 'use_result') return null;
+    if (index.id !== workflow.invocationRecordId || index.runId !== workflow.runId) return publicationRefusal('discussion_replay_invocation_mismatch');
+    if (index.attempt !== workflow.invocationAttempt || progress.attempt !== workflow.invocationAttempt) return publicationRefusal('discussion_replay_attempt_mismatch');
+    if (progress.review && index.lifecycle !== 'completed' && progress.review.decision?.kind !== 'use_result') {
+      return publicationRefusal('discussion_replay_review_pending');
+    }
     const delivery = progress.discussionReplyTo ?? opened.data.discussionResultDelivery;
-    if (!delivery || delivery.discussion.discussionId !== marker.origin.discussion.discussionId
-      || delivery.messageId !== marker.origin.messageId || delivery.throughSeq !== marker.origin.throughSeq
-      || !areServerProfileIdentifiersEquivalent(delivery.discussion.serverId, params.serverId,
-        id => id === params.serverId || id === origin.serverIdentityId ? origin.serverIdentityId : null)) return null;
+    if (!delivery) return publicationRefusal('discussion_replay_delivery_missing');
+    if (delivery.discussion.discussionId !== marker.origin.discussion.discussionId || delivery.messageId !== marker.origin.messageId
+      || delivery.throughSeq !== marker.origin.throughSeq || !areServerProfileIdentifiersEquivalent(delivery.discussion.serverId, params.serverId,
+        id => id === params.serverId || id === origin.serverIdentityId ? origin.serverIdentityId : null)) {
+      return publicationRefusal('discussion_replay_delivery_mismatch');
+    }
     const expectedProducer = projectWorkflowDiscussionProducerV1({ runId: index.runId, invocationRecordId: index.id,
       invocationAttempt: index.attempt, blockKind: progress.blockKind, lifecycle: index.lifecycle,
       ...(progress.execution ? { execution: progress.execution } : {}), ...(progress.result !== undefined ? { result: progress.result } : {}) });
     const expectedContent = projectWorkflowDiscussionResultContentV1({ runId: index.runId, invocationRecordId: index.id,
       invocationAttempt: index.attempt, lifecycle: index.lifecycle, ...(progress.result !== undefined ? { result: progress.result } : {}) });
-    if (!expectedProducer || !sameStrictJsonValue(workflow, expectedProducer) || !sameStrictJsonValue(params.content, expectedContent)) return null;
+    if (!expectedProducer || !sameStrictJsonValue(workflow, expectedProducer) || !sameStrictJsonValue(params.content, expectedContent)) {
+      return publicationRefusal('discussion_replay_result_mismatch');
+    }
     const response = await axios.get(params.serverUrl.replace(/\/+$/, '') + bindDiscussionActionHttpRequestV1('discussion.get', {
       discussionId: params.request.discussionId }).path, { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.credentials.token}` }, validateStatus: () => true, ...(params.signal ? { signal: params.signal } : {}) });
-    if (response.status !== 200) return null;
+    if (response.status !== 200) return publicationRefusal('discussion_replay_resource_unavailable');
     const summary = DiscussionDetailsResponseV1Schema.parse(response.data).discussion;
-    if (summary.id !== params.request.discussionId || !summary.keyReadiness) return null;
+    if (summary.id !== params.request.discussionId || !summary.keyReadiness) return publicationRefusal('discussion_replay_resource_not_ready');
     const resourceKey = await openResourceDataKey({ credentials: params.credentials, mode: summary.encryptionMode, dataEncryptionKey: summary.dataEncryptionKey });
     let openedContent;
     try { openedContent = DiscussionMessageContentV1Schema.safeParse(openSessionStoredContent({ content: params.request.request.content,
       ...(resourceKey.mode === 'plain' ? { mode: 'plain', ctx: null } : { mode: 'e2ee',
         ctx: { encryptionKey: resourceKey.dataKey, encryptionVariant: 'dataKey' } }) })); }
-    catch { return null; }
-    if (!openedContent.success || !sameStrictJsonValue(openedContent.data, expectedContent)) return null;
-    return { ...params.request, producer: expectedProducer, origin: marker.origin,
-      ...(marker.expectedParentRevision !== undefined ? { expectedParentRevision: opened.data.invocation.parentRevision } : {}) };
+    catch { return publicationRefusal('discussion_replay_envelope_invalid'); }
+    if (!openedContent.success || !sameStrictJsonValue(openedContent.data, expectedContent)) return publicationRefusal('discussion_replay_sealed_content_mismatch');
+    return { ok: true as const, value: { ...params.request, producer: expectedProducer, origin: marker.origin,
+      ...(marker.expectedParentRevision !== undefined ? { expectedParentRevision: opened.data.invocation.parentRevision } : {}) } };
   });
 }
 
@@ -136,8 +165,9 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
 }>): Promise<Readonly<{ serverIdentityId?: string; sourceSession?: SessionInputSourceSessionV1; replyReturn?: SessionMessageDiscussionReplyReturnV1;
   draftReview?: DiscussionDraftReviewV1; terminalReturn?: true; runId?: string; toolCallId: string }> | null> {
   return await runWithServerHttpBaseUrl(params.serverUrl, async () => {
-    const approval = await readExecutingDiscussionApproval(params);
-    if (!approval) return null;
+    const executing = await readExecutingDiscussionApproval(params);
+    if (!executing.ok) return null;
+    const approval = executing.approval;
     const docMutation = approval.actionId === 'doc.comment.reply' || approval.actionId === 'doc.edit.propose'
       ? prepareDocDiscussionMutationV1(approval.actionId, approval.actionArgs, params.serverId) : undefined;
     let actionId: string = docMutation?.actionId ?? approval.actionId;
@@ -313,3 +343,11 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       toolCallId: approval.origin?.toolCallId ?? origin.requestId };
   });
 }
+
+function publicationRefusal(errorCode: string): import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure {
+  return { ok: false, errorCode, error: errorCode };
+}
+
+export type ApprovedWorkflowDiscussionPublicationResult =
+  | Readonly<{ ok: true; value: DiscussionWorkflowPostPublicationV1 }>
+  | import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure;

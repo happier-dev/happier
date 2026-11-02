@@ -203,6 +203,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   startupMode?: 'normal' | 'pluginRecovery';
   /** Authenticated server boundary used by registry generation retirement. */
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
+
+agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
 }>): DaemonPluginRuntimeOwner {
   // A registry reload changes executable occurrences, not this host's prior
   // Account declaration admissions. All replacement Data hosts use this map.
@@ -262,6 +264,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     input,
   ) => developmentRoots?.resolveDevelopmentSourceAuthority(input) ?? null;
   const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
+...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
+
     ...(params.signal ? { signal: params.signal } : {}),
     beforeInstallPublish: async (registry, pluginIds, firstInstallPluginIds) => {
       const declarations = (registry.contributes.mcpServers ?? []).filter(entry => entry.pluginId && pluginIds.includes(entry.pluginId));

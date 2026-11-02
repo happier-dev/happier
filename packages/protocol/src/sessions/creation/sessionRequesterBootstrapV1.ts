@@ -1,3 +1,6 @@
+import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
+import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
+import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
@@ -119,16 +122,10 @@ const ManagedControllerCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObje
   codec: z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) }),
   invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
 }));
-const InstallationContextPlaintextV1Schema = lazyZodSchema(() => z.union([
-  RequesterAccountContextPlaintextV1Schema, ManagedControllerCodecPlaintextV1Schema,
-]));
+
 
 /** Nested purpose discriminants select an already parsed closed context arm. */
-function hasManagedCodecPurpose<Kind extends 'managed_controller_codec'>(
-  value: z.infer<typeof InstallationContextPlaintextV1Schema>, kind: Kind,
-): value is Extract<z.infer<typeof InstallationContextPlaintextV1Schema>, { purpose: { kind: Kind } }> {
-  return value.purpose.kind === kind;
-}
+
 
 function openInstallationSealedContext(sealed: z.infer<typeof SessionRequesterInstallationSealedBootstrapV1Schema>, privateKey: Uint8Array) {
   if (privateKey.length !== ED25519_SECRET_KEY_BYTES) return null;
@@ -140,11 +137,7 @@ function openInstallationSealedContext(sealed: z.infer<typeof SessionRequesterIn
 }
 
 /** These Actions execute with controller custody; the box may carry only invocation codec material. */
-export function isManagedControllerCodecActionV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
-  'actionId' | 'managedAdmission'>): boolean {
-  return binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
-    || binding.actionId === 'machines.managed.bootstrap.retry';
-}
+
 
 export function sealManagedControllerActionCodecV1(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -251,6 +244,10 @@ export function openExternalActionRequesterAccountContextV1(input: OpenRequester
     ...(plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : plaintext.credentials;
 }
 
+
+
+
+
 /** No Account credentials or requester execution context can be recovered from this purpose. */
 type ManagedControllerCodecMaterial = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation: true }>):
@@ -267,6 +264,10 @@ export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAcco
   return input.includeInvocation ? { material,
     ...('invocation' in plaintext && plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : material;
 }
+
+
+
+
 
 function openInstallationContext(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{
   purpose: ExternalActionRequesterAccountContextPurposeV1 | Readonly<{ kind: 'managed_controller_codec' }>;
@@ -435,4 +436,44 @@ function openInstalledRequest(input: Readonly<{
       || createCanonicalJsonSigningInput(plaintext.data.request.input) !== createCanonicalJsonSigningInput(parsed.data.input)) return null;
     return plaintext.data.request;
   } catch { return null; }
+}
+
+export function isManagedControllerCodecActionV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
+  'actionId' | 'managedAdmission'>): boolean {
+  return binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
+    || binding.actionId === 'machines.managed.bootstrap.retry';
+}
+
+
+
+
+
+
+
+const InstallationContextPlaintextV1Schema = lazyZodSchema(() => z.union([
+  RequesterAccountContextPlaintextV1Schema, ManagedControllerCodecPlaintextV1Schema, ManagedCreationCodecPlaintextV1Schema,
+]));
+
+
+
+
+
+const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
+  ...installationContextRootShape(),
+  invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
+  /** Existing parent facts; meaningful only after the source-signed domain continuation is admitted. */
+  reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
+  purpose: z.strictObject({ kind: z.literal('managed_creation_codec'),
+    actionId: z.enum(MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1),
+    continuation: ExternalActionManagedContinuationV1Schema,
+    recipient: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),
+    requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  }),
+  codec: z.optional(z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) })),
+}));
+
+function hasManagedCodecPurpose<Kind extends 'managed_creation_codec' | 'managed_controller_codec'>(
+  value: z.infer<typeof InstallationContextPlaintextV1Schema>, kind: Kind,
+): value is Extract<z.infer<typeof InstallationContextPlaintextV1Schema>, { purpose: { kind: Kind } }> {
+  return value.purpose.kind === kind;
 }

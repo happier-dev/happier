@@ -107,6 +107,8 @@
     "@happier-dev/agents",
     "@happier-dev/brand",
     "@happier-dev/cli-common",
+    "@happier-dev/deployment-protocol",
+    "@happier-dev/deployments",
     "@happier-dev/channels-protocol",
     "@happier-dev/email-transports-protocol",
     "@happier-dev/connection-supervisor",

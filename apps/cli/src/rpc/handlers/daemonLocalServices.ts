@@ -29,7 +29,7 @@ export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreview
         & Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'>
         & Partial<Pick<LocalServiceInventoryRoutes, 'watchSnapshot' | 'getSummary'>>
         | null;
-    localServicesLauncher?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves' | 'prepareStartApproval'>> | null;
+    localServicesLauncher?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves' | 'prepareStartApproval' | 'bindStartOperations'>> | null;
     localServicesPreview?: LocalServicePreviewRoutes | null;
     localServicesActions?: Pick<LocalServiceActionRoutes, 'execute'> | null;
     localServicesPublicPreview?: LocalServicePublicPreviewRoutes | null;

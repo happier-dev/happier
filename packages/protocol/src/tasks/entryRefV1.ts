@@ -1,3 +1,4 @@
+import { defineProtocolString } from '../plugins/actions/protocolComposableSchema.js';
 import {
   defineProtocolObject,
   defineProtocolUtf8String,
@@ -60,3 +61,11 @@ export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> 
   entryId: TriageIdentifierV1ProtocolSchema,
 }, { policy: 'closed' });
 export const TriageEntryRefV1JsonSchema: PluginJsonSchemaV2 = TriageEntryRefV1Schema.jsonSchema;
+
+export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
+  '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+
+export const TriageSourceInstanceIdV1Schema = defineProtocolString({
+  minLength: 36, maxLength: 36, pattern: TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
+});

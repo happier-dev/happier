@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { accountSettingsParse, normalizeActionsSettingsV1, type PluginSettingsContributionV2 } from '@happier-dev/protocol';
+
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAccountPluginSettingsRecordStorage } from '../../context/accountPluginSettingsRecordStorage';

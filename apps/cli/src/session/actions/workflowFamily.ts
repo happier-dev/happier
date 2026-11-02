@@ -1,3 +1,4 @@
+import type { PublishWorkflowInvocationRead } from '@/workspaces/publishProject';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
@@ -105,6 +106,7 @@ export type CliWorkflowFamily = Readonly<{
   workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']>;
   startCombinedWorkflow: (request: PublishWorkflowStart) => Promise<unknown>;
   waitForCombinedWorkflow: (request: PublishWorkflowStart, runId: string) => Promise<unknown>;
+  readCombinedWorkflowInvocations: (request: PublishWorkflowStart, input: PublishWorkflowInvocationRead) => Promise<unknown>;
 }>;
 export function createCliWorkflowFamily(
   params: CliActionDepsParams,
@@ -583,6 +585,11 @@ export function createCliWorkflowFamily(
     return ownedWorkflowAction({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal'] },
       context: accountCallerContext(request.context) }, request);
   };
+  const readCombinedWorkflowInvocations: CliWorkflowFamily['readCombinedWorkflowInvocations'] = async (request, input) => {
+    if (!ownedWorkflowAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    return ownedWorkflowAction({ actionId: 'workflow.run.invocations.list', input,
+      context: accountCallerContext(request.context) }, request);
+  };
   const workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']> = async (args) => {
       if (!workflowAction) {
         return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
@@ -624,5 +631,5 @@ export function createCliWorkflowFamily(
     };
 
   return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
-    startCombinedWorkflow, waitForCombinedWorkflow };
+    startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations };
 }

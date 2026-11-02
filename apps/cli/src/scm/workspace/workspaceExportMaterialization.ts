@@ -1,3 +1,6 @@
+import { prepareFilesystemPathAuthorizer } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { lstat } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { access, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
@@ -665,6 +668,8 @@ export async function rehydrateWorkspaceTargetMaterializationFromReceiptPath(inp
 export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params: Readonly<{
     workspaceExportArtifacts: ScmWorkspaceIntegrationWorkspaceExportArtifacts;
     targetPath: string;
+    /** An admitted release destination is exact and may never fall back to the user's home. */
+    admittedTargetRoot?: string;
     conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
     blobProvider: WorkspaceExportBlobProvider;
     registry?: ScmBackendRegistry;
@@ -673,6 +678,12 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     materializationReceiptPath?: string;
     originalTargetExists?: boolean;
     targetFence?: WorkspaceTargetMaterializationFence;
+    /** Host-only custody of one exact preexisting file; ordinary target fences are unchanged. */
+    retainedTargetFile?: Readonly<{
+        relativePath: string;
+        assertInitialTarget(): Promise<void>;
+        assertRetainedFile(): Promise<void>;
+    }>;
     assertCanContinue?: () => Promise<void>;
 }>): Promise<WorkspaceExportMaterializationResult> {
     if (!params.registry) {
@@ -683,11 +694,22 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             }));
     }
 
-    const targetPath = await resolveWorkspaceExportMaterializationTargetPath({
+    const targetPath = params.admittedTargetRoot ? resolve(params.targetPath) : await resolveWorkspaceExportMaterializationTargetPath({
         targetPath: params.targetPath,
         conflictPolicy: params.conflictPolicy,
         naming: params.naming,
     });
+    const authorizeTarget = params.admittedTargetRoot ? await prepareFilesystemPathAuthorizer({
+        defaultDirectory: params.admittedTargetRoot,
+        accessPolicy: { kind: 'restrictedRoots', roots: [params.admittedTargetRoot] },
+    }) : undefined;
+    const assertCanContinue = authorizeTarget ? async () => {
+        await params.assertCanContinue?.();
+        if (!(await authorizeTarget(targetPath)).valid) {
+            throw Object.assign(new Error('Materialization escaped its admitted root'), { code: 'invalid_request' });
+        }
+    } : params.assertCanContinue;
+    if (authorizeTarget) await assertCanContinue?.();
     await assertPortableWorkspaceEntriesWithScmWorkspace({
         entries: params.workspaceExportArtifacts.manifest.entries,
         registry: params.registry,
@@ -698,7 +720,8 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
         stagingId: `${params.naming.stagingIdPrefix}-${randomUUID()}`,
     });
 
-    let targetMaterialization: Awaited<ReturnType<typeof beginWorkspaceTargetMaterialization>> | undefined;
+    let targetMaterialization: Awaited<ReturnType<typeof beginWorkspaceTargetMaterialization>>
+        | Awaited<ReturnType<typeof beginWorkspaceTargetMaterializationRetainingFile>> | undefined;
     try {
         for (const entry of params.workspaceExportArtifacts.manifest.entries) {
             const materializedEntryPath = resolveContainedWorkspaceMaterializationPath({
@@ -719,7 +742,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             expectedManifest: params.workspaceExportArtifacts.manifest,
             blobProvider: params.blobProvider,
             scmRegistry: params.registry,
-            assertCanContinue: params.assertCanContinue,
+            assertCanContinue,
         });
         if (!staged.verification.isVerified) {
             throw new Error(`Workspace transfer integrity check failed for ${targetPath}`);
@@ -733,9 +756,11 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             });
         }
 
-        await params.assertCanContinue?.();
+        await assertCanContinue?.();
 
-        targetMaterialization = await beginWorkspaceTargetMaterialization({
+        targetMaterialization = params.retainedTargetFile
+            ? await beginWorkspaceTargetMaterializationRetainingFile({ targetPath, retained: params.retainedTargetFile })
+            : await beginWorkspaceTargetMaterialization({
             targetPath,
             backupDirectoryPrefix: params.naming.backupDirectoryPrefix,
             ...(params.materializationReceiptPath ? { receiptPath: params.materializationReceiptPath } : {}),
@@ -747,10 +772,11 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             targetWorkspaceDirectory: targetPath,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             scmRegistry: params.registry,
+            ...('existingTarget' in targetMaterialization ? { existingTarget: targetMaterialization.existingTarget } : {}),
         });
         await targetMaterialization.custody.bindPromotedTarget();
 
-        await params.assertCanContinue?.();
+        await assertCanContinue?.();
         await reconcilePostMaterializationWithScmWorkspace({
             targetPath,
             previousTargetPath: targetMaterialization.previousTargetPath,
@@ -758,7 +784,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             workspaceIntegrationMetadata: params.workspaceExportArtifacts.workspaceIntegrationMetadata,
             registry: params.registry,
         });
-        await params.assertCanContinue?.();
+        await assertCanContinue?.();
     } catch (error) {
         const rollback = await abortWorkspaceTargetMaterializationAfterFailure(targetMaterialization?.custody, error)
             .then(() => undefined, (rollbackFailure: unknown) => rollbackFailure);
@@ -771,5 +797,63 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     return {
         targetPath,
         custody: targetMaterialization!.custody,
+    };
+}
+
+async function beginWorkspaceTargetMaterializationRetainingFile(input: Readonly<{
+    targetPath: string;
+    retained: Readonly<{ relativePath: string; assertInitialTarget(): Promise<void>; assertRetainedFile(): Promise<void> }>;
+}>) {
+    await input.retained.assertInitialTarget();
+    const rootIdentity = await readWorkspaceSyncRootObjectIdentity(input.targetPath);
+    const assertCurrent = async () => {
+        await assertObjectIdentity(input.targetPath, rootIdentity);
+        await input.retained.assertRetainedFile();
+    };
+    const objectIdentity = async (path: string) => {
+        const stat = await lstat(path, { bigint: true });
+        return { device: stat.dev, inode: stat.ino, birthtime: stat.birthtimeNs,
+            kind: stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'file' } as const;
+    };
+    const created: { path: string; identity: Awaited<ReturnType<typeof objectIdentity>> }[] = [];
+    let receipt: WorkspaceTargetMaterializationReceiptV1 = Object.freeze({ v: 1, previousTargetName: null,
+        originalTargetIdentity: rootIdentity, promotedTargetIdentity: rootIdentity, expectedBackupIdentity: null });
+    let settled = false;
+    const custody: WorkspaceExportMaterializationCustody = {
+        get receipt() { return receipt; },
+        async bindPromotedTarget() { await assertCurrent(); },
+        async commit() {
+            if (settled) return;
+            await assertCurrent();
+            receipt = await committedReceipt(input.targetPath, receipt); settled = true;
+        },
+        async abort() {
+            if (settled) return;
+            await assertCurrent();
+            // Validate the entire rollback set before removing anything. A replacement
+            // is foreign even when it occupies an operation-created pathname.
+            for (const entry of created) {
+                const actual = await objectIdentity(entry.path);
+                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
+                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
+                    throw materializationRecoveryError('Promoted workspace entry changed');
+                }
+            }
+            for (const entry of [...created].reverse()) {
+                await assertCurrent();
+                const actual = await objectIdentity(entry.path);
+                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
+                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
+                    throw materializationRecoveryError('Promoted workspace entry changed');
+                }
+                if (actual.kind === 'directory') await rmdir(entry.path);
+                else await unlink(entry.path);
+            }
+            settled = true;
+        },
+    };
+    return { previousTargetPath: undefined, custody,
+        existingTarget: { retainedRelativePath: input.retained.relativePath, assertCurrent,
+            async recordCreated(path: string) { created.push({ path, identity: await objectIdentity(path) }); } },
     };
 }

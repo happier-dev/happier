@@ -1,3 +1,4 @@
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
@@ -61,7 +62,11 @@ const modelKey = (ref: ProviderBoundModelRef) => JSON.stringify([ref.agentTarget
 export const ApiTokenGrantV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   actions: z.nullable(z.strictObject({ families: z.array(ActionIdFamilyV1Schema), ids: z.array(GrantIdSchema) })),
-  targets: z.nullable(z.strictObject({ sessions: z.array(GrantIdSchema), machines: z.array(GrantIdSchema) })),
+  targets: z.nullable(z.strictObject({
+    sessions: z.array(GrantIdSchema), machines: z.array(GrantIdSchema),
+    /** Historical restricted grants without this field grant no Environment. */
+    environments: z.optional(z.array(DeploymentIdentifierV1Schema)),
+  })),
   /** Exact workflow.trigger.run_now operand restriction; absent/null is unrestricted. */
   automationIds: z.optional(z.nullable(z.array(GrantIdSchema).check(z.minLength(1)))),
   approve: z.boolean(),
@@ -283,3 +288,5 @@ export function resolveApiTokenSessionCapabilityCeilingV1(grant: ApiTokenGrantV1
   if (grant.approve) capabilities.add('approveRuntimePermissions');
   return capabilities;
 }
+
+export const API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 = ['deployments.deploy', 'action.operations.get'] as const;

@@ -4648,6 +4648,8 @@ const enConnectedServices = {
     poolAccounts: ({ count }: { count: number }) => count === 1 ? '1 account' : `${count} accounts`,
     poolAccountsInUse: ({ accounts, account }: { accounts: string; account: string }) => `${accounts} · using ${account}`,
     requiredPrompt: 'Choose an account or group',
+    signInToChoose: 'Sign in to this Home to choose an account',
+    requiredAccountPrompt: 'Choose an account',
     notSet: 'Not set',
     ownSignIn: ({ agent }: { agent: string }) => `${agent}’s own sign-in`,
     legacyUnavailable: 'This server cannot show connected-account targets yet',
@@ -8295,6 +8297,8 @@ const enErrors = {
   connectionTimeout: 'Connection timed out',
   authenticationFailed: 'Authentication failed',
   permissionDenied: 'Permission denied',
+  machineAdminAccessRequired: 'Set up administrator access for this machine, then try adding the domain again.',
+  machineManagedCliUnavailable: "Install or update Happier on this machine, then try adding the domain again.",
   permissionDeniedReadOnlyMode:
     'Denied by Read Only mode (write actions are denied).',
   permissionCanceled: 'Permission canceled',

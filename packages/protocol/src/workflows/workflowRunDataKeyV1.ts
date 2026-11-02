@@ -1,3 +1,4 @@
+import type { AccountScopedCryptoMaterialSnapshotV1 } from '../crypto/accountScopedCipher.js';
 import tweetnacl from 'tweetnacl';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../teams/resourceRecipientKeyPreparationV1.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1,
@@ -15,8 +16,8 @@ export type WorkflowRunEncryptionV1 = Readonly<{
   runCrypto: WorkflowRunDataKeyV1;
 }>;
 
-function machineKey(encryption: AvailableAutomationAccountEncryptionV1): Uint8Array {
-  if (!isAvailableE2eeAutomationAccountEncryptionV1(encryption)) throw new Error('workflow_run_key_unavailable');
+function machineKey(encryption: WorkflowRunReadEncryptionV1): Uint8Array {
+  if (encryption.witness.mode !== 'e2ee' || !('material' in encryption)) throw new Error('workflow_run_key_unavailable');
   return encryption.material.material.type === 'legacy'
     ? deriveAccountMachineKeyFromRecoverySecret(encryption.material.material.secret)
     : encryption.material.material.machineKey;
@@ -52,7 +53,7 @@ export function prepareWorkflowRunDataKeyV1(params: Readonly<{
 
 /** Caller Account material opens only its envelope; content always binds the Run owner. */
 export function resolveWorkflowRunDataKeyV1(params: Readonly<{
-  encryption: AvailableAutomationAccountEncryptionV1;
+  encryption: WorkflowRunReadEncryptionV1;
   census: WorkflowRunRecipientCensusResponseV1;
 }>): Readonly<{ kind: 'available'; encryption: WorkflowRunEncryptionV1 }>
   | Readonly<{ kind: 'unavailable'; reason: 'history_not_readable' | 'encryption_setup_required' | 'waiting_for_keys' }> {
@@ -64,7 +65,7 @@ export function resolveWorkflowRunDataKeyV1(params: Readonly<{
     return { kind: 'available', encryption: { witness: census.ownerAccountCurrentness, runCrypto: { mode: 'plain' } } };
   }
   if (!census.dataEncryptionKey) return { kind: 'unavailable', reason: 'history_not_readable' };
-  if (!isAvailableE2eeAutomationAccountEncryptionV1(params.encryption)) return { kind: 'unavailable', reason: 'encryption_setup_required' };
+  if (params.encryption.witness.mode !== 'e2ee' || !('material' in params.encryption)) return { kind: 'unavailable', reason: 'encryption_setup_required' };
   if (!census.callerDataEncryptionKey) return { kind: 'unavailable', reason: 'waiting_for_keys' };
   try {
     const envelope = decodeBase64(census.callerDataEncryptionKey);
@@ -101,3 +102,7 @@ export async function runWorkflowRecipientKeyPreparationV1(params: Readonly<{
   params.signal?.throwIfAborted();
   return params.commit({ runId: params.runId, expectedDataEncryptionKey: census.dataEncryptionKey, recipientKeyEnvelopes });
 }
+
+export type WorkflowRunReadEncryptionV1 =
+  | Readonly<{ witness: Readonly<{ mode: 'plain' }> }>
+  | Readonly<{ witness: Readonly<{ mode: 'e2ee' }>; material: AccountScopedCryptoMaterialSnapshotV1 }>;

@@ -1,4 +1,8 @@
+import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '../machines/adminAccessActionIdsV1.js';
+import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
+import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
 import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '../machines/reachability/actionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionFamily.js';
 import { z } from 'zod/mini';
@@ -131,6 +135,17 @@ export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoop
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
+  machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
+  machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
+  session_message_pins: ['session.messages.pins'],
+
+  desktop_shell: ['desktop.displays.list', 'desktop.notch.set'],
+
+  desktop_windows: ['desktop.windows.open'],
+
+  media_annotation: ['media.annotation.read', 'media.annotation.apply'],
+  machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,
+
   registries: REGISTRY_ACTION_IDS_V1,
   personal_saved_secrets: PERSONAL_SAVED_SECRET_ACTION_IDS_V1,
   plugin_execution_origin: PLUGIN_EXECUTION_ORIGIN_ACTION_IDS,
@@ -206,7 +221,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
   machine_connection: ['homes.connect', 'homes.reconnect', 'machines.add.command', 'machines.pairing.create', ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
-  local_daemon_services: LOCAL_DAEMON_SERVICE_ACTION_IDS,
+  local_daemon_services: [...LOCAL_DAEMON_SERVICE_ACTION_IDS, ...MACHINE_SERVICE_ACTION_IDS],
   machine_access: MACHINE_ACCESS_ACTION_IDS,
   machine_work_summary: MACHINE_WORK_SUMMARY_ACTION_IDS,
   machine_vitals: MACHINE_VITALS_ACTION_IDS,
@@ -263,6 +278,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'projects.list',
     'projects.open',
     'projects.context.update',
+    'projects.organization.update',
     'projects.visibility.set',
     'projects.workspace.update',
     'projects.workspace.forget',
@@ -830,6 +846,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   home_identity: HOME_IDENTITY_ACTION_IDS_V1,
   teams: TEAM_ACTION_IDS_V1,
   saved_secret_sharing: SHARED_SAVED_SECRET_ACTION_IDS_V1,
+
 } as const);
 
 type ActionFamilyId = (typeof ACTION_ID_FAMILIES_V1)[keyof typeof ACTION_ID_FAMILIES_V1][number];

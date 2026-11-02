@@ -234,7 +234,7 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
                     const spec = operation.kind === 'disable'
                         ? buildRelayAccessDisableSystemTaskSpec({ target: relay.target })
                         : buildRelayAccessExecutionSystemTaskSpec({ target: relay.target,
-                            providerId: operation.config.providerId, config: operation.config, upstreamUrl: relay.upstreamUrl });
+                            config: operation.config, upstreamUrl: relay.upstreamUrl });
                     return startAdmittedRemoteHostSystemTask(admission, spec);
                 }
                 if (request.actionId === 'remote_hosts.connect') {

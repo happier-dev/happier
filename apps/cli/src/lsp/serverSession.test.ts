@@ -19,7 +19,7 @@ async function fixture(rootPath: string, options: Record<string, unknown> = {}) 
     const protocols: PluginProtocolClientHandle<'jsonRpc'>[] = [];
     const session = createServerSession({ definition, rootPath, workspaceRoot: rootPath, onChange: () => undefined,
         async openProtocol(input) {
-            const service = createStablePluginExecService({ allowedExecutables: [definition.executable], signal: input.signal,
+            const service = createStablePluginExecService({ signal: input.signal,
                 processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => ({ command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify(options)] }),
                 resolvePath: async () => rootPath,

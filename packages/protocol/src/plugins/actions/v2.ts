@@ -503,6 +503,8 @@ export function normalizePluginActionSlashV2(
 }
 
 export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObject({
+readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
+
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   confirmVerb: z.optional(PluginLocalizedStringV2Schema),
@@ -533,7 +535,6 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
   }))),
   priority: z.optional(z.number().check(z.int())),
   dangerLevel: PluginActionDangerLevelV2Schema,
-  readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   confirmation: z.optional(PluginActionConfirmationV2Schema),
   confirmationWhen: z.optional(PluginActionConfirmationWhenV2Schema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),

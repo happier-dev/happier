@@ -1,3 +1,4 @@
+import type { ResolvedActionLocalizedPresentation } from '../types';
 import type { ActionInputHints, PluginActionContributionV2 } from '@happier-dev/protocol';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
@@ -12,4 +13,21 @@ export function projectPluginActionInputDefinition(definition: PluginActionContr
     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
     inputHints: normalizePluginActionInputHintsV2(definition.inputHints) ?? null,
   };
+}
+
+export function projectPluginActionLocalizedPresentation(
+  definition: PluginActionContributionV2,
+  inputHints: ActionInputHints | null,
+): ResolvedActionLocalizedPresentation {
+  const authored = definition.inputHints;
+  const authoredByPath = new Map(authored?.fields.map(field => [field.path, field]));
+  return Object.freeze({
+    title: definition.title,
+    ...(definition.description === undefined ? {} : { description: definition.description }),
+    ...(inputHints ? { inputHints: {
+      ...inputHints,
+      ...authored,
+      fields: inputHints.fields.map(field => authoredByPath.get(field.path) ?? field),
+    } } : {}),
+  });
 }

@@ -170,3 +170,10 @@ export const SessionTranscriptObservationAckV1Schema = lazyZodSchema(() => z.uni
 
 export type SessionTranscriptObservationCapabilityAckV1 = z.infer<typeof SessionTranscriptObservationCapabilityAckV1Schema>;
 export type SessionTranscriptObservationAckV1 = z.infer<typeof SessionTranscriptObservationAckV1Schema>;
+
+export type ApprovalTranscriptVisualPublicationV1 = z.infer<typeof ApprovalTranscriptVisualPublicationV1Schema>;
+
+export const ApprovalTranscriptVisualPublicationV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), sessionId: NonBlankStringSchema,
+  surfaceItemReference: SessionTranscriptSurfaceItemReferencesV1Schema,
+}));

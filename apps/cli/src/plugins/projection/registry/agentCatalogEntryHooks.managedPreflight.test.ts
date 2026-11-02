@@ -1,3 +1,4 @@
+import { readManagedServiceResponseJson } from '@/plugins/testkit/managedServiceResponse';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +32,7 @@ async function fixture(openCodeModes?: Readonly<{ bindProbe: boolean }>, callbac
   const inventory = new Promise<void>((resolve) => { inventoryStarted = resolve; });
   const inspect = async (context: AgentPreflightSessionControlsProbeContextV1) => await context.withDeclaredManagedService(spec, async (client) => {
     const response = await client.request({ pathAndQuery: '/catalog' });
-    const payload = await new Response(response.body).json();
+    const payload = await readManagedServiceResponseJson(response);
     if (typeof payload !== 'object' || payload === null || !('pid' in payload) || typeof payload.pid !== 'number') {
       throw new Error('Managed preflight fixture returned no process identity');
     }
@@ -39,7 +40,7 @@ async function fixture(openCodeModes?: Readonly<{ bindProbe: boolean }>, callbac
     if (callbackMethod === 'probeModes') {
       inventoryStarted();
       const modes = await client.request({ pathAndQuery: context.accountSettings?.wait === true ? '/agent?pending' : '/agent?delayed' });
-      return await new Response(modes.body).json();
+      return await readManagedServiceResponseJson(modes);
     }
     if (context.accountSettings?.wait === true) await client.request({ pathAndQuery: '/pending' });
     return payload;

@@ -22,7 +22,7 @@ describe('current admitted daemon child metadata', () => {
     const current = { host: 'child', platform: 'linux', happyCliVersion: 'test', displayName: 'My child',
       homeDir: '/home/child', happyHomeDir: '/home/child/.happier', happyLibDir: '/opt/happier',
       devcontainerChild: { relation: { managedMachineId: row.id, managedMachineKind: 'devcontainer' as const,
-        parentMachineId: row.controller.machineId }, observation: { ...observation, nativeResourceId: 'old-native' } } };
+        parentMachineId: 'physical-controller' }, observation: { ...observation, nativeResourceId: 'old-native' } } };
     const input = { current, credentials: { token: 'account-token', encryption: null }, homeId: row.homeId,
       machineId: 'child-machine', serverHttpBaseUrl: 'https://child-home.example.test' };
     const projection = await readCurrentManagedChildMachineMetadata(input);
@@ -34,7 +34,13 @@ describe('current admitted daemon child metadata', () => {
     expect(post.mock.calls.every(([url]) => url === `${input.serverHttpBaseUrl}${managedMachineActionEndpointPathV1('machines.managed.get')}`)).toBe(true);
     expect(await readCurrentManagedChildMachineMetadata({ ...input, homeId: 'another-Home' })).toBeNull();
     expect(await readCurrentManagedChildMachineMetadata({ ...input, machineId: 'another-child' })).toBeNull();
-    row = ManagedMachineV1Schema.parse({ ...row, enrolledMachineId: undefined, creationState: 'canceled' });
+    const nativeRow = row;
+    const cloudProvider = { pluginId: 'fixture.cloud', localId: 'vm' };
+    row = ManagedMachineV1Schema.parse({ ...row, controller: undefined,
+      launch: { ...row.launch, provider: cloudProvider },
+      resource: { contributionRef: cloudProvider, schemaVersion: 1, value: { nativeId: 'cloud-guest' } } });
+    expect(await readCurrentManagedChildMachineMetadata(input)).toBeNull();
+    row = ManagedMachineV1Schema.parse({ ...nativeRow, enrolledMachineId: undefined, creationState: 'canceled' });
     const retired = await readCurrentManagedChildMachineMetadata(input);
     expect(retired).toBeNull();
     expect(refreshMachineMetadataForCurrentDaemon(current, { host: current.host, platform: current.platform,

@@ -22,8 +22,7 @@ describe('host-issued Agent native launch qualifier', () => {
             current = false;
             return null;
         });
-        const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal,
+        const service = createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
             resolvePath: async () => process.cwd(),
@@ -47,7 +46,7 @@ describe('host-issued Agent native launch qualifier', () => {
         const refusal = new PluginError({ code: 'fixture_resolution_denied', message: 'Tool resolution refused', retryable: true });
         const common = { signal: new AbortController().signal, isOccurrenceCurrent: () => true };
         const service = kind === 'host' ? createStablePluginExecService({
-            ...common, allowedExecutables: [], resolveExecutable: async () => ({ command: process.execPath }),
+            ...common, resolveExecutable: async () => ({ command: process.execPath }),
             resolvePath: async () => process.cwd(), systemTools: { resolve: async () => { throw refusal; } },
         }) : createStableRunnerPluginExecService({
             ...common, agentCli: { checkReadiness: async () => ({ launchable: [] }) },
@@ -62,8 +61,7 @@ describe('host-issued Agent native launch qualifier', () => {
     it.each(['currentness', 'environment'] as const)('retains prelaunch evidence when %s fails after authorization', async phase => {
         const release = vi.fn();
         let current = true;
-        const service = createStablePluginExecService({
-            allowedExecutables: [], signal: new AbortController().signal,
+        const service = createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => current, resolveExecutable: async () => ({ command: process.execPath, release }),
             resolvePath: async () => process.cwd(),
             transformAgentChildLaunchEnvironment: () => {
@@ -80,8 +78,7 @@ describe('host-issued Agent native launch qualifier', () => {
 
     it('refuses a forged native launch qualifier before resolving or launching a process', async () => {
         const resolveExecutable = vi.fn(async () => ({ command: process.execPath }));
-        const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal,
+        const service = createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable,
             resolvePath: async () => process.cwd(),
         });
@@ -97,8 +94,7 @@ describe('host-issued Agent native launch qualifier', () => {
         const prepareAgentNativeLaunch = vi.fn<HostAgentNativeLaunchPreparation>(async () => ({
             projectLaunch: { status: 'refused', kind: 'approval_pending', code: 'project_setup_consent_required' },
         }));
-        const create = () => createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal,
+        const create = () => createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
             resolvePath: async () => process.cwd(), prepareAgentNativeLaunch,
         });
@@ -131,8 +127,7 @@ describe('host-issued Agent native launch qualifier', () => {
                     io: { resolveTool: async () => ({ executablePath: '/native/mise', version: '2026.10.4' }), run: nativeRun },
                 } } };
             });
-            const service = createStablePluginExecService({
-                allowedExecutables: [executable], allowedEnvKeys: ['REMOVE'], environment: { REMOVE: 'old' },
+            const service = createStablePluginExecService({ environment: { REMOVE: 'old' },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath, args: ['--installed'], release }),
                 resolvePath: async () => root, prepareAgentNativeLaunch,
@@ -156,8 +151,7 @@ describe('host-issued Agent native launch qualifier', () => {
     it('releases a resolved native tuple when preparation retires its invocation', async () => {
         const controller = new AbortController();
         const release = vi.fn();
-        const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: controller.signal, isOccurrenceCurrent: () => true,
+        const service = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
             prepareAgentNativeLaunch: async () => { controller.abort(); return undefined; },
         });
@@ -169,8 +163,7 @@ describe('host-issued Agent native launch qualifier', () => {
 
     it('fails closed when a recognized qualifier has no host preparation owner', async () => {
         const resolveExecutable = vi.fn(async () => ({ command: process.execPath }));
-        const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        const service = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             resolveExecutable, resolvePath: async () => process.cwd(),
         });
         const nativeLaunch = issueAgentNativeLaunchQualifierForHost(service);
@@ -186,8 +179,7 @@ describe('host-issued Agent native launch qualifier', () => {
 
     it('rejects malformed resolved launch input before native preparation', async () => {
         const prepareAgentNativeLaunch = vi.fn<HostAgentNativeLaunchPreparation>(async () => undefined);
-        const service = createStablePluginExecService({
-            allowedExecutables: [executable], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        const service = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(), prepareAgentNativeLaunch,
         });
         const release = vi.fn();
@@ -203,8 +195,7 @@ describe('host-issued Agent native launch qualifier', () => {
             await writeFile(join(root, 'mise.toml'), '[env]\nKEEP = "native"\n');
             let current = true;
             const release = vi.fn();
-            const service = createStablePluginExecService({
-                allowedExecutables: [executable], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            const service = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath, release }), resolvePath: async () => root,
                 prepareAgentNativeLaunch: async () => ({ projectLaunch: {
                     status: 'ready', reviewedEffectDigest: 'old-effect',

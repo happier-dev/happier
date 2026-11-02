@@ -1,8 +1,9 @@
+import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
 import type { EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { NativeComposeObservationIo, NativeComposeActivatedProject } from './nativeComposeLifecycle';
 import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
-import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';

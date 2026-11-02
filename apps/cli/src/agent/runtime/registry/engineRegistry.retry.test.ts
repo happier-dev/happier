@@ -56,6 +56,7 @@ function createContributionRegistry(params?: Readonly<{
     }
 
     return {
+        backupDestinations: [],
         voiceProviders: [],
         connectedAccountDescriptorsById: new Map(),
         providersByContributionKey: new Map(),

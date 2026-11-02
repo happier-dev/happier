@@ -35,6 +35,51 @@ import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '@/daemon/spawn/spawnRequestCoalescer';
 
 describe('finite host operation custody', () => {
+  it.each((['acknowledged-content', 'unknown-secret'] as const).flatMap(phase =>
+    (['existing', 'new'] as const).map(project => ({ phase, project }))))(
+    'retains a template partial result ($phase, $project Project) and rejoins its creation intent without repeating generated-secret effects', async ({ phase, project }) => {
+    let sequence = 0;
+    let effects = 0;
+    const runtime = createHostActionOperationRuntime({ machineId: 'target', resolveAccountId: async () => 'owner',
+      generateOperationId: () => `template-operation-${++sequence}` });
+    const input = { mode: 'apply', serverId: 'home', machineId: 'target',
+      ...(project === 'existing' ? { projectSourceId: 'project' }
+        : { newProject: { name: 'New Project', requestKey: 'create-project', owner: { kind: 'account' as const, accountId: 'owner' } } }),
+      templateRef: { sourceId: 'builtin:apps', itemId: 'app', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction',
+        purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'target' },
+      target: { kind: 'new', installationId: 'installation' }, destination: { kind: 'stored' }, bindings: [] };
+    const retained = { kind: 'partial', phase: phase === 'unknown-secret' ? 'generation' : 'bindings', errorCode: 'deployment_conflict',
+      ...(phase === 'unknown-secret' ? { unknownSecret: { name: 'SECOND_PASSWORD', phase: 'runtime', ref: 'happier:shared-secret:v1:candidate' } }
+        : { environmentId: 'created-environment', revision: 2, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } }),
+      savedSecrets: [{ name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'secret', ref: 'happier:shared-secret:v1:saved-secret', resourceRevision: 1 } }],
+    };
+    const invoke = (value: typeof input, requestId: string) => runtime.observeExecution({ actionId: 'deployments.templates.instantiate',
+      input: value, actionRequestId: requestId, execute: async () => {
+        effects += 1;
+        return { ok: false, errorCode: retained.errorCode, error: retained.errorCode, details: retained };
+      } });
+    const first = await invoke(input, 'transport-one');
+    expect(first).toMatchObject({ ok: false, details: retained });
+    expect(await invoke(input, 'transport-two')).toEqual(first);
+    expect(effects, 'A transport retry must observe the existing operation, preserving acknowledged refs').toBe(1);
+    expect(await runtime.handlers.getV2({ operationId: 'template-operation-1' })).toMatchObject({ kind: 'found', operation: {
+      state: 'failed', error: { errorCode: 'deployment_conflict', details: retained },
+    } });
+    expect(await invoke({ ...input, environment: { ...input.environment, name: 'Changed' } }, 'transport-three'))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toBe(1);
+    expect(await invoke({ ...input, machineId: 'another-target' }, 'transport-four')).toMatchObject({ ok: false, details: retained });
+    expect(effects).toBe(2);
+    await invoke({ ...input, mode: 'preview' }, 'preview-request');
+    await invoke({ ...input, mode: 'preview' }, 'preview-request');
+    expect(effects).toBe(4);
+    expect((await runtime.handlers.listV2({})).items).toHaveLength(2);
+    expect(await invoke({ ...input, environment: { ...input.environment, requestKey: 'independent-create' } }, 'transport-five'))
+      .toMatchObject({ ok: false, details: retained });
+    expect(effects).toBe(5);
+  });
   // Open's native registrar owns observation across direct and relay calls;
   // its composed settlement keeper exercises this same outer adapter.
   it.each(listActionSpecs().filter(spec => spec.operation && spec.id !== 'projects.open' && spec.id !== 'localServices.launcher.start').map(spec => spec.id))(

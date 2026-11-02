@@ -1,3 +1,10 @@
+import { DeploymentStateV1Schema } from './deploymentStateV1.js';
+import { DeploymentHealthCurrentSuccessV1Schema } from './deploymentReadsV1.js';
+import { DeploymentBackupRestoreResultV1Schema } from './deploymentBackupRestoreV1.js';
+import { MachineServiceControlResultV1Schema } from '../actions/specs/machine/services.js';
+import { DeploymentBackupRestoreInputV1Schema } from './deploymentBackupRestoreV1.js';
+import { DeploymentHealthCurrentInputV1Schema } from './deploymentReadsV1.js';
+import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
 import { z } from 'zod/mini';
 import { WorkflowRunIdV1Schema, WorkflowInvocationRecordIdSchema } from '../workflows/workflowIdsV1.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
@@ -64,12 +71,10 @@ export { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeade
 export { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTimestampV1Schema } from './deploymentIdentifiersV1.js';
 export { DEPLOYMENT_ACTION_IDS_V1, isDeploymentActionIdV1, type DeploymentActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 
-export { deploymentInProgressStates } from './deploymentStateV1.js';
+export { deploymentInProgressStates, DeploymentStateV1Schema } from './deploymentStateV1.js';
 
 /** Storage transport leaves. Private deployment records remain deployment-protocol owned. */
-export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
-  'queued', 'waitingApproval', 'running', 'running_unverified', 'succeeded', 'failed', 'cancelled', 'outcome_unknown',
-]));
+
 export const DeploymentEnvironmentOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('account'), accountId: DeploymentIdentifierV1Schema }),
   z.strictObject({ kind: z.literal('team'), teamId: DeploymentIdentifierV1Schema }),
@@ -618,6 +623,12 @@ export type DeploymentLogsReadResultV1 = z.infer<typeof DeploymentLogsReadResult
 // Domain leaf imports legitimately reach this catalog through installation and
 // access-provider contracts. Admit catalog bindings on first use, not ESM load.
 export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
+'deployments.backups.restore': DeploymentBackupRestoreInputV1Schema,
+
+'deployments.restart': DeploymentRestartInputV1Schema,
+
+'deployments.health.current': DeploymentHealthCurrentInputV1Schema,
+
   'deployments.domains.add': DeploymentDomainAddInputV1Schema,
   'deployments.domains.remove': DeploymentDomainRemoveInputV1Schema,
   'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
@@ -638,7 +649,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.environments.delete': DeploymentEnvironmentDeleteInputV1Schema,
   'deployments.deploy': DeploymentDeployActionInputV1Schema,
   'deployments.rollback': DeploymentRollbackActionInputV1Schema,
-  'deployments.teardown': DeploymentTeardownInputV1Schema,
+  'deployments.teardown': DeploymentTeardownActionInputV1Schema,
   'deployments.cancel': DeploymentCancelInputV1Schema,
   'deployments.promote': DeploymentPromoteInputV1Schema,
   'deployments.environments.get': DeploymentEnvironmentGetInputV1Schema,
@@ -663,6 +674,12 @@ export const DeploymentEnvironmentCreateActionResultV1Schema = lazyZodSchema(() 
   DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreatePreviewV1Schema,
 ]));
 export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
+'deployments.backups.restore': DeploymentBackupRestoreResultV1Schema,
+
+'deployments.restart': MachineServiceControlResultV1Schema,
+
+'deployments.health.current': DeploymentHealthCurrentResultV1Schema,
+
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.verify': DeploymentDomainMutationResultV1Schema,
@@ -716,6 +733,8 @@ export type DeploymentActionInputV1 = z.infer<typeof DeploymentActionInputSchema
 export type DeploymentActionOutputV1 = z.infer<typeof DeploymentActionOutputSchemasV1[DeploymentTransportActionIdV1]>;
 
 export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObject({
+expectedTargetLinkRevision: z.optional(DeploymentRevisionV1Schema),
+
   ...environment, deploymentId: DeploymentIdentifierV1Schema, actionOperationId: DeploymentIdentifierV1Schema,
   machineId: DeploymentIdentifierV1Schema, installationId: DeploymentIdentifierV1Schema,
   proof: MachineInstallationProofV1Schema,
@@ -787,3 +806,5 @@ export function readDeploymentAccountChangeV1(change: Readonly<{ kind: string; e
       ...(projectSourceId === undefined ? {} : { projectSourceId }) };
   } catch { return null; }
 }
+
+export const DeploymentHealthCurrentResultV1Schema = lazyZodSchema(() => z.union([DeploymentHealthCurrentSuccessV1Schema, DeploymentActionFailureV1Schema]));

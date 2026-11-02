@@ -1,3 +1,4 @@
+import type { PluginActionContributionV2 } from './v2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { evaluateInputPredicate } from '../../inputs/inputPredicates.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
@@ -1085,4 +1086,12 @@ export function createPluginActionInvocation(params: Readonly<{
       return preparedInput.kind === 'settled' ? preparedInput.result : await preparedInput.invoke(options);
     },
   });
+}
+
+export function pluginActionDeclarationIsReadOnlyForInput(
+  declaration: Pick<PluginActionContributionV2, 'readOnly'>,
+  input: unknown,
+): boolean {
+  return declaration.readOnly === true || typeof declaration.readOnly === 'object'
+    && declaration.readOnly !== null && evaluateInputPredicate(declaration.readOnly, input);
 }

@@ -17,12 +17,12 @@ export class ResourceDataKeyUnavailableError extends Error {
   }
 }
 
-function requireEncryption(credentials: StoredCredentials): Credentials {
+function requireEncryption(credentials: ContentEncryption): Pick<Credentials, 'encryption'> {
   if (!credentials.encryption) throw new ResourceDataKeyUnavailableError();
-  return credentials;
+  return { encryption: credentials.encryption };
 }
 
-async function recipientSecret(credentials: Credentials): Promise<Uint8Array> {
+async function recipientSecret(credentials: Pick<Credentials, 'encryption'>): Promise<Uint8Array> {
   return credentials.encryption.type === 'dataKey'
     ? credentials.encryption.machineKey
     : deriveKey(credentials.encryption.secret, 'Happy EnCoder', ['content']);
@@ -30,7 +30,7 @@ async function recipientSecret(credentials: Credentials): Promise<Uint8Array> {
 
 /** A new resource owns a fresh DEK; plain resources require no Account key. */
 export async function createResourceDataKey(params: Readonly<{
-  credentials: StoredCredentials;
+  credentials: ContentEncryption;
   mode: 'plain' | 'e2ee';
   expectedContentPublicKeyFingerprint?: string;
 }>): Promise<ResourceDataKey> {
@@ -52,7 +52,7 @@ export async function createResourceDataKey(params: Readonly<{
 
 /** Open only the exact recipient envelope supplied by the admitted resource. */
 export async function openResourceDataKey(params: Readonly<{
-  credentials: StoredCredentials;
+  credentials: ContentEncryption;
   mode: 'plain' | 'e2ee';
   dataEncryptionKey: string | null;
 }>): Promise<ResourceDataKey> {
@@ -69,3 +69,5 @@ export async function openResourceDataKey(params: Readonly<{
   if (!dataKey) throw new ResourceDataKeyUnavailableError();
   return { mode: 'e2ee', dataKey, dataEncryptionKey: params.dataEncryptionKey };
 }
+
+type ContentEncryption = Pick<StoredCredentials, 'encryption'>;

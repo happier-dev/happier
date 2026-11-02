@@ -29,8 +29,7 @@ async function fixture(rootPath: string, options: Readonly<Record<string, unknow
             for (const listener of listeners) listener();
         },
         async openProtocol(input) {
-            const service = createStablePluginExecService({
-                allowedExecutables: [definition.executable], signal: input.signal, processOwner: input.processOwner,
+            const service = createStablePluginExecService({ signal: input.signal, processOwner: input.processOwner,
                 isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => ({
                     command: process.execPath,

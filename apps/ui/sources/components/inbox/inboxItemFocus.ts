@@ -71,7 +71,7 @@ export function resolveInboxNoticePageRoute(id: string, notice?: InboxItemDetail
 
 /** The page a notice points at (a plugin page, usage or a machine), or null when the notice is its own content. */
 export function resolveInboxNoticeOwnPageRoute(notice?: InboxItemDetailContext['notice'], serverId?: string): string | null {
-    if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'plugin' && notice.page) {
+    if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'plugin' && notice.page && !('kind' in notice.page)) {
         return buildPluginAppPageRoutePath({ pluginId: notice.source.pluginId, localId: notice.page.pageId,
             ...(notice.page.subPath === undefined ? {} : { subPath: notice.page.subPath }) });
     }

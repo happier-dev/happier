@@ -316,9 +316,8 @@ async function createExecutableRegistry(params: Readonly<{
 
   return {
         ...await resolveExecutablePluginRuntimeRegistry({ contributes: contributes, pluginIds: [] }),
-    contributes: contributes,
     generation: 7,
-    targetActionInvocations: params.targetActionInvocations,
+    ...(params.targetActionInvocations ? { targetActionInvocations: params.targetActionInvocations } : {}),
     readPluginOccurrenceId: params.readPluginOccurrenceId ?? readFixtureOccurrenceId,
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),

@@ -1,5 +1,5 @@
 import type { SystemTaskSpec } from '@happier-dev/protocol';
-import type { RelayAccessConfig, RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import type { RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 
 import {
     buildRelayAccessConfigureSystemTaskSpec,
@@ -16,13 +16,11 @@ export function buildLocalRelayAccessDisableSystemTaskSpec(): SystemTaskSpec {
 }
 
 export function buildLocalRelayAccessConfigureSystemTaskSpec(params: Readonly<{
-    providerId: RelayAccessProviderId;
     config: RelayAccessConfig;
     upstreamUrl?: string | null;
 }>): SystemTaskSpec {
     return buildRelayAccessConfigureSystemTaskSpec({
         target: { kind: 'local' },
-        providerId: params.providerId,
         config: params.config,
         upstreamUrl: params.upstreamUrl,
     });

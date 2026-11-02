@@ -11,7 +11,7 @@ import {
 
 export type FilesystemPathAuthorizationResult =
   | Readonly<{ valid: true; resolvedPath: string; error?: never }>
-  | Readonly<{ valid: false; error: string; resolvedPath?: never }>;
+  | Readonly<{ valid: false; error: string; errorCode: 'access_denied'; resolvedPath?: never }>;
 
 export type AuthorizeFilesystemPathInput = Readonly<{
   targetPath: unknown;
@@ -151,18 +151,18 @@ export function resolveFilesystemTargetPath(input: Readonly<{
   const api = pathApi(platform);
   const targetPath = typeof input.targetPath === 'string' ? input.targetPath : '';
   if (targetPath.length === 0) {
-    return { valid: false, error: 'Path is required' };
+    return { valid: false, error: 'Path is required', errorCode: 'access_denied' };
   }
   if (targetPath.includes('\0')) {
-    return { valid: false, error: 'Access denied: Path contains invalid characters' };
+    return { valid: false, error: 'Access denied: Path contains invalid characters', errorCode: 'access_denied' };
   }
   if (!input.defaultDirectory || typeof input.defaultDirectory !== 'string') {
-    return { valid: false, error: 'Access denied: Invalid working directory' };
+    return { valid: false, error: 'Access denied: Invalid working directory', errorCode: 'access_denied' };
   }
 
   const defaultDirectory = input.defaultDirectory.trim();
   if (!isFilesystemPathAbsolute(defaultDirectory, platform)) {
-    return { valid: false, error: 'Access denied: Invalid working directory' };
+    return { valid: false, error: 'Access denied: Invalid working directory', errorCode: 'access_denied' };
   }
 
   const resolvedPath = isFilesystemPathAbsolute(targetPath, platform)
@@ -198,11 +198,12 @@ export function authorizeFilesystemPath(input: AuthorizeFilesystemPathInput): Fi
       }
     }
   } catch {
-    return { valid: false, error: 'Access denied: Path could not be resolved' };
+    return { valid: false, error: 'Access denied: Path could not be resolved', errorCode: 'access_denied' };
   }
 
   return {
     valid: false,
+    errorCode: 'access_denied',
     error: `Access denied: Path '${String(input.targetPath ?? '')}' is outside the allowed directories`,
   };
 }
@@ -210,9 +211,9 @@ export function authorizeFilesystemPath(input: AuthorizeFilesystemPathInput): Fi
 /** Admit the checkout under host policy, then confine its entry under that exact root. */
 export function authorizeFilesystemPathWithinRoot(
   input: AuthorizeFilesystemPathInput & Readonly<{ rootPath: string }>,
-): (Readonly<{ valid: true; resolvedPath: string; rootPath: string; error?: never }> | Readonly<{ valid: false; error: string; resolvedPath?: never }>) {
+): (Readonly<{ valid: true; resolvedPath: string; rootPath: string; error?: never }> | Extract<FilesystemPathAuthorizationResult, { valid: false }>) {
   if (!isFilesystemPathAbsolute(input.rootPath, input.platform)) {
-    return { valid: false, error: 'The filesystem root must be absolute' };
+    return { valid: false, error: 'The filesystem root must be absolute', errorCode: 'access_denied' };
   }
   const root = authorizeFilesystemPath({ ...input, targetPath: input.rootPath });
   if (!root.valid) return root;
@@ -258,7 +259,7 @@ export async function prepareFilesystemPathAuthorizer(
     try {
       resolvedTargetKey = filesystemPathComparisonKey(await resolveRealPathForAuthorizationAsync(resolved.resolvedPath, platform), platform);
     } catch {
-      return { valid: false, error: 'Access denied: Path could not be resolved' };
+      return { valid: false, error: 'Access denied: Path could not be resolved', errorCode: 'access_denied' };
     }
     for (const root of resolvedRootKeys) {
       if (isWithinResolvedRoot(resolvedTargetKey, root, platform)) {
@@ -268,6 +269,7 @@ export async function prepareFilesystemPathAuthorizer(
 
     return {
       valid: false,
+      errorCode: 'access_denied',
       error: `Access denied: Path '${String(targetPath ?? '')}' is outside the allowed directories`,
     };
   };

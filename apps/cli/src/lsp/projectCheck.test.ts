@@ -18,8 +18,7 @@ const processOwner = { kind: 'service', serviceId: 'lsp:fixture/checker:01234567
 
 function fixture(rootPath: string, scenario: string) {
     return createLanguageServerProjectChecker({ async acquireExec(input) {
-        const service = createStablePluginExecService({
-            allowedExecutables: [input.definition.executable], signal: input.signal,
+        const service = createStablePluginExecService({ signal: input.signal,
             processOwner: input.processOwner,
             isOccurrenceCurrent: () => !input.signal.aborted,
             resolveExecutable: async () => ({ command: process.execPath,

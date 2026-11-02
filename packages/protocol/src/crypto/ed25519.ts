@@ -30,3 +30,14 @@ export function verifyEd25519Signature(message: Uint8Array, signature: Uint8Arra
     return false;
   }
 }
+
+export function deriveEd25519KeyPair(seed: Uint8Array): Readonly<{ publicKey: Uint8Array; secretKey: Uint8Array }> {
+  if (seed.length !== ED25519_SEED_BYTES) {
+    throw new Error(`Invalid Ed25519 seed length: expected ${ED25519_SEED_BYTES} bytes`);
+  }
+  const publicKey = ed25519.getPublicKey(seed);
+  const secretKey = new Uint8Array(ED25519_SECRET_KEY_BYTES);
+  secretKey.set(seed);
+  secretKey.set(publicKey, ED25519_SEED_BYTES);
+  return { publicKey, secretKey };
+}

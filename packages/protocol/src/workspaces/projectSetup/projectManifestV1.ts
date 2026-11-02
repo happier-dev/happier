@@ -102,3 +102,11 @@ export const ProjectDefinitionImportCandidateV1Schema = z.strictObject({
   executionInputs: z.optional(z.array(ProjectExecutionInputV1Schema)),
 }).check(z.refine(candidate => !candidate.preselected || candidate.availability === 'available', 'Only available unambiguous offers may be preselected'));
 export type ProjectDefinitionImportCandidateV1 = z.infer<typeof ProjectDefinitionImportCandidateV1Schema>;
+
+export type ProjectToolchainSelectionV1 = z.infer<typeof ProjectToolchainSelectionV1Schema>;
+
+export const ProjectToolchainSelectionV1Schema = z.union([
+  z.strictObject({ kind: z.literal('host') }),
+  z.strictObject({ kind: z.literal('toolchain'), tool: z.enum(['mise', 'devbox', 'devenv', 'flox', 'nix_flake']), configPath: z.optional(containedPath) }),
+  z.strictObject({ kind: z.literal('pluginToolchain'), adapter, configPath: z.optional(containedPath) }),
+]);

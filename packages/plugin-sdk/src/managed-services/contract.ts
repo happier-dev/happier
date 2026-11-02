@@ -141,10 +141,12 @@ export type ManagedServiceRequest = Readonly<{
     method?: HttpMethod;
     headers?: Readonly<Record<string, string>>;
     body?: Uint8Array;
+    /** Open-ended access closes with the owning scope; omitted for finite requests. */
+    interactive?: true;
     /**
      * Bounds request establishment through validated response headers. After
-     * headers arrive, the caller signal and exact handle lifecycle own a
-     * streaming response body.
+     * headers arrive, caller cancellation owns a finite response body.
+     * Explicitly interactive bodies also close with the owning scope.
      * Omission leaves establishment under that same caller/handle lifetime;
      * an ordinary native prompt has no implicit managed HTTP deadline.
      */
@@ -157,7 +159,18 @@ export type ManagedServiceResponse = Readonly<{
     status: number;
     statusText: string;
     headers: Readonly<Record<string, string>>;
-    body: ReadableStream<Uint8Array> | null;
+    /** Portable reader subset of a native byte stream; no DOM globals required. */
+    body: Readonly<{
+        cancel(reason?: unknown): Promise<void>;
+        getReader(): Readonly<{
+            read(): Promise<
+                | Readonly<{ done: false; value: Uint8Array }>
+                | Readonly<{ done: true; value?: Uint8Array }>
+            >;
+            cancel(reason?: unknown): Promise<void>;
+            releaseLock(): void;
+        }>;
+    }> | null;
 }>;
 
 export type ManagedServiceMaterializationInjection =
@@ -368,7 +381,9 @@ export interface ManagedServiceNativeLifecycleV1 {
             context?: PluginInvocationContext): Promise<Disposable>;
     };
     stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
-        status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
+        status: 'accepted';
+    }> | Readonly<{
+        status: 'stopped' | 'unsupported' | 'termination_incomplete';
     }>>;
 }
 

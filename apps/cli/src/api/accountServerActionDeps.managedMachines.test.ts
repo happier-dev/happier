@@ -157,7 +157,10 @@ describe('managed inventory CLI Home adapter', () => {
 
   it.each(['cli', 'agent', 'mcp'] as const)('invokes preset setup, terminals and authenticated work summary through the exact-machine %s transport', async surface => {
     const seen: Array<{ method: string; request: unknown }> = [];
-    const environment = { homeId: 'srv_home', machineId: 'controller-1', presetId: 'preset-1', presetRevision: 2 };
+    const environment = { homeId: 'srv_home', machineId: 'controller-1', sources: [
+      { kind: 'accountPreset', presetId: 'preset-1', presetRevision: 2, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
+      { kind: 'direct', setup: {} },
+    ] };
     const terminals = { ok: true, terminals: [{ terminalId: 'terminal-1', terminalKey: 'setup', cwd: '/workspace', ended: false, exit: null }] };
     const workSummary = { kind: 'current', requesters: [{ accountId: 'recipient', displayName: 'Recipient', sessions: 2, tasks: 1, terminals: 3 }] } satisfies MachineWorkSummaryV1;
     app.get('/v1/machines/controller-1', async request => {
@@ -180,20 +183,21 @@ describe('managed inventory CLI Home adapter', () => {
       // exact-target adapter, schema validation and admission remain real.
       machineActionDirectTargetTransport: { machineId: 'controller-1', invoke: async (method, request) => {
         seen.push({ method, request });
-        if (method === 'machines.environment.apply') return { operationId: 'setup-1', terminalId: 'terminal-1' };
+        if (method === 'machines.setup.apply') return { operationId: 'setup-1', terminalId: 'terminal-1' };
         if (method === RPC_METHODS.DAEMON_TERMINAL_LIST) return terminals;
         throw new Error(`Unexpected daemon method: ${method}`);
       } },
     });
-    await expect(invoke(cli, surface, 'machines.environment.apply', environment))
+    await expect(invoke(cli, surface, 'machines.setup.apply', environment))
       .resolves.toEqual({ ok: true, result: { operationId: 'setup-1', terminalId: 'terminal-1' } });
     await expect(invoke(cli, surface, 'machines.terminal.list', { serverId: 'route-home', machineId: 'controller-1' }))
       .resolves.toEqual({ ok: true, result: terminals });
     await expect(invoke(cli, surface, 'machines.work.summary.get', { serverId: 'route-home', machineId: 'controller-1' }))
       .resolves.toEqual({ ok: true, result: workSummary });
-    await expect(invoke(cli, surface, 'machines.environment.apply', { ...environment, presetRevision: '2' }))
+    await expect(invoke(cli, surface, 'machines.setup.apply', { ...environment, sources: environment.sources.map(source =>
+      source.kind === 'accountPreset' ? { ...source, presetRevision: '2' } : source) }))
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(seen).toEqual([{ method: 'machines.environment.apply', request: environment },
+    expect(seen).toEqual([{ method: 'machines.setup.apply', request: environment },
       { method: RPC_METHODS.DAEMON_TERMINAL_LIST, request: {} },
       { method: RPC_METHODS.MACHINES_WORK_SUMMARY_GET, request: { serverId: 'route-home', machineId: 'controller-1' } }]);
   });

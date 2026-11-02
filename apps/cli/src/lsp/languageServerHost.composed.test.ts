@@ -37,7 +37,7 @@ function fixtureProjectChecker(rootPath: string, scenario: string, count?: numbe
     return createLanguageServerProjectChecker({ async acquireExec(input) {
         // Executable resolution is the OS boundary; the actual process owner,
         // compiler-output decoder and host projection remain real.
-        const service = createStablePluginExecService({ allowedExecutables: [input.definition.executable], signal: input.signal,
+        const service = createStablePluginExecService({  signal: input.signal,
             processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
             resolveExecutable: async () => ({ command: process.execPath,
                 args: [resolve('src/lsp/__fixtures__/projectCheck.cjs'), scenario, join(rootPath, 'started'), ...(count === undefined ? [] : [String(count)])] }),
@@ -69,7 +69,7 @@ async function fixture(rootPath: string, count = 1, behavior: Record<string, unk
     let registry = registryFor(count);
     const host = createLanguageServerHost({ readCurrentContributionRegistry: () => registry, readPolicy, platform, projectChecker, async openProtocol(input) {
             // The OS executable/protocol child is the system boundary; host, catalog, codec and supervisor stay real.
-            const service = createStablePluginExecService({ allowedExecutables: [input.definition.executable], signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
+            const service = createStablePluginExecService({  signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => behavior.nativeTypeScript ? { command: resolve('../../node_modules/@typescript/typescript-linux-x64/lib/tsc'), args: ['--lsp', '--stdio'] }
                     : { command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify({ ...readLspObject(input.definition.initializationOptions), ...behavior })] }, resolvePath: async () => rootPath });
             const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest', launch: { executable: input.definition.executable, cwd: rootPath } });

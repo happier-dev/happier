@@ -1,3 +1,4 @@
+import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../actions/decisionAuthority.js';
@@ -36,4 +37,13 @@ export function isLiveCliApprovalOriginMethod(method: string): boolean {
   const suffix = `:${LIVE_CLI_APPROVAL_DECIDE_METHOD}`;
   return method.startsWith(prefix) && method.endsWith(suffix)
     && /^[A-Za-z0-9_-]{43}$/.test(method.slice(prefix.length, -suffix.length));
+}
+
+export function readLiveCliApprovalOriginScope(request: ApprovalRequest): string | null {
+  if (request.v !== 2) return null;
+  const executor = resolveApprovalExecutor(request);
+  if (executor.kind !== 'live_invocation' || executor.daemonMachineId) return null;
+  const origin = request.executionOriginV1;
+  return origin.surface === 'cli' && origin.caller.kind === 'host'
+    ? liveCliApprovalOriginScope(origin.requestId) : null;
 }

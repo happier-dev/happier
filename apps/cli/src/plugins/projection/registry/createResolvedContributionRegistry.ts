@@ -489,6 +489,15 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         }
         connectedAccountDescriptorsById.set(key, descriptor);
     }
+    const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
+    const deploymentTargets = freezeQualifiedContributions(inputs.deploymentTargets ?? []);
+    const healthCheckKinds = freezeQualifiedContributions(inputs.healthCheckKinds ?? []);
+    const machineRecipes = freezeQualifiedContributions(inputs.machineRecipes ?? []);
+    const machineSetupPresets = freezeQualifiedContributions(inputs.machineSetupPresets ?? []);
+    const accessProviders = freezeQualifiedContributions(inputs.accessProviders ?? []);
+    const accessProvidersByContributionKey = new Map(accessProviders.map((entry) => [
+        resolveQualifiedContributionRegistryKey(entry), entry,
+    ] as const));
     return Object.freeze({
         introspectionContributions,
         uiViewsV2,
@@ -581,6 +590,14 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         agentDefinitionsById,
         providersByContributionKey: Object.freeze(providersByContributionKey),
         pluginDiagnosticsByPluginId,
+
+        backupDestinations,
+        deploymentTargets,
+        healthCheckKinds,
+        machineRecipes,
+        machineSetupPresets,
+        accessProviders,
+        accessProvidersByContributionKey: Object.freeze(accessProvidersByContributionKey),
     });
 }
 

@@ -1,3 +1,7 @@
+import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
+import { projectActionExecuteFailure } from '../actionExecutionResult.js';
+import { isRecord } from '../../inputs/inputRecords.js';
+import { getActionSpec } from '../actionSpecs.js';
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
 import { PublicProfileAccountScopeError } from './publicProfileActions.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
@@ -235,4 +239,39 @@ export function completeSpawnActionResult(result: unknown): ActionExecuteResult 
   const spawn = SessionSpawnNewResultV1Schema.safeParse(result);
   return completeActionResult(spawn.success ? projectSessionSpawnNewActionResultV1(spawn.data) : result,
     { treatReturnedErrorEnvelopeAsFailure: true });
+}
+
+export function settleActionOutput(actionId: ActionId, result: ActionExecuteResult): ActionExecuteResult {
+  const withCredentialUses = (settled: ActionExecuteResult): ActionExecuteResult => result.operationCredentialUses?.length
+    ? { ...settled, operationCredentialUses: result.operationCredentialUses } : settled;
+  if (!result.ok) {
+    if (actionId === 'projects.open' && (result.errorCode === 'outcome_unknown'
+      || result.errorCode === 'invalid_action_output' || result.errorCode === 'result_too_large')) {
+      return withCredentialUses(completeUnknownProjectOpenResult(result.details));
+    }
+    return withCredentialUses(projectActionExecuteFailure(result));
+  }
+  if (isDeferredApprovalResult(result)) return result;
+  const outputSchema = getActionSpec(actionId).outputSchema;
+  if (!outputSchema) return result;
+  const invalidOutput = (): ActionExecuteResult => actionId === 'projects.open'
+    ? completeUnknownProjectOpenResult()
+    : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  try {
+    const output = outputSchema.safeParse(result.result);
+    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput());
+  } catch {
+    return withCredentialUses(invalidOutput());
+  }
+}
+
+function completeUnknownProjectOpenResult(details?: unknown): ActionExecuteResult {
+  const operationId = readRecord(details).operationId;
+  const unknown = OpenProjectResultV1Schema.safeParse({ kind: 'outcomeUnknown',
+    ...(operationId === undefined ? {} : { operationId }) });
+  return { ok: true, result: unknown.success ? unknown.data : { kind: 'outcomeUnknown' } };
+}
+
+export function isDeferredApprovalResult(result: ActionExecuteResult): boolean {
+  return result.ok && isRecord(result.result) && result.result.kind === 'approval_request_created';
 }

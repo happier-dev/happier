@@ -1,6 +1,14 @@
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import type { ActionPreparedOperation, ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import type { HostReviewedChildrenPlanV1 } from './types.js';
+import { DeploymentEnvironmentCreationReviewV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentTeardownInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentRollbackInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+
+
+
+
 import { type ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -117,8 +125,56 @@ export async function resolveComputerActionSelection(
 }
 
 export async function readDeploymentPreparation(deps: ActionExecutorDeps, actionId: ActionId, input: unknown,
-  context: ActionExecutorContext,
-) {
+  context: ActionExecutorContext, retainedReview?: JsonValue,
+): Promise<
+  | Readonly<{ input: unknown; preview: JsonValue; hostReviewedChildren?: HostReviewedChildrenPlanV1 }>
+  | ActionExecuteFailure
+  | Extract<Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareDeploymentAction']>>>, { observePendingOperation: unknown }>
+  | null
+> {
+  if (actionId === 'deployments.environments.create' && deps.prepareDeploymentEnvironmentCreate) {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    // Prepared/replayed refs are the reviewed operands. Preview dispatch reaches
+    // the installed host directly, following the template preview pattern.
+    if ('contentArtifactId' in parsed.data || parsed.data.mode === 'preview') return null;
+    const prepared = await deps.prepareDeploymentEnvironmentCreate({ input: parsed.data, context,
+      ...(retainedReview === undefined ? {} : { creationReview: DeploymentEnvironmentCreationReviewV1Schema.parse(retainedReview) }) });
+    if ('errorCode' in prepared) return prepared;
+    const reviewed = DeploymentActionInputSchemasV1['deployments.environments.create'].safeParse(prepared.input);
+    const review = DeploymentEnvironmentCreationReviewV1Schema.safeParse(prepared.preview);
+    if (!reviewed.success || !review.success) return { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    const authored = parsed.data;
+    const candidate = reviewed.data;
+    const values = review.data.creationDefaults.values;
+    if (candidate.serverId !== authored.serverId || candidate.projectSourceId !== authored.projectSourceId
+      || !sameStrictJsonValue(candidate.newProject ?? null, authored.newProject ?? null)
+      || candidate.requestKey !== authored.requestKey || candidate.protection !== authored.protection
+      || candidate.purpose !== authored.purpose || candidate.deployerMode !== authored.deployerMode
+      || !sameStrictJsonValue(candidate.deployerPrincipals ?? null, authored.deployerPrincipals ?? null)
+      || !sameStrictJsonValue(candidate.copyFrom ?? null, authored.copyFrom ?? null)
+      || !sameStrictJsonValue(candidate.firstTargetLink?.machines ?? null, authored.firstTargetLink?.machines ?? null)
+      || candidate.controllerMachineId !== values.controllerMachineId || candidate.buildMachineId !== values.buildMachineId
+      || review.data.creationDefaultsBasis?.projectSourceId !== authored.projectSourceId
+      || authored.controllerMachineId !== undefined && values.controllerMachineId !== authored.controllerMachineId
+      || authored.buildMachineId !== undefined && values.buildMachineId !== authored.buildMachineId
+      || authored.retainPreviousDeployments !== undefined && values.retainPreviousDeployments !== authored.retainPreviousDeployments)
+      return { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' };
+    if (context.signal?.aborted) return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' };
+    return { input: reviewed.data, preview: projectNativeJsonValueForTransport(review.data) };
+  }
+  if (actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown) {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    const prepared = await deps.prepareDeploymentTeardown({ input: parsed.data, context,
+      readWorkflowInvocation: async reference => deps.workflowAction
+        ? deps.workflowAction({ actionId: 'workflow.run.invocations.get', input: reference, context })
+        : { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' } });
+    if ('errorCode' in prepared) return prepared;
+    const reviewed = DeploymentTeardownInputV1Schema.safeParse(prepared.input);
+    if (!reviewed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    return { ...prepared, input: reviewed.data };
+  }
   if (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
     && context.actionCaller?.kind !== 'workflowRun'
     && !context.externalActionExecutionAuthorization?.binding.managedContinuation) {
@@ -148,9 +204,11 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     return { input: reviewed.data, preview: projectNativeJsonValueForTransport(review.data) };
   }
   if (actionId === 'deployments.publish') {
-    if (!deps.prepareDeploymentPublish) return { ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    // Approval replay consumes the original admission's native review.
+    if (retainedReview !== undefined) return { input: parsed.data, preview: retainedReview };
+    if (!deps.prepareDeploymentPublish) return { ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
     const prepared = await deps.prepareDeploymentPublish({ input: parsed.data, context });
     if ('errorCode' in prepared) return prepared;
     const reviewed = DeploymentActionInputSchemasV1[actionId].safeParse(prepared.input);
@@ -173,10 +231,14 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
   if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
   const prepared = await deps.prepareDeploymentAction({ actionId, input: parsed.data, context });
   if ('errorCode' in prepared) return prepared;
-  const reviewed = (actionId === 'deployments.deploy' ? DeploymentDeployInputV1Schema : schema).safeParse(prepared.input);
+  if ('observePendingOperation' in prepared) return actionId === 'deployments.deploy' && !('contentArtifactId' in parsed.data)
+    ? prepared : { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  const reviewed = (actionId === 'deployments.deploy' ? DeploymentDeployInputV1Schema
+    : actionId === 'deployments.rollback' ? DeploymentRollbackInputV1Schema : schema).safeParse(prepared.input);
   if (!reviewed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
   if (context.signal?.aborted) return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' };
-  return { input: reviewed.data, preview: prepared.preview };
+  return { input: reviewed.data, preview: prepared.preview,
+    ...(prepared.hostReviewedChildren ? { hostReviewedChildren: prepared.hostReviewedChildren } : {}) };
 }
 
 export async function prepareApprovalRequest(params: Readonly<{
@@ -188,6 +250,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   computerApprovalDisplay?: ComputerApprovalDisplayV1;
   widgetSurfaceRead?: ReturnType<typeof WidgetSurfaceReadV1Schema.parse>;
   deploymentReview?: JsonValue;
+  hostReviewedChildren?: HostReviewedChildrenPlanV1;
   executeCanonicalAction?: RuntimeActionExecuteArgs['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
@@ -273,10 +336,11 @@ export async function prepareApprovalRequest(params: Readonly<{
       || (params.actionId === 'deployments.deploy' || params.actionId === 'deployments.rollback' || params.actionId === 'deployments.promote') && params.deps.prepareDeploymentAction
       ? await readDeploymentPreparation(params.deps, params.actionId, params.input, params.context) : null
     : { input: params.actionArgs, preview: params.deploymentReview };
-  if (deployment) {
+  if (deployment && !('observePendingOperation' in deployment)) {
     if ('errorCode' in deployment) return deployment;
     return { actionArgs: deployment.input, preview: { actionId: params.actionId, actionArgs: deployment.input,
-      summary: buildApprovalPreviewSummary(spec, deployment.input), deploymentReview: deployment.preview } };
+      summary: buildApprovalPreviewSummary(spec, deployment.input), deploymentReview: deployment.preview,
+      ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
   if (params.actionId === 'localServices.launcher.start' && readRecord(params.input).declaration !== undefined) {
     const input = DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(params.input);
@@ -347,6 +411,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   }
   const defaultPreview = {
     actionId: params.actionId,
+    ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,
     summary: buildApprovalPreviewSummary(spec, summaryInput, widgetPresentation ? { widgetPresentation } : undefined),
     ...(widgetPresentation ? { widgetPresentation } : {}),
@@ -401,6 +466,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   const preview = {
     ...customizedRecord,
     actionId: params.actionId,
+    ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     ...(params.context.sessionTargetsV1 ? { sessionTargets: params.context.sessionTargetsV1.targets } : {}),
     // This private preview is distinct from shared observations. A declared
     // review schema validates its safe projection, including live-only inputs

@@ -419,3 +419,7 @@ export function readSavedSecretRevisionsFromSnapshotV1(
   }
   return { status: 'ready', resourcesByRef };
 }
+
+export type SavedSecretExternalAcquisitionV1 =
+  | Readonly<{ status: 'ready'; value: string }>
+  | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;

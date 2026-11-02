@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { AccountNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
+import { PluginNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
 import { PluginClientExecutionPlatformsV1Schema, PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -25,7 +25,7 @@ export const PluginWorkItemV1Schema = lazyZodSchema(() => z.strictObject({
   parentItemId: z.optional(ItemId),
   parentTitle: z.optional(z.string().check(z.minLength(1))),
   linkedSessions: z.readonly(z.array(z.readonly(z.strictObject({ serverId: ItemId, sessionId: ItemId })))),
-  page: z.optional(AccountNoticePageV1Schema),
+  page: z.optional(PluginNoticePageV1Schema),
   transitions: z.optional(z.readonly(z.array(z.readonly(z.strictObject({ id: ItemId, label: ItemId, category: PluginWorkItemCategoryV1Schema }))))),
 }));
 export type PluginWorkItemV1 = z.infer<typeof PluginWorkItemV1Schema>;

@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+import type { NetworkInterfaceInfo } from 'node:os';
 function readNonEmptyString(value: unknown): string | null {
   const text = typeof value === 'string' ? value.trim() : '';
   return text ? text : null;
@@ -33,6 +35,11 @@ export type TailscaleStatusSnapshot = Readonly<{
   dnsName: string | null;
   tailnetName: string | null;
   tailscaleIps: readonly string[];
+  /** Network-level capability, not proof of a container's DNS configuration. */
+  magicDnsEnabled: boolean | null;
+  /** Actual native scope, unavailable for userspace/stopped/unobserved interfaces. */
+  interfaceName: string | null;
+  sourceRanges: readonly string[];
   loggedIn: boolean;
   /**
    * Whether the local backend is actually up and carrying traffic.
@@ -56,7 +63,7 @@ export type TailscaleStatusSnapshot = Readonly<{
   daemonReachable: boolean;
 }>;
 
-export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSnapshot {
+export function parseTailscaleStatusSnapshot(value: unknown, nativeInterfaces: NativeInterfaces = {}): TailscaleStatusSnapshot {
   const record = readRecord(value);
   const self = readRecord(record?.Self);
   const currentTailnet = readRecord(record?.CurrentTailnet);
@@ -81,6 +88,8 @@ export function parseTailscaleStatusSnapshot(value: unknown): TailscaleStatusSna
     dnsName,
     tailnetName,
     tailscaleIps,
+    magicDnsEnabled: typeof currentTailnet?.MagicDNSEnabled === 'boolean' ? currentTailnet.MagicDNSEnabled : null,
+    ...readNativeScope(running && record?.TUN === true ? tailscaleIps : [], nativeInterfaces),
     loggedIn: hasLoggedInEvidence && !explicitLoginRequired,
     running,
     daemonReachable: true,
@@ -101,6 +110,9 @@ export function tailscaleStatusSnapshotForUnreachableDaemon(): TailscaleStatusSn
     dnsName: null,
     tailnetName: null,
     tailscaleIps: [],
+    magicDnsEnabled: null,
+    interfaceName: null,
+    sourceRanges: [],
     loggedIn: false,
     running: false,
     daemonReachable: false,
@@ -126,7 +138,7 @@ export function isTailscaleDaemonUnreachableOutput(text: string): boolean {
   return DAEMON_UNREACHABLE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-export function parseTailscaleStatusJson(text: string): TailscaleStatusSnapshot {
+export function parseTailscaleStatusJson(text: string, nativeInterfaces: NativeInterfaces = {}): TailscaleStatusSnapshot {
   const raw = String(text ?? '').trim();
   if (!raw) {
     throw new Error('Received an empty tailscale status payload.');
@@ -142,5 +154,51 @@ export function parseTailscaleStatusJson(text: string): TailscaleStatusSnapshot 
     throw new Error(message);
   }
 
-  return parseTailscaleStatusSnapshot(parsed);
+  return parseTailscaleStatusSnapshot(parsed, nativeInterfaces);
+}
+
+type NativeInterfaces = Readonly<Record<string,
+  readonly Pick<NetworkInterfaceInfo, 'address' | 'family' | 'internal'>[] | undefined>>;
+
+export function parseTailscaleCurrentProfileId(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  let selectedId: string | null = null;
+  for (const candidate of value) {
+    const profile = readRecord(candidate);
+    if (profile?.selected !== true) continue;
+    const id = readNonEmptyString(profile.id);
+    if (!id || selectedId !== null) return null;
+    selectedId = id;
+  }
+  return selectedId;
+}
+
+function normalizeIp(address: string): string | null {
+  const family = isIP(address);
+  if (family === 4) return address;
+  if (family === 6 && !address.includes('%')) return new URL(`http://[${address}]`).hostname;
+  return null;
+}
+
+function readNativeScope(addresses: readonly string[], interfaces: NativeInterfaces): Pick<TailscaleStatusSnapshot, 'interfaceName' | 'sourceRanges'> {
+  const assigned = new Set(addresses.map(normalizeIp).filter(address => address !== null));
+  const matches = Object.entries(interfaces).flatMap(([name, entries]) => {
+    const families = new Set((entries ?? [])
+      .filter(entry => {
+        const address = normalizeIp(entry.address);
+        return !entry.internal && address !== null && assigned.has(address);
+      })
+      .map(entry => entry.family));
+    return families.size ? [{ name, families }] : [];
+  });
+  const match = matches.length === 1 ? matches[0] : undefined;
+  return {
+    interfaceName: match?.name ?? null,
+    // Tailscale's documented source spaces; only observed address families apply.
+    // https://tailscale.com/docs/reference/faq/other-vpns#split-tunnels
+    sourceRanges: match ? [
+      ...(match.families.has('IPv4') ? ['100.64.0.0/10'] : []),
+      ...(match.families.has('IPv6') ? ['fd7a:115c:a1e0::/48'] : []),
+    ] : [],
+  };
 }

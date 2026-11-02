@@ -309,3 +309,5 @@ export function createPluginInvocationServicesFactory(
 ): CreatePluginInvocationServices {
     return (seed, binding) => createPluginInvocationServicesFromDescriptors(seed, binding, params);
 }
+
+export { createPluginInvocationServiceBinding } from './unavailable';

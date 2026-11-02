@@ -963,3 +963,16 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         } finally { if (!runStarted && !nativeUncertain) await releaseNativeInvocations(); }
     };
 }
+
+export async function readProjectRuntimeAdmissionRefusal(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): Promise<ActionExecuteFailure | null> {
+    const requester = await readProjectRuntimeRequesterRefusal(runtime, ingress);
+    if (requester) return requester;
+    // Restricted requester resolution already verifies the installed, Account,
+    // HTTP and Machine custody together at its canonical owner.
+    if (ingress.callerInputAuthorization) return null;
+    const custody = await readProjectRuntimeCurrentnessRefusal(runtime, ingress.signal);
+    if (custody) return custody;
+    if (!ingress.verifyMachineAdmissionCurrent) return failure('machine_admission_required');
+    if (!await ingress.verifyMachineAdmissionCurrent()) return failure('machine_admission_changed');
+    return ingress.signal.aborted ? failure('cancelled') : null;
+}

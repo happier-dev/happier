@@ -29,3 +29,20 @@ export const PROMPT_PICKER_ACTION_SPECS = [{
   outputSchema: UiPromptPickerOpenOutputSchema,
   inputHints: { fields: [{ path: 'composerRef', title: 'Mounted composer address', widget: 'json' }] },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+
+export const UiPromptPickerSelectInputSchema = lazyZodSchema(() => z.strictObject({
+  composerRef: z.optional(ComposerRefSchema),
+  selection: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('doc'), artifactId: z.string().check(z.minLength(1)) }),
+    z.strictObject({ kind: z.literal('builtIn'), token: z.string().check(z.minLength(1)) }),
+    z.strictObject({ kind: z.literal('history'), serverId: z.string().check(z.minLength(1)), sessionId: z.string().check(z.minLength(1)), messageId: z.string().check(z.minLength(1)) }),
+  ]),
+}));
+
+export const UiPromptPickerApplyInputSchema = lazyZodSchema(() => z.strictObject({
+  composerRef: z.optional(ComposerRefSchema), mode: z.enum(['insert', 'send']),
+}));
+
+export const UiPromptHistoryInputSchema = lazyZodSchema(() => z.strictObject({
+  composerRef: z.optional(ComposerRefSchema), op: z.enum(['read', 'page', 'stop', 'retry']),
+}));

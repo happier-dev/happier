@@ -19,6 +19,7 @@ export {
   runTailscaleLogin,
   runTailscaleFunnelEnable,
   runTailscaleFunnelReset,
+  runTailscaleFunnelDisable,
   runTailscaleFunnelStatus,
   runTailscaleServeDisable,
   runTailscaleServeEnable,
@@ -58,3 +59,5 @@ export {
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
 } from './taskContract.js';
+
+export { runTailscaleOperatorObservation } from './commandRunner.js';

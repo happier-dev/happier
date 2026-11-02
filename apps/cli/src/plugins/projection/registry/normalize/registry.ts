@@ -1,7 +1,10 @@
+import { readDeploymentTargetReferenceRolesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { ResolvedActionAdmittedTarget } from '../types';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 import { projectTargetedContributionActionDefinition } from '@happier-dev/plugin-sdk/host/registration';
 import { toCommandDefinition } from './commandDefinition';
-import { projectPluginActionInputDefinition } from './actionInput';
+import { projectPluginActionInputDefinition, projectPluginActionLocalizedPresentation } from './actionInput';
 import { admitPluginContributionGraph, type AdmittedPluginContributionGraph } from './admission';
 import { readPluginSemanticContributions, type PluginContributionCanonicalizer } from './semantic';
 import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
@@ -128,6 +131,7 @@ export type PluginOwnedVoiceProviderContribution = PluginOwnedContribution<Voice
 }>;
 
 export type PluginOwnedActionContribution = PluginOwnedContribution<ResolvedActionDefinition> & Readonly<{
+  admittedTarget: ResolvedActionAdmittedTarget;
   /** The Action's client execution target resolves only through this signed graph. */
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
   /** Exact author presentation retained for the daemon/UI localization path. */
@@ -460,6 +464,16 @@ export function projectPluginContributionRegistry(params: Readonly<{
       semanticContributionsForPlugin.get(family)?.map((entry) => entry.definition as T) ?? []
     );
 
+    const deploymentRolesByAction = new Map<string, import('../types').ResolvedDeploymentTargetActionRole[]>();
+    for (const target of readSemanticDefinitions<import('@happier-dev/protocol').DeploymentTargetContributionV1>('deploymentTargets')) {
+      for (const binding of readDeploymentTargetReferenceRolesV1(target)) {
+        if (binding.targetFamily !== 'actions') continue;
+        const roles = deploymentRolesByAction.get(binding.reference) ?? [];
+        roles.push(Object.freeze({ targetLocalId: target.id, targetKind: target.targetKind, role: binding.role }));
+        deploymentRolesByAction.set(binding.reference, roles);
+      }
+    }
+
     for (const definition of readSemanticDefinitions<PluginContributionPointV1>('pluginContributionPoints')) {
       pluginContributionPoints.push({
         pluginId: plugin.pluginId,
@@ -677,6 +691,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     }
 
     for (const definition of readSemanticDefinitions<PluginActionContributionV2>('actions')) {
+      const actionDefinition = toActionDefinition(definition);
       actions.push({
         pluginId: plugin.pluginId,
         pluginVersion: plugin.manifest.version,
@@ -689,8 +704,31 @@ export function projectPluginContributionRegistry(params: Readonly<{
         ...(plugin.generatedUiArtifactsManifest
           ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest }
           : {}),
-        localizedPresentation: toActionLocalizedPresentation(definition),
-        definition: toActionDefinition(definition),
+        localizedPresentation: projectPluginActionLocalizedPresentation(definition, actionDefinition.inputHints),
+        admittedTarget: Object.freeze({
+          declaration: definition,
+          ...(deploymentRolesByAction.has(definition.id)
+            ? { deploymentTargetRoles: Object.freeze(deploymentRolesByAction.get(definition.id)!) }
+            : {}),
+          hostAccessRequests: resolvePluginContributionHostAccessRequestsV2({
+            manifest: plugin.manifest,
+            pluginId: plugin.pluginId,
+            contribution: { family: 'actions', localId: definition.id },
+            requestIds: definition.hostAccess,
+          }),
+          historyGapSources: Object.freeze(plugin.manifest.contributes.events.flatMap((event) => {
+            const source = event.kind === 'event' && event.automation?.eligible === true
+              ? event.automation.source : null;
+            if (source?.historyGapResetActionRef?.pluginId !== plugin.pluginId
+              || source.historyGapResetActionRef.localId !== definition.id) return [];
+            return [Object.freeze({
+              eventLocalId: event.id,
+              purposeBindings: source.connectedAccountPurposeBindings ?? Object.freeze([]),
+            })];
+          })),
+          surfaces: Object.freeze(Object.entries(actionDefinition.surfaces).flatMap(([surface, enabled]) => enabled ? [surface] : [])),
+        }),
+        definition: actionDefinition,
       });
     }
 

@@ -1,3 +1,7 @@
+import type { ResolvedPluginManifestHostAccessRequestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginActionConnectedAccountPurposeBindingV2 } from '@happier-dev/protocol';
+import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol';
+import type { AccessProviderContributionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 import type { PluginLanguageServerContributionV1 } from '@happier-dev/protocol/plugins/contributions/languageServers';
 import type {
@@ -323,6 +327,8 @@ export type ResolvedActionContribution = Readonly<{
     /** Signed generated UI graph retained only for the Action's exact client executable. */
     generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
     localizedPresentation?: ResolvedActionLocalizedPresentation;
+    /** Present for manifest-owned V2 contributions, absent for the distinct legacy Action domain. */
+    admittedTarget?: ResolvedActionAdmittedTarget;
     definition: ResolvedActionDefinition;
 }>;
 
@@ -789,6 +795,7 @@ export type ResolvedContributionInputs = Readonly<{
     openableContentViewers?: readonly ResolvedOpenableContentViewerContribution[];
     uiSettingsGroupsV2?: readonly ResolvedUiSettingsGroupV2Contribution[];
     uiSettingsPagesV2?: readonly ResolvedUiSettingsPageV2Contribution[];
+    uiListExtensionsV1?: readonly ResolvedUiListExtensionV1Contribution[];
     uiRenderersV2?: readonly ResolvedUiRendererV2Contribution[];
     uiTranslationsV2?: readonly ResolvedUiTranslationBundleV2Contribution[];
     composerReferences?: readonly ResolvedComposerReferenceContribution[];
@@ -800,8 +807,6 @@ export type ResolvedContributionInputs = Readonly<{
     providers?: readonly ResolvedProviderContribution[];
     catalogEntries?: readonly ResolvedCatalogEntry[];
     actions?: readonly ResolvedActionContribution[];
-    tools?: readonly ResolvedToolContribution[];
-    commands?: readonly ResolvedCommandContribution[];
     resources?: readonly ResolvedResourceContribution[];
     promptAssets?: readonly ResolvedPromptAssetContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
@@ -820,9 +825,15 @@ export type ResolvedContributionInputs = Readonly<{
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
+    backupDestinations?: readonly ResolvedBackupDestinationContribution[];
+    deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
+    healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
+    machineRecipes?: readonly ResolvedMachineRecipeContribution[];
+    machineSetupPresets?: readonly ResolvedMachineSetupPresetContribution[];
     languageServers?: readonly ResolvedLanguageServerContribution[];
     skills?: readonly ResolvedSkillContribution[];
     machineProvisioners?: readonly ResolvedMachineProvisionerContribution[];
+    accessProviders?: readonly ResolvedAccessProviderContribution[];
     dragSources?: readonly ResolvedDragSourceContribution[];
     workItems?: readonly ResolvedWorkItemsContribution[];
     dropTargets?: readonly ResolvedDropTargetContribution[];
@@ -847,6 +858,9 @@ export type ResolvedContributionInputs = Readonly<{
     /** Candidate-local activation occurrences; never persisted or published before adoption. */
     occurrenceIdsByPluginId?: Readonly<Record<string, PluginRuntimeOccurrenceId>>;
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+
+tools?: readonly ResolvedToolContribution[];
+commands?: readonly ResolvedCommandContribution[];
 }>;
 
 export type ResolvedContributionRegistry = Readonly<{
@@ -857,6 +871,7 @@ export type ResolvedContributionRegistry = Readonly<{
     openableContentViewers?: readonly ResolvedOpenableContentViewerContribution[];
     uiSettingsGroupsV2?: readonly ResolvedUiSettingsGroupV2Contribution[];
     uiSettingsPagesV2?: readonly ResolvedUiSettingsPageV2Contribution[];
+    uiListExtensionsV1?: readonly ResolvedUiListExtensionV1Contribution[];
     uiRenderersV2?: readonly ResolvedUiRendererV2Contribution[];
     uiTranslationsV2?: readonly ResolvedUiTranslationBundleV2Contribution[];
     composerReferences?: readonly ResolvedComposerReferenceContribution[];
@@ -867,8 +882,6 @@ export type ResolvedContributionRegistry = Readonly<{
     agents: readonly ResolvedAgentContribution[];
     providers?: readonly ResolvedProviderContribution[];
     actions: readonly ResolvedActionContribution[];
-    tools?: readonly ResolvedToolContribution[];
-    commands?: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
     promptAssets?: readonly ResolvedPromptAssetContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
@@ -889,9 +902,15 @@ export type ResolvedContributionRegistry = Readonly<{
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
+    backupDestinations: readonly ResolvedBackupDestinationContribution[];
+    deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
+    healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
+    machineRecipes?: readonly ResolvedMachineRecipeContribution[];
+    machineSetupPresets?: readonly ResolvedMachineSetupPresetContribution[];
     languageServers?: readonly ResolvedLanguageServerContribution[];
     skills?: readonly ResolvedSkillContribution[];
     machineProvisioners?: readonly ResolvedMachineProvisionerContribution[];
+    accessProviders?: readonly ResolvedAccessProviderContribution[];
     dragSources?: readonly ResolvedDragSourceContribution[];
     workItems?: readonly ResolvedWorkItemsContribution[];
     dropTargets?: readonly ResolvedDropTargetContribution[];
@@ -923,8 +942,6 @@ export type ResolvedContributionRegistry = Readonly<{
     immutableGenerationIdsByPluginId?: Readonly<Record<string, string>>;
     occurrenceIdsByPluginId?: Readonly<Record<string, PluginRuntimeOccurrenceId>>;
     actionsById?: ReadonlyMap<string, ResolvedActionContribution>;
-    toolsById?: ReadonlyMap<string, ResolvedToolContribution>;
-    commandsById?: ReadonlyMap<string, ResolvedCommandContribution>;
     resourcesById?: ReadonlyMap<string, ResolvedResourceContribution>;
     promptAssetsById?: ReadonlyMap<string, ResolvedPromptAssetContribution>;
     structuredMessagesById?: ReadonlyMap<string, ResolvedStructuredMessageContribution>;
@@ -947,5 +964,43 @@ export type ResolvedContributionRegistry = Readonly<{
     agentDefinitionsById: ReadonlyMap<string, ResolvedAgentContribution>;
     providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution>;
     machineProvisionersByContributionKey?: ReadonlyMap<string, ResolvedMachineProvisionerContribution>;
+    accessProvidersByContributionKey?: ReadonlyMap<string, ResolvedAccessProviderContribution>;
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+
+tools?: readonly ResolvedToolContribution[];
+commands?: readonly ResolvedCommandContribution[];
+toolsById?: ReadonlyMap<string, ResolvedToolContribution>;
+commandsById?: ReadonlyMap<string, ResolvedCommandContribution>;
+}>;
+
+export type ResolvedDeploymentTargetContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>;
+
+export type ResolvedAccessProviderContribution = ResolvedTargetUiContribution<AccessProviderContributionV1>;
+
+export type ResolvedDeploymentTargetActionRole = Readonly<{
+    targetLocalId: string;
+    targetKind: string;
+    role: string;
+}>;
+
+export type ResolvedUiListExtensionV1Contribution = ResolvedTargetUiContribution<PluginCollectionListExtensionV1>;
+
+export type ResolvedBackupDestinationContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>;
+
+export type ResolvedHealthCheckKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>;
+
+export type ResolvedMachineRecipeContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').MachineRecipeV1>;
+
+export type ResolvedMachineSetupPresetContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').MachineSetupPresetContributionV1>;
+
+export type ResolvedActionAdmittedTarget = Readonly<{
+    declaration: PluginActionContributionV2;
+    hostAccessRequests: readonly ResolvedPluginManifestHostAccessRequestV2[];
+    historyGapSources: readonly Readonly<{
+        eventLocalId: string;
+        purposeBindings: readonly PluginActionConnectedAccountPurposeBindingV2[];
+    }>[];
+    /** Host invocation surfaces, including the host-owned API surface. */
+    surfaces: readonly string[];
+    deploymentTargetRoles?: readonly ResolvedDeploymentTargetActionRole[];
 }>;

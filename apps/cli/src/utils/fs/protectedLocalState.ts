@@ -1,3 +1,4 @@
+import { type FileHandle } from 'node:fs/promises';
 import {
   chmodSync,
   closeSync,
@@ -616,4 +617,31 @@ export async function listProtectedLocalStateDirectory(
 ): Promise<readonly string[]> {
   await assertProtectedPath(path, 'directory', options);
   return readdir(path);
+}
+
+export async function openProtectedLocalStateFile(
+  path: string,
+  mode: 'r' | 'a',
+  options: ProtectedLocalStateOptions = {},
+): Promise<FileHandle> {
+  const platform = resolvePlatform(options);
+  const expectedUid = platform === 'win32' ? undefined : resolveExpectedUid(options);
+  const resolvedPath = resolve(path);
+  const parentPath = dirname(resolvedPath);
+  const [parentStats, fileStats] = await Promise.all([
+    lstat(parentPath),
+    lstat(resolvedPath),
+  ]);
+  assertProtectedFileReadIdentity({ parentStats, fileStats, platform, expectedUid });
+  if (platform === 'win32') {
+    await resolveWindowsAclBoundary(options).verify({ path: resolvedPath, kind: 'file' });
+  }
+  const flags = platform === 'win32' ? mode : (mode === 'a' ? constants.O_WRONLY | constants.O_APPEND : constants.O_RDONLY) | constants.O_NOFOLLOW;
+  const handle = await open(resolvedPath, flags);
+  try {
+    const opened = await handle.stat();
+    validateStats({ stats: opened, kind: 'file', platform, expectedUid });
+    assertUnchangedOpenIdentity(fileStats, opened);
+    return handle;
+  } catch (error) { await handle.close(); throw error; }
 }

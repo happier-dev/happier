@@ -1,3 +1,5 @@
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 import type {
   ActionOperationDeclarationV1,
   ActionOperationDomainRefV1,
@@ -64,3 +66,21 @@ export interface ActionOperationDomainOwner {
     publishSnapshot(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): void;
   }>): () => void;
 }
+
+export type ActionOperationCancellation = Readonly<{
+  onRequest(listener: (context?: ActionOperationCancellationContext) => void | Promise<void>): () => void;
+}>;
+
+export type ActionOperationCancellationContext = Readonly<Partial<Pick<RpcHandlerContext,
+  'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap'
+  | 'callerInputAuthorization' | 'originalActionEnvelope' | 'callerAuthority' | 'callerInputConstraints'>> & {
+  assertCurrent(): Promise<void>;
+  /** Daemon-private capture of this external-operation request, never transported. */
+  externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
+}>;
+
+export type DeploymentTokenOperationOrigin = Readonly<{
+  serverIdentityId: string;
+  credentialId: string;
+  environmentId: string;
+}>;

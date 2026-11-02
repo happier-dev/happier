@@ -47,3 +47,5 @@ export { defineTriageCompositeIdentifierStringV1 } from './triageEntryRef.js';
 export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
 export { encodeBase64 } from './encoding.js';
 export { pluginJsonValuesEqual } from './protocolFacade.js';
+
+export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './index.public.js';

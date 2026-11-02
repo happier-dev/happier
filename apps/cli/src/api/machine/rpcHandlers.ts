@@ -455,6 +455,7 @@ export type MachineRpcHandlerDeps = Readonly<{
     rawSession: RawSessionRecord;
     signal?: AbortSignal;
   }>) => Promise<void>;
+
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{

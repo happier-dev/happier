@@ -1,3 +1,11 @@
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectServiceMoveChildRole } from './projectServiceMoveChildren';
+import { projectServiceMoveSnapshotInput } from './projectServiceMoveChildren';
+import { projectServiceMoveStatusInput } from './projectServiceMoveChildren';
+import { projectServiceMoveStopInput } from './projectServiceMoveChildren';
+import { projectServiceMoveInspectionInput } from './projectServiceMoveChildren';
+import { projectServiceMoveStartInput } from './projectServiceMoveChildren';
 import { createHash } from 'node:crypto';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -45,7 +53,11 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             return { ok: true as const, result: refusal('project_requester_authority_unavailable') };
         }
         const credentials = requester?.credentials ?? input.credentials;
-        const execute = executeCanonicalAction as CanonicalChildAction | undefined;
+        const execute: CanonicalChildAction | undefined = context.hostReviewedChild
+            ? (action, childInput) => {
+                const normalized = projectNativeJsonValueForTransport(getActionSpec(action).inputSchema.parse(childInput));
+                return context.hostReviewedChild!.invoke({ action, role: projectServiceMoveChildRole(action, normalized), input: normalized });
+            } : context.externalActionExecutionAuthorization ? undefined : executeCanonicalAction;
         const resolveDestination = async (signal?: AbortSignal) => {
             const targetMachineId = request.selectedTarget.machineId;
             try {
@@ -76,9 +88,8 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
         };
         const coordinator = createProjectServiceRelocation({
             readService: async (_request, signal) => {
-                // The coordinator re-reads after placement persistence. Local
-                // native custody must not outlive the original requester's root.
-                if (requester && !await requester.isCurrent()) return refusal('project_requester_authority_unavailable');
+                // Re-read the exact native binding after placement persistence;
+                // requester authority was admitted at the request boundary.
                 const resolved = input.projectManagedServices.resolveProjectService(request.currentTarget);
                 if (resolved.status !== 'found') {
                     if (resolved.status === 'mismatch') return refusal('service_inputs_changed');
@@ -95,8 +106,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                         const workspace = refs.workspaceRefs.find(ref => ref.serverId === request.workspace.serverId
                             && ref.machineId === target.machineId && ref.id === target.workspaceId);
                         if (!workspace) return refusal('service_inputs_changed');
-                        const result = await execute('localServices.launcher.snapshot', { machineId: target.machineId,
-                            projection: 'managed_bindings', scope: 'workspace', workspaceRoot: workspace.rootPath });
+                        const result = await execute('localServices.launcher.snapshot', projectServiceMoveSnapshotInput(request, workspace));
                         if (!result.ok) return refusal(result.errorCode ?? 'service_observation_unavailable');
                         const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(result.result);
                         if (snapshot.machineId !== target.machineId) return refusal('service_inputs_changed');
@@ -140,7 +150,24 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                     snapshot: handle.snapshot(),
                 };
             },
-            resolveDestination: async (_request, signal) => await resolveDestination(signal),
+            resolveDestination: async (_request, signal) => {
+                const selected = await resolveDestination(signal);
+                if (selected.status === 'refused') return selected;
+                const destination = selected.workspace;
+                // An unchanged placement has no destination launch to admit.
+                if (destination.machineId === request.currentTarget.machineId
+                    && destination.id === request.currentTarget.workspaceId) return selected;
+                if (!execute) return refusal('project_worker_status_unavailable');
+                const result = await execute('projects.worker.status', projectServiceMoveStatusInput(request, destination.machineId));
+                signal?.throwIfAborted();
+                if (!result.ok) return refusal(result.errorCode ?? 'project_worker_status_unavailable', result.error);
+                const status = ProjectWorkerStatusResultV1Schema.safeParse(result.result);
+                return status.success && status.data.eligible
+                    && status.data.candidate.machineId === destination.machineId
+                    ? selected
+                    : refusal(status.success && !status.data.eligible
+                        ? `project_worker_${status.data.explanation}` : 'project_worker_status_unavailable');
+            },
             saveDesiredPlacement: async (placement, signal) => {
                 if (!execute) return { status: 'unavailable' as const };
                 const result = await execute('projects.service.placement.set', placement);
@@ -153,14 +180,11 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 const resolved = input.projectManagedServices.resolveProjectService(target);
                 if (resolved.status === 'found') return await resolved.handle.stop(signal ? { signal } : undefined);
                 if (resolved.status === 'mismatch' || !execute) return { status: 'termination_incomplete' as const };
-                // Move's existing request id allows 2,000 characters; the control
-                // contract allows 256. Preserve all valid parent ids without truncation.
-                const stopRequestId = createHash('sha256').update(request.requestId).digest('hex');
-                const result = await execute('localServices.actions.stopManaged', { requestId: stopRequestId,
-                    action: 'stop_managed', force: false, target });
+                const stopInput = projectServiceMoveStopInput(request);
+                const result = await execute('localServices.actions.stopManaged', stopInput);
                 if (!result.ok) return { status: 'termination_incomplete' as const };
                 const stopped = LocalServiceActionResultV1Schema.parse(result.result);
-                if (stopped.requestId !== stopRequestId || stopped.action !== 'stop_managed') {
+                if (stopped.requestId !== stopInput.requestId || stopped.action !== 'stop_managed') {
                     return { status: 'termination_incomplete' as const };
                 }
                 return { status: stopped.status === 'succeeded' ? 'stopped' as const
@@ -172,20 +196,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 if (createCanonicalJsonSigningInput(current.workspace) !== createCanonicalJsonSigningInput(destination)) {
                     return refusal('selected_target_changed');
                 }
-                if (!execute) return refusal('project_worker_status_unavailable');
-                const result = await execute('projects.worker.status', {
-                    workspace: request.workspace,
-                    destination: { kind: 'machine', machineId: destination.machineId },
-                    purpose: 'service-start',
-                });
-                signal?.throwIfAborted();
-                if (!result.ok) return refusal(result.errorCode ?? 'project_worker_status_unavailable', result.error);
-                const status = ProjectWorkerStatusResultV1Schema.safeParse(result.result);
-                return status.success && status.data.eligible
-                    && status.data.candidate.machineId === destination.machineId
-                    ? { status: 'admitted' as const }
-                    : refusal(status.success && !status.data.eligible
-                        ? `project_worker_${status.data.explanation}` : 'project_worker_status_unavailable');
+                return { status: 'admitted' as const };
             },
             reviewDestinationSetup: async (_request, destination, signal) => {
                 if (!execute) return refusal('project_setup_review_unavailable');
@@ -196,8 +207,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 const source = snapshot.workspaceRefs.find(ref => ref.serverId === request.workspace.serverId && ref.id === request.workspace.refId);
                 if (!source) return refusal('project_setup_review_unavailable');
                 const inspect = async (workspace: typeof source, reviewSetupConsent?: true) => {
-                    const result = await execute('projects.inspect', { workspace: workspaceAddressFromRefV1(workspace),
-                        ...(reviewSetupConsent ? { reviewSetupConsent } : {}) });
+                    const result = await execute('projects.inspect', projectServiceMoveInspectionInput(workspace, reviewSetupConsent));
                     signal?.throwIfAborted();
                     if (!result.ok) return { status: 'refused' as const, reasonCode: result.errorCode ?? 'project_setup_review_unavailable' };
                     const parsed = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
@@ -251,26 +261,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             },
             startService: async (startRequest, destination, signal) => {
                 if (!execute) return { status: 'failed' as const, reasonCode: 'launcher_start_unavailable' };
-                const declaration = {
-                    workspaceRefId: destination.id,
-                    selection: startRequest.currentTarget.declaration.selection,
-                };
-                const result = await execute('localServices.launcher.start', {
-                    machineId: destination.machineId,
-                    targetId: createProjectServiceDeclarationTargetIdV1(destination, declaration.selection),
-                    workspaceId: destination.id,
-                    workspace: {
-                        serverId: destination.serverId,
-                        machineId: destination.machineId,
-                        workspaceId: destination.id,
-                        rootPath: destination.rootPath,
-                    },
-                    declaration,
-                    // The pool has already settled to this reviewed exact Machine.
-                    choice: request.destination.kind === 'primary'
-                        ? { kind: 'primary' }
-                        : { kind: 'workers', destination: { kind: 'machine', machineId: destination.machineId } },
-                });
+                const result = await execute('localServices.launcher.start', projectServiceMoveStartInput(startRequest, destination));
                 signal?.throwIfAborted();
                 if (!result.ok) {
                     // These acknowledgements refuse this Start before establishment.

@@ -2,9 +2,8 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { RelayAccessConfig } from '@happier-dev/cli-common/relayAccess';
+import { parseRelayAccessConfig, relayAccessProviderDescriptors, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess';
 import type { RelayAccessTaskTarget, SystemTaskSshConnectionConfig } from '@happier-dev/cli-common/systemTasks';
-import { RelayAccessConfigV1Schema } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 
 type RemoteTextResult = Readonly<{
   status: number;
@@ -42,8 +41,8 @@ function parsePersistedRelayAccessConfig(raw: string): RelayAccessConfig | null 
   } catch {
     return null;
   }
-  const result = RelayAccessConfigV1Schema.safeParse(parsed);
-  return result.success ? result.data : null;
+  return parseRelayAccessConfig(parsed, relayAccessProviderDescriptors.filter(descriptor =>
+    descriptor.definition.targets.includes('homeRelay')));
 }
 
 function stringifyPersistedRelayAccessConfig(config: RelayAccessConfig): string {

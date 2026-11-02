@@ -1,3 +1,4 @@
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
@@ -302,7 +303,7 @@ describe('Provider broker external authenticated context', () => {
       },
     });
     if (!result.ok) throw new Error('expected admitted Provider response');
-    expect(await new Response(result.response.body).text()).toBe(sse);
+    expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).text()).toBe(sse);
     expect(admissionCount).toBe(1);
     expect(terminalFacts).toEqual([expected]);
   });

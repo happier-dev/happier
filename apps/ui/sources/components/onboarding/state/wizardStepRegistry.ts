@@ -1,3 +1,4 @@
+import { relayAccessProviderUsesPrerequisitesStep as relayAccessProviderNeedsPrerequisitesStep } from '@/components/settings/server/relayAccess/relayAccessUiCatalog';
 import { getRelayAccessProviderDescriptor } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { WizardContext, WizardStepDefinition, WizardStepId } from './wizardTypes';
 
@@ -6,13 +7,6 @@ const baseRelayStep: Pick<WizardStepDefinition, 'kind' | 'surface' | 'canSkip'> 
     surface: 'onboarding',
     canSkip: true,
 };
-
-function relayAccessProviderNeedsPrerequisitesStep(providerId: WizardContext['relayAccessProviderId']): boolean {
-    if (!providerId) {
-        return false;
-    }
-    return getRelayAccessProviderDescriptor(providerId).prerequisites.length > 0;
-}
 
 const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): boolean => {
     if (context.mode !== 'onboarding') return false;

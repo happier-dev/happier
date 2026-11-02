@@ -1,3 +1,6 @@
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type {
   ConnectedAccountPurposeDeclarationV1,
   PluginActionConnectedAccountPurposeBindingV2,
@@ -251,8 +254,8 @@ export function resolveRegistryConnectedAccountActionPurposeAuthorizations(input
   return Object.freeze(authorizations);
 }
 
-function resolveRegistryConnectedAccountActionCredentialPurposeAuthorization(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+export function resolveRegistryConnectedAccountActionCredentialPurposeAuthorization(input: Readonly<{
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   fieldPath: string;
   requireSelect: boolean;
@@ -260,13 +263,13 @@ function resolveRegistryConnectedAccountActionCredentialPurposeAuthorization(inp
 }>): RegistryConnectedAccountActionFormPurposeAuthorization | null {
   const match = resolveRegistryConnectedAccountAction(input);
   if (!match) return null;
-  const { target, action, identity } = match;
+  const { action } = match;
   const purposeMappings = action.connectedAccountPurposeBindings?.filter((binding) => (
     binding.path === input.fieldPath
   )) ?? [];
   if (purposeMappings.length !== 1) return null;
   return resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch({
-    match: Object.freeze({ target, action, identity }),
+    match,
     purposeId: purposeMappings[0]!.purpose,
     requireSelect: input.requireSelect,
     ...(input.resolveOptionalAccess
@@ -831,3 +834,5 @@ export function deriveRegistryConnectedAccountPurposeReconciliationScopes(
       identityKey(left.consumer).localeCompare(identityKey(right.consumer))),
   );
 }
+
+export type RegistryConnectedAccountActionAuthorizationProjection = Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;

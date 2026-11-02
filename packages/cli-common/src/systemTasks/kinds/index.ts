@@ -124,6 +124,7 @@ export {
   extractFirstScannedSshKnownHostLine,
   parseSshKnownHostLine,
   resolveSshKnownHostTrust,
+  persistSshKnownHostTrust,
   type ParsedSshKnownHostLine,
   type ResolvedSshHostTrust,
 } from './sshHostTrust.js';

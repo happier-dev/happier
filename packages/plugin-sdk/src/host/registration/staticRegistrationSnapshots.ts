@@ -857,6 +857,8 @@ export function snapshotStaticRegistrationValue<
             const receiver = requireObject(value, 'Drop target runtime');
             return Object.freeze({ resolve: captureStaticRegistrationMethod(receiver, 'resolve', 'Drop target runtime.resolve', true) }) as PluginRegistrationValueByFamily[TFamily];
         }
+        case 'secretSources':
+            return snapshotRequiredMethodGroup(value, ['acquire'], 'Secret source runtime') as PluginRegistrationValueByFamily[TFamily];
         case 'captureSources': {
             const receiver = requireObject(value, 'Capture source runtime');
             return Object.freeze({ start: captureStaticRegistrationMethod(receiver, 'start', 'Capture source runtime.start', true) }) as PluginCaptureSourceRuntime as PluginRegistrationValueByFamily[TFamily];

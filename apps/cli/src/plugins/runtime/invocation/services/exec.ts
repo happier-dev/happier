@@ -50,6 +50,21 @@ import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type Lin
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { logger } from '@/ui/logger';
+import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
+import { type HostAgentIsolationLaunchKind } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { type HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
+import { consumeDeploymentExecEnvForHost } from '@/deployments/secrets/deploymentExecEnvPort';
+import { type HostRuntimeDockerTuple } from '@/deployments/secrets/deploymentExecEnvPort';
+import { type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
+import { resolveHostRequesterExecutionIdentityForLaunch } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { assertHostRequesterExecutionAdmissionForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { admitAgentIsolationLaunchForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
+import { type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 
@@ -115,11 +130,11 @@ export type HostAgentNativeLaunchPreparation = (
 
 type NativeLaunchQualifiers = WeakSet<object>;
 const INTERNAL_NATIVE_LAUNCH_QUALIFIERS = new WeakMap<ExecService, NativeLaunchQualifiers>();
-const INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS = new WeakMap<ExecService, (
-    launch: ResolvedHostExecLaunch,
-    signal?: AbortSignal,
-    nativeLaunch?: AgentNativeLaunchQualifier,
-) => Promise<HostAuthorizedPluginExecLaunch>>();
+const INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS = new WeakMap<ExecService, Readonly<{
+    signal: AbortSignal;
+    admit(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<void>;
+    authorize: HostResolvedAgentLaunchAuthorizer;
+}>>();
 
 function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeLaunch?: AgentNativeLaunchQualifier): void {
     if (nativeLaunch === undefined) return;
@@ -146,6 +161,8 @@ export async function authorizeResolvedAgentNativeExecLaunchForHost(
     launch: ResolvedHostExecLaunch,
     signal?: AbortSignal,
     nativeLaunch?: AgentNativeLaunchQualifier,
+    agentLaunchKind: HostAgentIsolationLaunchKind = 'exec',
+    mcpLaunchMaterial?: McpLaunchMaterial,
 ): Promise<HostAuthorizedPluginExecLaunch> {
     try {
         const authorize = INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.get(service);
@@ -153,7 +170,7 @@ export async function authorizeResolvedAgentNativeExecLaunchForHost(
             launch.release?.();
             return fail('plugin_exec_native_launch_unavailable', 'Native Agent launch authority is unavailable');
         }
-        return await authorize(launch, signal, nativeLaunch);
+        return await authorize.authorize(launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial);
     } catch (error) { throw withExecLaunchNotStarted(error); }
 }
 
@@ -167,7 +184,7 @@ export type ResolvedPluginExecutable = Readonly<{
 
 const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
     object,
-    WeakMap<object, ResolvedPluginExecutable>
+    WeakMap<object, PreauthorizedPluginExecSpawn>
 >();
 
 /**
@@ -256,6 +273,7 @@ export function installPreauthorizedPluginExecSpawnForHost(
     service: Pick<ExecService, 'spawn' | 'run'>,
     request: Parameters<ExecService['spawn']>[0],
     launch: ResolvedPluginExecutable,
+    authorizePreparedLaunch?: HostPreparedPluginExecLaunchAuthorizer,
 ): Readonly<{ dispose(): void }> {
     const authorizations = INTERNAL_PREAUTHORIZED_SPAWNS.get(service);
     if (!authorizations || authorizations.has(request)) {
@@ -264,10 +282,12 @@ export function installPreauthorizedPluginExecSpawnForHost(
             'Exact process launch preauthorization is unavailable',
         );
     }
-    authorizations.set(request, launch);
+    const authorization: PreauthorizedPluginExecSpawn = Object.freeze({ launch,
+        ...(authorizePreparedLaunch ? { authorizePreparedLaunch } : {}) });
+    authorizations.set(request, authorization);
     return Object.freeze({
         dispose() {
-            if (authorizations.get(request) === launch) {
+            if (authorizations.get(request) === authorization) {
                 authorizations.delete(request);
             }
         },
@@ -294,7 +314,11 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     args: readonly string[];
     env: Readonly<Record<string, string>>;
     cwd?: string;
+    /** Host-finalized RunAs wrapper directory; cwd remains the logical payload directory. */
+    launcherCwd?: string;
     stdin?: Uint8Array;
+    /** Host launch frame; provider stdin remains a separate stream. */
+    stdinPreamble?: Uint8Array;
     timeoutMs?: number;
     maxStdoutBytes?: number;
     maxStderrBytes?: number;
@@ -303,6 +327,17 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     waitForGracefulRootExitBeforeTreeStop?: true;
     /** Host-private ownership, retained across all native and provider env layers. */
     processOwnerTag?: string;
+    /** Exact value-free generation inputs, captured before finite input retirement. */
+    deploymentSecretRefs?: readonly Readonly<{ resourceId: string; resourceRevision: number }>[];
+    /** Actual finalized direct-native prefix, captured by the private P41 projection. */
+    nativeExecutablePrefix?: readonly string[];
+    /** Helper-only AM-9 files are no native mount: retire after actual CLI settlement,
+     * even while the existing native effect retains uncertain-command custody. */
+    retireDeploymentRuntimeFiles?(): Promise<void>;
+    /** Host-only, single-use handoff after activation; never an SDK exec capability. */
+    detachDeploymentEnvironmentForObservation?(): HostAuthorizedPluginExecLaunch;
+    /** Recheck opaque input custody after asynchronous admission, before spawn. */
+    recheckInputs?(): Promise<void>;
     release(): void | Promise<void>;
 }>;
 
@@ -311,12 +346,16 @@ export function spawnAuthorizedHostExecLaunchForHost(
     launch: HostAuthorizedPluginExecLaunch,
     options: Readonly<{
         signal?: AbortSignal;
+        /** Host-only binary pipeline: stdout belongs to the raw pipe, not diagnostics. */
+        pipeStdout?: true;
         processCustody?: ProcessCustodySpawnSpec;
         /** Host-owned worker containment; ordinary Exec retains its dedicated group. */
         posixProcessGroup?: 'inherit';
         processTreeSystemBoundary?: Parameters<typeof spawnSupervisedPluginProcess>[0]['processTreeSystemBoundary'];
         descendantDisposition?: NonNullable<Parameters<ExecService['spawn']>[1]>['descendantDisposition'];
         linuxProcessLaunchScope?: LinuxProcessLaunchScope | null;
+        /** Native environment helpers retain their existing Happier remainder custody. */
+        ownerRemainder?: OwnerRemainderPort;
         recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
         readSpawnFailureLimits?: SpawnFailureLimitsReader;
         /** Transfer the final capture to the existing service's physical-settlement cleanup. */
@@ -349,15 +388,21 @@ export function spawnAuthorizedHostExecLaunchForHost(
                 ...(launch.windowsVerbatimArguments ? ['--target-windows-verbatim'] : []),
                 '--', launch.command, ...launch.args,
             ] : scopedLaunch?.args ?? launch.args,
-            ...(launch.cwd ? { cwd: launch.cwd } : {}),
+            ...((launch.launcherCwd ?? launch.cwd) ? { cwd: launch.launcherCwd ?? launch.cwd } : {}),
             env: scopedLaunch?.env ?? environment,
             ...(launch.stdin ? { stdin: launch.stdin } : {}),
+            ...(launch.stdinPreamble ? { stdinPreamble: launch.stdinPreamble } : {}),
             ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
             ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
             ...(launch.maxStderrBytes === undefined ? {} : { maxStderrBytes: launch.maxStderrBytes }),
+            ...(launch.secretRedactionLease ? { secretRedactionLease: launch.secretRedactionLease } : {}),
+            ...(options.ownerRemainder ? { rootExitObservation: {
+                ownerRemainder: options.ownerRemainder, owner: { kind: 'happier' as const },
+            } } : {}),
             ...(options.descendantDisposition ? { descendantDisposition: options.descendantDisposition } : {}),
             ...(launch.waitForGracefulRootExitBeforeTreeStop ? { waitForGracefulRootExitBeforeTreeStop: true } : {}),
             signals: options.signal ? [options.signal] : [],
+            ...(options.pipeStdout ? { pipeStdout: true } : {}),
             ...(custody ? { processCustody: custody } : {}),
             ...(options.processTreeSystemBoundary ? { processTreeSystemBoundary: options.processTreeSystemBoundary } : {}),
             spawnOptions: {
@@ -392,6 +437,8 @@ const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
         projectLaunch?: HostProjectNativeLaunchAdmission,
         nativeExecutableOwner?: ExecService,
         prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation,
+        agentIsolation?: HostAgentIsolationLaunchContext,
+        deploymentRuntimeProjection?: HostDeploymentRuntimeProjectionV1,
     ) => Promise<HostAuthorizedPluginExecLaunch>
 >();
 
@@ -450,13 +497,16 @@ export function createStableRunnerPluginExecService(
         authorizeLaunch(
             request: Parameters<ExecService['spawn']>[0]
                 & Readonly<{ timeoutMs?: number }>,
-            options?: Readonly<{ signal?: AbortSignal; agentNativeLaunch?: true }>,
+            options?: Readonly<{ signal?: AbortSignal; agentNativeLaunch?: true; sessionMcpContext?: SessionMcpLocalContext;
+                mcpLaunchMaterial?: McpLaunchMaterial }>,
             systemToolResolutionId?: string,
         ): Promise<HostAuthorizedPluginExecLaunch>;
         authorizeResolvedAgentNativeLaunch?(
             launch: ResolvedHostExecLaunch,
-            options?: Readonly<{ signal?: AbortSignal }>,
+            options?: Readonly<{ signal?: AbortSignal; agentLaunchKind?: HostAgentIsolationLaunchKind; sessionMcpContext?: SessionMcpLocalContext;
+                mcpLaunchMaterial?: McpLaunchMaterial }>,
         ): Promise<HostAuthorizedPluginExecLaunch>;
+        admitAgentNativeLaunch?(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<void>;
         transformAgentChildLaunchEnvironment?(
             environment: Readonly<Record<string, string>>,
         ): Readonly<Record<string, string>>;
@@ -468,7 +518,6 @@ export function createStableRunnerPluginExecService(
     const systemToolResolutionIds = new WeakMap<object, string>();
     const base = createStablePluginExecService({
         ...(params.processOwner ? { processOwner: params.processOwner } : {}),
-        allowedExecutables: [],
         signal: params.signal,
         readSpawnFailureLimits: params.readSpawnFailureLimits,
         isOccurrenceCurrent: params.isOccurrenceCurrent,
@@ -530,7 +579,14 @@ export function createStableRunnerPluginExecService(
     INTERNAL_OWNER_REBINDERS.set(service, (owner, signal) => createStableRunnerPluginExecService({ ...params,
         processOwner: owner, signal: signal ? AbortSignal.any([params.signal, signal]) : params.signal }));
     INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(base)!);
-    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, async (launch, signal, nativeLaunch) => {
+    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, { signal: params.signal, async admit(kind, signal) {
+        if (params.signal.aborted || signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+        if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
+        if (!params.admitAgentNativeLaunch) fail('plugin_exec_native_launch_unavailable', 'Daemon native Agent launch authority is unavailable');
+        await params.admitAgentNativeLaunch(kind, signal);
+        if (params.signal.aborted || signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+        if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
+    }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const assertCurrent = () => {
             if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
             if (params.signal.aborted || signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
@@ -544,7 +600,9 @@ export function createStableRunnerPluginExecService(
             const processOwnerTag = params.processOwner
                 ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: params.processOwner }) : readHostProcessOwnerTag();
             authorized = await params.authorizeResolvedAgentNativeLaunch({ ...launch,
-                ...(processOwnerTag ? { processOwnerTag } : {}) }, { signal });
+                ...(processOwnerTag ? { processOwnerTag } : {}) }, { signal, agentLaunchKind,
+                  ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
+                    mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : { mcpLaunchMaterial }) });
             try { assertCurrent(); }
             catch (error) { await authorized.release(); throw error; }
         } catch (error) {
@@ -558,7 +616,7 @@ export function createStableRunnerPluginExecService(
             try { await authorized.release(); }
             finally { launch.release?.(); }
         } });
-    });
+    } });
     return service;
 }
 
@@ -629,7 +687,7 @@ export function resolveStablePluginExecInvocation(input: Readonly<{
     return resolveWindowsCommandInvocation(input);
 }
 
-type ResolvedHostExecLaunch = Omit<HostAuthorizedPluginExecLaunch, 'windowsVerbatimArguments' | 'release'>
+type ResolvedHostExecLaunch = Omit<HostAuthorizedPluginExecLaunch, 'windowsVerbatimArguments' | 'release' | 'launcherCwd'>
     & Readonly<{ release?: () => void }>;
 
 function validateExecLaunchInput(input: Readonly<{
@@ -708,12 +766,15 @@ async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
     // Complete replacement preserves native removals. Only exact bindings may
     // overlay it; no consumer can accidentally merge inherited values back.
     let environment = native.env;
+    let secretValues: readonly string[] = [];
     if (admitted.secretReferences) {
         const { resolveProjectSecretReferenceEnvironment } = await import('@/settings/secrets/secretReferenceOverlay');
-        environment = { ...environment, ...resolveProjectSecretReferenceEnvironment(admitted.secretReferences) };
+        const secrets = resolveProjectSecretReferenceEnvironment(admitted.secretReferences);
+        secretValues = Object.values(secrets).filter(value => value.length > 0);
+        environment = { ...environment, ...secrets };
     }
     assertCurrent();
-    return { ...native, env: Object.freeze({ ...environment }) };
+    return { ...native, env: Object.freeze({ ...environment }), secretValues };
 }
 
 /** Environment-only preparation uses the same owner without a dummy process. */
@@ -726,18 +787,33 @@ export async function produceProjectLaunchEnvironmentForHost(input: HostProjectE
 /** The one final tuple producer, after the caller's executable/effect admission. */
 async function finalizeHostExecLaunch(input: Readonly<{
     launch: ResolvedHostExecLaunch;
+    requestedCwd?: string;
     projectLaunch?: HostProjectNativeLaunchAdmission;
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    sessionMcpContext?: SessionMcpLocalContext;
+    mcpLaunchMaterial?: McpLaunchMaterial;
+    agentNativeLaunch?: boolean;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
     resolveNativeExecutable?: (executable: ManagedExecutableRef, signal: AbortSignal) => Promise<ResolvedPluginExecutable>;
+    /** Issued by the trusted terminal or native lifecycle invocation owner. */
+    executionKind?: HostPluginExecExecutionKind;
+    requesterIdentity?: HostRequesterExecutionIdentity;
+    hostNativeSystemTool?: boolean;
     signal: AbortSignal;
     assertCurrent(): void;
 }>): Promise<HostAuthorizedPluginExecLaunch> {
     let released = false;
     let nativeExecutable: ResolvedPluginExecutable | undefined;
+    let secretRedactionLease = input.launch.secretRedactionLease;
+    let ownsRedactionLease = false;
     const release = () => {
         if (released) return;
         released = true;
         try { nativeExecutable?.release?.(); }
-        finally { input.launch.release?.(); }
+        finally {
+            try { input.launch.release?.(); }
+            finally { if (ownsRedactionLease) secretRedactionLease?.close(); }
+        }
     };
     const assertCurrent = () => {
         input.assertCurrent();
@@ -748,6 +824,8 @@ async function finalizeHostExecLaunch(input: Readonly<{
     };
     try {
         assertCurrent();
+        const requesterIdentity = await resolveExecRequesterIdentity(input);
+        assertCurrent();
         if (input.projectLaunch?.status === 'refused') {
             fail(input.projectLaunch.code, 'Project launch preparation was not admitted');
         }
@@ -756,6 +834,8 @@ async function finalizeHostExecLaunch(input: Readonly<{
         let command = input.launch.command;
         let args = input.launch.args;
         let cwd = input.launch.cwd;
+        let launcherCwd: string | undefined;
+        let stdinPreamble = input.launch.stdinPreamble;
         if (input.projectLaunch?.status === 'ready') {
             const native = await produceHostProjectEnvironment({
                 cwd: cwd ?? '', env: environment, projectLaunch: input.projectLaunch,
@@ -763,11 +843,17 @@ async function finalizeHostExecLaunch(input: Readonly<{
             }, { command, args });
             assertCurrent();
             environment = native.env;
+            if (native.secretValues.length) {
+                if (secretRedactionLease) secretRedactionLease.add(native.secretValues);
+                else {
+                    secretRedactionLease = createProviderRedactionLease({ values: native.secretValues });
+                    ownsRedactionLease = true;
+                }
+            }
             if (native.nativeLaunch) {
                 if (!input.resolveNativeExecutable) fail('native_adapter_invocation_unavailable', 'Native wrapper executable resolution is unavailable');
                 nativeExecutable = await input.resolveNativeExecutable(native.nativeLaunch.executable, input.signal);
                 assertCurrent();
-                assertAllowedExecArguments(nativeExecutable, native.nativeLaunch.args);
                 command = nativeExecutable.command;
                 args = [...(nativeExecutable.args ?? []), ...native.nativeLaunch.args];
                 cwd = native.nativeLaunch.cwd;
@@ -775,6 +861,30 @@ async function finalizeHostExecLaunch(input: Readonly<{
                 // resolver overlay must not revive values it removed.
             }
             assertCurrent();
+        }
+        const isolated = await admitAgentIsolationLaunchForHost({ context: input.agentIsolation, cwd,
+            requesterIdentity, personBreakGlass: input.executionKind === 'person_break_glass',
+            hostNativeSystemTool: input.hostNativeSystemTool,
+            sessionMcpContext: input.sessionMcpContext, mcpLaunchMaterial: input.mcpLaunchMaterial, signal: input.signal,
+            requestedCwd: input.requestedCwd ?? input.launch.cwd,
+            agentNativeLaunch: input.agentNativeLaunch,
+            agentLaunchKind: input.agentLaunchKind ?? (input.projectLaunch?.status === 'ready' ? 'workspaceExec' : undefined) });
+        assertCurrent();
+        if (isolated) {
+            const material = isolated.snapshot.launch!;
+            if (input.agentNativeLaunch && !material.sessionMcpContext) fail('agent_isolation_unavailable', 'Current Session MCP context is unavailable');
+            const launch = createUnixAgentIdentityLaunch({ ...material, executable: command, args, cwd: isolated.cwd,
+                ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
+                environment: { ...environment, ...material.environment },
+                sessionMcpContext: material.sessionMcpContext });
+            command = launch.command;
+            args = [...launch.args];
+            environment = { ...launch.env };
+            cwd = isolated.cwd;
+            // The daemon cannot chdir into a native user's private home before
+            // sudo switches identity. The frame retains the admitted payload cwd.
+            launcherCwd = process.cwd();
+            stdinPreamble = launch.stdinPreamble;
         }
         const invocation = resolveStablePluginExecInvocation({
             command, args, env: environment,
@@ -786,8 +896,11 @@ async function finalizeHostExecLaunch(input: Readonly<{
             command: invocation.command,
             args: Object.freeze([...invocation.args]),
             env: Object.freeze({ ...environment }),
+            ...(secretRedactionLease ? { secretRedactionLease } : {}),
             ...(cwd === undefined ? {} : { cwd }),
+            ...(launcherCwd === undefined ? {} : { launcherCwd }),
             ...(input.launch.stdin ? { stdin: new Uint8Array(input.launch.stdin) } : {}),
+            ...(stdinPreamble ? { stdinPreamble: new Uint8Array(stdinPreamble) } : {}),
             ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             release,
         });
@@ -804,8 +917,16 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
     projectLaunch?: HostProjectNativeLaunchAdmission;
     nativeExecutableOwner?: ExecService;
     prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    sessionMcpContext?: SessionMcpLocalContext;
+    mcpLaunchMaterial?: McpLaunchMaterial;
+    agentNativeLaunch?: boolean;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
     signal: AbortSignal;
     assertCurrent(): void;
+    /** Host-private: never copied from an SDK request or daemon launch DTO. */
+    executionKind?: 'person_break_glass';
+    requesterIdentity?: HostRequesterExecutionIdentity;
 }>): Promise<HostAuthorizedPluginExecLaunch> {
     const assertCurrent = () => {
         if (input.signal.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
@@ -813,9 +934,12 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
     };
     let projectLaunch = input.projectLaunch;
     let nativeExecutableOwner = input.nativeExecutableOwner;
+    let requesterIdentity = input.requesterIdentity;
     try {
         assertCurrent();
         validateExecLaunchInput(input.launch);
+        requesterIdentity = await resolveExecRequesterIdentity(input);
+        assertCurrent();
         if (!projectLaunch && input.prepareAgentNativeLaunch) {
             const prepared = await input.prepareAgentNativeLaunch(input.signal, input.launch.cwd, input.launch.env);
             assertCurrent();
@@ -829,6 +953,7 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
     const executableOwner = nativeExecutableOwner;
     return await finalizeHostExecLaunch({
         ...input,
+        requesterIdentity,
         projectLaunch,
         ...(executableOwner ? {
             resolveNativeExecutable: (executable: ManagedExecutableRef, signal: AbortSignal) =>
@@ -1023,11 +1148,9 @@ export function createStablePluginExecService(params: Readonly<{
     /** Host-private placement inside an already supervised worker process group. */
     posixProcessGroup?: 'inherit';
     processTreeSystemBoundary?: Parameters<typeof spawnSupervisedPluginProcess>[0]['processTreeSystemBoundary'];
-    allowedExecutables: readonly ManagedExecutableRef[];
-    allowedEnvKeys?: readonly string[];
     environment?: Readonly<Record<string, string>>;
-    allowedCwdScopes?: readonly PluginFileSystemScope[];
     signal: AbortSignal;
+    retirementSignal?: AbortSignal;
     isOccurrenceCurrent(): boolean;
     resolveExecutable(executable: ManagedExecutableRef): Promise<ResolvedPluginExecutable>;
     /** Host-only physical owner admission, independent of one consumer invocation. */
@@ -1041,17 +1164,22 @@ export function createStablePluginExecService(params: Readonly<{
     agentCli?: PluginAgentCliReadinessServiceForHost;
     systemTools?: ExecSystemToolServiceV1;
     prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    /** Issued by the private operation owner, never accepted from an SDK request. */
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
+    executionKind?: HostPluginExecExecutionKind;
     /** Operation-owned authority; applies to qualified and ordinary launches alike. */
+    requesterIdentity?: HostRequesterExecutionIdentity;
     assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
     authorizeLaunch?(
         request: Parameters<ExecService['spawn']>[0]
             & Readonly<{ timeoutMs?: number }>,
-        options?: Readonly<{ signal?: AbortSignal; agentNativeLaunch?: true }>,
+        options?: Readonly<{ signal?: AbortSignal; agentNativeLaunch?: true; sessionMcpContext?: SessionMcpLocalContext;
+            mcpLaunchMaterial?: McpLaunchMaterial }>,
     ): Promise<HostAuthorizedPluginExecLaunch>;
     transformAgentChildLaunchEnvironment?(
         environment: Readonly<Record<string, string>>,
     ): Readonly<Record<string, string>>;
-    recordDisclosureMismatch?(mismatch: PluginExecDisclosureMismatch): void;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
 }>): ExecService {
@@ -1060,17 +1188,16 @@ export function createStablePluginExecService(params: Readonly<{
         : readHostProcessOwnerTag();
     const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
     const nativeLaunchQualifiers = new WeakSet<object>();
-    const allowedExecutables = new Set(params.allowedExecutables.map(executableKey));
     const preResolvedSystemTools = new WeakMap<object, Readonly<{
         launch: ResolvedPluginExecutable;
         expiresAt: number | null;
     }>>();
     const preauthorizedSpawns =
-        new WeakMap<object, ResolvedPluginExecutable>();
-    const allowedEnvKeys = new Set(params.allowedEnvKeys ?? []);
+        new WeakMap<object, PreauthorizedPluginExecSpawn>();
 
     function guard(signal?: AbortSignal, lifetime?: ManagedPluginExecLifetimeForHost): void {
-        if (!(lifetime ? lifetime.isOccurrenceCurrent() : params.isOccurrenceCurrent())) {
+        if (!(lifetime ? lifetime.isOccurrenceCurrent() : params.isOccurrenceCurrent())
+            || !lifetime && params.retirementSignal?.aborted) {
             fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
         }
         if (!lifetime) assertOpen();
@@ -1079,28 +1206,6 @@ export function createStablePluginExecService(params: Readonly<{
         }
     }
 
-    function recordDisclosureMismatch(mismatch: Parameters<NonNullable<typeof params.recordDisclosureMismatch>>[0]): void {
-        try {
-            params.recordDisclosureMismatch?.(mismatch);
-        } catch {
-            // Cooperative-disclosure diagnostics cannot alter process semantics.
-        }
-    }
-
-    function diagnoseDeclarationMismatches(
-        request: Readonly<{ executable: ManagedExecutableRef; env?: Readonly<Record<string, string>> }>,
-    ): void {
-        if (!allowedExecutables.has(executableKey(request.executable))) {
-            recordDisclosureMismatch({ capability: 'process', executable: request.executable });
-        }
-        const undeclaredEnvKeys = Object.keys(request.env ?? {}).filter((key) => !allowedEnvKeys.has(key));
-        if (undeclaredEnvKeys.length > 0) {
-            recordDisclosureMismatch({
-                capability: 'environment',
-                keys: Object.freeze(undeclaredEnvKeys.sort()),
-            });
-        }
-    }
 
     const agentCli: PluginAgentCliReadinessService = Object.freeze({
         async checkReadiness(request: Parameters<PluginAgentCliReadinessService['checkReadiness']>[0]) {
@@ -1154,7 +1259,6 @@ export function createStablePluginExecService(params: Readonly<{
                     kind: 'systemTool' as const,
                     id: request.toolId,
                 });
-                diagnoseDeclarationMismatches({ executable });
                 if (params.systemTools === undefined) {
                     fail('plugin_exec_system_tool_resolution_unavailable', 'System-tool resolution is unavailable in this invocation host');
                 }
@@ -1196,9 +1300,113 @@ export function createStablePluginExecService(params: Readonly<{
         },
     });
 
-    async function authorizeLaunch(...args: Parameters<typeof prepareLaunch>): Promise<HostAuthorizedPluginExecLaunch> {
-        try { return await prepareLaunch(...args); }
-        catch (error) { throw withExecLaunchNotStarted(error); }
+    async function authorizeLaunch(request: Parameters<typeof prepareLaunch>[0], options?: Parameters<typeof prepareLaunch>[1],
+        projectLaunch?: HostProjectNativeLaunchAdmission, nativeExecutableOwner?: ExecService,
+        prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation, hostAgentIsolation?: HostAgentIsolationLaunchContext,
+        lifetime?: ManagedPluginExecLifetimeForHost, deploymentRuntimeProjection?: HostDeploymentRuntimeProjectionV1): Promise<HostAuthorizedPluginExecLaunch> {
+        const args = [request, options, projectLaunch, nativeExecutableOwner, prepareAgentNativeLaunch, hostAgentIsolation, lifetime] as const;
+        let material: Awaited<ReturnType<typeof consumeDeploymentExecEnvForHost>> | undefined;
+        let launch: HostAuthorizedPluginExecLaunch | undefined;
+        try {
+            if (request.deploymentEnv) {
+                material = await consumeDeploymentExecEnvForHost(request.deploymentEnv, options?.signal,
+                    deploymentRuntimeProjection ? 'runtimeProjection' : undefined);
+            }
+            if (deploymentRuntimeProjection && !material) fail('service_admission_unavailable', 'Candidate runtime custody is unavailable');
+            const runtimeMaterial = material;
+            const prepareRuntime = deploymentRuntimeProjection && runtimeMaterial
+                ? async (host: HostRuntimeDockerTuple, admit: Parameters<HostDeploymentRuntimeProjectionV1['prepare']>[0]['admitNormalization']) =>
+                    runtimeMaterial.projectRuntime(deploymentRuntimeProjection, host, async request => {
+                        const helper = await admit(request);
+                        if (helper.stdin) runtimeMaterial.retainRuntimeBytes(helper.stdin);
+                        return helper;
+                    }, options?.signal)
+                : undefined;
+            launch = await prepareLaunch(...args, prepareRuntime);
+            if (deploymentRuntimeProjection && launch.stdin) runtimeMaterial!.retainRuntimeBytes(launch.stdin);
+            if (!material) {
+                // Host-native consumers can execute this tuple through their
+                // existing IO owner instead of Exec.spawn. Even an input-free
+                // normalization command needs fresh installed Home admission.
+                const lifetime = args[6];
+                const assertLaunchCurrent = params.assertLaunchCurrent;
+                if (!assertLaunchCurrent) return launch;
+                const signal = options?.signal
+                    ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal])
+                    : lifetime?.signal ?? params.signal;
+                const recheckHostCurrent = async () => {
+                    await assertLaunchCurrent(signal);
+                    guard(options?.signal, lifetime);
+                };
+                await recheckHostCurrent();
+                const authorized = launch;
+                return Object.freeze({ ...authorized, async recheckInputs() {
+                    await authorized.recheckInputs?.();
+                    await recheckHostCurrent();
+                } });
+            }
+            await material.recheck();
+            let retained: typeof material | undefined = material;
+            const authorized = launch;
+            if (authorized.secretRedactionLease) retained.redaction.add(authorized.secretRedactionLease.values());
+            const redaction = retained.redaction;
+            const refs = retained.refs;
+            const consumed = retained;
+            let released = false;
+            let carrierRelease: Promise<void> | undefined;
+            let retired = false;
+            const env: Record<string, string> = deploymentRuntimeProjection
+                ? Object.assign(Object.create(null), authorized.env)
+                : Object.assign(Object.create(null), authorized.env, retained.env);
+            const release = () => {
+                // A failed AM-9 cleanup remains the same failed acknowledgement;
+                // a later native reconciliation must not turn it into success.
+                if (carrierRelease) return carrierRelease;
+                const pending = (async () => {
+                if (released) return;
+                released = true;
+                const current = consumed;
+                retained = undefined;
+                try { await authorized.release(); }
+                finally {
+                    try { if (current) await current.dispose(); else redaction.close(); }
+                    finally { for (const key of Object.keys(env)) delete env[key]; }
+                }
+                })();
+                if (deploymentRuntimeProjection) carrierRelease = pending;
+                return pending;
+            };
+            const prepared = Object.freeze({ ...authorized, env,
+                ...(deploymentRuntimeProjection ? { retireDeploymentRuntimeFiles: () => consumed.retireRuntimeFiles() } : {}),
+                secretRedactionLease: redaction, deploymentSecretRefs: refs,
+                async recheckInputs() {
+                    if (retired || !retained) fail('unavailable', 'Deployment execution environment is unavailable');
+                    const current = retained;
+                    await authorized.recheckInputs?.();
+                    await current.recheck();
+                },
+                detachDeploymentEnvironmentForObservation() {
+                    if (released || retired || !retained) fail('unavailable', 'Deployment execution environment is unavailable');
+                    retired = true;
+                    const current = retained;
+                    try { current.retireEnvironment(); }
+                    finally {
+                        retained = undefined;
+                        for (const key of Object.keys(env)) delete env[key];
+                    }
+                    // Reuse the original authorized Docker tuple, not a filtered
+                    // application environment or a new ambient environment.
+                    const original = authorized.detachDeploymentEnvironmentForObservation?.() ?? authorized;
+                    return Object.freeze({ ...original, secretRedactionLease: redaction, deploymentSecretRefs: refs, release });
+                },
+                release });
+            material = undefined;
+            return prepared;
+        }
+        catch (error) {
+            try { await launch?.release(); } finally { await material?.dispose(); }
+            throw withExecLaunchNotStarted(error);
+        }
     }
 
     async function prepareLaunch(
@@ -1207,7 +1415,10 @@ export function createStablePluginExecService(params: Readonly<{
         projectLaunch?: HostProjectNativeLaunchAdmission,
         nativeExecutableOwner?: ExecService,
         prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation,
+        hostAgentIsolation?: HostAgentIsolationLaunchContext,
         lifetime?: ManagedPluginExecLifetimeForHost,
+        prepareRuntime?: (host: HostRuntimeDockerTuple,
+            admit: Parameters<HostDeploymentRuntimeProjectionV1['prepare']>[0]['admitNormalization']) => Promise<HostRuntimeProjectedDockerInput>,
     ): Promise<HostAuthorizedPluginExecLaunch> {
         const assertCurrent = () => guard(options?.signal, lifetime);
         const resolveManagedExecutable = lifetime?.resolveManagedExecutable ?? params.resolveManagedExecutable;
@@ -1215,6 +1426,10 @@ export function createStablePluginExecService(params: Readonly<{
         const nativeLaunch = options?.nativeLaunch;
         const agentNativeLaunch = nativeLaunch !== undefined;
         assertNativeLaunchQualifier(nativeLaunchQualifiers, nativeLaunch);
+        const requesterIdentity = await resolveExecRequesterIdentity({ agentIsolation: hostAgentIsolation ?? params.agentIsolation,
+            requesterIdentity: params.requesterIdentity, executionKind: params.executionKind,
+            signal: options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal });
+        assertCurrent();
         if (agentNativeLaunch && !params.authorizeLaunch && !params.prepareAgentNativeLaunch && !prepareAgentNativeLaunch) {
             fail('plugin_exec_native_launch_unavailable', 'Native Agent launch preparation is unavailable');
         }
@@ -1222,31 +1437,45 @@ export function createStablePluginExecService(params: Readonly<{
             return fail('plugin_exec_managed_launch_authorization_unavailable', 'Physical process launch authorization is unavailable');
         }
         validateExecLaunchInput(request);
+        const hostNativeSystemTool = params.executionKind === 'machine_native'
+            && request.executable.kind === 'systemTool' && request.cwd === undefined;
         if (projectLaunch?.status === 'refused') {
             return fail(projectLaunch.code, 'Project launch preparation was not admitted');
         }
         if (params.authorizeLaunch) {
+            if (prepareRuntime) fail('service_admission_unavailable', 'Candidate runtime requires the target native host');
             if (projectLaunch) {
                 return fail('plugin_project_launch_admission_unavailable', 'Project effects must be produced by the target host');
             }
             const launch = await params.authorizeLaunch(
                 request,
-                agentNativeLaunch ? { ...(options?.signal ? { signal: options.signal } : {}), agentNativeLaunch: true }
+                agentNativeLaunch ? { ...(options?.signal ? { signal: options.signal } : {}), agentNativeLaunch: true,
+                    sessionMcpContext: nativeLaunch ? INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.() : undefined,
+                    mcpLaunchMaterial: nativeLaunch ? INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() : undefined }
                     : options === undefined ? undefined : { ...(options.signal ? { signal: options.signal } : {}) },
             );
             try {
                 assertCurrent();
-                return launch;
             } catch (error) {
-                launch.release();
+                await launch.release();
                 throw error;
             }
+            return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({ launch,
+                ...(typeof request.cwd === 'string' ? { requestedCwd: request.cwd } : {}),
+                agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
+                ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
+                    mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : {}),
+                agentLaunchKind: params.agentLaunchKind,
+                executionKind: params.executionKind,
+                requesterIdentity: params.requesterIdentity,
+                hostNativeSystemTool,
+                signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+                assertCurrent }) : launch;
         }
         const environmentValidation = validateEnvVarRecordStrict(request.env);
         if (!environmentValidation.ok) {
             fail('plugin_exec_invalid_environment', environmentValidation.error);
         }
-        diagnoseDeclarationMismatches(request);
         let resolved: ResolvedPluginExecutable;
         const preauthorized = preauthorizedSpawns.get(request);
         if (lifetime) {
@@ -1258,7 +1487,7 @@ export function createStablePluginExecService(params: Readonly<{
             }
         } else if (preauthorized) {
             preauthorizedSpawns.delete(request);
-            resolved = preauthorized;
+            resolved = preauthorized.launch;
         } else {
             const preResolved = preResolvedSystemTools.get(request.executable);
             if (preResolved) {
@@ -1283,12 +1512,6 @@ export function createStablePluginExecService(params: Readonly<{
             resolved.release?.();
         };
         try {
-            assertAllowedExecArguments(resolved, request.args ?? []);
-        } catch (error) {
-            releaseExecutable();
-            throw error;
-        }
-        try {
             assertCurrent();
         } catch (error) {
             releaseExecutable();
@@ -1302,17 +1525,6 @@ export function createStablePluginExecService(params: Readonly<{
             releaseExecutable();
             if (isPluginError(error)) throw error;
             return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
-        }
-        if (
-            request.cwd
-            && (typeof request.cwd === 'string'
-                || !isPluginPathCoveredByDisclosure(request.cwd, params.allowedCwdScopes ?? [], 'read'))
-        ) {
-            recordDisclosureMismatch({
-                capability: 'filesystem',
-                path: request.cwd,
-                access: 'read',
-            });
         }
         try {
             assertCurrent();
@@ -1338,13 +1550,30 @@ export function createStablePluginExecService(params: Readonly<{
             releaseExecutable();
             throw error;
         }
-        return await finalizeHostExecLaunch({
+        // A candidate is a target-daemon native tool, never an Agent or a
+        // caller-supplied Project wrapper. Do not reconstruct identity frames.
+        if (prepareRuntime && (agentNativeLaunch || projectLaunch || (hostAgentIsolation ?? params.agentIsolation))) {
+            releaseExecutable();
+            fail('service_admission_unavailable', 'Candidate runtime requires the target native host');
+        }
+        const finalize = (launch: ResolvedHostExecLaunch) => finalizeHostExecLaunch({
             signal,
             assertCurrent,
             projectLaunch,
+            ...(typeof request.cwd === 'string' ? { requestedCwd: request.cwd } : {}),
+            agentIsolation: hostAgentIsolation ?? params.agentIsolation,
+            agentNativeLaunch,
+            ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
+                mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : {}),
+            agentLaunchKind: params.agentLaunchKind,
+            executionKind: params.executionKind,
+            requesterIdentity,
+            hostNativeSystemTool,
             ...(nativeExecutableOwner ? { resolveNativeExecutable: (executable: ManagedExecutableRef, signal: AbortSignal) =>
                 resolveNativeExecutableForHost(nativeExecutableOwner, executable, signal) } : {}),
-            launch: {
+            launch,
+        });
+        const originalInput: ResolvedHostExecLaunch = {
                 command: resolved.command,
                 args: [...(resolved.args ?? []), ...(request.args ?? [])],
                 env: environment,
@@ -1354,14 +1583,60 @@ export function createStablePluginExecService(params: Readonly<{
                 ...(request.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: request.maxStdoutBytes }),
                 ...(request.maxStderrBytes === undefined ? {} : { maxStderrBytes: request.maxStderrBytes }),
                 release: releaseExecutable,
-            },
-        });
+        };
+        const original = await finalize(originalInput);
+        let finalized = original;
+        if (prepareRuntime) {
+            if (!original.cwd || original.command !== resolved.command || original.args.length !== originalInput.args.length
+                || original.args.some((arg, index) => arg !== originalInput.args[index])) {
+                await original.release();
+                fail('service_admission_unavailable', 'Candidate requires the admitted direct-native profile');
+            }
+            const admit = async (projection: HostRuntimeProjectedDockerInput) => {
+                assertCurrent();
+                const prefix = [...(projection.nativePrefix ?? resolved.args ?? []), ...(projection.prefixArguments ?? [])];
+                const prepared = await finalize({ ...originalInput, args: [...prefix, ...projection.args],
+                    env: projection.env, stdin: projection.stdin, release() {} });
+                if (!prepared.cwd) { await prepared.release(); fail('service_admission_unavailable', 'Candidate source is unavailable'); }
+                const expected = [...prefix, ...projection.args];
+                if (prepared.command !== resolved.command || prepared.args.length !== expected.length
+                    || prepared.args.some((arg, index) => arg !== expected[index])) {
+                    await prepared.release();
+                    fail('service_admission_unavailable', 'The native runtime prefix is unavailable');
+                }
+                return Object.freeze({ ...prepared, cwd: prepared.cwd,
+                    nativeExecutablePrefix: Object.freeze([...prefix]) });
+            };
+            try {
+                const projection = await prepareRuntime({ command: original.command, prefix: resolved.args ?? [],
+                    args: request.args ?? [], cwd: original.cwd, env: original.env }, admit);
+                const effect = await admit(projection);
+                let releasePromise: Promise<void> | undefined;
+                const release = () => releasePromise ??= (async () => {
+                    try { await effect.release(); } finally { await original.release(); }
+                })();
+                finalized = Object.freeze({ ...effect, release,
+                    // SAME finalized original host profile/custody, never a
+                    // raw pre-finalizer tuple or projection helper profile.
+                    detachDeploymentEnvironmentForObservation: () => Object.freeze({ ...original, release }) });
+            } catch (error) { await original.release(); throw error; }
+        }
+        if (!preauthorized?.authorizePreparedLaunch) return finalized;
+        try {
+            const authorized = await preauthorized.authorizePreparedLaunch(finalized, signal);
+            try { assertCurrent(); }
+            catch (error) { await authorized.release(); throw error; }
+            return authorized;
+        } catch (error) {
+            await finalized.release();
+            throw error;
+        }
     }
 
     async function launchProcess(
         request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
         options?: Parameters<ExecService['run']>[1],
-        transformProtocolClientEnvironment = false,
+        openAccess = false,
     ): Promise<SupervisedPluginProcess> {
         const launchStartedAt = performance.now();
         // Only the supervisor installs this exact host-owned request; public
@@ -1371,7 +1646,7 @@ export function createStablePluginExecService(params: Readonly<{
             throw withExecLaunchNotStarted(new PluginError({ code: 'plugin_exec_managed_handoff_forbidden', message: 'Managed process custody cannot be handed to a native tool' }));
         }
         const lifetime = managedCustody?.lifetime;
-        const launch = await authorizeLaunch(request, options, undefined, undefined, undefined, lifetime);
+        const launch = await authorizeLaunch(request, options, undefined, undefined, undefined, undefined, lifetime);
         const authorizedAt = performance.now();
         try { guard(options?.signal, lifetime); }
         catch (error) { await launch.release(); throw withExecLaunchNotStarted(error); }
@@ -1379,7 +1654,7 @@ export function createStablePluginExecService(params: Readonly<{
         let linuxProcessLaunchScope: LinuxProcessLaunchScope | null;
         try {
             try {
-                environment = transformProtocolClientEnvironment
+                environment = openAccess
                     && params.transformAgentChildLaunchEnvironment
                     ? params.transformAgentChildLaunchEnvironment(launch.env)
                     : launch.env;
@@ -1394,6 +1669,7 @@ export function createStablePluginExecService(params: Readonly<{
                     ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal])
                     : lifetime?.signal ?? params.signal);
             }
+            await launch.recheckInputs?.();
             guard(options?.signal, lifetime);
         } catch (error) {
             await launch.release();
@@ -1405,7 +1681,7 @@ export function createStablePluginExecService(params: Readonly<{
             ...(params.posixProcessGroup ? { posixProcessGroup: params.posixProcessGroup } : {}),
             ...(params.processTreeSystemBoundary ? { processTreeSystemBoundary: params.processTreeSystemBoundary } : {}),
             ...(options?.descendantDisposition ? { descendantDisposition: options.descendantDisposition } : {}),
-            ...(lifetime ? { signal: lifetime.signal } : options?.signal ? { signal: options.signal } : {}),
+            signal: lifetime?.signal ?? (options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal),
             ...(managedCustody?.processCustody ? { processCustody: managedCustody.processCustody } : {}),
             ...(linuxProcessLaunchScope ? { linuxProcessLaunchScope } : {}),
             ...(params.recordRuntimeLimitMeasurement
@@ -1426,10 +1702,12 @@ export function createStablePluginExecService(params: Readonly<{
             void supervised.dispose('generationRetired').catch(() => undefined);
         };
 
-        if (!lifetime) params.signal.addEventListener('abort', retire, { once: true });
+        const retirementSignal = !lifetime && openAccess ? params.retirementSignal : undefined;
+        if (retirementSignal?.aborted) retire();
+        else retirementSignal?.addEventListener('abort', retire, { once: true });
         void supervised.waitForSettlement().then(() => {
             outputSubscription?.dispose();
-            if (!lifetime) params.signal.removeEventListener('abort', retire);
+            retirementSignal?.removeEventListener('abort', retire);
         });
         return supervised;
     }
@@ -1748,7 +2026,10 @@ export function createStablePluginExecService(params: Readonly<{
         spec: PluginJsonRpcConnectionSpec,
         options?: { signal?: AbortSignal },
     ): Promise<PluginJsonRpcConnection> {
-        const signal = options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal;
+        const signal = options?.signal || params.retirementSignal
+            ? AbortSignal.any([params.signal, ...(params.retirementSignal ? [params.retirementSignal] : []),
+                ...(options?.signal ? [options.signal] : [])])
+            : params.signal;
         guard(signal);
         assertJsonRpcLimits(spec);
         if (spec.endpoint.kind !== 'unixWebSocket' || typeof spec.endpoint.socketPath !== 'string'
@@ -1864,7 +2145,15 @@ export function createStablePluginExecService(params: Readonly<{
     });
     INTERNAL_PREAUTHORIZED_SPAWNS.set(service, preauthorizedSpawns);
     INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, nativeLaunchQualifiers);
-    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, async (launch, signal, nativeLaunch) => {
+    INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, { signal: params.signal, async admit(kind, signal) {
+        const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
+        guard(combinedSignal);
+        const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: params.agentIsolation,
+            requesterIdentity: params.requesterIdentity, signal: combinedSignal });
+        guard(combinedSignal);
+        assertHostRequesterExecutionAdmissionForHost({ identity: identity ?? { kind: 'unknown', reason: 'requester_authority_unavailable' },
+            snapshot: params.agentIsolation?.read(), agentLaunchKind: kind });
+    }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
         try {
             guard(combinedSignal);
@@ -1879,16 +2168,20 @@ export function createStablePluginExecService(params: Readonly<{
         return await authorizeResolvedProjectExecLaunchForHost({
             launch: { ...launch, ...(processOwnerTag ? { processOwnerTag } : {}) },
             signal: combinedSignal, assertCurrent: () => guard(combinedSignal),
-            prepareAgentNativeLaunch: params.prepareAgentNativeLaunch,
+            ...(!mcpLaunchMaterial || nativeLaunch !== undefined ? { prepareAgentNativeLaunch: params.prepareAgentNativeLaunch } : {}),
+            agentIsolation: params.agentIsolation, agentNativeLaunch: nativeLaunch !== undefined || !mcpLaunchMaterial, agentLaunchKind,
+            requesterIdentity: params.requesterIdentity,
+            ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
+                mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : { mcpLaunchMaterial }),
         });
-    });
+    } });
     INTERNAL_OWNER_REBINDERS.set(service, (owner, signal) => createStablePluginExecService({ ...params,
         processOwner: owner, signal: signal ? AbortSignal.any([params.signal, signal]) : params.signal }));
-    INTERNAL_LAUNCH_AUTHORIZERS.set(service, authorizeLaunch);
+    INTERNAL_LAUNCH_AUTHORIZERS.set(service, (request, options, project, nativeOwner, prepare, isolation, projection) =>
+        authorizeLaunch(request, options, project, nativeOwner, prepare, isolation, undefined, projection));
     INTERNAL_PROCESS_CUSTODY.set(service, custody);
     INTERNAL_EXECUTABLE_RESOLVERS.set(service, async (executable, options) => {
         guard(options?.signal);
-        diagnoseDeclarationMismatches({ executable });
         const resolved = await params.resolveExecutable(executable);
         try {
             guard(options?.signal);
@@ -1930,3 +2223,153 @@ export function createStablePluginExecService(params: Readonly<{
     });
     return service;
 }
+
+export function createProjectNativeToolchainIoForHost(input: Readonly<{
+    ownerRemainder?: OwnerRemainderPort;
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeToolchainIo): ReturnType<ProjectNativeToolchainIo['resolveTool']>;
+}>): ProjectNativeToolchainIoForHost {
+    const create = (invocation?: Parameters<ProjectNativeToolchainIoForHost['createInvocation']>[0]): ProjectNativeToolchainIoForHost => {
+        const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
+        const capture: ProjectNativeEffectCaptureForHost = Object.freeze({
+            requestStop: custody.requestStop,
+            waitForSettlement: custody.waitForSettlement,
+            onOutcomeUncertain: custody.onOutcomeUncertain,
+            async release() {
+                await custody.requestStop();
+                await custody.waitForSettlement();
+            },
+        });
+        invocation?.retainCapture(capture);
+        const io: ProjectNativeToolchainIoForHost = Object.freeze({
+            resolveTool: (tool, signal) => input.resolveTool(tool, signal, io),
+            createInvocation: create,
+            async run(request: Parameters<ProjectNativeToolchainIo['run']>[0]) {
+                const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
+                assertOpen();
+                if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                // Native environment evaluation can execute workspace code before
+                // the final script exists. Its actual command uses the same tuple
+                // authority, not a preflight that is discarded before spawning.
+                const launch = await authorizeResolvedProjectExecLaunchForHost({
+                    launch: request, signal: signal ?? new AbortController().signal,
+                    agentIsolation: invocation?.agentIsolation ?? input.agentIsolation,
+                    executionKind: invocation?.executionKind,
+                    requesterIdentity: invocation?.requesterIdentity,
+                    agentLaunchKind: 'workspaceExec',
+                    assertCurrent() {
+                        assertOpen();
+                        if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                    },
+                });
+                try {
+                    await invocation?.assertLaunchCurrent?.();
+                    assertOpen();
+                    if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                    if (request.output && !request.output.redaction.isActive()) {
+                        fail('secret_redaction_unavailable', 'Native output custody is unavailable');
+                    }
+                } catch (error) {
+                    await launch.release();
+                    throw withExecLaunchNotStarted(error);
+                }
+                const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch,
+                    ...(request.output ? { secretRedactionLease: request.output.redaction } : {}),
+                    processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } }),
+                }, {
+                    ...(signal ? { signal } : {}),
+                    ...(input.ownerRemainder ? { ownerRemainder: input.ownerRemainder } : {}),
+                });
+                retain(supervised);
+                const outputSubscription = request.output ? supervised.handle.onOutput(chunk => {
+                    request.output!.onChunk(chunk.stream, chunk.data);
+                }) : undefined;
+                const settle = async () => {
+                    try { await supervised.dispose(); }
+                    catch (error) {
+                        if (!invocation || !isPluginError(error) || error.code !== 'plugin_exec_termination_incomplete') throw error;
+                        await supervised.waitForSettlement();
+                    }
+                };
+                try {
+                    const result = await supervised.handle.wait();
+                    // Root exit alone is not completed requested tree cleanup.
+                    await settle();
+                    if (signal?.aborted || result.termination.requestedBy.kind === 'abort') {
+                        fail('plugin_exec_aborted', 'Process operation was aborted');
+                    }
+                    if (result.termination.observed.kind === 'failed') {
+                        fail('project_native_toolchain_process_failed', 'Native environment process failed');
+                    }
+                    if (result.stdoutTruncated) {
+                        fail('project_native_toolchain_output_incomplete', 'Native environment output was incomplete');
+                    }
+                    return Object.freeze({
+                        exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : 1,
+                        stdout: Buffer.from(result.stdout).toString('utf8'),
+                        stderr: Buffer.from(result.stderr).toString('utf8'),
+                    });
+                } finally {
+                    try { await settle(); }
+                    finally { await outputSubscription?.dispose(); }
+                }
+            },
+        });
+        return io;
+    };
+    return create();
+}
+
+export type ProjectNativeToolchainIoForHost = ProjectNativeToolchainIo & Readonly<{
+    createInvocation(input: Readonly<{
+        signal: AbortSignal;
+        retainCapture(capture: ProjectNativeEffectCaptureForHost): void;
+        agentIsolation?: HostAgentIsolationLaunchContext;
+        executionKind?: 'person_break_glass';
+        requesterIdentity?: HostRequesterExecutionIdentity;
+        assertLaunchCurrent?: () => Promise<void>;
+    }>): ProjectNativeToolchainIo;
+}>;
+
+export type HostPluginExecExecutionKind = 'person_break_glass' | 'machine_native';
+
+type McpLaunchMaterial = Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]['mcpLaunchMaterial'];
+
+type PreauthorizedPluginExecSpawn = Readonly<{
+    launch: ResolvedPluginExecutable;
+    authorizePreparedLaunch?: HostPreparedPluginExecLaunchAuthorizer;
+}>;
+
+export type HostPreparedPluginExecLaunchAuthorizer = (
+    launch: HostAuthorizedPluginExecLaunch,
+    signal: AbortSignal,
+) => Promise<HostAuthorizedPluginExecLaunch>;
+
+async function resolveExecRequesterIdentity(input: Readonly<{
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    requesterIdentity?: HostRequesterExecutionIdentity;
+    executionKind?: HostPluginExecExecutionKind;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
+    signal: AbortSignal;
+}>): Promise<HostRequesterExecutionIdentity | undefined> {
+    const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: input.agentIsolation,
+        requesterIdentity: input.requesterIdentity, signal: input.signal });
+    if (identity || input.executionKind === 'person_break_glass') {
+        assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: input.executionKind === 'person_break_glass',
+            agentLaunchKind: input.agentLaunchKind,
+            snapshot: input.executionKind === 'person_break_glass' ? undefined : input.agentIsolation?.read() });
+    }
+    return identity;
+}
+
+const INTERNAL_NATIVE_SESSION_CONTEXTS = new WeakMap<object, () => SessionMcpLocalContext | undefined>();
+
+const INTERNAL_NATIVE_MCP_MATERIAL = new WeakMap<object, () => McpLaunchMaterial>();
+
+type HostResolvedAgentLaunchAuthorizer = (
+    launch: ResolvedHostExecLaunch,
+    signal?: AbortSignal,
+    nativeLaunch?: AgentNativeLaunchQualifier,
+    agentLaunchKind?: HostAgentIsolationLaunchKind,
+    mcpLaunchMaterial?: McpLaunchMaterial,
+) => Promise<HostAuthorizedPluginExecLaunch>;

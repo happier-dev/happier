@@ -171,6 +171,10 @@ export type MachineRpcAdmissionBoundary = Readonly<{
     callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
     signal?: AbortSignal;
   }>) => Promise<boolean>;
+
+resolveHomeServerIdentityId?: (
+    signal?: AbortSignal,
+  ) => Promise<string | null>;
 }>;
 
 /**

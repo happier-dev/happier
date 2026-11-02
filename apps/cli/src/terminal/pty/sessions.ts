@@ -64,6 +64,8 @@ type TerminalProcessExitEvent = TerminalProcessExitObservation | Readonly<{ kind
 
 /** Host-private accepted attribution. This is never parsed from a terminal request. */
 type TerminalPtyCustodyBase = Readonly<{
+  /** Immutable admitted Home; serverId remains the local routing profile. */
+  homeServerIdentityId?: string;
   serverId: string;
   requesterAccountId: string;
   machineId: string;

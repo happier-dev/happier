@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { API } from '@typescript/native/sync';
 import ts from 'typescript';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
-import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
+import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
 
 const TYPESCRIPT_SOURCE = /\.(?:[cm]?ts|tsx)$/u;
@@ -321,7 +321,7 @@ function repository(repo) {
           line: (diagnostic.startPosition?.line ?? -1) + 1,
           column: (diagnostic.startPosition?.character ?? -1) + 1,
           code: diagnostic.code,
-          text: diagnostic.text,
+          text: diagnosticMessageText(diagnostic),
         });
       }
     }

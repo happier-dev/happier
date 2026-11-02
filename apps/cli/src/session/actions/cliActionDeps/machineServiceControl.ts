@@ -1,3 +1,4 @@
+import { controlNativeServiceForHost } from '@/daemon/local/services/launch/nativeServiceControl';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import type { CliMachineActionCall } from './machineTransport';
 import { withMachineServiceControlTarget } from '@/daemon/local/services/launch/machineServiceTarget';
@@ -35,28 +36,9 @@ export function createMachineServiceControlAction(input: Readonly<{
       if (!acceptance || acceptance.actionId !== 'machines.services.control') {
         return { ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable' };
       }
-      const operation = { operationId: acceptance.operationId };
-      const lifetime = AbortSignal.any([handle.retirementSignal, ...(signal ? [signal] : [])]);
-      const uncertain = () => {
-        context.operationOwnerUpdate?.update({ cancellation: 'unsupported', outcome: {
-          ok: false, errorCode: 'action_outcome_unknown', error: 'Native service control settlement is unknown',
-        } });
-        return { kind: 'outcome_unknown' as const, operation };
-      };
       await input.assertCurrent(context);
-      try {
-        const settlement = await handle.controlNative(request.operation, {
-          operation: { ...operation, kind: 'serviceControl', signal: lifetime }, signal: lifetime,
-        });
-        if (settlement.kind === 'outcome_unknown') return uncertain();
-        if (settlement.kind === 'unsupported') return settlement;
-        if (settlement.kind === 'accepted') return { kind: 'accepted', operation };
-        return { kind: 'observed', serviceId: handle.serviceId, generation: handle.instanceId,
-          state: settlement.state, operation };
-      } catch (error) {
-        if (isProjectNativeProcessUncertain(error)) return uncertain();
-        throw error;
-      }
+      return controlNativeServiceForHost({ handle, operation: request.operation, operationId: acceptance.operationId,
+        context, ...(signal ? { signal } : {}) });
     });
   };
 }

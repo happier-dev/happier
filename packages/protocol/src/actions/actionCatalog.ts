@@ -579,3 +579,8 @@ export function filterResolvedActionOptions(
 
   return limit === null ? filtered : filtered.slice(0, limit);
 }
+
+export class ActionCatalogUnavailableError extends Error {
+  readonly code = 'catalog_unavailable';
+  constructor() { super('catalog_unavailable'); }
+}

@@ -8,9 +8,10 @@ import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextFie
 import { Text } from '@/components/ui/text/Text';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
+import { RelayAccessCredentialFields } from '@/components/settings/server/relayAccess/RelayAccessCredentialFields';
 
 import { RelayAccessWizardBusyOverlay } from './RelayAccessWizardBusyOverlay';
-import type { RelayAccessConfigStepDefinition, RelayAccessConfigStepDraft } from './relayAccessConfigStepCatalog';
+import type { RelayAccessConfigStepDefinition, RelayAccessConfigStepDraft, RelayAccessCredentialRefs } from './relayAccessConfigStepCatalog';
 import {
     type RelayAccessWizardPrimaryState,
     useRelayAccessWizardConfigStep,
@@ -31,6 +32,8 @@ const stylesheet = UnistylesStyleSheet.create((theme) => ({
     },
 }));
 
+const EMPTY_CREDENTIAL_REFS: RelayAccessCredentialRefs = Object.freeze([]);
+
 export type RelayAccessConfigFieldsStepProps = Readonly<{
     testID?: string;
     runner?: SystemTaskRunner;
@@ -50,8 +53,10 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
 ) {
     const styles = stylesheet;
     const [draft, setDraft] = React.useState<RelayAccessConfigStepDraft>(props.definition.readConfiguredDraft(null));
+    const [credentialRefsDraft, setCredentialRefsDraft] = React.useState<RelayAccessCredentialRefs | null>(null);
     const {
         activeTaskSnapshot,
+        actionScope,
         configure,
         isBusy,
         isUnavailable,
@@ -73,9 +78,13 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
         () => props.definition.normalizeDraft(draft),
         [draft, props.definition],
     );
+    const configuredCredentialRefs = snapshot?.providerId === props.definition.providerId
+        ? snapshot.selection?.credentialRefs ?? EMPTY_CREDENTIAL_REFS
+        : EMPTY_CREDENTIAL_REFS;
+    const credentialRefs = credentialRefsDraft ?? configuredCredentialRefs;
     const needsSave = React.useMemo(
-        () => props.definition.isSaveNeeded({ configuredDraft, normalizedDraft }),
-        [configuredDraft, normalizedDraft, props.definition],
+        () => props.definition.isSaveNeeded({ configuredDraft, normalizedDraft, configuredCredentialRefs, credentialRefs }),
+        [configuredDraft, normalizedDraft, configuredCredentialRefs, credentialRefs, props.definition],
     );
 
     useRelayAccessWizardConfigStep({
@@ -86,7 +95,7 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
         onWizardPrimaryChange: props.onWizardPrimaryChange,
         onRequestAdvance: props.onRequestAdvance,
         isSaveNeeded: needsSave,
-        isPrimaryDisabled: props.definition.isPrimaryDisabled({ needsSave, normalizedDraft }),
+        isPrimaryDisabled: props.definition.isPrimaryDisabled({ needsSave, normalizedDraft, credentialRefs }),
         control: {
             configure,
             isBusy,
@@ -95,7 +104,7 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
             activeTaskSnapshot,
             snapshot,
         },
-        createConfig: async () => await props.definition.createConfig({ normalizedDraft }),
+        createConfig: async () => await props.definition.createConfig({ normalizedDraft, credentialRefs }),
     });
 
     React.useEffect(() => {
@@ -130,11 +139,18 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
                         placeholder={field.placeholder}
                         autoCapitalize={field.autoCapitalize}
                         autoCorrect={field.autoCorrect}
-                        secureTextEntry={field.secureTextEntry}
                         value={draft[field.id]}
                         onChangeText={(value) => handleChange(field.id, value)}
                     />
                 ))}
+                <RelayAccessCredentialFields
+                    descriptor={props.definition.descriptor}
+                    value={credentialRefs}
+                    accountScope={actionScope}
+                    onChange={setCredentialRefsDraft}
+                    disabled={isBusy || isUnavailable}
+                    testIDPrefix={props.testID ?? props.definition.testIDPrefix}
+                />
                 <Text style={styles.hint}>{props.definition.hint}</Text>
             </View>
 

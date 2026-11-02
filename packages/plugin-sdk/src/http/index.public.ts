@@ -13,3 +13,7 @@ export type { PluginWebSocketMessage } from '../http.js';
 export type { PluginWebSocketOpenInput } from '../http.js';
 
 export { readHttpStatus, isPermanentRequestStatus, isPermanentRequestError } from '../httpStatusError.js';
+
+
+
+export type { HttpResponse } from '../http.js';

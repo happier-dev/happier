@@ -15,3 +15,7 @@ export type { SystemToolContribution } from '../exec.js';
 export type { SystemToolDiagnostic } from '../exec.js';
 export type { SystemToolResolveRequest } from '../exec.js';
 export type { SystemToolsService } from '../exec.js';
+
+export { DeploymentExecEnvAttachmentV1 } from './index.public.js';
+
+export { DeploymentExecEnvPortV1 } from './index.public.js';

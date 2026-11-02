@@ -5,7 +5,10 @@ import type { MachineGuardActivityNotificationV1 } from '@happier-dev/protocol/a
 import type { MachineVitalsNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import type { SessionFollowUpdateNotificationV1, RunFollowUpdateNotificationV1, DiscussionFollowUpdateNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 
+import type { ServiceHealthNoticeNotificationV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+
 export type ActivityNotificationEvent =
+  | ServiceHealthNoticeNotificationV1
   | SessionFollowUpdateNotificationV1
   | RunFollowUpdateNotificationV1
   | DiscussionFollowUpdateNotificationV1

@@ -4,12 +4,13 @@ import { resolveFileLogLevel } from '@/ui/logFileLevel';
 import { DAEMON_EVENT_LOOP_STALL_WARNING_THRESHOLD_MS } from '@/daemon/diagnostics/daemonEventLoopStallMonitor';
 
 const context = new AsyncLocalStorage<Readonly<{
-  requestId: string;
+  requestId?: string;
   sessionId?: string;
   sequence: { next: number };
   spanId?: number;
   parentSpanId?: number;
   storageRead?: true;
+  approval?: { actionId: string; artifactId: string | null };
 }>>();
 
 export type WebLatencyTracePoint = Readonly<{ requestId: string; spanId?: number }>;
@@ -30,7 +31,7 @@ export type WebLatencyApprovalFacts = Readonly<{
 /** Diagnostic provenance for an already-shared promise, never an authority witness. */
 export function readWebLatencyTracePoint(): WebLatencyTracePoint | undefined {
   const current = context.getStore();
-  return process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && current
+  return process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && current?.requestId
     ? { requestId: current.requestId, ...(current.spanId === undefined ? {} : { spanId: current.spanId }) } : undefined;
 }
 
@@ -107,4 +108,21 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
     try { logger.warnLocalFile('[web-latency]', { phase, elapsedMs: performance.now() - started,
       status, ...(current === undefined ? {} : { current }), ...correlation, ...approvalFacts?.() }); } catch { /* Diagnostic only. */ }
   }
+}
+
+export function withApprovalActionTrace<T>(actionId: string, operation: () => T, artifactId?: string, requestId?: unknown): T {
+  if (actionId !== 'approval.request.decide') return operation();
+  const parent = context.getStore();
+  const candidate = typeof requestId === 'string' ? requestId.replace(/^rpc_/u, '') : undefined;
+  const root = candidate && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(candidate) ? candidate : undefined;
+  if (parent?.approval) {
+    if (artifactId !== undefined) parent.approval.artifactId = artifactId;
+    return operation();
+  }
+  return context.run({ ...parent, ...(root ? { requestId: root } : {}), sequence: parent?.sequence ?? { next: 0 },
+    approval: { actionId, artifactId: artifactId ?? null } }, operation);
+}
+
+export async function timeApprovalPhase<T>(phase: string, operation: () => T | Promise<T>): Promise<T> {
+  return context.getStore()?.approval ? await timeWebLatencyPhase(phase, operation) : await operation();
 }

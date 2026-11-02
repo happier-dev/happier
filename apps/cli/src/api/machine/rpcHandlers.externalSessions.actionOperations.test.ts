@@ -1,3 +1,4 @@
+import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
 import { createExternalSessionActionOperationOwner, projectExternalSessionActionOperation } from '@/session/actions/externalSessions/actionOperationOwner';
 import { createExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
 import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
@@ -63,16 +64,20 @@ async function register(retainedDirectory?: string) {
   environment.activeServerDir = retainedDirectory ?? await mkdtemp(join(tmpdir(), 'happier-external-activity-'));
   if (!retainedDirectory) roots.push(environment.activeServerDir);
   const snapshots: unknown[] = [];
-  const runtime = createHostActionOperationRuntime({ machineId: 'machine-1', resolveAccountId: async () => 'account-1', publishSnapshot: (snapshot) => snapshots.push(snapshot) });
+  const runtime = createHostActionOperationRuntime({ machineId: 'machine-1', resolveAccountId: async () => 'account-1', publishSnapshot: (snapshot) => { snapshots.push(snapshot); } });
+  let installedOwner: ActionOperationDomainOwner | undefined;
   let onDeleted: Parameters<NonNullable<Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0]['subscribeSessionDeletedChanges']>>[0] | null = null;
   const registration = registerMachineExternalSessionsRpcHandlers({
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain' }),
-    machineId: 'machine-1', actionOperations: runtime,
+    machineId: 'machine-1', actionOperations: {
+      attachOwner(owner) { installedOwner = owner; return runtime.attachOwner(owner); },
+    },
     executeExternalSessionHistoricalImportCommand: async () => { throw new Error('Unexpected historical import network command in observation fixture'); },
     subscribeSessionDeletedChanges: (listener) => { onDeleted = listener; return () => { onDeleted = null; }; },
   });
   registrations.push(registration);
-  return { runtime, snapshots, deleteSession: async () => {
+  if (!installedOwner) throw new Error('External Action operation owner was not installed');
+  return { runtime, snapshots, owner: installedOwner, deleteSession: async () => {
     if (!onDeleted) throw new Error('Session deletion feed is not attached');
     await onDeleted({ sessionId: 'session-1', cursor: 1, accountScope: { activeServerDir: environment.activeServerDir, accountSubject: 'account-1' } });
   } };

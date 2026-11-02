@@ -1,3 +1,4 @@
+import type { DeploymentTokenOperationOrigin } from './actionOperationTypes';
 import { canAdvanceActionOperationSnapshotV1, ActionOperationFailureV1Schema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type {
   ActionOperationDomainRefV1,
@@ -27,6 +28,8 @@ type CreateActionOperationInput = Readonly<{
   cancellation: ActionOperationSnapshotV1['cancellation'];
   domainRef?: ActionOperationSnapshotV1['domainRef'];
   inputIdentity: string;
+  deploymentChildIdentity?: string;
+  deploymentTokenOrigin?: DeploymentTokenOperationOrigin;
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
 }>;
 
@@ -85,7 +88,8 @@ export function createActionOperationStore(options?: Readonly<{
   const settledRetentionLimit = options?.settledRetentionLimit ?? SETTLED_RETENTION_LIMIT;
   const settledRetentionMs = options?.settledRetentionMs ?? SETTLED_RETENTION_MS;
   const snapshots = new Map<string, ActionOperationSnapshotV1>();
-  const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; requesterWorkAttributionV1?: RequesterWorkAttributionV1 }>>();
+  const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
+    deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1 }>>();
   const subscribers = new Set<() => void>();
   const notifySubscribers = (): void => {
     for (const subscriber of subscribers) {
@@ -230,6 +234,8 @@ export function createActionOperationStore(options?: Readonly<{
       });
       snapshots.set(input.operationId, snapshot);
       invocationMetadata.set(input.operationId, { inputIdentity: input.inputIdentity,
+        ...(input.deploymentChildIdentity ? { deploymentChildIdentity: input.deploymentChildIdentity } : {}),
+        ...(input.deploymentTokenOrigin ? { deploymentTokenOrigin: Object.freeze({ ...input.deploymentTokenOrigin }) } : {}),
         ...(attribution ? { requesterWorkAttributionV1: attribution } : {}) });
       notify(snapshot);
       prune();
@@ -393,8 +399,21 @@ export function createActionOperationStore(options?: Readonly<{
         nextCursor: null,
       };
     },
-
-  });
+readDeploymentInvocationInput(scope: ActionOperationQueryScope, operationId: string): unknown {
+      const snapshot = snapshots.get(operationId);
+      const metadata = invocationMetadata.get(operationId);
+      if (!snapshot || !inScope(snapshot, scope) || snapshot.actionId !== 'deployments.deploy' || !metadata) return undefined;
+      return JSON.parse(metadata.inputIdentity);
+    }
+,
+hasMatchingDeploymentTokenOrigin(operationId: string, origin: DeploymentTokenOperationOrigin | undefined): boolean {
+      return isDeepStrictEqual(invocationMetadata.get(operationId)?.deploymentTokenOrigin, origin);
+    }
+,
+hasMatchingDeploymentChildIdentity(operationId: string, identity: string | undefined): boolean {
+      return invocationMetadata.get(operationId)?.deploymentChildIdentity === identity;
+    }
+});
 }
 
 export type ActionOperationStore = ReturnType<typeof createActionOperationStore>;

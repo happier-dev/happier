@@ -47,6 +47,9 @@ describe('relayAccess publicUrl', () => {
     it('does not treat a persisted tailscaleFunnel config as a canonical public url without an upstream match', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             backendState: 'Running',
             authUrl: null,
             dnsName: 'my-machine.tailnet.ts.net',
@@ -87,6 +90,9 @@ describe('relayAccess publicUrl', () => {
     it('resolves a persisted tailscaleFunnel canonical public url when the caller provides the matching upstream url', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             backendState: 'Running',
             authUrl: null,
             dnsName: 'my-machine.tailnet.ts.net',

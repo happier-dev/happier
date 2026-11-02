@@ -244,3 +244,5 @@ export async function executeSessionSectionActionV1(actionId: SessionSectionActi
   const result = await port.upsertFolder(folderRequest(folders.find(row => row.folderId === request.sectionId)!, sortKey));
   return 'ok' in result ? result : { sectionId: result.folderId, sortKey: result.sortKey };
 }
+
+export { isSessionStopChildRootV1, isSessionStopChildV1 } from './sessionSectionArchive.js';

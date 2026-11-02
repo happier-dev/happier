@@ -85,7 +85,7 @@ export const FixtureVendor = async () => {
 };
 `, { mode: 0o600 });
   const executable = { kind: 'systemTool', id: 'opencode-cli' } as const;
-  const exec = createStablePluginExecService({ allowedExecutables: [executable],
+  const exec = createStablePluginExecService({
     signal: new AbortController().signal,
     isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: input.executable }),
     resolveManagedExecutable: async () => ({ command: input.executable }), resolvePath: async () => input.directory });

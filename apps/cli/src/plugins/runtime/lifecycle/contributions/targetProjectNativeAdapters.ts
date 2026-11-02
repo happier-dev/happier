@@ -1,3 +1,5 @@
+import { PluginProjectNativeToolchainResultV1Schema } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import type { PluginProjectNativeToolchainRequestV1, PluginProjectNativeToolchainResultV1 } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { ProjectDefinitionDetectionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -44,6 +46,7 @@ export type ProjectNativeAdapterProductionV1 = Readonly<{
     /** Host-private capture; plugins receive this only as an admitted callback argument. */
     invocationContext: PluginInvocationContext;
     resolveCommand(request: PluginProjectNativeCommandRequestV1, options?: PluginCancellationOptions): Promise<PluginProjectNativeCommandResultV1>;
+    prepareToolchain(request: PluginProjectNativeToolchainRequestV1, options?: PluginCancellationOptions): Promise<PluginProjectNativeToolchainResultV1>;
     produceEnvironment(request: PluginProjectNativeEnvironmentRequestV1, options?: PluginCancellationOptions): Promise<PluginProjectNativeEnvironmentResultV1>;
     isCurrent(): boolean;
     /** Operates only on resources already captured by this selected invocation. */
@@ -160,6 +163,24 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
             }
             return admitted.data;
         } } : {}),
+        ...(registered.prepareToolchain ? { async prepareToolchain(request: PluginProjectNativeToolchainRequestV1, context: PluginInvocationContext, options?: PluginCancellationOptions) {
+            if (!current()) return { kind: 'unavailable' as const, code: 'native_adapter_retired' };
+            if (context.signal.aborted || options?.signal?.aborted) return { kind: 'cancelled' as const, code: 'native_adapter_cancelled' };
+            if (!matchesContext(context) || !matches(request.adapter) || !matches(request.selection.adapter)) return { kind: 'failed' as const, code: 'native_adapter_reference_mismatch' };
+            let result: unknown;
+            try { result = await registered.prepareToolchain!(request, context, options); }
+            catch (error) {
+                preserveUnconfirmedNativeProcess(error);
+                if (!current()) return { kind: 'unavailable' as const, code: 'native_adapter_retired' };
+                return context.signal.aborted || options?.signal?.aborted
+                    ? { kind: 'cancelled' as const, code: 'native_adapter_cancelled' }
+                    : { kind: 'failed' as const, code: 'native_adapter_failed' };
+            }
+            if (!current()) return { kind: 'unavailable' as const, code: 'native_adapter_retired' };
+            if (context.signal.aborted || options?.signal?.aborted) return { kind: 'cancelled' as const, code: 'native_adapter_cancelled' };
+            const admitted = PluginProjectNativeToolchainResultV1Schema.safeParse(result);
+            return admitted.success ? admitted.data : { kind: 'failed' as const, code: 'native_adapter_result_invalid' };
+        } } : {}),
         ...(registered.produceEnvironment ? { async produceEnvironment(request: PluginProjectNativeEnvironmentRequestV1, context: PluginInvocationContext, options?: PluginCancellationOptions) {
             if (!current()) return { kind: 'unavailable' as const, code: 'native_adapter_retired' };
             if (context.signal.aborted || options?.signal?.aborted) return { kind: 'cancelled' as const, code: 'native_adapter_cancelled' };
@@ -207,7 +228,7 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
         let released = false;
         let stopRequested = false;
         let releasePromise: Promise<void> | undefined;
-        const invoke = async <Request extends PluginProjectNativeInspectionV1, Result extends PluginProjectNativeCommandResultV1 | PluginProjectNativeEnvironmentResultV1>(
+        const invoke = async <Request extends PluginProjectNativeInspectionV1, Result extends PluginProjectNativeCommandResultV1 | PluginProjectNativeEnvironmentResultV1 | PluginProjectNativeToolchainResultV1>(
             request: Request,
             handler: ((request: Request, context: PluginInvocationContext, options?: PluginCancellationOptions) => Promise<Result>) | undefined,
             options?: PluginCancellationOptions,
@@ -234,6 +255,7 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
             exec: invocation.context.services.exec,
             invocationContext: invocation.context,
             resolveCommand: (request: PluginProjectNativeCommandRequestV1, options?: PluginCancellationOptions) => invoke(request, runtime.resolveCommand, options),
+            prepareToolchain: (request: PluginProjectNativeToolchainRequestV1, options?: PluginCancellationOptions) => invoke(request, runtime.prepareToolchain, options),
             produceEnvironment: (request: PluginProjectNativeEnvironmentRequestV1, options?: PluginCancellationOptions) => invoke(request, runtime.produceEnvironment, options),
             isCurrent: () => !released && !stopRequested && !invocation.context.signal.aborted && current(),
             requestStop() { stopRequested = true; return custody.requestStop(); },

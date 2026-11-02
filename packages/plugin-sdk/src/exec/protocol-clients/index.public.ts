@@ -12,3 +12,15 @@ export type { PluginProtocolClientKind } from '../protocol-clients.js';
 export type { PluginProtocolClientSpec } from '../protocol-clients.js';
 export type { PluginProtocolClientSpecByKind } from '../protocol-clients.js';
 export type { ProtocolClientsService } from '../protocol-clients.js';
+
+
+
+
+
+
+
+
+
+export type { PluginJsonRpcConnectionSpec } from '../protocol-clients.js';
+
+export type { PluginJsonRpcConnection } from '../protocol-clients.js';

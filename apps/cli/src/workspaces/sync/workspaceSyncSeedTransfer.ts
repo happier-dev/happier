@@ -19,7 +19,6 @@ import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/direct
 import {
   createBufferTransferPayloadSource,
   createFileTransferPayloadSource,
-  type TransferPayloadSource,
 } from '@/machines/transfer/transferPayloadSource';
 
 type WorkspaceSyncSeedEnvelopeV1 = Readonly<{
@@ -58,8 +57,11 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
   workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
   registry?: ScmBackendRegistry;
 }>): Promise<Readonly<{
-  payloadSource: TransferPayloadSource;
-  onDemandScope: DirectPeerOnDemandTransferScope;
+  payloadSource: ReturnType<typeof createBufferTransferPayloadSource>;
+  onDemandScope: Omit<DirectPeerOnDemandTransferScope, 'resolvePayloadSourceOnOpen'> & Readonly<{
+    resolvePayloadSourceOnOpen(input: Parameters<DirectPeerOnDemandTransferScope['resolvePayloadSourceOnOpen']>[0]):
+      Promise<ReturnType<typeof createFileTransferPayloadSource>>;
+  }>;
   blobTransferIds: readonly string[];
 }>> {
   const built = await buildWorkspaceExportArtifactsWithBlobProviderFromWorkspaceIntegration(input);

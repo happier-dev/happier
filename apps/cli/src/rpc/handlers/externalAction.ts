@@ -1,3 +1,4 @@
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createExternalActionDaemonDispatchResponse, ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult, ExternalActionDaemonDispatchRequest, ExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -182,3 +183,8 @@ export function registerExternalActionRpcHandler(
     return createExternalActionDaemonDispatchResponse(result.prepared);
   });
 }
+
+export type ExternalActionApprovalReplay = (
+  args: Parameters<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>[0],
+  machineIngress?: Pick<RpcHandlerContext, 'signal' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>,
+) => ReturnType<ReturnType<typeof createActionExecutor>['replayApprovedApprovalRequest']>;

@@ -851,3 +851,5 @@ export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): bo
   return SURFACE_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.surface]
     || CALLER_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.caller.kind];
 }
+
+export { resolveApprovalExecutor } from './resolveApprovalExecutor.js';

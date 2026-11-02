@@ -245,7 +245,6 @@ describe('runner daemon PluginServices proxy', () => {
             const executable = { kind: 'systemTool' as const, id: 'codex-cli' };
             const daemonExec = createStablePluginExecService({
                 signal: controller.signal, isOccurrenceCurrent: () => true,
-                allowedExecutables: [executable],
                 resolveExecutable: async () => ({ command: process.execPath, args: [script] }),
                 resolvePath: async () => root,
             });

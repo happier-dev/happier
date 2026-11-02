@@ -168,6 +168,16 @@ function createWorkspaceIntegrationAdapter(
     if (!handlers) return undefined;
 
     return {
+...(handlers.fetchCommitRef ? { fetchCommitRef: async (input) => await runWithScmBackendRuntimeServices(
+            services, async () => await handlers.fetchCommitRef!(input),
+        ) } : {}),
+...(handlers.resolveCommitRef ? { resolveCommitRef: async (input) => await runWithScmBackendRuntimeServices(
+            services, async () => await handlers.resolveCommitRef!(input),
+        ) } : {}),
+...(handlers.exportCommit ? { exportCommit: async (input) => await runWithScmBackendRuntimeServices(
+            services, async () => await handlers.exportCommit!(input),
+        ) } : {}),
+
         ...(handlers.classifyDirectoryIgnores ? {
             classifyDirectoryIgnores: async (input) => await runWithScmBackendRuntimeServices(
                 services,

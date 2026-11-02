@@ -1,3 +1,5 @@
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -91,3 +93,12 @@ export const SavedSecretResourceStoredContentV1Schema = lazyZodSchema(() => z.di
 export type SavedSecretResourceStoredContentV1 = Readonly<
   z.infer<typeof SavedSecretResourceStoredContentV1Schema>
 >;
+
+export type SavedSecretExternalSourceV1 = Readonly<z.infer<typeof SavedSecretExternalSourceV1Schema>>;
+
+export const SavedSecretExternalSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('external'),
+  contribution: asProtocolZod(PluginContributionIdentityV1Schema),
+  account: z.string().check(z.minLength(1)),
+  reference: z.string().check(z.minLength(1)),
+}));

@@ -1,3 +1,6 @@
+import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
+export { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -198,6 +201,7 @@ export const WorkflowMaterializedLeafV1Schema = lazyZodSchema(() => z.strictObje
   childRef: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   actionId: z.optional(z.string().check(z.minLength(1))),
   actionContract: z.optional(z.strictObject({ inputSchema: StrictJsonValueSchema, outputSchema: StrictJsonValueSchema,
+    secretInputPaths: z.optional(z.array(InputPathSchema)),
     completion: zMini.optional(StrictJsonValueSchema) })),
   actionInput: z.optional(z.record(z.string(), StrictJsonValueSchema)),
 }));
@@ -207,6 +211,7 @@ export type WorkflowRunStartedByV1 = z.infer<typeof WorkflowRunStartedByV1Schema
 export const WorkflowFrozenChildrenV1Schema = lazyZodSchema(() => z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema));
 
 const workflowMaterializationFields = () => ({
+  approvedOperation: z.optional(WorkflowApprovedOperationV1Schema),
   /** Private relation frozen by admission, inside the existing Run envelope. */
   targetSessionIds: z.optional(z.array(preservedBoundedNfcString(191, 'Session ids'))),
   requiresMachineStartCapacity: z.optional(z.boolean()),
@@ -409,3 +414,5 @@ export const WorkflowAcceptedSnapshotV1Schema = lazyZodSchema(() => z.union([
   WorkflowAcceptedSnapshotDirectV1Schema,
 ]));
 export type WorkflowAcceptedSnapshotV1 = z.infer<typeof WorkflowAcceptedSnapshotV1Schema>;
+
+export { type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';

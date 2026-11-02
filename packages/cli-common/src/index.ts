@@ -14,3 +14,5 @@ export * as happierRuntime from './happierRuntime/index.js';
 export * as homeTarget from './homeTarget/index.js';
 export * as accountService from './accountService/index.js';
 export * as homeEnrollment from './homeEnrollment/index.js';
+
+export * as machineSetup from './machineSetup/index.js';

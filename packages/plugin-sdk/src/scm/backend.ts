@@ -438,6 +438,33 @@ export type WorkspaceLocationInspection = Readonly<{
 }>;
 
 export type WorkspaceIntegrationHandlers = Readonly<{
+exportCommit?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        commitSha: string;
+        artifactDirectory: string;
+        signal?: AbortSignal;
+    }>) => Promise<Readonly<{
+        commitSha: string;
+        /** Display-only subject of this exact exported commit, never the checkout HEAD. */
+        commitSubject?: string;
+        entries: readonly (WorkspaceTransferEntry & Readonly<{ disposeSource?: () => Promise<void> | void }>)[];
+        dispose(): Promise<void>;
+    }>>;
+
+resolveCommitRef?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        ref: string;
+        signal?: AbortSignal;
+    }>) => Promise<string>;
+
+fetchCommitRef?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        cloneUrl: string;
+        ref: string;
+        expectedCommitSha: string;
+        signal?: AbortSignal;
+    }>) => Promise<void>;
+
     /** Optional read classification; raw directory listings remain available when absent. */
     classifyDirectoryIgnores?: (input: Readonly<{
         cwd: string;

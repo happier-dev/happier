@@ -1,3 +1,4 @@
+import { probeAcpSessionControls } from './probeAcpCatalogs';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { existsSync, readFileSync } from 'node:fs';
@@ -123,8 +124,7 @@ async function runProbe(dir: string, scenario: Parameters<typeof writeFixture>[1
   // The fixture owns this cancellation budget, as the preflight host does in production.
   const timer = setTimeout(() => controller.abort(new Error('Fixture probe deadline')), scenario === 'absent' ? 1_500 : 10_000);
   const executable = { kind: 'systemTool' as const, id: 'fixture-acp' };
-  const service = createStablePluginExecService({
-    allowedExecutables: [executable], allowedEnvKeys: [], signal: controller.signal, isOccurrenceCurrent: () => true,
+  const service = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: process.execPath, args: [fixture.script] }),
     resolvePath: async () => dir,
   });
@@ -487,8 +487,7 @@ describe('Gemini preflight authentication through native execution', () => {
     await withTempDir('gemini-ordinary-auth-', async (dir) => {
       const f = fixture(dir, 'missing');
       const executable = { kind: 'systemTool' as const, id: 'gemini-cli' };
-      const service = createStablePluginExecService({
-        allowedExecutables: [executable], allowedEnvKeys: ['CI'], environment: { CI: '' },
+      const service = createStablePluginExecService({ environment: { CI: '' },
         signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         resolveExecutable: async () => ({ command: process.execPath, args: [f.script, '--acp'] }),
         resolvePath: async () => dir,

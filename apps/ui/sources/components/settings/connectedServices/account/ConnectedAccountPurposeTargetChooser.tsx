@@ -174,6 +174,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     HomeTeamCredentialModelCatalog,
     'resources' | 'teamNameById' | 'currentResourceKeys'
   >;
+  accountsOnly?: boolean;
+
 }>) {
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
@@ -206,7 +208,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const accounts = effectiveAccountTransport === 'advertised-v4'
     ? profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS
     : EMPTY_ACCOUNTS;
-  const groups = effectiveAccountTransport === 'advertised-v4'
+  const groups = effectiveAccountTransport === 'advertised-v4' && !props.accountsOnly
     ? profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS
     : EMPTY_GROUPS;
   const teamCatalog = props.teamCredentialCatalog;
@@ -269,7 +271,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       ? t('connectedServices.purposeTargets.legacyUnavailable')
       : null;
   const requiredUnsetLabel = props.value === null && !props.teamResourceValue && props.declaration.required === true
-    ? t('connectedServices.purposeTargets.requiredPrompt')
+    ? (props.accountsOnly ? t('connectedServices.purposeTargets.requiredAccountPrompt') : t('connectedServices.purposeTargets.requiredPrompt'))
     : null;
   const triggerStatus = props.disabledReason
     ?? unresolvedSourceLabel

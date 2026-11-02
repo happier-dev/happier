@@ -11,6 +11,10 @@ import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { selectManagedOwnedTreeEndpoint } from '@/plugins/runtime/invocation/services/managedOwnedTreeEndpoint';
+import { readProjectManagedServicePreviewEndpoint } from '../preview/projectEndpoint';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { projectStartingServiceTargets } from './starting';
+
 
 type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'readProcessRoots'>;
 
@@ -51,6 +55,8 @@ export type CreateLocalServiceLauncherFeedInput = Readonly<{
     previewRegistry: LocalServicePreviewRegistry;
     runTargets?: readonly LocalServiceLauncherRunTarget[] | LocalServiceRunTargetsProvider;
     projectManagedServices?: ProjectManagedServicesFeed;
+    /** Already scoped by the installed Account operation owner, never client pending state. */
+    startOperations?: () => readonly ActionOperationSnapshotV1[];
     history?: Pick<LocalServiceLauncherHistoryStore, 'isDismissed'>;
     onRunTargetsError?: (error: unknown) => void;
     terminateDetectedEnabled?: () => boolean;
@@ -309,7 +315,6 @@ export function createLocalServiceLauncherFeed(
                     return { ...target,
                         sourceClass: { kind: 'managed_service' as const, managedServiceId: handle.instanceId, inventoryEntryId: entry.id },
                         subtitle: listener.subtitle, kind: listener.kind, commandPreview: listener.commandPreview,
-                        actions: [...target.actions, ...listener.actions.filter(action => action === 'register_preview')],
                     };
                 });
             if (bindingsOnly) return { v: 1, machineId: input.machineId, updatedAt: snapshot.updatedAt, targets: sortTargets(managed) };
@@ -323,12 +328,13 @@ export function createLocalServiceLauncherFeed(
             }
             return {
                 ...snapshot,
-                targets: [...sortTargets([
+                targets: [...sortTargets(projectStartingServiceTargets([
                     ...snapshot.targets.filter(target => !managedIds.has(target.id)
                         && !(target.sourceClass?.kind === 'inventory_entry' && correlatedInventoryIds.has(target.sourceClass.inventoryEntryId)))
                         .map(fenceExecutableAuthority),
                     ...managed,
-                ]).filter(target => !input.history?.isDismissed(target.id))],
+                ], input.startOperations?.() ?? [], input.machineId, workspaceScopePaths))
+                    .filter(target => !input.history?.isDismissed(target.id))],
             };
         },
     };

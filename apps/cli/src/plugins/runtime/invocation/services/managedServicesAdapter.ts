@@ -140,6 +140,9 @@ export type ManagedServicesInvocationBindingContext = Readonly<{
     declaredSecretReadPort: DeclaredPluginSecretReadPort | null;
     managedProvider: ManagedProviderRuntimeInvocationBinding | null;
     requestAuth: ManagedProviderRequestAuthCapabilityPathBinding | null;
+
+
+authorizePreparedLaunch?: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
 }>;
 
 export type ManagedServicesInvocationOwner = Readonly<{

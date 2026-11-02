@@ -9,11 +9,11 @@ import {
 } from '@happier-dev/cli-common/systemTasks';
 import {
   createRelayAccessDeadline,
+  createBuiltinRelayAccessSelection,
   getRelayAccessProvider,
   type RelayAccessConfig,
   type RelayAccessExecutionContext,
   type RelayAccessProvider,
-  type RelayAccessProviderId,
 } from '@happier-dev/cli-common/relayAccess';
 import {
   createTailscaleReadinessRuntimeDeps,
@@ -42,7 +42,7 @@ type SecureAccessTailscaleParams = Readonly<{
 type SecureAccessTailscaleDeps = Readonly<{
   inspectState: (params: SecureAccessTailscaleParams, options?: TailscaleReadinessInspectionOptions) => Promise<TailscaleReadinessState>;
   relayAccess: Readonly<{
-    getProvider: (providerId: RelayAccessProviderId) => RelayAccessProvider;
+    getProvider: (provider: RelayAccessConfig['provider']) => RelayAccessProvider;
     writeConfig: (params: Readonly<{ target: RelayAccessTaskTarget; config: RelayAccessConfig | null }>) => Promise<void>;
     createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => RelayAccessExecutionContext;
   }>;
@@ -107,8 +107,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
       params: {
         target: serializeSecureAccessTailscaleTarget(parsed.target),
         upstreamUrl: parsed.upstreamUrl,
-        providerId: parsed.providerId,
-        config: { providerId: parsed.providerId },
+        config: createBuiltinRelayAccessSelection(parsed.providerId),
       },
       ...(context?.signal ? { signal: context.signal } : {}),
       emit: () => undefined,
@@ -243,7 +242,7 @@ export function createSecureAccessTailscaleHandler(overrides?: Partial<SecureAcc
 
 function createSecureAccessTailscaleDeps(overrides?: Partial<SecureAccessTailscaleDeps>): SecureAccessTailscaleDeps {
   const relayAccess = overrides?.relayAccess ?? {
-    getProvider: (providerId: RelayAccessProviderId) => getRelayAccessProvider(providerId),
+    getProvider: getRelayAccessProvider,
     writeConfig: async () => undefined,
     createExecutionContext: (params: Readonly<{ target: RelayAccessTaskTarget; upstreamUrl: string | null }>) => ({
       env: process.env,
@@ -322,9 +321,10 @@ async function inspectSecureAccessTailscaleState(
     };
   }
 
-  const relayAccessProvider = relayAccess.getProvider(params.providerId);
+  const config = createBuiltinRelayAccessSelection(params.providerId);
+  const relayAccessProvider = relayAccess.getProvider(config.provider);
   const relayAccessStatus = await relayAccessProvider.status({
-    config: { providerId: params.providerId },
+    config,
     ctx: executionContext,
     ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options?.deadline ? { deadline: options.deadline } : {}),

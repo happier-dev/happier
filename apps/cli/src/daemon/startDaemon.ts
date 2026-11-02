@@ -1,8 +1,11 @@
+import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+
+import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import { randomUUID } from 'node:crypto';
 import { createDaemonMcpRequestAuthForTest } from './connectedServices/requestAuth/createDaemonMcpRequestAuthForTest';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
+
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { createManagedActivityInventory, createLiveWorkProducerGroup, type LiveWorkProducerV1 } from './lifecycle/managedActivity';
@@ -35,7 +38,7 @@ import { createLeftBehindActuator, readLeftBehindRestoration } from './guard/act
 import { createIdleTerminalPolicy } from './guard/idleTerminalPolicy';
 import { createSessionMemoryCeiling, type SessionMemoryCeilingTarget } from './platform/linux/sessionMemoryCeiling';
 import { waitForChangeOrDeadline } from './lifecycle/waitForChangeOrDeadline';
-import { processRef } from './processes/view/processRef';
+
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createReadGuardFacts } from './guard/readGuardFacts';
 import { readCurrentSessionEligibility } from './guard/sessionEligibility';
@@ -60,10 +63,7 @@ import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime'
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import {
-  buildHappyCliSubprocessLaunchSpec,
-  pruneHappyCliRunnerSnapshots,
-} from '@/utils/spawnHappyCLI';
+import { pruneHappyCliRunnerSnapshots } from '@/utils/spawnHappyCLI';
 import { projectPath } from '@/projectPath';
 import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import {
@@ -129,9 +129,9 @@ import { ensureDaemonStartupOwnership } from './startup/ensureDaemonStartupOwner
 import { startDaemonMachineRegistrationRuntime } from './startup/startDaemonMachineRegistrationRuntime';
 import { createDaemonCleanupAndShutdown } from './startup/createDaemonCleanupAndShutdown';
 import { releaseDaemonOwnershipAfterFatal } from './lifecycle/cleanupAndShutdown';
-import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
-import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
-import { startVoiceInferenceWorker, type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
+import { type AutomationWorkerHandle } from './automation/automationWorker';
+import { type MemoryWorkerHandle } from './memory/memoryWorker';
+import { type VoiceInferenceWorkerHandle } from './voiceInference/voiceInferenceWorker';
 import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
@@ -142,7 +142,7 @@ import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/release
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { readIrohRelayConfigFromEnv, trimProcessAllocator } from '@happier-dev/iroh-native/node';
@@ -175,7 +175,7 @@ import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWork
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
-import { readProjectFiniteIngressRefusal } from '@/workspaces/projectSetup/projectFiniteAction';
+
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -290,11 +290,7 @@ import {
   createTeamCredentialBrokerSourceOwner,
   teamCredentialBrokerResourceAcceptsMachine,
 } from '@/providers/broker/teamCredentialBrokerSourceOwner';
-import {
-  createTeamCredentialExternalModelCatalog,
-  isSameTeamCredentialBrokerApplication,
-  type TeamCredentialModelCatalogResolver,
-} from '@/providers/broker/teamCredentialModelCatalog';
+import { createTeamCredentialExternalModelCatalog, type TeamCredentialModelCatalogResolver } from '@/providers/broker/teamCredentialModelCatalog';
 import {
   resolveTeamCredentialResourceCatalogApplications,
   resolveTeamCredentialSourceModelCatalog,
@@ -303,13 +299,7 @@ import {
   classifyTeamCredentialRequestRouteV1,
   evaluateTeamCredentialRequestPolicyV1,
 } from '@/providers/broker/requestPolicyV1';
-import {
-  createProviderConnectionBrokerSourceOpen,
-  isProviderConnectionBrokerSourceCurrent,
-  isProviderConnectionDirectSourceCurrent,
-  materializeProviderConnectionDirectCredential,
-  resolveAdmittedProviderConnectionDirectSourceSnapshot,
-} from '@/providers/broker/providerConnectionSource';
+import { createProviderConnectionBrokerSourceOpen, isProviderConnectionDirectSourceCurrent, materializeProviderConnectionDirectCredential, resolveAdmittedProviderConnectionDirectSourceSnapshot } from '@/providers/broker/providerConnectionSource';
 import { createProviderConnectionTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { createProviderConnectionCpxBridge } from '@/providers/broker/providerConnectionCpxBridge';
 import { createAccountConnectionBrokerSourceOpen, retireAccountConnectionBrokerSource } from '@/providers/broker/accountConnectionSource';
@@ -718,6 +708,10 @@ export async function startDaemon(
         installationId: installation.installationId, custodianAccountId };
     };
     machineRpcRouteAttachments.attachMachineResourcesPolicyRoutes({ policy: machineResourcesPolicy, target: machineResourceTarget });
+    const machineAdminAccessRoutes = createDaemonMachineAdminAccessRoutes({
+      getMachineClient: () => apiMachine, target: machineResourceTarget,
+    });
+    machineRpcRouteAttachments.attachMachineAdminAccessRoutes(machineAdminAccessRoutes);
     machineRpcRouteAttachments.attachMachineVitalsRoutes({
       sampler: machineVitals,
       target: machineResourceTarget,
@@ -1631,7 +1625,29 @@ export async function startDaemon(
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     const pluginRegistrySourceHome = resolveServerHttpBaseUrl();
     const pluginRegistrySourceHost = createCliRegistryHostV1({ credentials });
-    const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+    const requesterRuntimeServerId = configuration.activeServerId;
+    const isolationWorkspaceScope = `${requesterRuntimeServerId}:${resolveAccountSettingsScopeKey(credentials)}`;
+const readIsolationRoots = () => {
+      const workspaces = getActiveProjectAccountRowsSnapshot();
+      return configuration.activeServerId === requesterRuntimeServerId && workspaces?.scopeKey === isolationWorkspaceScope
+        ? workspaces.workspaceRefs.filter(ref => ref.serverId === requesterRuntimeServerId && ref.machineId === machineId)
+          .map(ref => ({ rootId: ref.id, path: ref.rootPath })) : null;
+    };
+
+const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
+
+
+      read() {
+        const snapshot = apiMachineForSessions?.getAgentIsolationSnapshot()
+          ?? { enabled: true, status: { kind: 'unavailable' as const, code: 'metadata_unavailable' as const } };
+        const workspaceRoots = (readIsolationRoots() ?? []).map(root => root.path);
+        return { ...snapshot, workspaceRoots, daemonObservation: machineAdminAccessRoutes.observer.read() };
+      },
+    };
+
+const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+
+
       signal: homeTransportCancellation.signal,
       publishDevelopmentReview: createDaemonPluginDevelopmentReviewApprovalPublisher({
         credentials,
@@ -1983,7 +1999,6 @@ export async function startDaemon(
         }
       : undefined;
     let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
-    const requesterRuntimeServerId = configuration.activeServerId;
     const requesterRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
     const openRunAccountConnectionSource = managedPolicyHomeId && externalActionAccountId
       ? createDaemonAccountConnectionManagedConsumerOpen({
@@ -2104,6 +2119,7 @@ export async function startDaemon(
       onTrackedSessionHealthy,
       controlPort,
       controlToken,
+      daemonWorkSignal,
       stopControlServer,
       connectedServiceAuthGroupPreTurnSwitchCoordinator,
       connectedServicePredictiveSwitchGuard,
@@ -2128,6 +2144,8 @@ export async function startDaemon(
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       processLeftBehindPass: sessionControlLeftBehindPass,
     } = await startDaemonSessionControlRuntime({
+
+
       observeSessionScopeExit: async tracked => {
         const result = await sessionCeiling?.observeRunnerExit(tracked);
         if (result?.status === 'unavailable') logger.warn('[DAEMON RUN] Session scope exit memory evidence unavailable', { sessionId: tracked.happySessionId });
@@ -3187,6 +3205,8 @@ export async function startDaemon(
       isShuttingDown: admissionDrain.isFinalShutdown,
       isQuiescing: admissionDrain.isPublicationQuiescing,
       bootstrapRuntime: machineBootstrapRuntime = createDaemonMachineBootstrapRuntime({
+agentIsolation,
+
         api,
         controlPort,
         credentials,
@@ -4070,6 +4090,7 @@ export async function startDaemon(
             homeTransportReplacementPending = !attemptedApiMachine.requestServerTransportReconnect();
           }
           apiMachineForSessions = attemptedApiMachineForSessions;
+          attemptedApiMachineForSessions?.registerDeploymentChildRoutes(daemonWorkSignal);
           machineActivity.notifyChanged();
           syncActivity.notifyChanged();
           sessionLiveWorkProducer.notifyChanged();

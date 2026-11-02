@@ -1,11 +1,11 @@
 import * as React from 'react';
 
-import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
+import { relayAccessProviderDescriptors, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
-import { RelayAccessCloudflareNamedTunnelStep } from './RelayAccessCloudflareNamedTunnelStep';
-import { RelayAccessLanUrlStep } from './RelayAccessLanUrlStep';
+import { RelayAccessConfigFieldsStep } from './RelayAccessConfigFieldsStep';
+import { relayAccessConfigStepCatalog } from './relayAccessConfigStepCatalog';
 import { RelayAccessTailscalePrerequisitesStep } from './RelayAccessTailscalePrerequisitesStep';
 import type { RelayAccessWizardPrimaryState } from './useRelayAccessWizardConfigStep';
 
@@ -22,67 +22,17 @@ export type RelayAccessPrerequisitesStepProps = Readonly<{
     onRequestAdvance?: () => void;
 }>;
 
-type RelayAccessPrerequisiteStepComponent = React.ComponentType<Readonly<{
-    testID?: string;
-    providerId?: RelayAccessProviderId | null;
-    upstreamUrl?: string | null;
-    serverProfileId?: string | null;
-    target?: RelayAccessTaskTarget;
-    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
-    remoteHost?: RelayAccessControlOptions['remoteHost'];
-    onShareUrlChange?: (shareUrl: string | null) => void;
-    onWizardPrimaryChange?: (state: RelayAccessWizardPrimaryState | null) => void;
-    onRequestAdvance?: () => void;
-}>>;
-
-const RelayAccessTailscaleRegistryStep: RelayAccessPrerequisiteStepComponent = React.memo(function RelayAccessTailscaleRegistryStep(props) {
-    if (props.providerId !== 'tailscaleServe' && props.providerId !== 'tailscaleFunnel') {
-        return null;
-    }
-
-    return (
-        <RelayAccessTailscalePrerequisitesStep
-            testID={props.testID}
-            providerId={props.providerId}
-            upstreamUrl={props.upstreamUrl}
-            serverProfileId={props.serverProfileId}
-            target={props.target}
-            runWithTarget={props.runWithTarget}
-            remoteHost={props.remoteHost}
-            onShareUrlChange={props.onShareUrlChange}
-            onWizardPrimaryChange={props.onWizardPrimaryChange}
-            onRequestAdvance={props.onRequestAdvance}
-        />
-    );
-});
-
-const relayAccessPrerequisiteStepRegistry: Readonly<Partial<Record<RelayAccessProviderId, RelayAccessPrerequisiteStepComponent>>> = {
-    lan: RelayAccessLanUrlStep,
-    cloudflareNamed: RelayAccessCloudflareNamedTunnelStep,
-    tailscaleServe: RelayAccessTailscaleRegistryStep,
-    tailscaleFunnel: RelayAccessTailscaleRegistryStep,
-};
-
+/** The provider's descriptor decides its details step: the Tailscale setup task, or its declared config fields. */
 export const RelayAccessPrerequisitesStep = React.memo(function RelayAccessPrerequisitesStep(
     props: RelayAccessPrerequisitesStepProps,
 ) {
-    const StepComponent = props.providerId ? relayAccessPrerequisiteStepRegistry[props.providerId] : null;
-    if (!StepComponent) {
+    const descriptor = relayAccessProviderDescriptors.find((candidate) => candidate.id === props.providerId);
+    if (!descriptor) {
         return null;
     }
-
-    return (
-        <StepComponent
-            testID={props.testID}
-            providerId={props.providerId}
-            upstreamUrl={props.upstreamUrl}
-            serverProfileId={props.serverProfileId}
-            target={props.target}
-            runWithTarget={props.runWithTarget}
-            remoteHost={props.remoteHost}
-            onShareUrlChange={props.onShareUrlChange}
-            onWizardPrimaryChange={props.onWizardPrimaryChange}
-            onRequestAdvance={props.onRequestAdvance}
-        />
-    );
+    if (descriptor.homeSetupTaskKind === 'secureAccess.tailscale.v1') {
+        return <RelayAccessTailscalePrerequisitesStep key={descriptor.id} {...props} providerId={descriptor.id} />;
+    }
+    const definition = relayAccessConfigStepCatalog[descriptor.id];
+    return definition ? <RelayAccessConfigFieldsStep key={descriptor.id} {...props} definition={definition} /> : null;
 });

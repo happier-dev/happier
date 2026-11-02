@@ -8,6 +8,8 @@ import { createManagedServicesOwner, type WorkspaceProjectManagedServiceSupervis
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+
 
 const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
     v: 1,
@@ -81,7 +83,7 @@ describe('createLocalServiceActionRoutes', () => {
                         status: 'ready', reviewedEffectDigest,
                         environment: {
                             selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
-                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                            io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
                         },
                     },
                     launch: {

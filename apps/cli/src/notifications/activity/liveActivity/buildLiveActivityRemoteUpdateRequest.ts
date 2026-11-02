@@ -24,7 +24,7 @@ type LiveActivityInterruptiveAlert =
   NonNullable<Extract<LiveActivityRemoteUpdateRequestV1, { event: 'update' }>['interruptiveAlert']>;
 type LiveActivityNotificationEvent = Exclude<
   ActivityNotificationEvent,
-  Readonly<{ topic: 'follow_update' | 'workflow_run_update' | 'notify_me' | 'connected_service_usage' | 'guard_stop_warning' | 'guard_attention' | 'machine_guard_activity' | 'resource_limit' }>
+  Readonly<{ topic: 'service_health' | 'follow_update' | 'workflow_run_update' | 'notify_me' | 'connected_service_usage' | 'guard_stop_warning' | 'guard_attention' | 'machine_guard_activity' | 'resource_limit' }>
 >;
 
 function normalizeText(value: unknown): string | null {
@@ -194,7 +194,7 @@ export function buildLiveActivityRemoteUpdateRequest(params: Readonly<{
   const event = params.event;
   if (event.topic === 'follow_update' || event.topic === 'workflow_run_update' || event.topic === 'notify_me' || event.topic === 'connected_service_usage'
     || event.topic === 'guard_stop_warning' || event.topic === 'guard_attention' || event.topic === 'machine_guard_activity' || event.topic === 'resource_limit') return null;
-  if (!event.sessionId) return null;
+  if (!('sessionId' in event) || !event.sessionId) return null;
 
   const behavior = params.decision.liveActivityRemoteBehavior;
   const transportMode = resolveTransportMode(behavior?.mode);

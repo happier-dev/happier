@@ -13,6 +13,8 @@ import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
+'machines.setup.remove': 'Remove machine setup items',
+'machines.managed.credentials.install': 'Install credential delivery',
   'machines.provisioners.list': 'List machine provisioners',
   'machines.provisioners.check': 'Check machine provisioner',
   'machines.provisioners.options': 'Get machine provisioner choices',
@@ -23,6 +25,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.inspect': 'Check managed machine now',
   'machines.managed.bootstrap.retry': 'Retry Happier installation',
   'machines.managed.setup.skip': 'Continue without setup',
+  'machines.environment.apply': 'Apply machine setup',
   'machines.setup.plan': 'Review machine setup',
   'machines.setup.apply': 'Apply machine setup',
   'machines.managed.cancel': 'Cancel managed machine creation',
@@ -195,4 +198,3 @@ export const MACHINE_POOL_ACTION_SPECS = Object.freeze([
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
 ] as const);
-

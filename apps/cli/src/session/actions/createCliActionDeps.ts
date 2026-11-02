@@ -1,3 +1,18 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
@@ -643,26 +658,24 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const { workflowTriggers, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
-    startCombinedWorkflow, waitForCombinedWorkflow } = createCliWorkflowFamily(params, {
+    startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
   }, workflowRunStorageHost);
   const publishDeps = createPublishProjectActionDeps({
-    readDeps: () => readEffectiveDeps?.() ?? actionDeps,
+    prepareDeploymentAction: request => {
+      const prepare = (readEffectiveDeps?.() ?? actionDeps).prepareDeploymentAction;
+      return prepare ? prepare(request) : Promise.resolve(executionRunActionFailure('deployment_unavailable'));
+    },
     orchestrationDirectory: configuration.happyHomeDir,
     startCombined: startCombinedWorkflow,
     waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),
-    readArtifact: async (input, context) => {
-      const ref = { serverId: input.serverId, artifactId: input.contentArtifactId };
-      if (context.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact(ref, { signal: context.signal }, context))?.document ?? null;
-      if (await projectAccountAdmission(input.serverId, context) || !roleArtifactStore) return null;
-      return withProjectHome(() => roleArtifactStore.read(input.contentArtifactId, { signal: context.signal,
-        prepareRecipients: false, includeSharedAudience: false }));
-    },
-    readHostFacts: async context => {
+    readInvocations: readCombinedWorkflowInvocations,
+    readHostFacts: async (context, selectedMachineId) => {
       const [{ listCurrentAccountMachines }, { isMachineReachableV1 }] = await Promise.all([
         import('@/api/machine/resolveCurrentAccountMachineTarget'), import('@happier-dev/protocol/machines/machineReachabilityV1'),
       ]);
       const machines = await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
+        projection: 'hostFacts', ...(selectedMachineId ? { machineIds: [selectedMachineId] } : {}),
         authorization: context.externalActionExecutionAuthorization, effectActionId: 'deployments.publish',
         serverHttpBaseUrl: todoHomeBaseUrl, signal: context.signal });
       return { machines: machines.map(machine => ({ machineId: machine.id,
@@ -682,22 +695,27 @@ export function createCliActionDeps(params: CliActionDepsParams,
     orchestrationDirectory: configuration.happyHomeDir,
     startCombined: startCombinedWorkflow,
     waitForRun: request => waitForCombinedWorkflow(request, request.start.runId),
-    readArtifact: async (input, context) => {
-      const ref = { serverId: input.serverId, artifactId: input.contentArtifactId };
-      if (context.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact(ref, { signal: context.signal }, context))?.document ?? null;
-      if (await projectAccountAdmission(input.serverId, context) || !roleArtifactStore) return null;
-      return withProjectHome(() => roleArtifactStore.read(input.contentArtifactId, { signal: context.signal,
-        prepareRecipients: false, includeSharedAudience: false }));
-    },
-    readHostFacts: async context => {
+    readHostFacts: async (context, selectedMachineId, requestedTargetMachineIds) => {
       const [{ listCurrentAccountMachines }, { isMachineReachableV1 }] = await Promise.all([
         import('@/api/machine/resolveCurrentAccountMachineTarget'), import('@happier-dev/protocol/machines/machineReachabilityV1'),
       ]);
+      const agentSession = selectedMachineId === undefined && (context.actionCaller?.kind === 'session'
+        || context.surface === 'agent' || context.surface === 'mcp') ? await resolveActionCallerSession(context) : null;
       const machines = await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
+        projection: 'hostFacts', ...(selectedMachineId
+          ? { machineIds: [...new Set([selectedMachineId, ...(requestedTargetMachineIds ?? [])])] } : {}),
         authorization: context.externalActionExecutionAuthorization,
         effectActionId: context.externalActionExecutionAuthorization?.binding.actionId === 'machines.setup.plan'
           ? 'machines.setup.plan' : 'machines.setup.apply', serverHttpBaseUrl: todoHomeBaseUrl, signal: context.signal });
-      return { machines: machines.map(machine => ({ machineId: machine.id,
+      return { ...(agentSession?.machineId ? { agentMachineId: agentSession.machineId } : {}),
+        // Only admitted current presence classifies a recoverable offline row.
+        // Missing, retired or access-denied rows still reach their target owner.
+        // The direct target also keeps its transport-owned reachability decision.
+        offlineMachineIds: machines.filter(machine => machine.id !== params.machineActionDirectTargetTransport?.machineId
+          && machine.revokedAt === null && machine.replacedByMachineId === null
+          && (!machine.access || machine.access.accessState === 'ready')
+          && !isMachineReachableV1({ machine, nowMs: Date.now() })).map(machine => machine.id),
+        machines: machines.filter(machine => !selectedMachineId || machine.id === selectedMachineId).map(machine => ({ machineId: machine.id,
         online: !machine.replacedByMachineId && (!machine.access || machine.access.accessState === 'ready')
           && isMachineReachableV1({ machine, nowMs: Date.now() }) })) };
     },
@@ -833,8 +851,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       machineId: params.machineActionDirectTargetTransport?.machineId ?? params.sessionSpawnDirectTargetTransport?.machineId,
       credentials: params.credentials, isCredentialCurrent: params.isCredentialCurrent,
       readWorkspaceRows: readAdmittedProjectRows,
-      readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context),
-      readEnvironment: deploymentStorage }),
+      readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
     deploymentAction: async (actionId, input, context) => {
       if (params.deploymentAction) return params.deploymentAction(actionId, input, context);
       const nativeRead = isDeploymentNativeReadActionIdV1(actionId);
@@ -1110,7 +1127,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       callMachineAction,
       resolveAuthorizationHeaders: (actionId, context, request) => resolveServerRequestHeaders(context, actionId, request),
     }) : {}),
-    projectsOrganizationUpdate: projectDeps.projectsOrganizationUpdate,
+
     projectsVisibilitySet: projectDeps.projectsVisibilitySet,
     projectsList: projectDeps.projectsList,
     projectWorkspaceRefs: projectDeps.projectWorkspaceRefs,
@@ -1120,7 +1137,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     machineStorageAction: machineResourceDeps.machineStorageAction,
     machineProcessesAction: machineResourceDeps.machineProcessesAction,
     machineVitalsAction: machineResourceDeps.machineVitalsAction,
-    machineAgentIsolationAction: machineResourceDeps.machineAgentIsolationAction,
+
     machineServiceAction: machineResourceDeps.machineServiceAction,
     machineServiceScope: machineResourceDeps.machineServiceScope,
     machineServiceControl: machineResourceDeps.machineServiceControl,
@@ -1334,4 +1351,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     resetGlobalVoiceAgent: () => {},
   };
   return actionDeps;
+}
+
+export function isControllerDeploymentMutationAction(actionId: string): actionId is
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' {
+  return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
+    || actionId === 'deployments.promote' || actionId === 'deployments.teardown';
 }

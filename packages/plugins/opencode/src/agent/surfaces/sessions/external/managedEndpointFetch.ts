@@ -1,3 +1,4 @@
+import { toNativeResponse } from '../../../runtime/server/transport.js';
 import type {
   AgentExternalSessionsManagedEndpointRead,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -84,10 +85,6 @@ export function createManagedEndpointFetch(
       }),
       init.signal,
     );
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+    return toNativeResponse(response);
   };
 }

@@ -9,6 +9,29 @@ export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentati
 
 export const RPC_METHODS = {
   DAEMON_DEPLOYMENT_CHILD: 'daemon.deployments.child.v1',
+  DAEMON_SERVICE_HEALTH_DELIVER: 'daemon.serviceHealth.deliver.v1',
+  MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
+
+  MACHINES_SERVICE_CONTROL: 'machines.services.control',
+
+  MACHINES_SERVICE_UNWATCH: 'machines.services.unwatch',
+
+  MACHINES_SERVICE_WATCH: 'machines.services.watch',
+
+  MACHINES_SERVICE_DETAIL: 'machines.services.detail',
+
+  MACHINES_SERVICE_DISCOVERY: 'machines.services.discovery',
+
+  MACHINES_SERVICE_EXEC: 'machines.services.exec',
+
+  MACHINES_SERVICE_LIST: 'machines.services.list',
+
+  MACHINES_REACHABILITY_CONFIGURE: 'machines.reachability.configure',
+
+  MACHINES_REACHABILITY_INSPECT: 'machines.reachability.inspect',
+  MACHINE_SETUP_REMOVE: 'machines.setup.remove',
+  MACHINE_SETUP_PLAN: 'machines.setup.plan',
+
   USAGE_SOURCES_DISCOVER: 'usage.sources.discover',
   USAGE_SOURCES_GET: 'usage.sources.get',
   USAGE_SOURCES_CONSENT_SET: 'usage.sources.consent.set',
@@ -557,6 +580,7 @@ export const RPC_METHODS = {
   BUGREPORT_COLLECT_DIAGNOSTICS: 'bugreport.collectDiagnostics',
   BUGREPORT_GET_LOG_TAIL: 'bugreport.getLogTail',
   BUGREPORT_UPLOAD_ARTIFACT: 'bugreport.uploadArtifact',
+
 } as const;
 
 export const SESSION_RPC_METHODS = {

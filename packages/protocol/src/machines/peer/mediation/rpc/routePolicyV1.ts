@@ -1315,3 +1315,7 @@ export function validateMachineRpcGrantAllowedMethods(
   }
   return { ok: true };
 }
+
+export const MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1 = Object.freeze({
+  sharedMachineAccess: 'manage',
+} as const satisfies Pick<MachineRpcRoutePolicyV1, 'sharedMachineAccess'>);

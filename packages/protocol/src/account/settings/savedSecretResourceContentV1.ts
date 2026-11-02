@@ -1,3 +1,6 @@
+import { type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';
+import type { SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
+import { sealEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import tweetnacl from 'tweetnacl';
 import { z } from 'zod/mini';
@@ -139,3 +142,19 @@ export function openSavedSecretResourceStoredContentV1(
     return null;
   }
 }
+
+export function prepareSavedSecretResourceRecipientEnvelopesV1(params: Readonly<{
+  recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[];
+  resourceDataKey: Uint8Array;
+  randomBytes: (length: number) => Uint8Array;
+}>): readonly Readonly<{ recipientAccountId: string; encryptedDataKey: string; recipientContentPublicKeyFingerprint: string }>[] {
+  return params.recipients.flatMap(recipient => recipient.readiness.status !== 'available'
+    || recipient.envelopeStatus === 'prepared' ? [] : [{
+      recipientAccountId: recipient.account.accountId,
+      encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.resourceDataKey,
+        recipientPublicKey: decodeBase64(recipient.readiness.contentPublicKey, 'base64'), randomBytes: params.randomBytes }), 'base64'),
+      recipientContentPublicKeyFingerprint: recipient.readiness.contentPublicKeyFingerprint,
+    }]);
+}
+
+export type { SavedSecretExternalSourceV1 };

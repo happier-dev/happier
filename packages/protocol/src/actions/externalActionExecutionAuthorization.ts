@@ -1,3 +1,5 @@
+import { WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceExecutionV1 } from '../rpc/socket.js';
+import { DeploymentChildExecutionProofV1Schema, type DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { computeCanonicalDomainSeparatedDigest, encodeCanonicalLengthDelimited } from '../crypto/canonicalDigest.js';
 import { ActionResolvedSessionTargetsV1Schema, type ActionResolvedSessionTargetsV1 } from './sessionTargetV1.js';
@@ -208,3 +210,26 @@ export function verifyExternalActionMachineRequestV1(input: MachineRequest & Rea
 }
 
 export type { DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
+
+export function computeExternalActionMachineRpcParamsDigestV1(params: unknown): string {
+  return computeCanonicalDomainSeparatedDigest('happier-external-action-rpc-payload-v1', [
+    createCanonicalJsonSigningInput(params === undefined ? null : params),
+  ]);
+}
+
+export function createDeploymentChildExecutionProofV1(value: WorkspaceSyncSourceExecutionV1,
+  archiveOrigin?: DeploymentChildExecutionProofV1['archiveOrigin'],
+  nativeIncumbentSource?: DeploymentChildExecutionProofV1['nativeIncumbentSource']): DeploymentChildExecutionProofV1 {
+  return DeploymentChildExecutionProofV1Schema.parse({ ...projectDeploymentChildExecutionProofV1(value),
+    ...(archiveOrigin ? { archiveOrigin } : {}), ...(nativeIncumbentSource ? { nativeIncumbentSource } : {}) });
+}
+
+export function projectDeploymentChildExecutionProofV1(value: WorkspaceSyncSourceExecutionV1): DeploymentChildExecutionProofV1 {
+  const packet = WorkspaceSyncSourceExecutionV1Schema.parse(value);
+  if (!packet.externalActionExecution.deploymentChildRouting || !packet.originalActionEnvelope) {
+    throw new TypeError('Deployment HTTP custody requires its exact original child packet');
+  }
+  return DeploymentChildExecutionProofV1Schema.parse({ method: packet.method, requestId: packet.requestId,
+    paramsPresent: packet.params !== undefined, paramsDigest: computeExternalActionMachineRpcParamsDigestV1(packet.params),
+    externalActionExecution: packet.externalActionExecution });
+}

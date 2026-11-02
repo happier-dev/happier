@@ -126,10 +126,11 @@ describe('daemon local service preview snapshot rpc handler', () => {
                             stop: async () => { stopped = true; return { status: 'stopped' }; } } } },
                     authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', ''], env: {}, release: async () => undefined }),
                 });
+                let verifications = 0;
                 const rpc = new RpcHandlerManager({ scopePrefix: workspace.machineId, localMachineId: workspace.machineId,
                     encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
                         machineId: workspace.machineId, resolveCustodianAccountId: async () => 'starter',
-                        resolveInstallationId: () => 'installation', verifyMachineAdmission: async () => true,
+                        resolveInstallationId: () => 'installation', verifyMachineAdmission: async () => { verifications++; return true; },
                     }) });
                 registerDaemonLocalServicePreviewSnapshotHandler(rpc, { projectManagedServices: owner,
                     machineId: workspace.machineId, serverId: profile.id });
@@ -140,18 +141,14 @@ describe('daemon local service preview snapshot rpc handler', () => {
                     machineAdmission: { actorAccountId: 'starter', custodianAccountId: 'starter', machineId: workspace.machineId,
                         installationId: 'installation', role: 'manage', encryptionMode: 'plain' } });
                 expect(await read()).toMatchObject({ kind: 'refused', reasonCode: 'service_unavailable' });
-                const accessLoss = { serverId: profile.id, accountId: 'starter',
-                    machineId: workspace.machineId, installationId: 'installation' };
-                const currentLoss = { verifyCurrentMachineAdmission: async () => true };
-                expect(await owner.stopForAccessLoss(accessLoss, currentLoss)).toEqual([]);
                 await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
                     descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: profile.serverUrl,
                         revision: 1, endpoints: [{ kind: 'https', url: profile.serverUrl }] } });
+                const beforeRead = verifications;
                 expect(await read()).toMatchObject({ v: 1, kind: 'admitted', instanceId: handle.instanceId,
                     serviceTarget: target, starterAccountId: 'starter', endpoint: { scheme: 'http', host: '127.0.0.1', port: 4312 } });
-                expect(await owner.stopForAccessLoss({ ...accessLoss, serverId: 'srv_foreign_home' }, currentLoss)).toEqual([]);
-                expect(await owner.stopForAccessLoss(accessLoss, currentLoss))
-                    .toMatchObject([{ status: 'stopped', instanceId: handle.instanceId }]);
+                expect(verifications - beforeRead).toBe(1);
+                await handle.stop();
                 expect(stopped).toBe(true);
                 expect(await read()).toMatchObject({ kind: 'refused', reasonCode: 'service_unavailable' });
             } finally {

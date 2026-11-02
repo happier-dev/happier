@@ -109,10 +109,10 @@ describe('managed Machine rebuild origination', () => {
         expect(effects).toHaveLength(1);
     });
 
-    it.each([{ actionId: 'machines.managed.rebuild', revoked: false }, { actionId: 'machines.environment.apply', revoked: false },
-        { actionId: 'machines.environment.apply', revoked: true }] as const)(
+    it.each([{ actionId: 'machines.managed.rebuild', revoked: false }, { actionId: 'machines.setup.apply', revoked: false },
+        { actionId: 'machines.setup.apply', revoked: true }] as const)(
         'routes only the current reviewed exact machine ($actionId, revoked=$revoked)', async ({ actionId, revoked }) => {
-        const applyingEnvironment = actionId === 'machines.environment.apply';
+        const applyingEnvironment = actionId === 'machines.setup.apply';
         const homeId = applyingEnvironment ? `srv_environment_origination_home_${revoked}` : 'srv_rebuild_origination_home';
         const serverUrl = applyingEnvironment ? `https://environment-origination-${revoked}.example.test` : 'https://rebuild-origination.example.test';
         const accountId = 'rebuild-owner';
@@ -124,7 +124,9 @@ describe('managed Machine rebuild origination', () => {
         expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token })).toBe(true);
         const rebuildInput = ManagedRebuildInputV1Schema.parse({ homeId, managedMachineId: 'retained-child', kind: 'rebuild',
             expectedRevision: 4, reviewedEffectDigest: 'a'.repeat(64) });
-        const input = applyingEnvironment ? { homeId, machineId: 'ordinary-child', presetId: 'setup-preset', presetRevision: 3 } : rebuildInput;
+        const input = applyingEnvironment ? { homeId, machineId: 'ordinary-child',
+            targets: [{ homeId, machineId: 'ordinary-child', desiredRevision: 0,
+                sources: [{ kind: 'direct', setup: {} }], recipePlans: [], exclusions: [] }] } : rebuildInput;
         const machine = ManagedMachineV1Schema.parse({ id: rebuildInput.managedMachineId, homeId, custodianAccountId: accountId,
             controller: { machineId: 'physical-controller', installationId: 'physical-installation' },
             launch: { provider: { pluginId: 'acme.devcontainer', localId: 'child' }, schemaVersion: 1,

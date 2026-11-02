@@ -468,6 +468,15 @@ import {
     resolveActiveAccountConfiguredExternalSessionSourceRevision,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createCurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
+import { createPluginWebhookHeartbeatClient } from './webhooks/heartbeatClient';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
+import type { CurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
+
 
 export type PluginRuntimeGenerationAuthority = NonNullable<Awaited<ReturnType<typeof readCurrentCommittedPluginGenerations>>>;
 
@@ -612,7 +621,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<ResolvedPluginExecutable>;
     /** Host-private Project supervision/control; the SDK remains plugin-scoped. */
     projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>,
-        'resolveEnvironmentService' | 'machineServiceRows' | 'superviseMachine' | 'listMachineServices' | 'retireMachineServices' | 'resolveNativeService' | 'restoreEnvironmentServices' | 'superviseProject' | 'stopForAccessLoss' | 'resolveProjectService' | 'listProjectServices' | 'activity' | 'readProcessRoots' | 'readResourceTargets'>;
+        'superviseProject' | 'resolveProjectService' | 'listProjectServices' | 'resolveEnvironmentService' | 'machineServiceRows'
+        | 'superviseMachine' | 'listMachineServices' | 'retireMachineServices' | 'resolveNativeService'
+        | 'readEnvironmentServiceLogRedactionLease' | 'activity' | 'readProcessRoots' | 'readResourceTargets' | 'readNativeContainerSources' | 'readMachineRebootServices' | 'restoreEnvironmentServices' | 'resolveSetupScriptServiceEffects' | 'stopForAccessLoss'>;
     /** Reads the retained daemon custody owner without activating a contribution. */
     readSharedProviderGatewayRuntime?: ReturnType<typeof createManagedServicesOwner>['readSharedProviderGatewayRuntime'];
     /** Transfers the same generic Project/shared Provider custody at publication. */
@@ -629,9 +640,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * current snapshots; partial fixtures without this fact fail closed there.
      */
     durableRevision?: number;
-    generation?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['generation'];
-    readPluginOccurrenceId?(pluginId: string): PluginRuntimeOccurrenceId | null;
-    isPluginOccurrenceCurrent?(
+    generation: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['generation'];
+    readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
+    isPluginOccurrenceCurrent(
         pluginId: string,
         occurrenceId: PluginRuntimeOccurrenceId,
     ): boolean;
@@ -639,7 +650,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Exact daemon-admitted sources for a background child; this does not activate them. */
     readAdmittedBackgroundServicePlugins?(pluginIds: readonly string[]): readonly AdmittedBackgroundServicePlugin[];
     targetActivationFacts?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['targetActivationFacts'];
-    targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
+    targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry>;
     /** Existing authenticated machine reverse RPC; the answering UI owns client execution. */
     executeClientAction?: ClientContributedActionExecutor;
     /**
@@ -1190,6 +1201,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
             error: unknown;
         }>) => void;
     }>) => Promise<void>;
+
+currentDomainEdgeObservation?: CurrentDomainEdgeObservation;
 }>;
 
 function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
@@ -1915,7 +1928,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         networkDependencies?: PluginRuntimeNetworkDependencies;
         /** Testable port for the canonical Account plugin-settings persistence owner. */
         accountSettingsRecordAdapter?: PluginAccountSettingsRecordAdapter;
-    }>,
+
+agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+}>,
 ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
     const generation = params?.generation ?? 0;
     const scopedActionRuntime = params?.scopedActionRuntime;
@@ -4302,8 +4317,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
         revalidateCallerOccurrence: revalidatePluginActionCallerOccurrence,
     });
-    const automationEventAdoptedDefinitionOwners =
-        automationAssembly.adoptedDefinitionOwners;
     const resolveAutomationEventAdoptedDefinitionSet =
         automationAssembly.resolveAdoptedDefinitionSet;
     const resolveAutomationEventHistoryGapSource =
@@ -4486,9 +4499,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 revalidatePluginActionCallerOccurrence,
                 ...(params?.resolveCurrentMachineExecutionOriginContext ? { resolveCurrentPluginExecutionOrigin } : {}),
             }),
-            ...(resolveAutomationEventAdoptedDefinitionSet
-                ? { resolveAutomationEventAdoptedDefinitionSet }
-                : {}),
+            resolveAutomationEventAdoptedDefinitionSet,
             ...(params?.runtimeActionExecute
                 ? { runtimeActionExecute: params.runtimeActionExecute }
                 : {}),
@@ -4552,7 +4563,58 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 && accountExecution.isCurrent(),
             resolveBaseUrl: () => accountExecution.serverUrl,
         }) : undefined);
+    const notificationServerHttpBaseUrl = params?.accountExecution?.serverUrl ?? resolveServerHttpBaseUrl();
+    const currentDomainEdgeObservation = createCurrentDomainEdgeObservation();
+    consumerAssembly.allRetirementSignal.addEventListener('abort', () => currentDomainEdgeObservation.dispose(), { once: true });
+    const notificationAccountId = sessionCredentials ? readAccountIdFromToken(sessionCredentials.token) : null;
+    if (!accountExecution && sessionCredentials && notificationAccountId) {
+        // The observer's admitted Account/Home already owns this push feed. Domain and Environment
+        // writes by any entitled client invalidate its current fact without another probe or timer.
+        const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: notificationAccountId,
+            token: sessionCredentials.token, serverBaseUrl: notificationServerHttpBaseUrl });
+        const unsubscribe = accountChanges.subscribeEnvironmentAccess(change => {
+            if (change.kind === 'changes') {
+                for (const environmentId of change.environmentIds) currentDomainEdgeObservation.withdraw(environmentId);
+            } else currentDomainEdgeObservation.reconcile(() => false);
+        });
+        consumerAssembly.allRetirementSignal.addEventListener('abort', () => {
+            unsubscribe();
+            void accountChanges.dispose();
+        }, { once: true });
+    }
+    const readHealthCheckCredentials = async () => {
+        const current = await readSessionCredentials();
+        return current && sessionCredentials && readAccountIdFromToken(current.token)
+            && readAccountIdFromToken(current.token) === readAccountIdFromToken(sessionCredentials.token)
+            ? current : null;
+    };
+    const heartbeatClient = createPluginWebhookHeartbeatClient({
+        readCredentials: readHealthCheckCredentials,
+        serverHttpBaseUrl: notificationServerHttpBaseUrl,
+    });
     invocationServiceOwners = createProductionPluginInvocationServiceOwners({
+        ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
+            serverId: sessionCredentialsServerId,
+            resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+            enrollHeartbeat: heartbeatClient.enroll,
+            readHeartbeatReceipt: heartbeatClient.read,
+            onDomainResult: value => currentDomainEdgeObservation.publish(value),
+            openDomainArtifact: async (artifactId, signal) => {
+                const current = await readHealthCheckCredentials();
+                if (!current) return null;
+                const artifact = await runWithServerHttpBaseUrl(notificationServerHttpBaseUrl,
+                    () => createCredentialedAccountArtifactStore(current).read(artifactId,
+                        { signal, prepareRecipients: false, includeSharedAudience: false }));
+                return artifact && typeof artifact.body === 'string'
+                    ? { artifactId: artifact.artifactId, header: artifact.header, body: artifact.body, revision: artifact.revision }
+                    : null;
+            },
+            readObserver: () => {
+                const machineId = params?.resolveCurrentMachineId?.();
+                const identity = readInstallationIdentityIfExistsSync();
+                return machineId && identity ? { machineId, installationId: identity.installationId } : null;
+            },
+        }) } : {}),
         ...(!params?.accountExecution ? {
             demandBackgroundService: (target) => activatedRegistry.demandBackgroundService(target),
         } : {}),
@@ -4893,6 +4955,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         http: stableHttpHost,
         ...(resourcesOwner ? { resources: resourcesOwner } : {}),
         exec: {
+...(params?.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
+
             readSpawnFailureLimits: params?.readSpawnFailureLimits,
             agentCli: agentCliService,
             systemToolsForPlugin(pluginId) {
@@ -4908,7 +4972,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         managedServices: invocationManagedServicesOwner,
     });
+    const domainSourceInvalidation = !params?.accountExecution ? invocationServiceOwners.stableEventsBroker.subscribeHost({
+        target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
+        isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
+        listener: () => currentDomainEdgeObservation.reconcile(entry => {
+            const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+                caller: entry.caller, occurrenceId: entry.occurrenceId,
+                sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
+            return batch.kind === 'available' && batch.source.subject.kind === 'environment'
+                && batch.source.subject.environmentId === entry.observation.environmentId
+                && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
+        }),
+    }) : null;
     disposeInvocationServiceOwners = async () => {
+        await domainSourceInvalidation?.dispose();
         currentGlobalExternalSessions?.dispose();
         currentGlobalExternalSessions = null;
         currentGlobalExternalSessionsPublicationBasis = null;
@@ -5401,9 +5478,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ...(params?.actionFormConnectedAccounts
             ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
             : {}),
-        ...(resolveAutomationEventHistoryGapSource
-            ? { resolveAutomationEventHistoryGapSource }
-            : {}),
+        resolveAutomationEventHistoryGapSource,
         resolveOptionalAccess(pluginId) {
             return committed?.generations.get(pluginId)?.installation?.optionalAccess
                 ?? Object.freeze([]);
@@ -7477,6 +7552,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             readAccountExecutionSelection: accountActivationSources.readSelection } : {}),
         resolveReadyManagedExecutable: (executable, pluginId) =>
             executableResolver(executable, pluginId, undefined, { requireReady: true }),
+        currentDomainEdgeObservation,
         get projectManagedServices() {
             return projectManagedServicesOwner;
         },

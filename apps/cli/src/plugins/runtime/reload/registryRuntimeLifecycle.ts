@@ -256,6 +256,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
     rootPath: string;
   }>) => Extract<PluginRuntimeSourceAuthority, DevelopmentPluginSourceCustody> | null;
   isDevelopmentSourceRegistered?: (registeredRootId: string) => boolean;
+  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
 }>): PluginRegistryRuntimeLifecycle {
   type PreparedActivationCustody = Readonly<{
     pluginId: string;
@@ -437,6 +438,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         const targetedContributions =
           params.reloadController.getTargetedContributionsOwner();
         registry = await resolveExecutablePluginRuntimeRegistry({
+          ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
             ...(params.signal ? { signal: params.signal } : {}),
           readSpawnFailureLimits: params.readSpawnFailureLimits,
             happyHomeDir: params.happyHomeDir,

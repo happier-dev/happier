@@ -1,3 +1,4 @@
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -100,7 +101,7 @@ describe('createProviderBrokerRequestHandler', () => {
         if (!result.ok) throw new Error('expected transport size response');
         expect(mapProviderBrokerApplicationFailure(result.response.status, result.response.headers))
             .toEqual({ error: 'invalid_request' });
-        expect(await new Response(result.response.body).json()).toMatchObject({ error: {
+        expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).json()).toMatchObject({ error: {
             code: 'request_too_large', type: 'invalid_request_error',
         } });
     });
@@ -133,7 +134,7 @@ describe('createProviderBrokerRequestHandler', () => {
 
         expect(result).toMatchObject({ ok: true, response: { status: 200 } });
         if (!result.ok || !result.response.body) throw new Error('expected model-list response body');
-        expect(JSON.parse(new TextDecoder().decode(await new Response(result.response.body).arrayBuffer()))).toEqual({
+        expect(JSON.parse(new TextDecoder().decode(await new Response(await readProviderBrokerResponseBody(result.response.body)).arrayBuffer()))).toEqual({
             object: 'list',
             data: [{ id: 'allowed-model', object: 'model', created: 0, owned_by: 'happier' }],
         });

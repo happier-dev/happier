@@ -139,12 +139,13 @@ export class PushNotificationClient {
         token: string,
         baseUrl?: string,
         serverId: string = configuration.activeServerId,
+        notificationServerUrl: string = baseUrl ?? configuration.serverUrl,
     ) {
         this.token = token
         this.baseUrl = baseUrl ?? resolveServerHttpBaseUrl()
         // Explicit finite targets keep their link fallback. Default Home HTTP
         // may use a process-local carrier that cannot be shared with a device.
-        this.notificationServerUrl = baseUrl ?? configuration.serverUrl
+        this.notificationServerUrl = notificationServerUrl
         this.serverId = serverId
         this.expo = new Expo()
     }

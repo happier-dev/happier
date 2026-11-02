@@ -105,6 +105,18 @@ import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/o
 import { createProjectServiceRelocationRoute } from '@/daemon/local/services/actions/projectServiceRelocationRoute';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineDataEncryptionKey';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ManagedListInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { handleActionsCommand } from '@/cli/commands/actions';
+import type { WorkspaceProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
+
 
 // OS process boundary only; the installed operation, preparation, success and PTY owners stay real.
 class SetupBoundaryPty implements PtyProcess {
@@ -140,7 +152,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     request(input: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown; headers: Record<string, string> }>): Promise<{ status: number; data: unknown }> | null;
     relayWorkspaceSource?(packet: SocketRpcRequestPayload, deliver: (request: RpcRequest) => Promise<unknown>): Promise<unknown>;
   }>, worker = false, sameMachineWorker = false,
-  cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable'; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use' }>) {
+  cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable'; machineCustodianAccountId?: string; requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineRole?: 'manage' | 'use' }>) {
   vi.spyOn(syncClient, 'createHappierSocket').mockImplementation(params => {
     // Substitute only the Home socket boundary; the transport adapter, RPC
     // codecs and real loopback requester-currentness connection remain real.
@@ -234,13 +246,32 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   }) | undefined;
   let protectedMoveRows: ProjectAccountRowV1[] | undefined;
   let protectedMoveContentKeyFingerprint: string | null = null;
+  let protectedMachineKeys: Readonly<{ source: string; worker: string }> | undefined;
+  const publishedMachineContent = (machine: 'source' | 'worker') => {
+    const mode: 'e2ee' | 'plain' = protectedMachineKeys ? 'e2ee' : 'plain';
+    return { storageMode: mode,
+      dataEncryptionKey: protectedMachineKeys?.[machine] ?? MACHINE_PLAIN_DATA_KEY_MARKER,
+      access: { custodian: { accountId: machine === 'source' ? sourceAccountId : cliPolicy?.machineCustodianAccountId ?? 'account',
+        displayName: machine === 'source' ? 'Source Account' : 'Account' },
+        role: 'manage', resourceMode: mode, accessState: 'ready' } };
+  };
   const accountCurrentness = () => ({ mode: protectedMoveCredentials ? 'e2ee' as const : 'plain' as const,
     version: encryptionVersion, updatedAt: encryptionVersion, signingKeyFingerprint: null,
     contentKeyFingerprint: protectedMoveContentKeyFingerprint });
   const protectRequester = async () => {
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
-    protectedMoveCredentials = { token: credentials.token, encryption: { ...material,
-      publicKey: new Uint8Array(tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey) } };
+    const recipientPublicKey = new Uint8Array(tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey);
+    protectedMoveCredentials = { token: credentials.token, encryption: { ...material, publicKey: recipientPublicKey } };
+    const sealMachineKey = () => Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+      recipientPublicKey, randomBytes: tweetnacl.randomBytes })).toString('base64');
+    protectedMachineKeys = { source: sealMachineKey(), worker: sealMachineKey() };
+    const sourceContent = publishedMachineContent('source');
+    // The standalone SOURCE transport consumes its published Machine key at
+    // the same content-adoption owner as the installed ApiMachine receiver.
+    sourceRpc?.adoptEncryptionContext(resolvePublishedMachineEncryptionContext({ credentials: protectedMoveCredentials,
+      machineId: ref.machineId, expectedAccountMode: sourceContent.storageMode, access: sourceContent.access,
+      publishedDataEncryptionKey: sourceContent.dataEncryptionKey, machineKind: 'persistent',
+      installationId: sourceInstallation.installationId }));
     protectedMoveContentKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(
       tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey);
     const plain = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: tweetnacl.randomBytes });
@@ -252,16 +283,16 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   };
   let copies = 0;
   let afterCopy: (() => Promise<void>) | undefined;
-  const sourceHandlers = new Map<string, (input: unknown, context?: import('@/api/rpc/types').RpcHandlerContext) => Promise<unknown>>();
-  const accountSettings = { actionsSettingsV1: { v: 1, actions: approval === 'ask'
+  const accountSettings = { actionsSettingsV1: { v: 1, actions: { ...(approval === 'ask'
     ? { [actionId]: { approvalRequiredSurfaces: cliPolicy?.askWithUiWaiver ? ['cli'] : ['ui', 'rpc', 'cli'] } }
-    : approval === 'denied' ? { [actionId]: { enabled: false } } : {},
+    : approval === 'denied' ? { [actionId]: { enabled: false } } : {}),
+    ...(cliPolicy?.requireMoveChild ? { 'localServices.launcher.start': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } : {}) },
     ...(approval === 'allowed' ? { approvalWaivedSurfaces: { [actionId]: ['ui', 'rpc', 'cli'] } }
       : cliPolicy?.askWithUiWaiver ? { approvalWaivedSurfaces: { [actionId]: ['ui'] } } : {}),
     ...(actionId === 'projects.service.relocate' ? { approvalWaivedSurfaces: {
       ...(approval === 'allowed' ? { [actionId]: ['ui', 'rpc', 'cli'] } : {}),
       'projects.service.placement.set': ['ui', 'rpc', 'cli'],
-      'localServices.launcher.start': ['ui', 'rpc', 'cli'],
+      ...(!cliPolicy?.requireMoveChild ? { 'localServices.launcher.start': ['ui', 'rpc', 'cli'] } : {}),
     } } : {}) } };
   let artifact: Readonly<Record<string, unknown>> | undefined;
   let servicePlacementContent: WorkspaceExecutionConfigContentV1 | null = null;
@@ -283,10 +314,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     networkPaths.push('GET ' + path);
     const admitted = homeRequest('GET', path, undefined, options?.headers);
     if (admitted) return await admitted;
+    if (actionId === 'machines.terminal.open' && path === '/v2/sessions/owner-session') return { status: 200, data: { session: {
+      ...createSessionNotificationContextFixture('owner-session'), encryptionMode: 'plain',
+      metadata: JSON.stringify({ machineId: 'machine', path: rootPath }),
+    } } };
     if (path === '/v1/account/profile') return { status: 200, data: { id:
       options?.headers?.Authorization === `Bearer ${token}` ? cliPolicy?.machineCustodianAccountId ?? 'account' : 'account' } };
     if (path === '/v1/account/security') return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({
-      v: 1, encryptionMode: accountCurrentness().mode, terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+      v: 1, encryptionMode: accountCurrentness().mode, nativeEmail: null,
       password: { status: 'not_enrolled', revision: null },
     }) };
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: accountCurrentness().mode, updatedAt: encryptionVersion } };
@@ -299,13 +334,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       data: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [] }) };
     if (path === '/v1/artifacts') return { status: 200, data: artifact ? [artifact] : [] };
     if (artifact && path === '/v1/artifacts/' + artifact.id) return { status: 200, data: artifact };
+    if (path.startsWith('/v1/artifacts/')) return { status: 404, data: { error: 'Artifact not found' } };
     if (path === '/v1/account/authoring-memory') return { status: 200, data: { rows: [] } };
     if (worker && path === '/v1/machines/source-machine') return { status: 200, data: { machine: { id: ref.machineId,
-      kind: 'persistent', active: true, storageMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
-      installationId: 'source-installation', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
+      kind: 'persistent', active: true, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+      installationId: 'source-installation', revokedAt: null, replacedByMachineId: null,
       installationPublicKey: Buffer.from(sourceKeys.publicKey).toString('base64'),
-      access: { custodian: { accountId: sourceAccountId, displayName: 'Source Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
-    if (path === '/v1/machines/machine') return { status: 200, data: { machine: { id: 'machine', kind: 'persistent', active: true, storageMode: 'plain',
+      ...publishedMachineContent('source') } } };
+    if (path === '/v1/machines/machine') return { status: 200, data: { machine: { id: 'machine', kind: 'persistent', active: true,
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
       installationId: installation.installationId, installationPublicKey: publicKey.toString('base64'),
       dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
@@ -314,8 +350,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
       access: { custodian: { accountId: cliPolicy?.machineCustodianAccountId ?? 'account', displayName: 'Account' }, role: cliPolicy?.machineRole ?? 'manage', resourceMode: 'plain', accessState: 'ready' } },
       ...(worker && !sameMachineWorker ? [{ id: ref.machineId, active: true, kind: 'persistent', installationId: 'source-installation',
-        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
-        access: { custodian: { accountId: sourceAccountId, displayName: 'Source Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] : [])] };
+        revokedAt: null, replacedByMachineId: null, ...publishedMachineContent('source') }] : [])] };
     throw new Error('Unexpected Home GET ' + path);
   });
   const networkFetch = globalThis.fetch;
@@ -337,12 +372,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     if (admitted) return await admitted;
     if (path === '/v1/actions/projects.worker.copy.inspect/execution-authorization'
       || path === '/v1/actions/projects.worker.status/execution-authorization'
+      || path === '/v1/actions/approval.request.decide/execution-authorization'
       || path === `/v1/actions/${actionId}/execution-authorization`
       || path === '/v1/actions/projects.inspect/execution-authorization'
       || path === '/v1/actions/projects.execution.output.read/execution-authorization'
       || path === '/v1/actions/projects.execution.output.copy/execution-authorization'
       || Object.keys(PROJECT_FINITE_ACTION_RPC_METHODS_V1).some(id => path === `/v1/actions/${id}/execution-authorization`)) {
-      const requestedActionId = path === '/v1/actions/projects.worker.copy.inspect/execution-authorization' ? 'projects.worker.copy.inspect'
+      const requestedActionId = path === '/v1/actions/approval.request.decide/execution-authorization' ? 'approval.request.decide'
+        : path === '/v1/actions/projects.worker.copy.inspect/execution-authorization' ? 'projects.worker.copy.inspect'
         : path === '/v1/actions/projects.worker.status/execution-authorization' ? 'projects.worker.status'
         : path === '/v1/actions/projects.inspect/execution-authorization' ? 'projects.inspect'
         : path === '/v1/actions/projects.execution.output.read/execution-authorization' ? 'projects.execution.output.read'
@@ -353,16 +390,19 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       return { status: 200, data: home ? await home.mintAuthorization(requestedActionId, request.envelope, authentication)
         : ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: `${requestedActionId}-home-root`, binding: {
           accountId: 'account', custodianAccountId: cliPolicy?.machineCustodianAccountId ?? 'account', admittedMachineRole: cliPolicy?.machineRole ?? 'manage', authentication,
+          ...(requestedActionId === 'approval.request.decide' ? { approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(request.envelope.v === 1 ? request.envelope.input : {}) } : {}),
           accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId: request.machineId,
           installationId: request.machineId === target.machineId ? installation.installationId : 'source-installation', actionId: requestedActionId, requestId: request.envelope.requestId,
           target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
         } }) };
     }
     if (path === '/v1/actions/projects.worker.status' || path === '/v1/actions/projects.worker.copy.inspect' || path === '/v1/actions/projects.inspect'
+      || path === '/v1/actions/approval.request.decide'
       || path === `/v1/actions/${actionId}`
       || path === '/v1/actions/projects.execution.output.read' || path === '/v1/actions/projects.execution.output.copy'
       || Object.keys(PROJECT_FINITE_ACTION_RPC_METHODS_V1).some(id => path === `/v1/actions/${id}`)) {
-      const requestedActionId = path === '/v1/actions/projects.worker.status' ? 'projects.worker.status'
+      const requestedActionId = path === '/v1/actions/approval.request.decide' ? 'approval.request.decide'
+        : path === '/v1/actions/projects.worker.status' ? 'projects.worker.status'
         : path === '/v1/actions/projects.worker.copy.inspect' ? 'projects.worker.copy.inspect'
         : path === '/v1/actions/projects.inspect' ? 'projects.inspect'
         : path === '/v1/actions/projects.execution.output.read' ? 'projects.execution.output.read'
@@ -387,18 +427,37 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         return { status: 200, data: await originalMoveIngress(request) };
       }
       if (requestedActionId === 'projects.inspect' && worker && request.machineId === ref.machineId) {
-        if (request.envelope.v !== 1) throw new Error('Standalone SOURCE inspection requires a plain request');
-        const handler = sourceHandlers.get(getActionSpec('projects.inspect').bindings!.rpcMethod!);
-        if (!handler) throw new Error('Missing real SOURCE registrar');
-        const result = await handler(request.envelope.input, { signal: new AbortController().signal, callerAuthority: 'present_user' });
-        const parsedInspection = ProjectDefinitionInspectOutputSchema.safeParse(result);
-        rpcOutcomes.push({ actionId: 'projects.inspect', valid: parsedInspection.success,
-          ...(parsedInspection.success ? {} : { issues: parsedInspection.error.issues.map(issue => ({ code: issue.code, path: issue.path })) }) });
-        return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect',
-          requestId: request.envelope.requestId, execution: { ok: true, result } }) };
+        const principal = { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(authorization),
+          authentication: authorization.binding.authentication };
+        const surface = authorization.binding.authentication.kind === 'terminal' ? 'cli' : 'ui';
+        expect(authorization.binding).toMatchObject({ actionId: 'projects.inspect', requestId: request.envelope.requestId,
+          machineId: ref.machineId, installationId: sourceInstallation.installationId,
+          target: { kind: 'machine', machineId: ref.machineId } });
+        const result = await rpcInstallation.run(sourceInstallation, () => executeExternalAction({ actionId: requestedActionId,
+          envelope: request.envelope,
+          principal, surface, executionAuthorization: authorization,
+          currentMachineId: ref.machineId, currentServerId: 'srv_n2', currentServerHttpBaseUrl: params.serverHttpBaseUrl,
+          currentInstallationId: sourceInstallation.installationId,
+          externalActionMachineRequestPrivateKey: sourceInstallation.privateKey, verifyExecutionAuthorization: verifySourceRoot,
+          resolveTarget, executor: sourceExecutor, prepareRequesterAccountContext: prepareSourceRequester }));
+        if (result.kind !== 'response' || result.response.v !== 1) throw new Error('SOURCE inspection ingress refused');
+        rpcOutcomes.push({ phase: 'installed.sourceInspection', actionId: authorization.binding.actionId,
+          requestId: authorization.binding.requestId, machineId: authorization.binding.machineId,
+          installationId: authorization.binding.installationId, ok: result.response.execution.ok,
+          requesterContextOpensForSource: openExternalActionRequesterAccountContextV1({ authorization,
+            purpose: { kind: 'external_action' }, machineId: ref.machineId, installationId: sourceInstallation.installationId,
+            serverIdentityId: homeId, installationPrivateKey: Buffer.from(sourceInstallation.privateKey, 'base64url') }) !== null,
+          requesterContextOpensForWorker: openExternalActionRequesterAccountContextV1({ authorization,
+            purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: installation.installationId,
+            serverIdentityId: homeId, installationPrivateKey: privateKey }) !== null,
+          ...(result.response.execution.ok ? {} : { errorCode: result.response.execution.errorCode }) });
+        return { status: 200, data: result.response };
       }
       const result = await executeExternalAction({ actionId: requestedActionId, envelope: request.envelope,
-        principal: { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(authorization), authentication: authorization.binding.authentication },
+        // Home's readExternalActionRequestPrincipal retains the terminal token's
+        // automation floor. The receiving host must consume its sealed invocation.
+        principal: { accountId: 'account', authority: authorization.binding.authentication.kind === 'terminal'
+          ? 'account_automation' : resolveExternalActionRootInvocationAuthority(authorization), authentication: authorization.binding.authentication },
         surface: authorization.binding.authentication.kind === 'terminal' ? 'cli' : 'ui',
         executionAuthorization: authorization, currentMachineId: target.machineId, currentServerId: 'srv_n2',
         currentServerHttpBaseUrl: params.serverHttpBaseUrl, currentInstallationId: installation.installationId,
@@ -480,6 +539,11 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     const admitted = request.method === 'GET' || request.method === 'POST'
       ? homeRequest(request.method === 'GET' ? 'GET' : 'POST', path, request.data, request.headers) : null;
     if (admitted) return await admitted;
+    if (path === '/v1/machines/managed/actions/list') {
+      expect(ManagedListInputV1Schema.parse(request.data).homeId).toBe(homeId);
+      // This Home fixture enrolls personal Machines, not managed provisions.
+      return { status: 200, data: ManagedListOutputV1Schema.parse({ machines: [] }) };
+    }
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: accountCurrentness().mode, updatedAt: encryptionVersion } };
     if (path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) return { status: 200,
       data: WorkspaceExecutionConfigReadResponseV1Schema.parse(servicePlacementContent
@@ -608,14 +672,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         daemonToken: token, serverHttpBaseUrl: 'https://home.example.test',
         ...(input.workspaceSyncSourceRouting ? { workspaceSyncSourceReceiver: {
           machineId: ref.machineId, installationId: sourceInstallation.installationId } } : {}) }) }),
-    prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
-      purpose: request.purpose ?? { kind: 'external_action' }, machineId: ref.machineId, serverId: 'srv_n2',
-      serverHttpBaseUrl: 'https://home.example.test',
-      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: ref.machineId }),
-      createExecutor: context => createActionExecutor(createCliActionDeps({ ...params,
-        token: context.credentials.token, credentials: context.credentials, projectDefinitionAction: sourceDefinitionAction,
-        machineActionDirectTargetTransport: { machineId: ref.machineId,
-          invoke: (method, request, options) => sourceRpc!.invokeLocal(method, request, options) } })) }),
+    prepareRequesterAccountContext: request => prepareSourceRequester(request),
   }) : undefined;
   let installedSocket: ReturnType<typeof createApiSessionSocketStub> | undefined;
   socketBoundary.create.mockImplementation((_url: unknown, options?: Readonly<{ auth?: Readonly<{ clientType?: string }> }>) => {
@@ -644,6 +701,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         }
         if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected socket event ' + event);
         const execution = packet.externalActionExecution;
+        if (packet.method.includes('approval')) rpcOutcomes.push({ phase: 'approval.transport',
+          method: packet.method, signedExecution: execution !== undefined });
         if (worker && packet.workspaceSyncSourceRouting) {
           if (!sourceRpc || !execution || !packet.requestId) throw new Error('Missing installed SOURCE packet');
           rpcOutcomes.push({ phase: 'installed.sourceDelivery', method: packet.method,
@@ -732,10 +791,17 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           event: SOCKET_RPC_EVENTS.CALL, method: packet.method, requestId: packet.requestId!, params: packet.params,
           signature: execution.machineSignature, publicKey }),
           `Machine RPC signature with requester custody=${Boolean(execution.authorization.requesterAccountContext)}`).toBe(true);
+        // Home owns this transport stamp. Vary the deciding actor only at the
+        // network boundary, never the saved original approval or its executor.
+        const receivingAdmission = !execution && packet.method === `${target.machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`
+          && cliPolicy?.approvalDecisionActorAccountId
+          ? { ...admission, actorAccountId: cliPolicy.approvalDecisionActorAccountId } : admission;
+        if (receivingAdmission !== admission) rpcOutcomes.push({ phase: 'approval.replay.ingress',
+          originalAccountMatches: receivingAdmission.actorAccountId === admission.actorAccountId });
         const result = await rpc.handleRequest({ method: packet.method, params: packet.params,
           ...(packet.requestId ? { requestId: packet.requestId } : {}),
           callerAuthority: execution ? resolveExternalActionRootInvocationAuthority(execution.authorization) : 'present_user',
-          machineAdmission: admission,
+          machineAdmission: receivingAdmission,
           ...(packet.originalActionEnvelope ? { originalActionEnvelope: ExternalActionRequestEnvelopeSchema.parse(packet.originalActionEnvelope) } : {}),
           ...(execution ? { callerInputAuthorization: execution.authorization } : {}) });
         rpcOutcomes.push(result);
@@ -764,6 +830,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const verifyRoot: NonNullable<Parameters<typeof executeExternalAction>[0]['verifyExecutionAuthorization']> = input =>
     verifyExternalActionExecutionAuthorizationCurrent({ ...input, privateKey, installationId: installation.installationId,
       serverHttpBaseUrl: params.serverHttpBaseUrl });
+  const verifySourceRoot: typeof verifyRoot = input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+    privateKey: sourceInstallation.privateKey, installationId: sourceInstallation.installationId,
+    serverHttpBaseUrl: params.serverHttpBaseUrl });
   const originCurrent = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: target.machineId, serverId: 'srv_n2',
     resolveCurrentMachineExecutionOriginContext: resolveOrigin, resolveTarget, isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
     externalActionMachinePublicKey: publicKey, verifyExternalExecutionAuthorization: verifyRoot });
@@ -784,14 +853,23 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         nativeIo: nativeIo.commandIo, successHomeDir: join(directory, 'source-setup-success'), signal: context.signal },
         reviewSetupConsent ? { reviewConsent: true } : undefined);
     } });
-  if (worker) registerProjectDefinitionHandlers({ machineId: ref.machineId,
-    rpcHandlerManager: { registerHandler: (method, handler) => {
-      sourceHandlers.set(method, handler);
-      sourceRpc!.registerHandler(method, handler);
-    } },
-    actionExecutor: createActionExecutor(createCliActionDeps({ ...params, projectDefinitionAction: sourceDefinitionAction,
-      machineActionDirectTargetTransport: { machineId: ref.machineId,
-        invoke: (method, request, options) => sourceRpc!.invokeLocal(method, request, options) } })) });
+  const sourceParams = { ...params, externalActionMachineInstallationId: sourceInstallation.installationId,
+    externalActionMachineRequestPrivateKey: sourceInstallation.privateKey, projectDefinitionAction: sourceDefinitionAction,
+    machineActionDirectTargetTransport: { machineId: ref.machineId,
+      invoke: (method: string, request: unknown, options: Parameters<RpcHandlerManager['invokeLocal']>[2]) => {
+        if (!sourceRpc) throw new Error('Missing installed SOURCE RPC manager');
+        return sourceRpc.invokeLocal(method, request, options);
+      } } };
+  const sourceExecutor = createActionExecutor(createCliActionDeps(sourceParams));
+  const prepareSourceRequester: NonNullable<Parameters<typeof executeExternalAction>[0]['prepareRequesterAccountContext']> =
+    request => prepareInstalledRequesterAccountActionContext({ ...request,
+      purpose: request.purpose ?? { kind: 'external_action' }, machineId: ref.machineId, serverId: 'srv_n2',
+      serverHttpBaseUrl: params.serverHttpBaseUrl,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: ref.machineId }),
+      createExecutor: context => createActionExecutor(createCliActionDeps({ ...sourceParams,
+        token: context.credentials.token, credentials: context.credentials })) });
+  if (sourceRpc) registerProjectDefinitionHandlers({ machineId: ref.machineId,
+    rpcHandlerManager: sourceRpc, actionExecutor: sourceExecutor });
   const serviceAction = actionId === 'localServices.launcher.start' || actionId === 'projects.service.relocate';
   const features = serviceAction ? await api.getServerFeaturesSnapshot({ refresh: true }) : undefined;
   api.setServerFeaturesSnapshotProvider(() => features);
@@ -843,7 +921,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           syncDaemonRuntimes.push(runtime);
           return runtime;
         },
-        createBroker: async () => ({ bootstrapDescriptor: new Uint8Array([1]), waitForReady: async () => {}, command, close: async () => {} }),
+        createBroker: async () => ({ bootstrapDescriptor: new Uint8Array([1]),
+          waitForReady: async () => {}, command, close: async () => {} }),
         spawnSidecar: async () => {
           const terminated = new Promise<{ type: 'exited'; code: number }>(resolve => { endSidecar = () => resolve({ type: 'exited', code: 0 }); });
           return { pid: process.pid, waitForTermination: () => terminated, stop: async () => endSidecar?.() };
@@ -946,7 +1025,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const issuerParams = { ...params, ...(features ? { resolveServerFeaturesSnapshot: () => features } : {}) };
   const deciding = createCliActionExecutorHarness(issuerParams, { isApprovalExecutionOriginCurrent: originCurrent,
     approvalRequestApprovedReplay: async ({ artifactId, request }): Promise<ActionExecuteResult | null> => {
-      if (request.v !== 2 || !requiresExactDaemonApprovalReplay(request)) return null;
+      if (request.v !== 2 || resolveApprovalExecutor(request).kind !== 'daemon') return null;
       return await harness.run({ artifactId, decision: 'approve', serverIdentityId: homeId,
         originServerId: request.executionOriginV1.serverId }, 'ui', false, 'present_user', 'approval.request.decide', 'reviewer-request');
     } }).executor;
@@ -960,6 +1039,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     }) } : settings;
   const issuer = createCliActionExecutorFromCredentials({ credentials: cliCredentials,
     serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl, serverIdentityId: homeId,
+    // Original Run discovers SOURCE before selecting its execution Machine.
+    ...(actionId === 'projects.script.run' ? {} : { machineId: target.machineId }),
     actionsSettingsProvider: originalCliSettings, pluginActionExecutionOwner: 'current_process',
     readCredentials: async () => cliCredentials });
   // The app captures the portable Home; the daemon/decider has its own local
@@ -1023,6 +1104,21 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         }).execute(actionId, input, { surface: 'cli', authority: 'account_automation', actionRequestId: 'standalone-script' });
       } finally { await app.close(); }
     },
+    async runPublicCli(input: unknown, requestedActionId: ActionId) {
+      writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
+        httpPort: runtime.controlPort, controlToken: runtime.controlToken, machineId: target.machineId, accountId: 'account' });
+      const output = captureConsoleJsonOutput();
+      const previousExitCode = process.exitCode;
+      try {
+        await handleActionsCommand(['invoke', requestedActionId, '--input-json', JSON.stringify(input), '--json'], {
+          readCredentialsFn: async () => cliCredentials,
+          readCredentialsForServerIdFn: async () => cliCredentials,
+          createExecutorFn: executorParams => createCliActionExecutorFromCredentials({ ...executorParams,
+            actionsSettingsProvider: originalCliSettings }),
+        });
+        return output.json();
+      } finally { output.restore(); process.exitCode = previousExitCode; }
+    },
     async runOriginalCli(input: unknown, requestedActionId: ActionId = 'projects.worker.copy.inspect',
       options?: Readonly<{ serverId: string; authority: 'present_user' | 'account_automation' }>) {
       writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
@@ -1044,7 +1140,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       params: input, callerAuthority: 'present_user', machineAdmission: admission,
     })),
     humanToken: uiToken, installedToken: token,
-    serviceInstances: () => pluginRuntime?.registry.projectManagedServices.listProjectServices() ?? [],
+    serviceInstances: () => (pluginRuntime?.registry.projectManagedServices.listProjectServices() ?? [])
+      .filter((handle): handle is WorkspaceProjectManagedServiceHandle => handle.kind === 'workspace'),
     async syncRelationships() {
       return await Promise.all(syncDaemonRuntimes.map(async runtime => {
         await runtime.whenProjectsSettled();
@@ -1099,10 +1196,12 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       sourceCoordinator?: true; requesterToken?: string; activeMove?: true;
       executeMove?: import('@happier-dev/protocol/workspaces/projectServiceRelocationV1').ProjectServiceRelocateInputV1;
       originalCli?: 'default' | 'source';
+      approveRequiredChild?: true;
       inspectRequester?: (input: Readonly<{ authorization: ExternalActionExecutionAuthorizationV1;
         envelope: ExternalActionRequestEnvelope;
         status(variant?: 'missing-packet' | 'changed-input'): Promise<unknown>;
-        start(captureOnly?: true): Promise<unknown>; settleMove(): Promise<void>; cancelMove(): Promise<void> }>) => Promise<unknown> }> = {}) {
+        start(captureOnly?: true, admissionChange?: 'other-actor' | 'other-installation' | 'other-custodian'): Promise<unknown>;
+        settleMove(): Promise<void>; cancelMove(): Promise<void> }>) => Promise<unknown> }> = {}) {
       if (!workerWorkspaceSync) throw new Error('Missing real Sync composition');
       const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const,
         machineId: options.selectedMachineId ?? workerRef.machineId } };
@@ -1176,6 +1275,13 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           const relocate = createProjectServiceRelocationRoute({ serverBaseUrl: params.serverHttpBaseUrl, credentials,
             projectManagedServices: pluginRuntime.registry.projectManagedServices,
             resolveWorkspaceSyncHandoffAdapter: () => sourceWorkspaceSync?.handoffAdapter ?? null });
+          const sourceWork = new AbortController();
+          const prepareSourceRequesterAccountContext: NonNullable<Parameters<typeof executeExternalAction>[0]['prepareRequesterAccountContext']> =
+            request => prepareRequesterAccountActionContext({ ...request,
+              purpose: { kind: 'external_action' }, machineId: ref.machineId, installationId: moveInstallation.installationId,
+              installationPrivateKey: moveKey, serverId: 'srv_n2', serverIdentityId: homeId,
+              serverHttpBaseUrl: params.serverHttpBaseUrl, ownCredentials: credentials, isCurrent: async () => true,
+              createExecutor: () => sourceExecutor });
           const sourceExecutor = createCliActionExecutorFromCredentials({ credentials, machineId: moveTarget.machineId,
             serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl, serverIdentityId: homeId,
             // This is the receiving SOURCE daemon, matching the production composer.
@@ -1183,8 +1289,16 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
             externalActionMachineInstallationId: moveInstallation.installationId, externalActionMachineRequestPrivateKey: moveKey,
             runActionOperation: operations.runActionOperation,
             projectDefinitionAction: sourceDefinitionAction,
+            prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({
+              machineId: moveTarget.machineId, serverId: 'srv_n2', serverBaseUrl: params.serverHttpBaseUrl,
+              resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+                serverUrl: params.serverHttpBaseUrl, resolveCurrentMachineId: () => moveTarget.machineId,
+              }),
+              requesterAccountContext: requester, prepareRequesterAccountContext: prepareSourceRequesterAccountContext,
+              daemonWorkSignal: sourceWork.signal,
+            }),
             runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate,
-              ingress: { signal: new AbortController().signal,
+              ingress: { signal: sourceWork.signal,
                 machineAdmission: { ...admission, machineId: ref.machineId, installationId: sourceInstallation.installationId },
                 verifyMachineAdmissionCurrent: async () => true }, routes: {
               relocateService: relocate,
@@ -1195,19 +1309,19 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
             originalMoveIngress = async request => {
               const root = request.executionAuthorization;
               if (!root || !('authentication' in root.binding)) throw new Error('Missing original Move admission');
-              const result = await executeExternalAction({ actionId: 'projects.service.relocate', envelope: request.envelope,
-                principal: { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(root), authentication: root.binding.authentication },
+              const rootAuthentication = root.binding.authentication;
+              const sourceActionId = root.binding.actionId;
+              if (sourceActionId !== 'projects.service.relocate' && sourceActionId !== 'approval.request.decide') throw new Error('Unexpected SOURCE ingress');
+              const result = await rpcInstallation.run(moveInstallation, () => executeExternalAction({ actionId: sourceActionId, envelope: request.envelope,
+                principal: { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(root), authentication: rootAuthentication },
+                ...(sourceActionId === 'approval.request.decide' ? { surface: 'ui' as const } : {}),
                 executionAuthorization: root, currentMachineId: ref.machineId, currentServerId: 'srv_n2',
                 currentServerHttpBaseUrl: params.serverHttpBaseUrl, currentInstallationId: moveInstallation.installationId,
                 externalActionMachineRequestPrivateKey: moveKey, executor: sourceExecutor, resolveTarget,
                 verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
                   privateKey: moveKey, installationId: moveInstallation.installationId, serverHttpBaseUrl: params.serverHttpBaseUrl }),
-                prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ ...request,
-                  purpose: { kind: 'external_action' }, machineId: ref.machineId, installationId: moveInstallation.installationId,
-                  installationPrivateKey: moveKey, serverId: 'srv_n2', serverIdentityId: homeId,
-                  serverHttpBaseUrl: params.serverHttpBaseUrl, ownCredentials: credentials, isCurrent: async () => true,
-                  createExecutor: () => sourceExecutor }),
-              });
+                prepareRequesterAccountContext: prepareSourceRequesterAccountContext,
+              }));
               if (result.kind !== 'response') throw new Error('Original SOURCE Move ingress refused');
               return result.response;
             };
@@ -1227,6 +1341,40 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 ...(options.originalCli === 'source' ? { machineId: ref.machineId } : {}),
                 actionsSettingsProvider: settings, readCredentials: async () => credentials,
               }).execute('projects.service.relocate', input, { surface: 'cli', authority: 'present_user', actionRequestId: envelope.requestId });
+              if (options.approveRequiredChild) {
+                expect(accepted).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                const request = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifactId() }));
+                expect(request).toMatchObject({ actionId: 'projects.service.relocate', status: 'open', preview: {
+                  hostReviewedChildren: { children: expect.arrayContaining([expect.objectContaining({
+                    action: 'localServices.launcher.start', input: expect.objectContaining({ machineId: workerRef.machineId }),
+                  })]) },
+                } });
+                const decisionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: randomUUID(),
+                  target: moveTarget, input: { artifactId: artifactId(), decision: 'approve' } });
+                const authentication = { kind: 'account' as const, tokenEpoch: 1 };
+                const decisionRoot = home ? await home.mintAuthorization('approval.request.decide', decisionEnvelope, authentication)
+                  : ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'human-decision-home-root', binding: {
+                    accountId: 'account', custodianAccountId: 'account', authentication, accountEncryptionMode: 'plain',
+                    serverIdentityId: homeId, machineId: moveTarget.machineId, installationId: moveInstallation.installationId,
+                    actionId: 'approval.request.decide', requestId: decisionEnvelope.requestId, target: moveTarget,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(decisionEnvelope),
+                  } });
+                const decisionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: decisionRoot,
+                  credentials: { ...encodeStoredCredentials(credentials), token: uiToken },
+                  invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' }, purpose: { kind: 'external_action' },
+                  installationPublicKey: Buffer.from(moveInstallation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+                const response = ExternalActionResponseEnvelopeV1Schema.parse(await originalMoveIngress(
+                  ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: moveTarget.machineId,
+                    envelope: decisionEnvelope, executionAuthorization: decisionAuthorization })));
+                const decided = response.execution;
+                const approved = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifactId() }));
+                const replayCode = approved.execution?.ok === false ? approved.execution.errorCode : undefined;
+                expect(decided, decided.ok ? replayCode : decided.errorCode).toMatchObject({ ok: true, result: { status: 'executed' } });
+                expect(approved.execution, replayCode).toMatchObject({ ok: true });
+                const execution = approved.execution;
+                if (execution?.ok !== true) throw new Error('Missing successful SOURCE Move approval execution');
+                accepted = { ...execution, ok: execution.ok, result: execution.result };
+              }
             } finally { await app.close(); originalMoveIngress = undefined; }
           } else accepted = await sourceExecutor.execute('projects.service.relocate', input, {
             serverId: 'srv_n2', surface: 'ui', authority: 'present_user', actionRequestId: envelope.requestId,
@@ -1243,8 +1391,13 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         }
         let capturedStart: RpcRequest | undefined;
         const child = async (actionId: 'projects.worker.status' | 'localServices.launcher.start', params: unknown,
-          variant?: 'missing-packet' | 'changed-input' | 'capture-only') => {
-            if (actionId === 'localServices.launcher.start' && capturedStart) return await rpc.handleRequest({ ...capturedStart, requestId: randomUUID(),
+          variant?: 'missing-packet' | 'changed-input' | 'capture-only', admissionChange?: 'other-actor' | 'other-installation' | 'other-custodian') => {
+            const deliver = (packet: RpcRequest) => rpc.handleRequest({ ...packet,
+              ...(admissionChange ? { machineAdmission: { ...admission,
+                ...(admissionChange === 'other-actor' ? { actorAccountId: 'unrelated-requester' } : {}),
+                ...(admissionChange === 'other-installation' ? { installationId: 'replacement-installation' } : {}),
+                ...(admissionChange === 'other-custodian' ? { custodianAccountId: 'unrelated-custodian' } : {}) } } : {}) });
+            if (actionId === 'localServices.launcher.start' && capturedStart) return await deliver({ ...capturedStart, requestId: randomUUID(),
               callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse(capturedStart.callerInputAuthorization),
               workspaceSyncSourceExecution: WorkspaceSyncSourceExecutionV1Schema.parse(capturedStart.workspaceSyncSourceExecution) });
             const childMethod = getActionSpec(actionId).bindings!.rpcMethod!;
@@ -1273,16 +1426,16 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 requestId: 'move-child', externalActionExecution: execution, originalActionEnvelope: envelope }) }) };
             if (actionId === 'localServices.launcher.start') capturedStart = packet;
             if (variant === 'capture-only') return;
-            return await rpc.handleRequest(packet);
+            return await deliver(packet);
         };
         if (options.inspectRequester) return await options.inspectRequester({ authorization: projected, envelope, settleMove, cancelMove,
           status: variant => child('projects.worker.status', { workspace,
             destination: { kind: 'machine', machineId: workerRef.machineId }, purpose: 'service-start' }, variant),
-          start: captureOnly => child('localServices.launcher.start', { machineId: workerRef.machineId,
+          start: (captureOnly, admissionChange) => child('localServices.launcher.start', { machineId: workerRef.machineId,
             targetId: createProjectServiceDeclarationTargetIdV1(workerRef, { kind: 'manifest', name: 'web' }),
             workspaceId: workerRef.id, workspace: { serverId: homeId, machineId: workerRef.machineId,
               workspaceId: workerRef.id, rootPath: workerRef.rootPath },
-            declaration: { workspaceRefId: workerRef.id, selection: { kind: 'manifest', name: 'web' } }, choice: destination }, captureOnly ? 'capture-only' : undefined),
+            declaration: { workspaceRefId: workerRef.id, selection: { kind: 'manifest', name: 'web' } }, choice: destination }, captureOnly ? 'capture-only' : undefined, admissionChange),
         });
         return await workerWorkspaceSync.handoffAdapter.prepareBetween({ sourceWorkspaceRefId: options.sourceWorkspaceRefId ?? ref.id,
           targetWorkspaceRefId: options.targetWorkspaceRefId ?? workerRef.id }, undefined, {
@@ -1334,6 +1487,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       { surface: 'cli', authority: 'present_user' }),
     replay: () => rpc.invokeLocal(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, { artifactId: artifactId() }),
     localFinite: (input: unknown) => rpc.invokeLocal(PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.script.run'], input),
+    observeActionExecution: client.observeActionExecution.bind(client),
     readOperation: (operationId: string) => rpc.invokeLocal('actionOperation.get.v2', { operationId }),
     readReviewedOperation: (operationId: string) => rpc.invokeLocal('actionOperation.get.v2', { operationId, refreshSetupReview: true }),
     waitForTerminal: (operationId: string) => rpc.invokeLocal('actionOperation.get.v2', { operationId, waitForTerminal: true }),
@@ -1377,7 +1531,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         // Original CLI placement precedes Machine admission. Injecting a Run
         // root here would lend that root to the issuer's separate Inspect read.
         return await (proposalAtIssuer === 'unsigned-ui' ? uiIssuer : issuer).execute(requestedActionId, input, { surface, authority,
-          serverId: 'srv_n2', serverIdentityId: homeId, runtimeAccountId: 'account', actionRequestId: requestId });
+          serverId: 'srv_n2', serverIdentityId: homeId, runtimeAccountId: 'account', actionRequestId: requestId,
+          ...(requestedActionId === 'projects.script.run' ? {} : { externalActionTarget: envelope.target }) });
       }
       let authorization: ExternalActionExecutionAuthorizationV1 = home ? await home.mintAuthorization(requestedActionId, envelope, authentication)
         : ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'synthetic-home-root', binding: { accountId: 'account', custodianAccountId: cliPolicy?.machineCustodianAccountId ?? 'account', admittedMachineRole: cliPolicy?.machineRole ?? 'manage',

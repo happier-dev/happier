@@ -399,8 +399,7 @@ describe('plugin terminal-host creation rollback', () => {
             inventory.socketPath = api.socketPath;
             const owner = createDefaultPreparedTerminalHostOwner({ happyHomeDir, readSessionId: () => 'cleanup-session',
                 herdrRuntime: { herdrSessionName: 'work', herdrSocketPath: api.socketPath } });
-            const exec = createStablePluginExecService({
-                allowedExecutables: [], signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            const exec = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => { throw new Error('Prepared Agent must not resolve another executable'); },
                 resolvePath: async () => happyHomeDir,
                 prepareAgentNativeLaunch: async () => { throw new Error('Prepared launch must not evaluate the Project twice'); },

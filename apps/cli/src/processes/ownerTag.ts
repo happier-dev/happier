@@ -1,3 +1,4 @@
+import type { ProcessOwnerRefV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { createHash } from 'node:crypto';
 
 import { configuration } from '@/configuration';
@@ -5,14 +6,7 @@ import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHo
 
 export const PROCESS_OWNER_ENV_KEY = 'HAPPIER_PROCESS_OWNER';
 
-export type ProcessOwnerRef =
-  | Readonly<{ kind: 'session'; sessionId: string }>
-  | Readonly<{ kind: 'terminal'; terminalId: string; sessionId?: string }>
-  | Readonly<{ kind: 'service'; serviceId: string; pluginId?: string; sessionId?: string; workspaceId?: string }>
-  | Readonly<{ kind: 'run'; runId: string; sessionId?: string }>
-  | Readonly<{ kind: 'browser_sidecar' }>
-  | Readonly<{ kind: 'workspace_sync' }>
-  | Readonly<{ kind: 'happier'; component?: 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | 'workspace_sync' }>;
+export type ProcessOwnerRef = Readonly<ProcessOwnerRefV1>;
 
 export type ParsedProcessOwnerTag = Readonly<{
   daemonScopeKey: string;
@@ -32,6 +26,7 @@ export function processOwnerId(owner: ProcessOwnerRef): string {
     case 'session': return owner.sessionId;
     case 'terminal': return owner.terminalId;
     case 'service': return owner.serviceId;
+    case 'container': return owner.containerId;
     case 'run': return owner.runId;
     case 'browser_sidecar': return 'browser_sidecar';
     case 'workspace_sync': return 'workspace_sync';
@@ -42,6 +37,7 @@ export function processOwnerId(owner: ProcessOwnerRef): string {
 export function formatProcessOwnerTag(input: Readonly<{
   happierHomeDir: string; owner: ProcessOwnerRef; platform?: NodeJS.Platform;
 }>): string {
+  if (input.owner.kind === 'container') throw new Error('Native container ownership cannot be established by an environment marker');
   const id = processOwnerId(input.owner);
   if (!id || id.trim() !== id || /[\u0000-\u001f\u007f]/.test(id)) throw new Error('Invalid process owner id');
   return `v1.${resolveProcessOwnerScopeKey(input.happierHomeDir, input.platform)}.${input.owner.kind}.${id}`;

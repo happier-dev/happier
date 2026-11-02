@@ -167,7 +167,7 @@ export function contentRefLabel(
 ): string | null {
   if (!ref) return null;
   return ref.kind === 'gitTree' ? ref.commit.slice(0, 7)
-    : ref.kind === 'wellKnown' ? `${ref.digest.slice(0, 19)}…` : ref.version;
+    : ref.kind === 'version' ? ref.version : `${ref.digest.slice(0, 19)}…`;
 }
 
 /** The revision a skill's library copy came from. */

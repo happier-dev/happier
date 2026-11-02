@@ -21,11 +21,11 @@ describe('resource data key envelopes', () => {
     await expect(openResourceDataKey({ credentials, mode: 'e2ee', dataEncryptionKey: first.dataEncryptionKey }))
       .resolves.toEqual(first);
     await expect(openResourceDataKey({
-      credentials: { token: 'outsider', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) } },
+      credentials: { encryption: { type: 'legacy', secret: new Uint8Array(32).fill(8) } },
       mode: 'e2ee', dataEncryptionKey: first.dataEncryptionKey,
     })).rejects.toMatchObject({ code: 'resource_encryption_material_unavailable' });
     await expect(openResourceDataKey({
-      credentials: { token: 'keyless', encryption: null }, mode: 'e2ee', dataEncryptionKey: first.dataEncryptionKey,
+      credentials: { encryption: null }, mode: 'e2ee', dataEncryptionKey: first.dataEncryptionKey,
     })).rejects.toMatchObject({ code: 'resource_encryption_material_unavailable' });
   });
 

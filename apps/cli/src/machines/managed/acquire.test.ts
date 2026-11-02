@@ -26,7 +26,7 @@ import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invoc
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { PluginConnectedAccountAuthenticationV2Schema, type JsonValue } from '@happier-dev/protocol';
 import type { PluginServices, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { ManagedBootstrapCredentialCreateV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -244,7 +244,7 @@ describe('creation environment stage', () => {
             const actionInput = { ...input, selection: { ...input.selection, homeId } };
             const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) =>
                 await acquisition.execute(actionId, input, { requestId: 'creation', signal: context.signal,
-                    context: { ...context, operationOwnerUpdate: { update(value) {
+                    context: { ...context, operationOwnerUpdate: { update(value: Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0]) {
                         if (value.progress?.phase === 'ssh.installCli') installing = true;
                         context.operationOwnerUpdate?.update(value);
                     } } } }) } as ActionExecutorDeps);
@@ -1378,7 +1378,7 @@ describe('managed acquisition durable custody', () => {
         const retry = { homeId, managedId: retained.id, expectedIntentRevision: retained.intentRevision };
         const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) => {
             return await recovery.execute(actionId, input, { requestId: 'fresh-retry', signal: context.signal,
-                context: { ...context, operationOwnerUpdate: { update(value) {
+                context: { ...context, operationOwnerUpdate: { update(value: Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0]) {
                     if (value.progress?.phase === 'ssh.installCli') installing = true;
                     context.operationOwnerUpdate?.update(value);
                 } } } });
@@ -1546,7 +1546,7 @@ describe('managed acquisition durable custody', () => {
         const native = nativeFixture({ privateNative: true });
         const probeDriver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example',
             homeId: 'home', controller, ...accountInputs,
-            runtimeRegistry: { ...native.runtimeRegistry, readPluginOccurrenceId: undefined } });
+            runtimeRegistry: { ...native.runtimeRegistry, readPluginOccurrenceId: () => null } });
         await expect(probeDriver.execute('machines.provisioners.list', { homeId: 'home' }, { requestId: 'discovery' }))
             .resolves.toEqual({ controller, provisioners: [] });
         await expect(probeDriver.execute('machines.provisioners.check', { homeId: 'home', controller,

@@ -405,3 +405,15 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
         await bridge?.dispose?.();
     }
 }
+
+export type ManagedMachineOperationSettlementContext = ActionExecutorContext & Readonly<{
+    settleManagedDeleteOperation?: (settlement: ManagedDeleteOperationSettlement) => void;
+}>;
+
+export type ManagedDeleteOperationSettlement = Readonly<{
+    managedId: string;
+    controller: ManagedMachineV1['controller'];
+    resource?: ManagedMachineV1['resource'];
+    requestId: string;
+    intentRevision: number;
+}>;

@@ -1,3 +1,10 @@
+import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
+import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
+import { readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
+import { isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
+import { settleActionOutput, isDeferredApprovalResult } from './executor/resultProjection.js';
+import { bindCallerInput, callerInputSchema } from './executor/callerInput.js';
+import type { HostReviewedChildrenPlanV1 } from './executor/types.js';
 import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
@@ -19,7 +26,7 @@ import { dispatchSessionTranscript } from './executor/session/transcript.js';
 import { dispatchAccountSecurity } from './executor/account/security.js';
 import { dispatchWorkspaceSync } from './executor/workspace/sync.js';
 import { dispatchCode } from './executor/code.js';
-import type { CoreOptions, PreparedCoreAdmission, PrivatePrepareResult, ActionHomeEquivalence, DispatchFacts } from './executor/coreInvocation.js';
+import type { CoreOptions, PreparedCoreAdmission, PrivatePrepareResult, ActionHomeEquivalence, DispatchFacts, CoreInvocation } from './executor/coreInvocation.js';
 import { DeploymentTemplateInstantiationReviewV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
@@ -1755,7 +1762,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }, ...(request.actionId === 'deployments.templates.instantiate'
             && readRecord(request.preview).deploymentReview !== undefined ? {
               deploymentReview: projectNativeJsonValueForTransport(readRecord(request.preview).deploymentReview),
-            } : {}) } } : {}),
+            } : {}), ...(readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren)
+            ? { hostReviewedChildren: readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren) } : {}) } } : {}),
       ...(request.actionId === 'workspace.sync.conflict.resolve'
         ? { actionRequestId: args.artifactId }
         : {}),
@@ -2338,22 +2346,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
     if (workspaceFailure) return workspaceFailure;
     const retainedDeploymentReview = existingAdmission?.deploymentReview ?? ctx.approvedActionReplay?.deploymentReview;
+    const semanticInput = existingAdmission?.semanticInput ?? admittedInput;
     let deploymentReview: JsonValue | undefined = retainedDeploymentReview;
+    let preparedHostReviewedChildren: HostReviewedChildrenPlanV1 | undefined;
+    let observePendingOperation = existingAdmission?.observePendingOperation;
     if ((!existingAdmission || actionId === 'deployments.templates.instantiate') && (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
       || actionId === 'deployments.publish'
       || actionId === 'deployments.templates.instantiate' && deps.prepareDeploymentTemplateInstantiation && readRecord(admittedInput).mode === 'apply'
       || (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote') && deps.prepareDeploymentAction)) {
       if (actionId === 'deployments.publish' && (!ctx.serverId || !isSameHome(readRecord(admittedInput).serverId, ctx.serverId, ctx)))
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
-      const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx);
+      const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview);
       if (prepared) {
         if ('errorCode' in prepared) return prepared;
+        if ('observePendingOperation' in prepared) observePendingOperation = prepared.observePendingOperation;
+        else {
         if (actionId === 'deployments.templates.instantiate' && (retainedDeploymentReview === undefined
           ? options?.approvalReplay === true
-          : !areDeploymentTemplateReviewFactsEqualV1(retainedDeploymentReview, prepared.preview)))
+          : !areDeploymentTemplateReviewFactsEqualV1(retainedDeploymentReview,
+            prepared.preview)))
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         admittedInput = prepared.input;
         deploymentReview = prepared.preview;
+        if ('hostReviewedChildren' in prepared) preparedHostReviewedChildren = prepared.hostReviewedChildren;
+        }
       }
     }
     if (memoryDuplicateReview) return { ok: true, result: memoryDuplicateReview };
@@ -2839,8 +2855,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const { approvalScope, previewTemplateEnvironmentId, mandatoryApprovalRequired } = scopeAdmission;
     const nativeReview = !existingAdmission && !sharedRequesterRequest
       ? admitPresentUserConfirmationV1(actionId, admittedInput, ctx) : null;
-    const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null;
-    if (nativeReview) ctx = { ...ctx, presentUserApproval: nativeReview };
+    const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
+      reviewAdmitted: nativeReview !== null,
+      ...(preparedHostReviewedChildren ? { declaredChildren: preparedHostReviewedChildren.children } : {}),
+      ...(approvalScope ? { approvalScope } : {}),
+      ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
+      isSameHome: (left, right) => isSameHome(left, right, ctx) });
+    if ('ok' in childrenPreparation) return childrenPreparation;
+    const { plan: hostReviewedChildren, policies: childPolicies, executeAdmittedAction, admittedReviewedChild } = childrenPreparation;
+    const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
+      // The private replay owner already admitted and recorded this decision.
+      // Consumers use that fact; they do not validate the witness a second time.
+      || Boolean(options?.approvalReplay && ctx.presentUserApproval);
+    // The native flow and deferred decision record the same reviewed parent.
+    // Child dispatch consumes its existing issuer, never a new confirmation path.
+    if (nativeReview) ctx = { ...ctx, presentUserApproval: nativeReview, approvedActionReplay: {
+      ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+      ...(deploymentReview === undefined ? {} : { deploymentReview }),
+    } };
     if (ctx.presentUserConfirmation?.inputDigest !== undefined) ctx = { ...ctx, presentUserConfirmation: undefined };
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (existingAdmission && !sameStrictJsonValue(existingAdmission.approvalScope ?? null, approvalScope ?? null)) {
@@ -2851,15 +2883,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     const preferenceScope = resolveActionApprovalPreferenceScopeV1(approvalScope, previewTemplateEnvironmentId);
     const resolveBaseApprovalRouting = (executionContext: ActionExecutorContext,
-      approvedOperation?: Awaited<ReturnType<NonNullable<ActionExecutorDeps['readWorkflowApprovedOperation']>>>) => {
-      const context = actionPolicyContext(actionId, executionContext);
+      approvedOperation?: Pick<NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>, 'parent' | 'steps'> | null) => {
+      const context = actionPolicyContext(actionId, childrenPreparation.reviewRequired
+        ? { ...executionContext, bypassApprovals: false } : executionContext);
       return resolveActionApprovalRouting({
         actionId,
         spec,
         input: admittedInput,
         context,
         settings: context.actionsSettings,
-        reviewAdmitted,
+        reviewAdmitted: reviewAdmitted && !childrenPreparation.reviewRequired,
         ...(approvalScope ? { approvalScope } : {}),
         ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
         ...(mandatoryApprovalRequired ? { mandatoryApprovalRequired } : {}),
@@ -2886,19 +2919,34 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // admitting; ordinary one-shot prepared Actions retain their existing path.
     let baseApprovalRouting = existingAdmission && !workflowRunId && !liveEnvironmentScope || hasSessionQuestionAnswerOrigin(actionId, ctx)
       ? { required: false, flow: 'deferred' as const, result: 'none' as const }
-      : resolveBaseApprovalRouting(ctx);
-    if (baseApprovalRouting.required && workflowRunId && deps.readWorkflowApprovedOperation) {
-      let approvedOperation: Awaited<ReturnType<NonNullable<ActionExecutorDeps['readWorkflowApprovedOperation']>>> = null;
+      : resolveBaseApprovalRouting(ctx, readHostReviewedChildOperationV1(ctx, actionId, admittedInput));
+    let invokeReviewedOperationChild: NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>['invokeReviewedChild'];
+    if (baseApprovalRouting.required && workflowRunId && deps.readApprovedOperation) {
+      let approvedOperation: Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>> = null;
       try {
-        approvedOperation = await deps.readWorkflowApprovedOperation({ runId: workflowRunId, context: ctx,
+        approvedOperation = await deps.readApprovedOperation({ runId: workflowRunId, actionId, input: admittedInput, semanticInput, context: ctx,
           phase: existingAdmission ? 'dispatch' : 'prepare' });
       } catch {
         // Missing, revoked, unreadable or mode-inconsistent evidence follows
         // the ordinary approval hold, never a transported bypass.
       }
       if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-      if (approvedOperation) baseApprovalRouting = resolveBaseApprovalRouting(ctx, approvedOperation);
+      if (approvedOperation?.invokeReviewedChild) invokeReviewedOperationChild = approvedOperation.invokeReviewedChild;
+      else if (approvedOperation) baseApprovalRouting = resolveBaseApprovalRouting(ctx, approvedOperation);
     }
+    const dispatchParsed: CoreInvocation['parsed'] = parsed;
+    const dispatchMessageAdmission: Extract<SessionMessageSendAdmission, { ok: true }> = sessionMessageSendAdmission;
+    if (invokeReviewedOperationChild) return await invokeReviewedOperationChild(async issuedContext => {
+      ctx = issuedContext;
+      baseApprovalRouting = resolveBaseApprovalRouting(ctx, readHostReviewedChildOperationV1(ctx, actionId, admittedInput));
+      return await continueAdmittedAction(dispatchParsed, dispatchMessageAdmission);
+    });
+    return await continueAdmittedAction(dispatchParsed, dispatchMessageAdmission);
+
+    // Resume the existing remainder inside its live issuer without repeating preparation.
+    async function continueAdmittedAction(parsed: CoreInvocation['parsed'],
+      sessionMessageSendAdmission: Extract<SessionMessageSendAdmission, { ok: true }>,
+    ): Promise<ActionExecuteResult | PrivatePrepareResult> {
     const folderApprovalRouting = folderCreateInput && !existingAdmission ? resolveActionApprovalRouting({
       actionId: 'artifact.folders.create', spec: getActionSpec('artifact.folders.create'), input: folderCreateInput,
       context: ctx, settings: ctx.actionsSettings,
@@ -2967,7 +3015,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       () => executeCoreTerminal(actionId, reviewInput, ctx, true, legacyMetadataLabel,
         undefined, false, undefined, false, undefined, hostInternal));
     }
-
 
     try {
       if (approvalRouting.required && !isApprovalAction) {
@@ -3107,6 +3154,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionArgs: initialApprovalActionArgs,
           context: ctx,
           ...(deploymentReview === undefined ? {} : { deploymentReview }),
+          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
           executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
           ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
           ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
@@ -3377,24 +3425,65 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
           ...(memoryAdmission ? { memoryAdmission } : {}),
           ...(deploymentReview === undefined ? {} : { deploymentReview }),
+          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+          ...(observePendingOperation ? { observePendingOperation } : {}),
+          ...(childPolicies ? { hostReviewedChildPolicies: childPolicies } : {}),
+          ...(executeAdmittedAction ? { executeAdmittedAction } : {}),
+          semanticInput,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
         });
       }
 
+      // Preparation may identify an existing invocation, but observing it is
+      // dispatched only after the same policy/approval admission as Deploy.
+      if (observePendingOperation) {
+        const denied = await admitCredentialScope(actionId, ctx, admittedInput, hostInternal);
+        if (denied) return denied;
+        return await observePendingOperation(ctx);
+      }
+
+      ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
+        ?? (admittedReviewedChild ? ctx.hostReviewedChild : hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
+          input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
+          ...(childPolicies ? { policies: childPolicies } : {}),
+          ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
+          execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext) }) : undefined) };
+      const dispatchAdmission: PreparedCoreAdmission = {
+        ...existingAdmission,
+        actionId,
+        input: admittedInput,
+        context: ctx,
+        ...reviewClassification,
+        ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
+        ...(hostInternal ? { hostInternal: true } : {}),
+        ...(approvalScope ? { approvalScope } : {}),
+        ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
+        ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
+        ...(memoryAdmission ? { memoryAdmission } : {}),
+        ...(deploymentReview === undefined ? {} : { deploymentReview }),
+        ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+        ...(observePendingOperation ? { observePendingOperation } : {}),
+        ...(childPolicies ? { hostReviewedChildPolicies: childPolicies } : {}),
+        ...(executeAdmittedAction ? { executeAdmittedAction } : {}),
+        semanticInput,
+        ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
+      };
+      if (executeAdmittedAction && !existingAdmission?.admittedExecutionContinued) {
+        return await executeAdmittedAction({ actionId, input: admittedInput, context: ctx,
+          execute: (executionContext, target) => {
+            const originalContext = target ? { ...executionContext, admittedMachineTarget: {
+              machineId: target.machineId, ...(target.serverId === undefined ? {} : { serverId: target.serverId }),
+            } } : executionContext;
+            return executeCoreTerminal(actionId, admittedInput, originalContext, true, legacyMetadataLabel,
+              { ...dispatchAdmission, context: originalContext, admittedExecutionContinued: true },
+              options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
+          } });
+      }
       const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
       if (spec.operation && runActionOperation && !existingAdmission?.operationObserved
         && ctx.operationAcceptance?.actionId !== actionId) {
         return await runActionOperation({ actionId, input: admittedInput, context: ctx,
-          execute: operationContext => executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel, {
-            actionId, input: admittedInput, context: operationContext, operationObserved: true,
-            ...(hostInternal ? { hostInternal: true } : {}),
-            ...(approvalScope ? { approvalScope } : {}),
-            ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
-            ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
-            ...(memoryAdmission ? { memoryAdmission } : {}),
-            ...(deploymentReview === undefined ? {} : { deploymentReview }),
-            ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
-          }, options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true),
+          execute: operationContext => executeCoreTerminal(actionId, admittedInput, operationContext, true, legacyMetadataLabel, { ...dispatchAdmission, context: operationContext, operationObserved: true }, options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true),
         });
       }
 
@@ -5361,6 +5450,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         // Domain refusals retain their acknowledged/current Source revision;
         // the outer Action result distinguishes transport/admission failures.
+        if (actionId === 'deployments.backups.restore') {
+          if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          if (!deps.deploymentRestore) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.backups.restore' };
+          const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
+          if (!isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          const result = await deps.deploymentRestore(input, ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
         if (actionId === 'deployments.templates.instantiate') {
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentTemplateInstantiate) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.templates.instantiate' };
@@ -6584,6 +6681,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? classifyExecutionRunStartFailure(failure, dispatchFacts.executionRunStartDispatched ? 'outcomeUnknown' : 'noRunCreated', error)
         : failure;
     }
+    }
   };
 
   async function executeCoreTerminal(
@@ -7033,4 +7131,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   };
 }
 
-export { readHostReviewedChildReceivingAdmissionV1 } from './executor/deploymentRoleChild.js';
+export type { HostReviewedChildrenPlanV1 } from './executor/types.js';
+
+export { readHostReviewedParentV1, readHostReviewedChildReceivingAdmissionV1, invokeHostReviewedChildV1, readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
+
+export { resolveApprovalSurface } from './actionApprovalSurface.js';
+export type { ActionApprovedOperationAdmissionV1 } from './executor/types.js';
+export { readHostAdmittedReviewedChildV1 } from './executor/deploymentRoleChild.js';

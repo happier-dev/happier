@@ -175,3 +175,7 @@ export { resolveUsageCalendarInstant } from './usage.js';
 export { selectCurrentTargetedContribution } from './services/targetedContributions.js';
 export { summarizeUsageRunLengthObservations } from './usage.js';
 export { trimBugReportTextToMaxBytes } from './diagnostics.js';
+
+export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
+
+export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';

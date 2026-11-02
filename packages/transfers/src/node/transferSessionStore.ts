@@ -485,3 +485,18 @@ export class TransferSessionStore {
     return await this.disposePromise;
   }
 }
+
+export type NativeTransferSessionOwner = Readonly<{
+  invoke: (method: string, input: unknown) => Promise<unknown>;
+  verifyInvocation: (context: unknown) => Promise<void>;
+  /** Atomically detach the initializer's short request lifetime after admission. */
+  promote: () => void;
+  readExpiry?: () => number | undefined;
+  /** Native descriptor metadata for the incumbent relay data plane. */
+  describeDownload?: (downloadId: string, includeManifest: boolean) => Promise<NativeTransferDownloadDescription>;
+  dispose: () => Promise<void>;
+}>;
+
+export type NativeTransferDownloadDescription = Readonly<{
+  nextIndex: number; sizeBytes: number; recipientPublicKeyBase64?: string; manifestHash?: string;
+}>;

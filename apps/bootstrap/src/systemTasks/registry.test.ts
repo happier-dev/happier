@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as relaySelection, getRelayAccessProviderDescriptor as relayDescriptor } from '@happier-dev/cli-common/relayAccess';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1505,12 +1506,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           store.config = params.config;
         },
         getProvider: () => ({
-          descriptor: {
-            id: 'cloudflareNamed',
-            title: 'Cloudflare',
-            exposure: 'public',
-            prerequisites: [],
-          },
+          descriptor: relayDescriptor({ kind: 'builtin', id: 'cloudflareNamed' }),
           status: async () => ({
             state: 'enabled',
             shareUrl: 'https://relay.example.test',
@@ -1529,11 +1525,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         kind: 'relay.access.configure.v1',
         params: {
           target: { kind: 'local' },
-          providerId: 'cloudflareNamed',
-          config: {
-            hostname: 'relay.example.test',
-            token: 'super-secret',
-          },
+          config: relaySelection('cloudflareNamed', { hostname: 'relay.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' } } }]),
         },
       },
       taskId: 'task_relay_access_configure_1',
@@ -1555,6 +1547,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       data: {
         configured: true,
         providerId: 'cloudflareNamed',
+        selection: relaySelection('cloudflareNamed', { hostname: 'relay.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' } } }]),
         status: {
           state: 'enabled',
           shareUrl: 'https://relay.example.test',
@@ -1574,12 +1567,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         readConfig: async () => null as never,
         writeConfig: async () => {},
         getProvider: () => ({
-          descriptor: {
-            id: 'tailscaleServe',
-            title: 'Tailscale Serve',
-            exposure: 'private',
-            prerequisites: [],
-          },
+          descriptor: relayDescriptor({ kind: 'builtin', id: 'tailscaleServe' }),
           configure: async ({ ctx }) => {
             if (!ctx.runCommand) {
               return { state: 'error', details: { reason: 'missing_run_command' } };
@@ -1606,10 +1594,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         params: {
           target: { kind: 'local' },
           upstreamUrl: 'http://127.0.0.1:3005',
-          providerId: 'tailscaleServe',
-          config: {
-            providerId: 'tailscaleServe',
-          },
+          config: relaySelection('tailscaleServe'),
         },
       },
       taskId: 'task_relay_access_configure_local_runner_1',
@@ -1627,6 +1612,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       data: {
         configured: true,
         providerId: 'tailscaleServe',
+        selection: relaySelection('tailscaleServe'),
         status: {
           state: 'enabled',
           shareUrl: 'https://relay.example.test',
@@ -1648,11 +1634,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           kind: 'relay.access.configure.v1',
           params: {
             target: { kind: 'local' },
-            providerId: 'lan',
-            config: {
-              providerId: 'lan',
-              url: 'http://10.0.0.5:3005',
-            },
+            config: relaySelection('lan', { url: 'http://10.0.0.5:3005' }),
           },
         },
         taskId: 'task_relay_access_persist_1',
@@ -1684,6 +1666,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         data: {
           configured: true,
           providerId: 'lan',
+          selection: relaySelection('lan', { url: 'http://10.0.0.5:3005' }),
           status: {
             state: 'enabled',
             shareUrl: 'http://10.0.0.5:3005',

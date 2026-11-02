@@ -1,10 +1,12 @@
 import {
-    getRelayAccessProviderDescriptor,
+    relayAccessProviderDescriptors,
+    parseRelayAccessConfig,
+    type RelayAccessProviderDescriptor,
 } from '@happier-dev/cli-common/relayAccess/catalog';
+import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { normalizeRelayAccessCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess/normalizePublicServerUrl';
 import type {
     RelayAccessConfig,
-    RelayAccessProviderId,
     RelayAccessStatus,
 } from '@happier-dev/cli-common/relayAccess';
 
@@ -49,19 +51,12 @@ function relayAccessStatusToEndpointStatus(params: Readonly<{
     }
 }
 
-function relayAccessProviderReachability(providerId: RelayAccessProviderId): AccessEndpointReachability {
-    switch (providerId) {
-        case 'localOnly':
-            return 'loopback';
-        case 'lan':
-            return 'lan';
-        case 'tailscaleServe':
-            return 'private-network';
-        case 'tailscaleFunnel':
-        case 'cloudflareNamed':
-            return 'public';
-        default:
-            return 'public';
+function relayAccessProviderReachability(exposure: RelayAccessProviderDescriptor['definition']['exposure']): AccessEndpointReachability {
+    switch (exposure) {
+        case 'local': return 'loopback';
+        case 'lan': return 'lan';
+        case 'privateNetwork': return 'private-network';
+        case 'public': return 'public';
     }
 }
 
@@ -71,51 +66,18 @@ function readDetailsReason(details: unknown): string | null {
     return typeof reason === 'string' && reason.trim() ? reason.trim() : null;
 }
 
-function isTailscaleProvider(providerId: RelayAccessProviderId): boolean {
-    return providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel';
-}
-
-function isTailscaleInstallReason(reason: string | null): boolean {
-    return reason === 'tailscale_not_installed' || reason === 'tailscale_command_not_found';
-}
-
 function relayAccessRemediationActions(params: Readonly<{
-    providerId: RelayAccessProviderId;
+    descriptor: RelayAccessProviderDescriptor;
     status: RelayAccessStatus;
     httpBaseUrl: string | null;
 }>): readonly AccessEndpointRemediationAction[] {
     const reason = readDetailsReason(params.status.details);
-    if (isTailscaleProvider(params.providerId) && isTailscaleInstallReason(reason)) {
-        return [createAccessEndpointRemediationAction('tailscale.install')];
-    }
-
-    if (params.providerId === 'cloudflareNamed') {
-        return params.status.state === 'enabled' && params.httpBaseUrl ? [] : [createAccessEndpointRemediationAction('cloudflare.configure')];
-    }
-
-    if (params.providerId === 'tailscaleServe') {
-        if (reason === 'tailscale_serve_approval_required') {
-            return [createAccessEndpointRemediationAction('tailscale.serve.approve')];
-        }
-        if (params.status.state === 'needs_auth') {
-            return [createAccessEndpointRemediationAction('tailscale.login')];
-        }
-        return params.status.state === 'enabled' && params.httpBaseUrl ? [] : [createAccessEndpointRemediationAction('tailscale.serve.enable')];
-    }
-
-    if (params.providerId === 'tailscaleFunnel') {
-        if (reason === 'tailscale_funnel_approval_required') {
-            return [createAccessEndpointRemediationAction('tailscale.funnel.approve')];
-        }
-        if (params.status.state === 'needs_auth') {
-            return [createAccessEndpointRemediationAction('tailscale.login')];
-        }
-        if (params.status.state === 'enabled' && !params.httpBaseUrl) {
-            return [createAccessEndpointRemediationAction('tailscale.funnel.approve')];
-        }
-    }
-
-    return [];
+    const remedies = params.descriptor.remedies;
+    const remedy = (reason ? remedies?.reasons?.[reason] : undefined)
+        ?? (params.status.state === 'needs_auth' ? remedies?.needsAuth : undefined)
+        ?? (params.status.state === 'enabled' && !params.httpBaseUrl ? remedies?.missingShareUrl : undefined)
+        ?? (params.status.state !== 'enabled' || !params.httpBaseUrl ? remedies?.notConfigured : undefined);
+    return remedy ? [createAccessEndpointRemediationAction(remedy)] : [];
 }
 
 function relayAccessDiagnostics(status: RelayAccessStatus): readonly AccessEndpointDiagnostic[] | undefined {
@@ -154,11 +116,14 @@ export function buildRelayAccessEndpoints(params: Readonly<{
     const endpoints: AccessEndpoint[] = [];
 
     for (const input of params.relayAccess) {
-        const providerId = input.config.providerId;
+        const selection = parseRelayAccessConfig(input.config);
+        if (!selection) continue;
+        const descriptor = relayAccessProviderDescriptors.find(candidate => accessProviderRefsEqualV1(candidate.provider, selection.provider));
+        if (!descriptor) continue;
+        const providerId = descriptor.id;
         const httpBaseUrl = normalizeRelayAccessCanonicalPublicServerUrl(input.status.shareUrl);
-        const descriptor = getRelayAccessProviderDescriptor(providerId);
         const wsBaseUrl = httpBaseUrl ? deriveAccessEndpointWsBaseUrl(httpBaseUrl) : null;
-        const remediationActions = relayAccessRemediationActions({ providerId, status: input.status, httpBaseUrl });
+        const remediationActions = relayAccessRemediationActions({ descriptor, status: input.status, httpBaseUrl });
         const diagnostics = relayAccessDiagnosticsWithUrlStatus({
             status: input.status,
             httpBaseUrl,
@@ -170,7 +135,7 @@ export function buildRelayAccessEndpoints(params: Readonly<{
             label: descriptor.title,
             source: 'relay-access',
             providerId,
-            reachability: relayAccessProviderReachability(providerId),
+            reachability: relayAccessProviderReachability(descriptor.definition.exposure),
             hostedHttpsCompatibility: httpBaseUrl
                 ? classifyAccessEndpointHostedHttpsCompatibility({
                     httpBaseUrl,

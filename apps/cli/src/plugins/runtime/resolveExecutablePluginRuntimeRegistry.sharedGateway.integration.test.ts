@@ -1,3 +1,4 @@
+import { readManagedServiceResponseText } from '@/plugins/testkit/managedServiceResponse';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,7 +77,7 @@ it.each(['serving', 'resolving', 'explicitStart', 'withdrawn', 'withdrawnResolvi
     const readPid = async (service: ManagedServiceHandle) => {
         const response = await service.request({ pathAndQuery: '/pid' });
         expect(response.status).toBe(200);
-        const pid = Number(await new Response(response.body).text());
+        const pid = Number(await readManagedServiceResponseText(response));
         expect(Number.isInteger(pid) && pid > 0).toBe(true);
         return pid;
     };

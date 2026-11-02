@@ -1,4 +1,4 @@
-import { showRelayAccessHelp } from './accessHelp';
+import { readAvailableRelayAccessDescriptors, showRelayAccessHelp } from './accessHelp';
 export { showRelayAccessHelp } from './accessHelp';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -13,7 +13,9 @@ import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/agen
 import { definitionList, ok, renderHelpPage, sectionTitle, warn } from "@happier-dev/cli-common/output";
 import {
     getRelayAccessProvider,
-    relayAccessProviderIds,
+    getRelayAccessProviderDescriptor,
+    parseRelayAccessConfig,
+    relayAccessProviderDescriptors,
     normalizeRelayAccessCanonicalPublicServerUrl,
     resolveRelayAccessConfiguredCanonicalPublicServerUrl,
 } from "@happier-dev/cli-common/relayAccess";
@@ -112,14 +114,11 @@ function resolveConfigPath(): Readonly<{ dir: string; path: string }> {
 }
 
 function normalizeProviderId(value: string | null): RelayAccessProviderId {
-    const raw = String(value ?? "").trim();
-    if (!raw) {
-        throw new Error('Missing required flag: --provider');
-    }
-    if ((relayAccessProviderIds as readonly string[]).includes(raw)) {
-        return raw as RelayAccessProviderId;
-    }
-    throw new Error(`Invalid relay access provider: ${raw}`);
+    const raw = String(value ?? '').trim();
+    if (!raw) throw new Error('Missing required flag: --provider');
+    const descriptor = readAvailableRelayAccessDescriptors().find(candidate => candidate.id === raw);
+    if (!descriptor) throw new Error('Invalid or unavailable relay access provider');
+    return descriptor.id;
 }
 
 function ensureNonEmptyString(value: string | null, label: string): string {
@@ -160,67 +159,42 @@ async function resolveRelayAccessUpstreamUrl(explicitValue: string | null): Prom
 }
 
 function parseConfigFromArgs(providerId: RelayAccessProviderId, args: string[]): RelayAccessConfig {
-    if (providerId === "lan") {
-        const url = takeFlagValue(args, "--url");
-        const rest = url.rest;
-        if (rest.length > 0) {
-            throw new Error(`Unknown relay access configure arguments: ${rest.join(' ')}`);
+    const descriptor = getRelayAccessProviderDescriptor({ kind: 'builtin', id: providerId });
+    const configArg = takeFlagValue(args, '--config');
+    const refsArg = takeFlagValue(configArg.rest, '--credential-refs');
+    let rest = refsArg.rest;
+    const fields: Record<string, unknown> = {};
+    const properties = descriptor.definition.configSchema.properties;
+    if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+        for (const [name, schema] of Object.entries(properties)) {
+            if (!schema || typeof schema !== 'object' || Array.isArray(schema) || schema.type !== 'string') continue;
+            const field = takeFlagValue(rest, `--${name}`);
+            rest = field.rest;
+            if (field.value !== null) {
+                if (configArg.value !== null) throw new Error('Use either --config or individual config fields');
+                fields[name] = ensureNonEmptyString(field.value, `--${name}`);
+            }
         }
-        return { providerId: "lan", url: ensureNonEmptyString(url.value, "--url") };
     }
-
-    if (providerId === "cloudflareNamed") {
-        const hostname = takeFlagValue(args, "--hostname");
-        const token = takeFlagValue(hostname.rest, "--token");
-        const rest = token.rest;
-        if (rest.length > 0) {
-            throw new Error(`Unknown relay access configure arguments: ${rest.join(' ')}`);
-        }
-        return {
-            providerId: "cloudflareNamed",
-            hostname: ensureNonEmptyString(hostname.value, "--hostname"),
-            token: ensureNonEmptyString(token.value, "--token"),
-        };
+    // Never include unknown arguments: they may be obsolete raw credential flags.
+    if (rest.length) throw new Error('Unknown relay access configure arguments');
+    let config: unknown = fields;
+    let credentialRefs: unknown = [];
+    try {
+        if (configArg.value !== null) config = JSON.parse(configArg.value);
+        if (refsArg.value !== null) credentialRefs = JSON.parse(refsArg.value);
+    } catch {
+        throw new Error('Invalid relay access JSON');
     }
-
-    if (args.length > 0) {
-        throw new Error(`Unknown relay access configure arguments: ${args.join(' ')}`);
-    }
-    return { providerId };
+    const selection = parseRelayAccessConfig({ provider: descriptor.provider, config, credentialRefs });
+    if (!selection) throw new Error('Invalid relay access selection');
+    return selection;
 }
 
 function parsePersistedConfigFromJson(raw: string): RelayAccessConfig | null {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const record = parsed as Record<string, unknown>;
-    const providerId = typeof record.providerId === "string" ? record.providerId.trim() : "";
-    if (!providerId) return null;
-
-    if (providerId === "localOnly") {
-        return { providerId: "localOnly" };
-    }
-    if (providerId === "tailscaleServe") {
-        return { providerId: "tailscaleServe" };
-    }
-    if (providerId === "tailscaleFunnel") {
-        return { providerId: "tailscaleFunnel" };
-    }
-    if (providerId === "lan") {
-        const url = typeof record.url === "string" ? record.url.trim() : "";
-        return url ? { providerId: "lan", url } : null;
-    }
-    if (providerId === "cloudflareNamed") {
-        const hostname = typeof record.hostname === "string" ? record.hostname.trim() : "";
-        const token = typeof record.token === "string" ? record.token.trim() : "";
-        return hostname && token ? { providerId: "cloudflareNamed", hostname, token } : null;
-    }
-
-    return null;
+    try { return parseRelayAccessConfig(JSON.parse(raw), relayAccessProviderDescriptors.filter(descriptor =>
+        descriptor.definition.targets.includes('homeRelay'))); }
+    catch { return null; }
 }
 
 async function readPersistedConfig(): Promise<RelayAccessConfig | null> {
@@ -352,10 +326,11 @@ function createRelayAccessSshRunner(params: Readonly<{
         if (knownHostsMode !== 'app') return;
         const trustedHostKey = String(ssh.trustedHostKey ?? '').trim();
         if (!trustedHostKey) return;
-        const existing = readKnownHostsTextSync(knownHostsPath);
-        if (existing.includes(trustedHostKey)) return;
-        const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-        writeKnownHostsTextSync(knownHostsPath, `${existing}${suffix}${trustedHostKey}`);
+        writeKnownHostsTextSync(knownHostsPath, existing => {
+            if (existing.includes(trustedHostKey)) return existing;
+            const suffix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+            return `${existing}${suffix}${trustedHostKey}`;
+        });
     };
 
     function resolveSshEndpointForKeyscan(): Readonly<{ host: string; port?: number }> {
@@ -468,12 +443,12 @@ function createRelayAccessSshRunner(params: Readonly<{
                     throw new Error('SSH host trust was declined.');
                 }
 
-                writeKnownHostsTextSync(knownHostsPath, trust.nextKnownHostsText);
+                systemTasks.persistSshKnownHostTrust({ knownHostsPath, trust });
                 resolved = true;
                 return;
             }
 
-            writeKnownHostsTextSync(knownHostsPath, trust.nextKnownHostsText);
+            systemTasks.persistSshKnownHostTrust({ knownHostsPath, trust });
             resolved = true;
         };
     })();
@@ -583,7 +558,7 @@ function createRelayAccessExecutionContext(params: Readonly<{ target: systemTask
     const ssh = params.target.ssh;
 
     return {
-        env: {},
+        env: { NODE_ENV: process.env.NODE_ENV },
         upstreamUrl: params.upstreamUrl ?? null,
         runCommand: async (request) => {
             const command = String(request.command ?? '').trim();
@@ -641,12 +616,8 @@ async function cmdStatus(args: string[]): Promise<void> {
         ? createRelayAccessSshRunner({ ssh: target.ssh, auth: sshAuth ?? { mode: 'agent' }, assumeYes, interactive: isInteractiveTerminal() })
         : null;
 
-    let capturedConfig: RelayAccessConfig | null = null;
     const kind = systemTasks.createRelayAccessStatusTaskKind({
-        readConfig: async (params) => {
-            capturedConfig = await readRelayAccessConfig({ ...params, ...(sshRunner ? { runner: sshRunner } : {}) });
-            return capturedConfig;
-        },
+        readConfig: async (params) => await readRelayAccessConfig({ ...params, ...(sshRunner ? { runner: sshRunner } : {}) }),
         getProvider: (providerId) => getRelayAccessProvider(providerId),
         createExecutionContext: (params) => createRelayAccessExecutionContext({ ...params, ...(sshRunner ? { runner: sshRunner } : {}) }),
     });
@@ -682,7 +653,7 @@ async function cmdStatus(args: string[]): Promise<void> {
             kind: "relay_access_status",
             data: {
                 ...payload,
-                ...(capturedConfig ? { config: systemTasks.redactSensitiveSystemTaskJsonValue(capturedConfig) } : {}),
+                ...(snapshot.selection ? { config: snapshot.selection } : {}),
                 ...(snapshot.status.details ? { details: snapshot.status.details } : {}),
             },
         });
@@ -722,16 +693,13 @@ async function cmdConfigure(args: string[]): Promise<void> {
     rest = provider.rest;
     const providerId = normalizeProviderId(provider.value);
 
-    const upstreamUrl = providerId === 'tailscaleServe' || providerId === 'tailscaleFunnel'
+    const config = parseConfigFromArgs(providerId, rest);
+    const descriptor = getRelayAccessProviderDescriptor(config.provider);
+    const upstreamUrl = descriptor.requiresUpstreamUrl
         ? await resolveRelayAccessUpstreamUrl(upstream.value)
         : null;
-
-    const config = parseConfigFromArgs(providerId, rest);
-
-    let capturedConfig: RelayAccessConfig | null = null;
     const kind = systemTasks.createRelayAccessConfigureTaskKind({
         writeConfig: async (params) => {
-            capturedConfig = params.config;
             await writeRelayAccessConfig({ target: params.target, config: params.config, ...(sshRunner ? { runner: sshRunner } : {}) });
         },
         getProvider: (providerIdInner) => getRelayAccessProvider(providerIdInner),
@@ -742,7 +710,6 @@ async function cmdConfigure(args: string[]): Promise<void> {
         params: {
             target: relayAccessTargetToJson(target),
             upstreamUrl,
-            providerId,
             config,
         },
         emit: () => {},
@@ -764,7 +731,7 @@ async function cmdConfigure(args: string[]): Promise<void> {
             kind: "relay_access_configure",
             data: {
                 ...payload,
-                ...(capturedConfig ? { config: systemTasks.redactSensitiveSystemTaskJsonValue(capturedConfig) } : {}),
+                ...(snapshot.selection ? { config: snapshot.selection } : {}),
                 ...(snapshot.status.details ? { details: snapshot.status.details } : {}),
             },
         });

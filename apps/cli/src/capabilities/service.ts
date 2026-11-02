@@ -1,3 +1,4 @@
+import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type {
     CapabilitiesDescribeResponse,
     CapabilitiesDetectRequest,
@@ -159,3 +160,30 @@ export function createCapabilitiesService(opts: {
 
     return { describe, detect, invoke };
 }
+
+export async function assertMachineSystemTaskResponseCurrent(authorization: unknown, expected: Readonly<{
+    admission: MachineSystemTaskResponseContext['admission'];
+    verifyCurrent(): Promise<boolean>;
+}>): Promise<void> {
+    // The capabilities ingress supplies this private value, never the operand.
+    const response = authorization && typeof authorization === 'object'
+        ? authorization as Partial<MachineSystemTaskResponseContext> : null;
+    const admission = response?.admission;
+    if (!admission || response?.callerAuthority !== 'present_user' || admission.role !== 'manage'
+        || admission.actorAccountId !== expected.admission.actorAccountId
+        || admission.custodianAccountId !== expected.admission.custodianAccountId
+        || admission.machineId !== expected.admission.machineId
+        || admission.installationId !== expected.admission.installationId
+        || admission.encryptionMode !== expected.admission.encryptionMode
+        || !response.signal || response.signal.aborted || typeof response.verifyCurrent !== 'function'
+        || !await response.verifyCurrent() || !await expected.verifyCurrent() || response.signal.aborted) {
+        throw new SystemTaskExecutionError('permission_denied', 'Current operation Machine admission is required');
+    }
+}
+
+export type MachineSystemTaskResponseContext = Readonly<{
+    admission: NonNullable<import('@/api/rpc/types').RpcHandlerContext['machineAdmission']>;
+    callerAuthority: import('@/api/rpc/types').RpcHandlerContext['callerAuthority'];
+    verifyCurrent: NonNullable<import('@/api/rpc/types').RpcHandlerContext['verifyMachineAdmissionCurrent']>;
+    signal: AbortSignal;
+}>;

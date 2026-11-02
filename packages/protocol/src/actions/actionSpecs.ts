@@ -1,3 +1,8 @@
+import { MACHINE_REACHABILITY_ACTION_SPECS_V1 } from './specs/machineReachability.js';
+import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs.js';
+import { MEDIA_ANNOTATION_ACTION_SPECS } from './mediaAnnotationAction.js';
+import { DESKTOP_WINDOWS_ACTION_SPECS } from './desktopWindowsAction.js';
+import { DESKTOP_SHELL_ACTION_SPECS } from './specs/desktopShell.js';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { completeActionInputHints } from './schemaInputHints.js';
@@ -530,6 +535,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MACHINE_REBOOT_ACTION_SPECS,
   ...MACHINE_AGENT_ISOLATION_ACTION_SPECS,
   ...MACHINE_ADMIN_ACCESS_ACTION_SPECS,
+  ...MACHINE_REACHABILITY_ACTION_SPECS_V1,
   ...MACHINE_GUARD_ACTION_SPECS,
   ...TEAM_ACTION_SPECS,
   ...SHARED_SAVED_SECRET_ACTION_SPECS,
@@ -1281,6 +1287,8 @@ type LiteralActionSpecTupleDefinition<TSpecs extends readonly PreNormalizedActio
 type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof CODE_INTELLIGENCE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof CLIPBOARD_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof DESKTOP_WINDOWS_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof DESKTOP_SHELL_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof EXTERNAL_LINK_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof SESSION_ORGANIZATION_MOVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof LIST_REORDER_ACTION_SPECS>
@@ -1290,6 +1298,7 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof HOME_HUB_LAYOUT_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_SOURCE_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof DEPLOYMENT_ACTION_SPECS_V1>
+  | LiteralActionSpecTupleDefinition<typeof MACHINE_REACHABILITY_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof WIDGET_SNAPSHOT_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING>
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE>
@@ -1763,6 +1772,7 @@ export type CanonicalActionSpecDefinition =
       (typeof VoiceConversationActionInputSchemas)[Id], (typeof VoiceConversationActionOutputSchemas)[Id]>
     }[VoiceConversationActionId]
   | (typeof COMPOSER_INGRESS_ACTION_SPECS)[number]
+  | (typeof MEDIA_ANNOTATION_ACTION_SPECS)[number]
   | (typeof WORKFLOW_AUTHORING_ACTION_SPECS)[number]
   | (typeof WORKFLOW_DIAGNOSTIC_ACTION_SPECS)[number]
   | { [Id in NotificationConfigurationActionId]: CanonicalActionSchemaDefinition<Id,
@@ -1789,6 +1799,7 @@ export type CanonicalActionSpecDefinition =
   | (typeof COMMAND_PALETTE_ACTION_SPECS)[number]
   | (typeof FIND_ACTION_SPECS)[number]
   | (typeof PROMPT_PICKER_ACTION_SPECS)[number]
+  | (typeof SESSION_MESSAGE_PIN_ACTION_SPECS)[number]
   | (typeof PROMPT_INVOCATION_CREATE_ACTION_SPECS)[number]
   | (typeof SESSION_PENDING_NEXT_ACTION_SPECS)[number]
   | SessionPendingCustodyActionSpecDefinition
@@ -2406,3 +2417,7 @@ export function resolveVoiceClientToolNameAlias(value: string): string | null {
   return null;
 }
 export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from './scmGitActionSpecs.js';
+
+export type AdmittedActionInputById = Readonly<{
+  [Id in keyof CanonicalActionSpecById]: z.output<CanonicalActionSpecById[Id]['inputSchema']>;
+}>;

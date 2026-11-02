@@ -1,3 +1,5 @@
+import { readHomeAuthorityMismatchFailure } from '@happier-dev/protocol/ssh/commandFailure';
+import { readKnownSystemTaskFailure } from './runSystemTask.js';
 import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskResult } from '@happier-dev/protocol';
 
@@ -15,12 +17,18 @@ export type InteractiveSystemTaskPromptRequest = Readonly<{
   stepId?: string;
   message: string;
   data: SystemTaskJsonValue;
+  /** Host-only, current-question delivery. Neither the closure nor its result enters task observations. */
+  deliver?: (request: unknown) => Promise<SystemTaskJsonValue>;
+  /** Host-only authority check, including ordinary answers to this exact question. */
+  validateResponse?: (authorization: unknown) => Promise<void>;
   /** Retain prompt custody after task cancellation only when the owning operation has crossed
    * an irreversible boundary and must finish converging to a stable result. */
   nonCancellable?: true;
 }>;
 
 export type InteractiveSystemTaskContext = Readonly<{
+  /** Host admission identity; never taken from task input. */
+  taskId?: string;
   params: SystemTaskJsonValue;
   signal?: AbortSignal;
   emit: (event: InteractiveSystemTaskEventInput) => void;
@@ -42,6 +50,8 @@ type RunnerState = {
   events: SystemTaskEvent[];
   result: SystemTaskResult | null;
   pendingPrompt: PromptEnvelope | null;
+  deliverPrompt: InteractiveSystemTaskPromptRequest['deliver'] | null;
+  validateResponse: InteractiveSystemTaskPromptRequest['validateResponse'] | null;
   resolvePrompt: ((answer: unknown) => void) | null;
   rejectPrompt: ((error: SystemTaskExecutionError) => void) | null;
   abortController: AbortController;
@@ -62,7 +72,7 @@ export function createSystemTasksRunner(params: Readonly<{
     result: SystemTaskResult | null;
     pendingPrompt: PromptEnvelope | null;
   }>>;
-  respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<void>;
+  respond: (params: Readonly<{ taskId: string; answer: unknown; delivery?: unknown; responseAuthorization?: unknown; expectedPromptKind?: unknown; expectedPromptId?: unknown }>) => Promise<SystemTaskJsonValue | undefined>;
   cancel: (params: Readonly<{ taskId: string }>) => Promise<void>;
 }> {
   const now = params.now ?? (() => Date.now());
@@ -94,6 +104,8 @@ export function createSystemTasksRunner(params: Readonly<{
         events: [],
         result: null,
         pendingPrompt: null,
+        deliverPrompt: null,
+        validateResponse: null,
         resolvePrompt: null,
         rejectPrompt: null,
         abortController: new AbortController(),
@@ -102,6 +114,7 @@ export function createSystemTasksRunner(params: Readonly<{
 
       const state = readState(startParams.taskId);
       state.settlement = kind.run({
+        taskId: startParams.taskId,
         params: startParams.params,
         signal: state.abortController.signal,
         emit: (event) => {
@@ -116,6 +129,8 @@ export function createSystemTasksRunner(params: Readonly<{
             kind: prompt.kind,
             data: redactSensitiveSystemTaskJsonValue(prompt.data),
           };
+          state.deliverPrompt = prompt.deliver ?? null;
+          state.validateResponse = prompt.validateResponse ?? null;
           appendEvent(startParams.taskId, {
             type: 'prompt',
             ...(prompt.stepId ? { stepId: prompt.stepId } : {}),
@@ -125,6 +140,8 @@ export function createSystemTasksRunner(params: Readonly<{
           return await new Promise((resolve, reject) => {
             state.resolvePrompt = (answer) => {
               state.pendingPrompt = null;
+              state.deliverPrompt = null;
+              state.validateResponse = null;
               state.resolvePrompt = null;
               state.rejectPrompt = null;
               resolve(answer);
@@ -133,6 +150,8 @@ export function createSystemTasksRunner(params: Readonly<{
               ? null
               : (error) => {
                   state.pendingPrompt = null;
+                  state.deliverPrompt = null;
+                  state.validateResponse = null;
                   state.resolvePrompt = null;
                   state.rejectPrompt = null;
                   reject(error);
@@ -146,6 +165,8 @@ export function createSystemTasksRunner(params: Readonly<{
         (data) => {
           const state = readState(startParams.taskId);
           state.pendingPrompt = null;
+          state.deliverPrompt = null;
+          state.validateResponse = null;
           state.resolvePrompt = null;
           state.rejectPrompt = null;
           state.result = {
@@ -157,7 +178,12 @@ export function createSystemTasksRunner(params: Readonly<{
         },
         (error) => {
           const state = readState(startParams.taskId);
+          const authorityFailure = error && typeof error === 'object'
+            ? readHomeAuthorityMismatchFailure(Reflect.get(error, 'code'), Reflect.get(error, 'message')) : null;
+          const knownFailure = readKnownSystemTaskFailure(error);
           state.pendingPrompt = null;
+          state.deliverPrompt = null;
+          state.validateResponse = null;
           state.resolvePrompt = null;
           state.rejectPrompt = null;
           state.result = {
@@ -165,12 +191,12 @@ export function createSystemTasksRunner(params: Readonly<{
             taskId: startParams.taskId,
             ok: false,
             error: {
-              code: error instanceof SystemTaskExecutionError
-                ? error.code
+              code: authorityFailure?.code ?? (knownFailure
+                ? knownFailure.code
                 : state.abortController.signal.aborted
                   ? 'cancelled'
-                  : 'system_task_failed',
-              message: error instanceof Error ? error.message : 'System task failed',
+                  : 'system_task_failed'),
+              message: authorityFailure?.message ?? knownFailure?.message ?? (error instanceof Error ? error.message : 'System task failed'),
             },
           };
         },
@@ -209,8 +235,43 @@ export function createSystemTasksRunner(params: Readonly<{
 
     async respond(respondParams) {
       const state = readState(respondParams.taskId);
+      // The transport is untyped; validate and compare at the task owner, atomically with acceptance.
+      if (respondParams.expectedPromptKind !== undefined && typeof respondParams.expectedPromptKind !== 'string') {
+        throw new SystemTaskExecutionError('invalid_params', 'Expected prompt kind must be a string.');
+      }
+      if (respondParams.expectedPromptId !== undefined && (typeof respondParams.expectedPromptId !== 'string' || !respondParams.expectedPromptId.trim())) {
+        throw new SystemTaskExecutionError('invalid_params', 'Expected prompt id must be a nonempty string.');
+      }
+      if (respondParams.expectedPromptKind !== undefined && state.pendingPrompt?.kind !== respondParams.expectedPromptKind) {
+        throw new SystemTaskExecutionError('no_prompt', 'The system task question has changed.');
+      }
+      if (respondParams.expectedPromptId !== undefined || state.pendingPrompt?.kind === 'administrator.establish') {
+        const promptData = state.pendingPrompt?.data;
+        const promptId = promptData && typeof promptData === 'object' && !Array.isArray(promptData) && 'promptId' in promptData ? promptData.promptId : undefined;
+        if (typeof promptId !== 'string' || promptId !== respondParams.expectedPromptId) {
+          throw new SystemTaskExecutionError('no_prompt', 'The system task question has changed.');
+        }
+      }
+      if (Object.hasOwn(respondParams, 'delivery')) {
+        const deliver = state.deliverPrompt;
+        if (!deliver || !state.resolvePrompt || state.abortController.signal.aborted) {
+          throw new SystemTaskExecutionError('no_prompt', 'The system task question has changed.');
+        }
+        const delivered = await deliver(respondParams.delivery);
+        if (state.deliverPrompt !== deliver || state.abortController.signal.aborted) {
+          throw new SystemTaskExecutionError('no_prompt', 'The system task question has changed.');
+        }
+        return delivered;
+      }
       if (!state.resolvePrompt) {
         throw new Error(`System task ${respondParams.taskId} is not waiting for a prompt response`);
+      }
+      const resolvePrompt = state.resolvePrompt;
+      if (state.validateResponse) {
+        await state.validateResponse(respondParams.responseAuthorization);
+        if (state.resolvePrompt !== resolvePrompt || state.abortController.signal.aborted) {
+          throw new SystemTaskExecutionError('no_prompt', 'The system task question has changed.');
+        }
       }
       state.resolvePrompt(respondParams.answer);
       await new Promise((resolve) => setTimeout(resolve, 0));

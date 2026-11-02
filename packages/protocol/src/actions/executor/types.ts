@@ -1,4 +1,14 @@
+import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentTemplateInstantiateInputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import type { DeploymentPublishInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentDeployActionInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentRollbackActionInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentPromoteInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentDeployInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentRollbackInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { WorkflowApprovedOperationV1 } from '../../workflows/workflowDefinitionV1.js';
 import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, DeploymentActionOutputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
@@ -158,8 +168,7 @@ import type {
 } from '../../approvals/approvalRequestV1.js';
 import type { PluginSourceCustodyV1 } from '../../plugins/runtime/sourceCustody.js';
 import type { DaemonPluginStructuredMessageActionMountedBinding } from '../../plugins/actions/daemonInvocationV1.js';
-import type {
-} from '../../prompts/library/promptAssetsV1.js';
+
 import type { ProviderConnectionId } from '../../providers/ids.js';
 import type { SessionBoardActionIdV1 } from '../../sessions/board/actionIds.js';
 import type { SessionBoardActionPortResultV1 } from '../../sessions/board/actions.js';
@@ -603,6 +612,7 @@ export type SessionPermissionRemoteActionArgs =
 export type ActionExecutorContext = Readonly<{
   invocationServices?: HostReviewedChildInvocationServicesV1;
   hostReviewedChild?: HostReviewedChildPortV1;
+  hostReviewedChildren?: HostReviewedChildrenPlanV1;
   /** Host-stamped native Realtime input: ordinary Actions only, never approval decisions. Not Action/RPC input. */
   nativeRealtimeInput?: true;
   /** Host-local live delegation check before a request decision is issued; never Action/RPC input. */
@@ -691,6 +701,10 @@ export type ActionExecutorContext = Readonly<{
   operationOwnerUpdate?: Readonly<{
     update(update: Readonly<{
       state?: 'running';
+      /** Actual native owner capability, not inferred from an Action's AbortSignal. */
+      cancellation?: 'supported' | 'unsupported';
+      /** Native effect evidence; the runner still waits for the entire handler. Never plugin JSON. */
+      outcome?: ActionExecuteResult;
       progress?: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;
         approval?: ActionApprovalRequestCreatedResult }>;
       domainRef?: ActionOperationDomainRefV1;
@@ -916,7 +930,11 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-only approved proposal reference. Original caller facts supply defaults, never execution authority or policy. */
   approvedActionReplay?: Readonly<{ artifactId?: string;
-    origin?: Pick<ApprovalExecutionOriginV1, 'surface' | 'caller' | 'sessionId'> }>;
+    /** Validated stored review facts; comparison evidence, never effect authority. */
+    deploymentReview?: import('../../json/strictJsonValue.js').JsonValue;
+    /** Exact demanded children recovered from this parent's approved preview. */
+    hostReviewedChildren?: HostReviewedChildrenPlanV1;
+    origin?: Pick<ApprovalExecutionOriginV1, 'surface' | 'caller' | 'sessionId' | 'accountId'> }>;
 
   /** Host-bound original Discussion obligation, including failures before any turn was accepted. */
   discussionReplyReturn?: DiscussionReplyReturnV1;
@@ -959,6 +977,25 @@ export type ActionExecutorContext = Readonly<{
 
   /** Resolve the existing action attempt without repeating its outward write. */
   resumeActionRequest?: boolean;
+
+  machineServiceLogsResource?: Readonly<{
+    expectedGeneration: string;
+    /** Absent only for the first generation-constrained, approved native page. */
+    sourceRevision?: string;
+    observation?: Readonly<{
+      signal: AbortSignal;
+      emit(result: import('../../local/services/nativeLogsV1.js').ManagedServiceNativeLogResultV1): void;
+      retire(): void;
+      accept(subscription: Readonly<{ dispose(): void | Promise<void> }>): void;
+    }>;
+  }>;
+
+  machineServicesListResource?: Readonly<{
+    signal: AbortSignal;
+    invalidate(): void;
+    retire(): void;
+    accept(subscription: Readonly<{ dispose(): void | Promise<void> }>): void;
+  }>;
 }>;
 
 export type RuntimeActionInputById = Readonly<{
@@ -1176,6 +1213,33 @@ export type PluginSettingsAdministrationActionRequest = Readonly<{
 }>;
 
 export type ActionExecutorDeps = Readonly<{
+  executionRunHostActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
+
+  automationOccurrenceAction?: (args: Readonly<{
+    actionId: import('../../automations/occurrenceActions.js').AutomationOccurrenceActionId;
+    input: import('../../automations/occurrenceActions.js').AutomationOccurrenceInput;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
+
+  sessionInputResultGet?: (args: Readonly<{ sessionId: string; localId: string; projection?: 'reply'; callerPluginId?: string;
+    context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<import('../../sessions/messages/sessionInputResultV1.js').SessionInputResultGetResultV1>;
+
+  machineRebootReferences?: (args: Readonly<{
+    input: import('../specs/machine/reboot.js').MachineRebootInputV1;
+    context: ActionExecutorContext;
+    cursor?: string;
+    signal?: AbortSignal;
+  }>) => Promise<import('../../machines/machineReferenceCensusV1.js').MachineDeploymentReferencesPageV1>;
+
+  machineReboot?: (args: Readonly<{
+    input: import('../specs/machine/reboot.js').MachineRebootInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  deploymentRestore?: (input: import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreInputV1,
+    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreResultV1 | ActionExecuteFailure>;
+
   /** The same target-daemon loaders serve finite Actions and demanded Resources. */
   machineServiceAction?: (args: Readonly<{
     actionId: import('../specs/machine/services.js').MachineServiceActionId;
@@ -1183,6 +1247,68 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
+
+  machineAdminAccessAction?: (args: Readonly<{
+    actionId: import('../specs/machine/adminAccess.js').MachineAdminAccessActionId;
+    input: import('../specs/machine/adminAccess.js').MachineAdminAccessActionInput;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  machineAgentIsolationAction?: (args: Readonly<{
+    actionId: import('../specs/machine/agentIsolation.js').MachineAgentIsolationActionId;
+    input: import('../specs/machine/agentIsolation.js').MachineAgentIsolationActionInput;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  machineRecipesRead?: (args: Readonly<{ homeId: string; machineId: string;
+    recipeRefs?: readonly import('../../machines/setup/machineRecipeV1.js').MachineRecipeReferenceV1[] }>, context: ActionExecutorContext) => Promise<
+    Readonly<{ entries: readonly import('../../daemon/contributionRegistryProjection.js').PluginProjectedMachineRecipeEntryV1[];
+      target?: import('../../daemon/contributionRegistryProjection.js').MachineRecipeReadTargetV1 }> | ActionExecuteFailure
+  >;
+
+  deploymentPublish?: (input: DeploymentPublishInputV1, context: ActionExecutorContext) =>
+    Promise<DeploymentPublishResultV1 | ActionExecuteFailure>;
+
+  deploymentPrepare?: (input: DeploymentPrepareInputV1, context: ActionExecutorContext) =>
+    Promise<DeploymentPrepareResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+
+  deploymentTemplateInstantiate?: (input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
+    review?: import('../../deployments/deploymentTemplateInstantiationV1.js').DeploymentTemplateInstantiationReviewV1) =>
+    Promise<DeploymentTemplateInstantiateResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+
+  prepareDeploymentTemplateInstantiation?: (request: Readonly<{ input: DeploymentTemplateInstantiateInputV1; context: ActionExecutorContext }>) =>
+    Promise<Readonly<{ input: DeploymentTemplateInstantiateInputV1; preview: import('../../json/strictJsonValue.js').JsonValue }> | ActionExecuteFailure>;
+
+  machineReachabilityAction?: (args: Readonly<{
+    actionId: import('../../machines/reachability/actionIdsV1.js').MachineReachabilityActionIdV1;
+    input: import('../../machines/reachability/actionsV1.js').MachineReachabilityActionInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  machineServiceLogsRead?: (args: Readonly<{
+    input: import('../specs/machine/services.js').MachineServiceLogsReadInputV1;
+    context: ActionExecutorContext;
+    approvalScope?: import('../actionSettings.js').ActionApprovalScopeV1;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  machineServiceExec?: (args: Readonly<{
+    input: import('../specs/machine/services.js').MachineServiceExecInputV1;
+    context: ActionExecutorContext;
+    approvalScope?: import('../actionSettings.js').ActionApprovalScopeV1;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  prepareDeploymentEnvironmentCreate?: (request: Readonly<{
+    input: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreateIntentInputV1;
+    context: ActionExecutorContext;
+    creationReview?: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreationReviewV1;
+  }>) => Promise<Readonly<{ input: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreateInputV1
+      | import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreateIntentInputV1;
+    preview: import('../../json/strictJsonValue.js').JsonValue }> | ActionExecuteFailure>;
 
   deploymentAction?: (actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext,
@@ -2323,6 +2449,10 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1;
+    /** Current Settings from this same reacquired requester holder, never the decider's Account. */
+    actionsSettings?: ActionsSettingsV1;
+    /** Original receiver's signer, rebound to the unchanged verified requester root. */
+    signExternalActionApprovalInput?: ActionExecutorContext['signExternalActionApprovalInput'];
     dispose?: () => Promise<void>;
   }> | null>;
   /** Admitted deciding-human custody for a live, exact token approval; never serialized. */
@@ -2867,7 +2997,7 @@ export type ActionExecutorDeps = Readonly<{
   /** Read Machine samples/history and compose Account summaries through the existing scoped transports. */
   /** Receiving daemon proves the service's scope before shared Action approval. */
   machineServiceScope?: (args: Readonly<{
-    actionId?: 'machines.services.control' | 'machines.services.logs.read';
+    actionId?: 'machines.services.exec' | 'machines.services.control' | 'machines.services.logs.read';
     input: Readonly<{ serverId: string; machineId: string; serviceId: string; expectedGeneration?: string }>;
     context: ActionExecutorContext;
   }>) => Promise<import('../actionSettings.js').ActionApprovalScopeV1 | Extract<ActionExecuteResult, { ok: false }> | null>;
@@ -2978,6 +3108,105 @@ export type ActionExecutorDeps = Readonly<{
 
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
+
+  readApprovedOperation?: (args: Readonly<{
+    runId?: string;
+    actionId: ActionId;
+    input: unknown;
+    /** Exact post-hook intent before domain preparation binds stored content. */
+    semanticInput?: unknown;
+    context: ActionExecutorContext;
+    phase: 'prepare' | 'dispatch';
+  }>) => Promise<ActionApprovedOperationAdmissionV1 | null>;
+
+  machineSetupApply?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupApplyInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  machineSetupPlan?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupPlanInputV1
+      | import('../../machines/managed/actionsV1.js').MachineSetupCombinedPlanInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
+  prepareMachineSetupApply?: (request: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupApplyInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineSetupApplyInputV1;
+    preview: import('../../json/strictJsonValue.js').JsonValue;
+    host: Readonly<{ machines: readonly import('../../workflows/workflowStartPreparationV1.js').WorkflowCombinedActionHostMachineV1[];
+      createdMachineIds?: readonly string[]; agentMachineId?: string }>;
+  }> | ActionExecuteFailure>;
+
+  prepareDeploymentAction?: (request: Readonly<{
+    actionId: 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote';
+    input: DeploymentDeployActionInputV1 | DeploymentRollbackActionInputV1 | DeploymentPromoteInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<Readonly<{ input: DeploymentDeployInputV1 | DeploymentRollbackInputV1 | DeploymentPromoteInputV1;
+    preview: import('../../json/strictJsonValue.js').JsonValue;
+    /** Actual demanded target roles selected with these same prepared candidate facts. */
+    hostReviewedChildren?: HostReviewedChildrenPlanV1 }> | ActionExecuteFailure
+    | Readonly<{
+      /** Host-private observation of an already accepted pending operation.
+       * Not an executable effect, wire value, or authority to skip approval. */
+      observePendingOperation(context: ActionExecutorContext): Promise<ActionExecuteResult>;
+    }>>;
+
+  prepareDeploymentTeardown?: (request: Readonly<{
+    input: import('../../deployments/deploymentActionsV1.js').DeploymentTeardownActionInputV1;
+    context: ActionExecutorContext;
+    /** The incumbent authorized Workflow owner opens Account-mode content. */
+    readWorkflowInvocation(reference: import('../../deployments/deploymentActionsV1.js').DeploymentDataCreationReferenceV1): Promise<unknown>;
+  }>) => Promise<Readonly<{ input: import('../../deployments/deploymentActionsV1.js').DeploymentTeardownInputV1;
+    preview: import('../../json/strictJsonValue.js').JsonValue; hostReviewedChildren?: HostReviewedChildrenPlanV1 }> | ActionExecuteFailure>;
+
+  prepareDeploymentPublish?: (request: Readonly<{ input: DeploymentPublishInputV1; context: ActionExecutorContext }>) =>
+    Promise<Readonly<{ input: DeploymentPublishInputV1; preview: import('../../json/strictJsonValue.js').JsonValue;
+      host: Readonly<{
+        machines: readonly import('../../workflows/workflowStartPreparationV1.js').WorkflowCombinedActionHostMachineV1[];
+        createdMachineIds?: readonly string[];
+        agentMachineId?: string;
+        projectEnvironmentControllerMachineIds?: readonly string[];
+      }>;
+    }> | ActionExecuteFailure>;
+
+  prepareHostReviewedChildren?: (request: Readonly<{ actionId: ActionId; input: unknown;
+    context: ActionExecutorContext; machineRuntimeDemand?: ActionMachineRuntimeDemandV1;
+  }>) => Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>;
+
+}>;
+
+export type ActionMachineRuntimeDemandV1 = Readonly<{
+  target: Extract<ExternalActionTargetV1, { kind: 'machine' | 'session' }>;
+  serverId?: string;
+  /** Accepted Session input owns its activation; other finite work activates before its original effect. */
+  activation?: 'accepted-input';
+}>;
+
+export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Readonly<{
+  executeAdmittedAction?: (request: ActionAdmittedExecutionV1) => Promise<ActionExecuteResult>;
+}>;
+
+export type ActionAdmittedExecutionV1 = Readonly<{
+  actionId: ActionId;
+  input: unknown;
+  context: ActionExecutorContext;
+  execute(context: ActionExecutorContext, target?: ActionPreparedMachineTargetV1): Promise<ActionExecuteResult>;
+}>;
+
+export type ActionPreparedMachineTargetV1 = Readonly<{ machineId: string; serverId?: string }>;
+
+export type ActionApprovedOperationAdmissionV1 = WorkflowApprovedOperationV1 & Readonly<{
+  invokeReviewedChild?: <T>(execute: (context: ActionExecutorContext) => Promise<T>) => Promise<T | ActionExecuteFailure>;
+}>;
+
+export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
+  surface: keyof ActionSurfaces;
+  authority: ActionRequiredAuthority;
 }>;
 
 export type HostReviewedChildInvocationServicesV1 = Readonly<{
@@ -3026,7 +3255,6 @@ export type HostReviewedChildPortV1 = Readonly<{
   preparedChildren?: readonly HostReviewedChildInvocationV1[];
   invoke(request: HostReviewedChildInvocationV1): Promise<ActionExecuteResult>;
 }>;
-
 
 export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
   role: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerRoleV1;

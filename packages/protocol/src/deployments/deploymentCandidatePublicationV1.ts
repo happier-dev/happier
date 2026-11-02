@@ -1,3 +1,5 @@
+import { DeploymentBackupRestorePrepareInputV1Schema } from './deploymentBackupRestoreV1.js';
+import { DeploymentBackupRestoreConfirmInputV1Schema } from './deploymentBackupRestoreV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -38,3 +40,21 @@ export function createDeploymentCandidatePublicationV1(input: Readonly<{
     ...(input.actionId === 'deployments.promote' ? { environmentContentArtifactId: artifactId('environment') } : {}),
   });
 }
+
+export const DeploymentDomainNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
+  environmentId: id, domainId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+
+export const DeploymentRestartNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('restart'), actionId: z.literal('deployments.restart'), environmentId: id,
+  deploymentId: id, targetLinkId: id, machineId: id, installationId: id,
+}));
+
+export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
+  z.extend(z.omit(DeploymentBackupRestorePrepareInputV1Schema, { serverId: true }), restoreAdmission()),
+  z.extend(z.omit(DeploymentBackupRestoreConfirmInputV1Schema, { serverId: true }), restoreAdmission()),
+]));
+
+const restoreAdmission = () => ({ kind: z.literal('restore'), actionId: z.literal('deployments.backups.restore'),
+  inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });

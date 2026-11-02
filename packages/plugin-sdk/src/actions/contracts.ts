@@ -1,3 +1,4 @@
+import type { MachineConnectorSecretsService } from '../secrets.js';
 import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
@@ -73,6 +74,8 @@ export type PluginAccountActionContext = Readonly<{
     caller?: PluginInvocationContext['caller'];
     signal: AbortSignal;
     services: Readonly<{
+        machineConnectorSecrets?: MachineConnectorSecretsService;
+
         storage: Readonly<{ account: PluginAccountStorageScope }>;
         actions: Pick<ActionsService, 'execute' | 'executeAdmittedTargetedOperation'>;
         targetedContributions: TargetedContributionsService;

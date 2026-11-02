@@ -75,3 +75,7 @@ export {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1,
 } from './triageEntryRef.js';
+
+
+
+export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';

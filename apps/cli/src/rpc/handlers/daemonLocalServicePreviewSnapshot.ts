@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema, DaemonLocalServicePreviewRevokeResponseV1Schema, DaemonLocalServicePreviewSnapshotRequestV1Schema, DaemonLocalServicePreviewSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import type { DaemonLocalServicePreviewOpenOrCreateResponseV1, DaemonLocalServicePreviewRevokeResponseV1, DaemonLocalServicePreviewSnapshotResponseV1 } from '@happier-dev/protocol';
@@ -79,8 +80,7 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
             return Boolean(serverId && await isServerProfileHomeIdentity(serverId, handle.workspace.serverId)
                 && await isServerProfileHomeIdentity(serverId, handle.requester.serverId));
         };
-        if (!current() || !await homeCurrent()) return reply(refused, 'service_home_or_custody_changed');
-        if (!await context.verifyMachineAdmissionCurrent() || !await homeCurrent() || !current()) return reply(refused, 'service_admission_changed');
+        if (!current() || !await homeCurrent() || !current()) return reply(refused, 'service_home_or_custody_changed');
         if (request.kind === 'wait_retirement') {
             if (request.instanceId !== handle.instanceId) return reply(refused, 'service_instance_changed');
             await new Promise<void>((resolve) => {
@@ -93,7 +93,7 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
                 context.signal.addEventListener('abort', finish, { once: true });
                 if (handle.retirementSignal.aborted || context.signal.aborted) finish();
             });
-            if (context.signal.aborted || !await context.verifyMachineAdmissionCurrent() || !await homeCurrent()) return reply(refused, 'service_admission_changed');
+            if (context.signal.aborted || !await homeCurrent()) return reply(refused, 'service_admission_changed');
             return reply({ v: 1, kind: 'retired', instanceId: handle.instanceId });
         }
         const endpoint = readProjectManagedServicePreviewEndpoint(handle);
@@ -122,11 +122,11 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
         const openOrCreate = routes.openOrCreate;
         rpc.registerHandler(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE,
-            async (raw: unknown, context): Promise<DaemonLocalServicePreviewOpenOrCreateResponseV1> => {
+            async (raw: unknown, context): Promise<DaemonLocalServicePreviewOpenOrCreateResponseV1 | ActionExecuteFailure> => {
                 const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse(raw);
                 const result = await openOrCreate(request, context?.signal, context);
                 if (!result.ok) {
-                    throw new DaemonLocalServicePreviewLifecycleError(result.reasonCode);
+                    return previewLifecycleFailure(result.reasonCode);
                 }
                 return DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(result.response);
             },
@@ -137,14 +137,18 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
         const revoke = routes.revoke;
         rpc.registerHandler(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE,
-            async (raw: unknown, context): Promise<DaemonLocalServicePreviewRevokeResponseV1> => {
+            async (raw: unknown, context): Promise<DaemonLocalServicePreviewRevokeResponseV1 | ActionExecuteFailure> => {
                 const request = DaemonLocalServicePreviewRevokeRequestV1Schema.parse(raw);
                 const result = await revoke(request, context);
                 if (!result.ok) {
-                    throw new DaemonLocalServicePreviewLifecycleError(result.reasonCode);
+                    return previewLifecycleFailure(result.reasonCode);
                 }
                 return DaemonLocalServicePreviewRevokeResponseV1Schema.parse(result.response);
             },
         );
     }
+}
+
+function previewLifecycleFailure(reasonCode: string): ActionExecuteFailure {
+    return { ok: false, errorCode: reasonCode, error: `local_service_preview_lifecycle_refused:${reasonCode}` };
 }

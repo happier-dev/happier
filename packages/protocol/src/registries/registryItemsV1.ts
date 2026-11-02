@@ -1,31 +1,22 @@
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
+import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema } from './registryContentRefV1.js';
+export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
+  RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
+export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryFormatV1Schema, RegistryKindV1Schema } from './registrySourcesV1.js';
 import { MarketplaceIndexEntryV1Schema, MarketplaceIndexSourceSnapshotV1Schema } from '../marketplace/marketplaceIndexV1.js';
 import { PinnedArchivePlatformSchema } from '../installables/sourceKind.js';
 
-export const RegistryGitTreeRefV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('gitTree'), repo: z.string().check(z.minLength(1)), path: z.string(),
-  commit: z.string().check(z.minLength(1)), treeSha: z.string().check(z.minLength(1)),
-}));
-export const WellKnownSkillRefV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('wellKnown'),
-  indexUrl: z.string().check(z.url(), z.refine(raw => { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password; })),
-  name: z.string().check(z.regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/)),
-  /** Materialized bundle digest, including every path, byte and executable bit. */
-  digest: z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/)),
-  /** Present only when the publisher's artifact digest was verified. */
-  publishedDigest: z.optional(z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/))),
-}));
-export type WellKnownSkillRefV1 = z.infer<typeof WellKnownSkillRefV1Schema>;
-export const RegistrySkillContentRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema]));
-export type RegistrySkillContentRefV1 = z.infer<typeof RegistrySkillContentRefV1Schema>;
-export const RegistryContentRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  RegistryGitTreeRefV1Schema,
-  z.strictObject({ kind: z.literal('version'), version: z.string().check(z.minLength(1)) }),
-  WellKnownSkillRefV1Schema,
-]));
-export type RegistryContentRefV1 = z.infer<typeof RegistryContentRefV1Schema>;
+
+
+
+
+
+
+
 
 export const RegistryProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), format: RegistryFormatV1Schema, sourceUrl: z.string().check(z.minLength(1)),
@@ -33,13 +24,13 @@ export const RegistryProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type RegistryProvenanceV1 = z.infer<typeof RegistryProvenanceV1Schema>;
 
-export const RegistryItemPointerV1Schema = lazyZodSchema(() => z.strictObject({ sourceId: z.string().check(z.minLength(1)),
-  itemId: z.string(), version: z.string().check(z.minLength(1)) }));
-export type RegistryItemPointerV1 = z.infer<typeof RegistryItemPointerV1Schema>;
+
+
 export const RegistryItemProblemV1Schema = lazyZodSchema(() => z.discriminatedUnion('code', [
   z.strictObject({ code: z.literal('too_large'), limit: z.enum(['files', 'bytes']) }),
   z.strictObject({ code: z.literal('unsupported_entry'), reason: z.enum(['symlink', 'submodule', 'distribution', 'package_type']) }),
   z.strictObject({ code: z.literal('removed_from_source') }),
+  z.strictObject({ code: z.literal('needs_review'), diagnostics: z.array(RegistryAppFieldDiagnosticV1Schema).check(z.minLength(1)) }),
 ]));
 export type RegistryItemProblemV1 = z.infer<typeof RegistryItemProblemV1Schema>;
 /** Selected distribution only; list fit needs targets/extraction support, never executable operands. */
@@ -111,6 +102,11 @@ export const AcpRegistryAgentV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type AcpRegistryAgentV1 = z.infer<typeof AcpRegistryAgentV1Schema>;
 export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.discriminatedUnion('state', [
+    z.strictObject({ kind: z.literal('app'), state: z.literal('ready'), app: DeploymentTemplateV1Schema, ref: RegistryContentRefV1Schema }),
+    z.strictObject({ kind: z.literal('app'), state: z.literal('needs_review'), ref: RegistryContentRefV1Schema,
+      diagnostics: z.array(RegistryAppFieldDiagnosticV1Schema).check(z.minLength(1)) }),
+  ]),
   z.strictObject({ kind: z.literal('skill'), skill: RegistrySkillSourceV1Schema }),
   z.strictObject({ kind: z.literal('mcpServer'), server: McpRegistryServerV1Schema }),
   z.strictObject({ kind: z.literal('agent'), agent: AcpRegistryAgentV1Schema }),
@@ -123,9 +119,15 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
   fetchedAt: z.number().check(z.int(), z.nonnegative()),
 }).check(z.superRefine((item, ctx) => {
   const version = item.payload.kind === 'skill' ? item.payload.skill.ref.kind === 'gitTree' ? item.payload.skill.ref.commit : item.payload.skill.ref.digest
+    : item.payload.kind === 'app' ? item.payload.ref.kind === 'gitTree' ? item.payload.ref.commit
+      : item.payload.ref.kind === 'version' ? item.payload.ref.version
+      : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
     : item.payload.kind === 'agent' ? item.payload.agent.version
       : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;
   if (item.summary.kind !== item.payload.kind || item.summary.version !== version
+    || item.payload.kind === 'app' && (item.payload.state === 'needs_review'
+      ? item.summary.problem?.code !== 'needs_review' || !sameStrictJsonValue(item.summary.problem.diagnostics, item.payload.diagnostics)
+      : item.summary.problem !== undefined)
     || item.payload.kind === 'agent' && item.summary.itemId !== item.payload.agent.id
     || item.payload.kind === 'mcpServer' && item.summary.itemId !== item.payload.server.name
     || item.payload.kind === 'plugin' && (item.summary.sourceId !== item.payload.source.id
@@ -135,3 +137,11 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
 })));
 export type RegistryItemV1 = z.infer<typeof RegistryItemV1Schema>;
 export type RegistrySkillItemV1 = RegistryItemV1 & Readonly<{ payload: Extract<RegistryItemPayloadV1, { kind: 'skill' }> }>;
+
+
+
+
+
+export const RegistryAppFieldDiagnosticV1Schema = lazyZodSchema(() => z.strictObject({
+  field: z.string().check(z.minLength(1)), reason: z.string().check(z.minLength(1)),
+}));

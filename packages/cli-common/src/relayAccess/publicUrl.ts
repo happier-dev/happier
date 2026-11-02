@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 
 import { getRelayAccessProvider, getRelayAccessProviderDescriptor } from './registry.js';
+import { parseRelayAccessConfig, relayAccessProviderDescriptors } from './catalog.js';
 import type { RelayAccessConfig, RelayAccessProviderExposure, RelayAccessStatus } from './types.js';
 
 type RelayAccessConfigEnv = Readonly<Record<string, string | undefined>>;
@@ -23,7 +24,7 @@ async function resolveRelayAccessStatusShareUrlWithEnv(
     upstreamUrl: string | null,
 ): Promise<string | null> {
     try {
-        const provider = getRelayAccessProvider(config.providerId);
+        const provider = getRelayAccessProvider(config.provider);
         const status = await provider.status({ config, ctx: { env, upstreamUrl } });
         return resolveRelayAccessStatusShareUrlFromStatus(status);
     } catch {
@@ -50,28 +51,8 @@ async function readPersistedRelayAccessConfigFromEnv(
         return null;
     }
 
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const record = parsed as Record<string, unknown>;
-    const providerId = typeof record.providerId === 'string' ? record.providerId.trim() : '';
-    if (!providerId) return null;
-
-    switch (providerId) {
-        case 'localOnly':
-        case 'tailscaleServe':
-        case 'tailscaleFunnel':
-            return { providerId };
-        case 'lan': {
-            const url = typeof record.url === 'string' ? record.url.trim() : '';
-            return url ? { providerId: 'lan', url } : null;
-        }
-        case 'cloudflareNamed': {
-            const hostname = typeof record.hostname === 'string' ? record.hostname.trim() : '';
-            const token = typeof record.token === 'string' ? record.token.trim() : '';
-            return hostname && token ? { providerId: 'cloudflareNamed', hostname, token } : null;
-        }
-        default:
-            return null;
-    }
+    return parseRelayAccessConfig(parsed, relayAccessProviderDescriptors.filter(descriptor =>
+        descriptor.definition.targets.includes('homeRelay')));
 }
 
 /**
@@ -80,7 +61,7 @@ async function readPersistedRelayAccessConfigFromEnv(
  * address it shares (when the provider can report one). `null` when no usable configuration exists.
  */
 export type RelayAccessConfiguredPublicAccess = Readonly<{
-    providerId: RelayAccessConfig['providerId'];
+    providerId: string;
     exposure: RelayAccessProviderExposure;
     shareUrl: string | null;
 }>;
@@ -91,15 +72,16 @@ export async function resolveRelayAccessConfiguredPublicAccess(
 ): Promise<RelayAccessConfiguredPublicAccess | null> {
     const config = await readPersistedRelayAccessConfigFromEnv(env);
     if (!config) return null;
-    const exposure = getRelayAccessProviderDescriptor(config.providerId).exposure;
+    const descriptor = getRelayAccessProviderDescriptor(config.provider);
+    const { exposure } = descriptor;
 
     const upstreamUrl = String(options.upstreamUrl ?? '').trim() || null;
     const allowTailscaleProviders = options.allowTailscaleProviders ?? true;
-    if (config.providerId === 'tailscaleServe' || config.providerId === 'tailscaleFunnel') {
-        if (!allowTailscaleProviders || !upstreamUrl) return { providerId: config.providerId, exposure, shareUrl: null };
+    if (descriptor.homeSetupTaskKind && !allowTailscaleProviders || descriptor.requiresUpstreamUrl && !upstreamUrl) {
+        return { providerId: descriptor.id, exposure, shareUrl: null };
     }
     const shareUrl = await resolveRelayAccessStatusShareUrlWithEnv(config, env as NodeJS.ProcessEnv, upstreamUrl);
-    return { providerId: config.providerId, exposure, shareUrl };
+    return { providerId: descriptor.id, exposure, shareUrl };
 }
 
 export async function resolveRelayAccessConfiguredCanonicalPublicServerUrl(
