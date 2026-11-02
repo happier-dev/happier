@@ -23,7 +23,11 @@ import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponse
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn() }));
 // Only the HTTP and authenticated Machine socket are replaced; resource opening,
 // protected admission, receiver policy and the Pending send owner remain real.
-vi.mock('axios', () => ({ default: http }));
+// Keep the real Axios defaults and API for the credential redirect adapter.
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), http) };
+});
 
 const sessionId = 'c123456789012345678901234';
 const addressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: sessionId };
