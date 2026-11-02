@@ -22,19 +22,35 @@ describe('voiceConversationRuntimeHelpers', () => {
             cause: createVoiceTextTurnRejectedBeforeEffectError(cause, 'provider_unavailable_before_acceptance') });
         const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
         expect(snapshot).toMatchObject({ errorMessage: uxDiagnostic.code, errorConnectedServiceDiagnostic: uxDiagnostic,
-            errorRecoveryAction: retryable ? 'retry' : 'none' });
+            errorRecoveryAction: retryable ? 'retry' : 'connect_agent' });
+        const { resolveVoiceConnectRecoveryTarget } = await import('@/components/voice/surface/resolveVoiceConnectRecoveryTarget');
+        const { executeVoiceAttemptRecovery, resolveVoiceAttemptRecoveryAvailable } = await import('@/components/voice/attempt/voiceAttemptRecovery');
+        const { resolveVoiceSurfaceRecovery } = await import('@/components/voice/surface/resolveVoiceSurfaceRecovery');
+        const { buildConnectedServiceSetupRoute } = await import('@/sync/domains/connectedServices/connectedAccountSettingsRoute');
+        const recoveryContext = { connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({
+            uxDiagnostic, agentRuntime: null, bindingScope: 'global', runtimeTarget: null,
+            provider: null, providerConfig: null, sessionMetadata: null, connectedServiceEntries: [],
+        }), runtimeRecoveryTarget: null, attemptSessionId: 's1', startSessionId: 's1', globalStartAuthorized: false };
+        const recoveryAvailable = resolveVoiceAttemptRecoveryAvailable(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction), recoveryContext);
         const presentation = projectVoiceAttemptPresentation({
             control: { availability: 'recoverable', live: true, canStart: true, canStop: false, canMute: false, muted: false,
-                capturing: false, primaryAction: retryable ? 'recover' : 'start', recoveryAvailable: retryable,
+                capturing: false, primaryAction: 'recover', recoveryAvailable,
                 surfaceState: 'error', tone: 'error', stop: 'blush', sessionId: 's1', markPose: 'blocked', statusCell: null },
             attemptId: 'attempt', ended: false, ...snapshot,
             recoveryAction: snapshot.errorRecoveryAction ?? null,
-            recoveryContext: { connectRecoveryTarget: { kind: 'default' }, runtimeRecoveryTarget: null,
-                attemptSessionId: 's1', startSessionId: 's1', globalStartAuthorized: false },
+            recoveryContext,
             serviceTitle: 'Voice', agentTitle: 'Codex', agentMachineLabel: 'Dev machine',
         });
         expect(presentation.failureMessage).toBe(t(resolveConnectedServiceUxDiagnosticPresentation(uxDiagnostic)!.bodyKey));
-        expect(presentation.recovery?.action ?? null).toBe(retryable ? 'retry' : null);
+        expect(presentation.recovery?.action ?? null).toBe(retryable ? 'retry' : 'connect_agent');
+        if (!retryable) {
+            expect(presentation.recovery?.label).toBe(t('connectedServices.detail.actions.reconnect'));
+            const destinations: unknown[] = [];
+            await expect(executeVoiceAttemptRecovery({ recoveryAction: snapshot.errorRecoveryAction ?? null,
+                setupIncomplete: false, context: recoveryContext, navigate: href => { destinations.push(href); } })).resolves.toBe(true);
+            expect(destinations).toEqual([buildConnectedServiceSetupRoute({ kind: 'reconnect',
+                serviceKey: uxDiagnostic.serviceId!, accountId: uxDiagnostic.profileId! })]);
+        }
         expect(JSON.stringify(presentation)).not.toContain('PRIVATE_PROVIDER_BODY');
     });
     beforeEach(() => {

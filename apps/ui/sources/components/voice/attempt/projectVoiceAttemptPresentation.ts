@@ -26,15 +26,17 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
 }>): VoiceAttemptPresentation {
     const { control, recoveryAction, recoveryContext, agentTitle, agentMachineLabel } = input;
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
+    const connectedService = resolveConnectedServiceUxDiagnosticPresentation(input.errorConnectedServiceDiagnostic);
+    const reconnectProfile = recoveryAction === 'connect_agent'
+        ? connectedService?.actions.find(action => action.kind === 'reconnect_profile') : undefined;
     const recoveryPresentation = !control.recoveryAvailable ? null
         : control.surfaceState === 'permission_required'
             ? { label: t('voicePresence.recovery.allow'), icon: 'microphone' as const }
             : recovery
-                ? { label: opensAgentRuntimeSettings(recoveryAction, recoveryContext) && agentTitle
+                ? { label: reconnectProfile ? t(reconnectProfile.labelKey) : opensAgentRuntimeSettings(recoveryAction, recoveryContext) && agentTitle
                     ? t('voiceSurface.setUpAgent', { agent: agentTitle }) : t(recovery.labelKey), icon: recovery.icon }
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
-    const connectedService = resolveConnectedServiceUxDiagnosticPresentation(input.errorConnectedServiceDiagnostic);
     const failureMessage = connectedService ? t(connectedService.bodyKey) : failureKind === null ? null
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })

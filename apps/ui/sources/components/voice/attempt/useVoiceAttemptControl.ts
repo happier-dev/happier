@@ -374,6 +374,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const providerConnectedServicesBinding =
         providerEntry?.providerSettings?.connectedServicesBinding ?? null;
     const connectRecoveryTarget = React.useMemo(() => resolveVoiceConnectRecoveryTarget({
+        uxDiagnostic: snap.errorConnectedServiceDiagnostic,
         agentRuntime: agentRuntimeIdentity,
         bindingScope: recoveryBindingScope,
         runtimeTarget: runtimeRecoveryTarget,
@@ -389,6 +390,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         sessionMetadata: recoveryBindingScope === 'session' ? recoverySessionOwnerMetadata : null,
         connectedServiceEntries: connectedServicesRegistry.entries,
     }), [
+        snap.errorConnectedServiceDiagnostic,
         agentRuntimeIdentity,
         recoveryBindingScope,
         canonicalVoice,

@@ -106,8 +106,10 @@ export function createVoiceMachineError(params: Readonly<{
         ...(uxDiagnostic ? {
             uxDiagnostic,
             retryPolicy: uxDiagnostic.retryable ? 'user_action' as const : 'never' as const,
-            recoveryAction: uxDiagnostic.retryable && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry)
-                ? 'retry' as const : 'none' as const,
+            recoveryAction: uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.reconnectProfile)
+                ? 'connect_agent' as const
+                : uxDiagnostic.retryable && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry)
+                    ? 'retry' as const : 'none' as const,
             presentation: 'error' as const,
         } : {}),
         // Only a notice ends gracefully. A blocked microphone stays on screen ("Microphone blocked"

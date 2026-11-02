@@ -1,5 +1,6 @@
 import { BuiltInLegacyConnectedServiceBindingsV1IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import type {
     ConnectedServiceRegistryEntry,
@@ -7,6 +8,7 @@ import type {
 import {
     buildConnectedAccountSettingsRoute,
     resolveConnectedAccountSettingsRoute,
+    buildConnectedServiceSetupRoute,
 } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import {
     readSessionConnectedServiceBindings,
@@ -20,7 +22,7 @@ export type VoiceConnectRecoveryTarget =
     | Readonly<{ kind: 'provider_settings' }>
     | Readonly<{
         kind: 'exact';
-        route: ReturnType<typeof buildConnectedAccountSettingsRoute>;
+        route: ReturnType<typeof buildConnectedAccountSettingsRoute> | ReturnType<typeof buildConnectedServiceSetupRoute>;
     }>
     | Readonly<{ kind: 'unavailable' }>;
 
@@ -54,6 +56,7 @@ function resolveBindingAgent(params: Readonly<{
 }
 
 export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
+    uxDiagnostic?: ConnectedServiceUxDiagnosticV1;
     agentRuntime: PluginContributionIdentityV1 | null;
     bindingScope: 'global' | 'session';
     runtimeTarget: Readonly<{ machineId: string }> | null;
@@ -62,6 +65,12 @@ export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
     sessionMetadata: unknown;
     connectedServiceEntries: readonly ConnectedServiceRegistryEntry[];
 }>): VoiceConnectRecoveryTarget {
+    // The failed Run names the refused account; current provider preferences
+    // cannot retarget recovery to a different account or Agent setup screen.
+    if (params.uxDiagnostic?.serviceId && params.uxDiagnostic.profileId) {
+        return { kind: 'exact', route: buildConnectedServiceSetupRoute({ kind: 'reconnect',
+            serviceKey: params.uxDiagnostic.serviceId, accountId: params.uxDiagnostic.profileId }) };
+    }
     const connectedServicesBinding = params.provider?.connectedServicesBinding;
     if (!connectedServicesBinding) {
         return params.bindingScope === 'global'

@@ -107,7 +107,8 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const entry = registry.get(providerId);
     const context = { attemptSessionId: snapshot.sessionId, startSessionId: startAddress?.sessionId ?? null,
         globalStartAuthorized: bindingScope === 'global', runtimeRecoveryTarget,
-        connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({ agentRuntime: agent ?? null, bindingScope, runtimeTarget: runtimeRecoveryTarget,
+        connectRecoveryTarget: resolveVoiceConnectRecoveryTarget({ uxDiagnostic: snapshot.errorConnectedServiceDiagnostic,
+            agentRuntime: agent ?? null, bindingScope, runtimeTarget: runtimeRecoveryTarget,
             provider: entry ? { sourcePluginId: entry.source.kind === 'bundled' || entry.source.kind === 'external' ? entry.source.pluginId : null,
                 connectedServicesBinding: entry.providerSettings?.connectedServicesBinding ?? null } : null,
             providerConfig: bindingScope === 'session' ? null : readVoiceProviderSettingsConfig(voiceSettings, providerId),
