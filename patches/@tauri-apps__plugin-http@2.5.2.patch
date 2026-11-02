@@ -1,0 +1,58 @@
+diff --git a/dist-js/index.cjs b/dist-js/index.cjs
+index 93f3438..1be07a1 100644
+--- a/dist-js/index.cjs
++++ b/dist-js/index.cjs
+@@ -117,12 +117,14 @@ async function fetch(input, init) {
+     });
+     // no body for 101, 103, 204, 205 and 304
+     // see https://fetch.spec.whatwg.org/#null-body-status
++    let bodyCancelled = false;
+     const body = [101, 103, 204, 205, 304].includes(status)
+         ? null
+         : new ReadableStream({
+             start: (controller) => {
+                 const streamChannel = new core.Channel();
+                 streamChannel.onmessage = (res) => {
++                    if (bodyCancelled) return;
+                     // close early if aborted
+                     if (signal?.aborted) {
+                         controller.error(ERROR_REQUEST_CANCELLED);
+@@ -145,6 +147,9 @@ async function fetch(input, init) {
+                 }).catch((e) => {
+                     controller.error(e);
+                 });
++            },
++            cancel: () => {
++                bodyCancelled = true;
+             }
+         });
+     const res = new Response(body, {
+diff --git a/dist-js/index.js b/dist-js/index.js
+index f4db76b..db01fd7 100644
+--- a/dist-js/index.js
++++ b/dist-js/index.js
+@@ -115,12 +115,14 @@ async function fetch(input, init) {
+     });
+     // no body for 101, 103, 204, 205 and 304
+     // see https://fetch.spec.whatwg.org/#null-body-status
++    let bodyCancelled = false;
+     const body = [101, 103, 204, 205, 304].includes(status)
+         ? null
+         : new ReadableStream({
+             start: (controller) => {
+                 const streamChannel = new Channel();
+                 streamChannel.onmessage = (res) => {
++                    if (bodyCancelled) return;
+                     // close early if aborted
+                     if (signal?.aborted) {
+                         controller.error(ERROR_REQUEST_CANCELLED);
+@@ -143,6 +145,9 @@ async function fetch(input, init) {
+                 }).catch((e) => {
+                     controller.error(e);
+                 });
++            },
++            cancel: () => {
++                bodyCancelled = true;
+             }
+         });
+     const res = new Response(body, {

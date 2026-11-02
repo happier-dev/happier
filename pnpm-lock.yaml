@@ -219,6 +219,7 @@ patchedDependencies:
   '@react-navigation/core@7.21.5': 71a4729e813c532f803d10de2ce44b97574c6bc1b94e85ce03aebb877c1ab70c
   '@sentry/react-native@7.11.0': 4712205262361e4205c169fae1ea55caa710ebb6a4eefb9cf236843bce3ae0a4
   '@socket.io/redis-streams-adapter@0.3.1': 3f43e186d5a6ea68f11acb84b85b8d592540b5d431183964560cf55421cc1467
+  '@tauri-apps/plugin-http@2.5.2': de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64
   expo-crypto@55.0.12: e38a87b4c4c7be4f007034850901d7ef8f4723685ad1ab89a2ed6054da68070e
   expo-modules-core@55.0.20: a05c6fd24b1582d04b3285434d4214f90aa4aa343daefa671c732bb2e5da7c51
   expo-notifications@55.0.16: 9b0f9f0fa885c5151147f01624e5299bb7b6b05138f06bddf715a3efcde3a9e1
@@ -1589,7 +1590,7 @@ importers:
         version: 2.12.1
       '@tauri-apps/plugin-http':
         specifier: 2.5.2
-        version: 2.5.2
+        version: 2.5.2(patch_hash=de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64)
       '@tauri-apps/plugin-notification':
         specifier: ^2.3.1
         version: 2.3.3
@@ -22037,7 +22038,7 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.1
       '@tauri-apps/cli-win32-x64-msvc': 2.12.1
 
-  '@tauri-apps/plugin-http@2.5.2':
+  '@tauri-apps/plugin-http@2.5.2(patch_hash=de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64)':
     dependencies:
       '@tauri-apps/api': 2.12.1
 
