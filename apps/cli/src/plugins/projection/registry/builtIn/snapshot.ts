@@ -22,10 +22,10 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
     const { readStoredCredentials } = await import('@/persistence');
     const credentials = await (params?.accountStorageDependencies?.readCredentials ?? readStoredCredentials)();
     if (credentials) {
-      const { configuration } = await import('@/configuration');
+      const { resolveServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
       const { readCurrentAccountPluginEnablements } = await import('@/plugins/runtime/accountPluginActivationSource');
       accountEnabledById = await readCurrentAccountPluginEnablements({ credentials,
-        serverUrl: params?.accountStorageDependencies?.resolveBaseUrl?.() ?? configuration.apiServerUrl, pluginIds });
+        serverUrl: params?.accountStorageDependencies?.resolveBaseUrl?.() ?? resolveServerHttpBaseUrl(), pluginIds });
     }
   } catch {
     // Optional plugin reachability cannot stop the host. A failed Account read

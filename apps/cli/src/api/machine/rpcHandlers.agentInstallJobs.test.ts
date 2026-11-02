@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import fastify from 'fastify';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -7,21 +9,37 @@ import type { RpcHandler, RpcHandlerContext } from '../rpc/types';
 import { createAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { registerMachineAgentInstallJobRpcHandlers } from './rpcHandlers.agentInstallJobs';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it('admits qualified bundled Codex installs through machine RPC and shares the routing-id job', async () => {
+it('admits qualified bundled Codex installs through the published Home carrier and machine RPC, sharing the routing-id job', async () => {
   const home = await createTempDir('happier-codex-install-identity-');
   const handlers = new Map<string, RpcHandler>();
   let finishFetch!: (response: Response) => void;
   const response = new Promise<Response>(resolve => { finishFetch = resolve; });
-  const owner = createAgentInstallJobOwner({ readRegistry: getResolvedContributionRegistry,
+  const app = fastify();
+  app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+    const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body).knownPluginIds ?? [];
+    return { availabilityCursor: 1, pluginIds: ids, failedPluginIds: [], intentReads: ids.map(pluginId => ({ pluginId,
+      response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
+        release: null, uiArtifacts: [], packageAssets: [] },
+    })) };
+  });
+  await app.ready();
+  const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'http://codex-install-carrier.test' });
+  const unpublish = publishServerHttpRuntimeOrigin('http://codex-install-carrier.test', 'iroh');
+  const registry = getResolvedContributionRegistry({ pluginEnablementById: await readCurrentBundledPluginEnablement({
+    machineEnabledById: {}, accountStorageDependencies: { readCredentials: async () => ({ token: 'fixture', encryption: null }) },
+  }) });
+  const owner = createAgentInstallJobOwner({ readRegistry: () => registry,
     readTrackedSessions: () => [], env: { HOME: home, HAPPIER_HOME_DIR: home, PATH: '' },
-    // Only GitHub HTTP is substituted; bundled admission, identity projection,
-    // installer, settlement and RPC response parsing all remain real.
+    // Account/GitHub HTTP and stored credentials are boundary fixtures; bundled
+    // admission, identity projection, installer, settlement and RPC stay real.
     installerDeps: { fetchGitHubReleaseByTag: params => fetchGitHubReleaseByTag({ ...params,
       fetchImpl: async () => response,
     }) },
@@ -44,6 +62,9 @@ it('admits qualified bundled Codex installs through machine RPC and shares the r
   } finally {
     finishFetch(new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }));
     await owner.shutdown();
+    unpublish();
+    restoreHttp();
+    await app.close();
     await removeTempDir(home);
   }
 });
