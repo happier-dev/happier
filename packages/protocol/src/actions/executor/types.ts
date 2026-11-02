@@ -1553,6 +1553,8 @@ export type ActionExecutorDeps = Readonly<{
     actionId: ActionId;
     input: unknown;
     context: ActionExecutorContext;
+    /** Continue this admitted effect locally when no presenter forward is needed. */
+    execute: () => Promise<ActionExecuteResult>;
   }>) => Promise<ActionExecuteResult>;
   uiCommandPaletteAction?: (args: Readonly<{
     actionId: 'ui.command_palette.list' | 'ui.command_palette.invoke';

@@ -3521,8 +3521,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
         ctx = { ...ctx, expectedAccountId: accountId };
       }
-      if (executionPlacement === 'client' && deps.clientActionExecute) {
-        const delivered = await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx });
+      if (executionPlacement === 'client' && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued) {
+        // Local client delivery continues the resolved leaf. Dropping it here
+        // re-enters target resolution and then client delivery on every read.
+        const delivered = await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx,
+          execute: () => executeCoreTerminal(actionId, admittedInput, ctx, true, legacyMetadataLabel,
+            { ...dispatchAdmission, context: ctx, clientExecutionContinued: true },
+            options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true) });
         // An exact receiver's result cannot retarget to a headless owner.
         if (typeof data.clientId === 'string') return delivered;
         if (actionId === 'inbox.get' && delivered.ok && readRecord(delivered.result).status === 'unavailable' && deps.appShellAction) {
