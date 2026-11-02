@@ -584,6 +584,43 @@ whole V8 Script source strings for Unicode comments or raw template text. esbuil
 does not escape Unicode regular-expression literals; first-party regex owners
 use equivalent Unicode escapes to keep those source graphs Latin-1-safe.
 
+Retained source CLI/daemon readiness checks the installed dependency publication
+captured in `source-bundle.json` before probing or launching its selected graph.
+In current 0.3 development, new daemon captures also record the installed package
+closure selected by their emitted external imports, including executable sidecars.
+The daemon author-input owner (`source_author_inputs.mjs`) supplies the same
+installed-file walker for this runtime closure, following installed runtime and peer
+dependencies rather than compiler or unrelated workspace module roots. A completed
+dependency refresh outside that closure (for example UI-only wiring or a Metro
+patch) leaves the retained CLI launchable. Runtime file identities use cached
+content digests, so replacing identical files or changing their timestamps during
+an unrelated install does not invalidate the CLI. Author-build identities keep
+their existing metadata proof. Changed or removed closure inputs still
+require reload. Finite build/publication checks retain the installation-wide
+identity; server and Expo preparation are unchanged. Older captures without a
+runtime closure retain the installation-wide launch comparison.
+An unavailable publication record, changed runtime closure, or older capture
+without its publication locators returns `SOURCE_RUNTIME_RELOAD_REQUIRED`, with
+phase `dependencies` and `retryable: false`. Reload the Stack from current source
+to prepare and select a new graph. The refusal preserves the selected runtime;
+it does not automatically restart the Stack. This development-only check reads
+the existing preparation identity on launch demand and adds no background watcher.
+A completed reinstall with the same content identity remains launchable even when
+its install generation changed. Current captures recheck the runtime closure on
+that generation change, since an unchanged dependency manifest can still have a
+different installed layout. Bundle preparation invalidates its retained result
+on a generation change and resolves imports again through their importer.
+Launch waits for an active refresh through the
+dependency preparation owner's existing cancellable lock-release wait, then
+checks the completed content identity. An interrupted, unfinished publication
+remains unavailable and requires explicit reload after dependency repair.
+Reading the selected record for recovery does not perform this check: explicit
+reload can inspect and replace older captures that predate the publication locators.
+The daemon's existing source-launch preflight returns the same refusal before
+starting an Agent child. Its spawn result retains `SPAWN_FAILED` and carries
+`launch_error.code: SOURCE_RUNTIME_RELOAD_REQUIRED` with the reload instruction.
+Existing child-exit diagnostics remain available for failures after launch.
+
 Checkout source-dev Agent launches prepare shared dependencies through
 `syncSharedDepsForDev.mjs`'s canonical publisher, sharing its publication lock
 with Stack preparation and bundled Plugin runtime loading. A stale checkout

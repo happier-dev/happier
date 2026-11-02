@@ -2,17 +2,41 @@ import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, realpat
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { createHash } from 'node:crypto';
-import { resolveDependencyInstallRoot, withDependencyConsumption } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
+export { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
+
+export async function readBuildInputDependencies({ sourceDir, env = process.env }) {
+  return await readDependencyPublicationState({ installDir: resolveDependencyInstallRoot(sourceDir), env });
+}
+
+/** Reject a result that consumed an install while its writer was running. */
+export async function assertBuildInputDependencies({ sourceDir, env = process.env, state }) {
+  const current = await readBuildInputDependencies({ sourceDir, env });
+  if (!buildInputDependencyIdentityMatches(state, current) || state.generation !== current.generation) {
+    throw new BuildInputDriftError('[build] dependencies changed while producing the artifact; discard it and rerun the phase');
+  }
+}
 
 /**
- * Captures link external packages to the installed tree. Hold its existing
- * mutation custody through the entire finite consumption, not just mounting.
+ * Captures link external packages to the installed tree. Wait for an active
+ * writer at startup, then check dependency publication without holding readers.
  * @template T
  * @param {{ sourceDir: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} input
- * @param {(env: NodeJS.ProcessEnv) => Promise<T>} consume
+ * @param {(env: NodeJS.ProcessEnv, publication: { state: Awaited<ReturnType<typeof readDependencyPublicationState>>, assertCurrent: () => Promise<void> }) => Promise<T>} consume
  */
 export async function withBuildInputDependencies({ sourceDir, env = process.env, signal }, consume) {
-  return await withDependencyConsumption({ installDir: resolveDependencyInstallRoot(sourceDir), env, signal }, consume);
+  const installDir = resolveDependencyInstallRoot(sourceDir);
+  await waitForDependencyRefresh({ installDir, env, signal });
+  const state = await readBuildInputDependencies({ sourceDir, env });
+  let checkedAtPublication = false;
+  const assertCurrent = async () => {
+    await assertBuildInputDependencies({ sourceDir, env, state });
+    checkedAtPublication = true;
+  };
+  const result = await consume(env, { state, assertCurrent });
+  if (!checkedAtPublication) await assertCurrent();
+  return result;
 }
 
 /** Identity of an admitted input view, distinct from any emitted-code digest. */

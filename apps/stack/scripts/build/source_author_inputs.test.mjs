@@ -5,6 +5,65 @@ import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { readSourceAuthorDependencyIdentity, readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { assertSourceRuntimeDependenciesCurrent } from '../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
+import { readDependencyPublicationState, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
+
+test('runtime closure invalidates a removed installed path and re-resolves after an install relayout', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-input-relayout-' });
+  const sourceDir = fixture.path('repo');
+  const importer = fixture.path('repo/apps/cli/package.json');
+  const nested = fixture.path('repo/apps/cli/node_modules/runtime-input');
+  const hoisted = fixture.path('repo/node_modules/runtime-input');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  await mkdir(nested, { recursive: true });
+  await mkdir(fixture.path('repo/node_modules'), { recursive: true });
+  await writeFile(fixture.path('repo/package.json'), '{"private":true}');
+  await writeFile(importer, '{"private":true}');
+  await withDependencyRefresh({ installDir: sourceDir, env }, async () => {
+    await writeFile(`${nested}/package.json`, JSON.stringify({ name: 'runtime-input', main: 'index.cjs' }));
+    await writeFile(`${nested}/index.cjs`, 'exports.value = 1;');
+  });
+  await symlink(fileURLToPath(new URL('../../', import.meta.url)), fixture.path('repo/apps/stack'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  const dependencyPublication = { ...await readDependencyPublicationState({ installDir: sourceDir, env }),
+    markerPath: resolveDependencyRefreshMarkerPath(sourceDir),
+    generationPath: `${resolveDependencyRefreshLockPath(sourceDir, env)}.generation` };
+  let attempts = 0;
+  let before;
+  let staleImports;
+  const result = await withSingleTrailingBuildPass({ run: () => withBuildInputDependencies({ sourceDir, env }, async () => {
+    attempts++;
+    const installed = resolveInstalledRuntimePackage({ packageName: 'runtime-input', resolveFromPackageJsonPath: importer });
+    const imports = [{ path: pathToFileURL(`${installed.packageDir}/index.cjs`).href, resolveFrom: importer }];
+    if (attempts === 1) {
+      staleImports = imports;
+      before = readSourceRuntimeDependencyIdentity({ imports });
+      await withDependencyRefresh({ installDir: sourceDir, env, force: true }, async () => {
+        await rename(nested, hoisted);
+      });
+    }
+    return { imports, identity: readSourceRuntimeDependencyIdentity({ imports }) };
+  }) });
+  assert.equal(attempts, 2, 'the existing generation owner discards the stale closure and runs its trailing pass');
+  assert.equal(result.imports[0].path, pathToFileURL(`${hoisted}/index.cjs`).href);
+  assert.notEqual(readSourceRuntimeDependencyIdentity({ imports: staleImports }), before,
+    'a vanished absolute import must invalidate the old runtime without inventorying an ancestor workspace');
+  assert.equal(result.identity, readSourceRuntimeDependencyIdentity({ imports: result.imports }));
+  assert.equal((await readDependencyPublicationState({ installDir: sourceDir, env })).identity, dependencyPublication.identity,
+    'the relayout changes installation generation without changing dependency manifest identity');
+  const entrypoint = fixture.path('runtime/apps/cli/src/index.mjs');
+  await assert.doesNotReject(assertSourceRuntimeDependenciesCurrent({ entrypoint, env, record: {
+    dependencyPublication, runtimeDependencyClosure: result,
+  } }), 'an unchanged runtime closure remains usable after a completed reinstall');
+  await assert.rejects(assertSourceRuntimeDependenciesCurrent({ entrypoint, env, record: {
+    dependencyPublication, runtimeDependencyClosure: { imports: staleImports, identity: before },
+  } }), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' },
+  'generation changes invalidate cached closure proofs even when manifest identity stays the same');
+});
 
 test('runtime dependency identity survives identical installed-file replacement but rejects changed bytes', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-runtime-input-content-' });

@@ -123,7 +123,14 @@ function readInstalledDependencyIdentity({ sourceRepoDir, repoDir, workspacePack
       }
       // A removed import must refuse rather than accidentally inventorying an
       // ancestor workspace after the installed package directory disappears.
-      realpathSync(path);
+      try { realpathSync(path); }
+      catch (error) {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+        // Match missing bare imports: invalidate the closure, leaving finite
+        // build admission to discard a snapshot spanning an install relayout.
+        hash.update(JSON.stringify([identityPathFor(resolveFrom), path, 'absent']));
+        continue;
+      }
       let root = dirname(path);
       let manifest;
       for (;;) {
