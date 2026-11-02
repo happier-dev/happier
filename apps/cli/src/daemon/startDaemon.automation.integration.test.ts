@@ -3,6 +3,10 @@ import { join } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import packageJson from '../../package.json';
 import type {
   ConnectedServiceAuthGroupApi,
@@ -36,6 +40,11 @@ vi.mock('node:child_process', async (importOriginal) => ({
   ...await importOriginal<typeof import('node:child_process')>(),
   spawn: spawnChildProcess,
 }));
+
+vi.mock('socket.io-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('socket.io-client')>();
+  return { ...actual, io: vi.fn(actual.io) };
+});
 
 const automationCredentials = {
   token: 'token-automation',
@@ -92,6 +101,59 @@ async function useActualSessionAttachContext(): Promise<() => void> {
   };
 }
 
+async function installConnectedServiceSessionPersistenceFixture() {
+  const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
+  const socketIo = await import('socket.io-client');
+  const sessions = new Map<string, ReturnType<typeof createSessionRecordFixture>>();
+  const getSession = (sessionId: string) => {
+    let session = sessions.get(sessionId);
+    if (!session) {
+      session = createSessionRecordFixture({
+        id: sessionId, active: true, activeAt: 1,
+        encryptionMode: 'e2ee',
+        metadata: encodeBase64(encrypt(automationCredentials.encryption.secret, 'legacy', createTestMetadata({
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'claude-subscription': {
+                source: 'connected', selection: 'group', groupId: 'team', profileId: 'claude-primary',
+              },
+            },
+          },
+        })), 'base64'),
+      });
+      sessions.set(sessionId, session);
+    }
+    return session;
+  };
+  vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => getSession(sessionId));
+  // Socket.IO and HTTP are network boundaries; keep the metadata updater and encryption real.
+  vi.mocked(socketIo.io).mockImplementation((_url, options) => {
+    const sessionId = options?.auth && typeof options.auth === 'object'
+      ? String(options.auth.sessionId) : '';
+    const socket = createApiSessionSocketStub({
+      emit: (event, args) => {
+        expect(event).toBe('update-metadata');
+        const [payload, callback] = args as [
+          { sid: string; expectedVersion: number; metadata: string },
+          (ack: unknown) => void,
+        ];
+        const session = getSession(sessionId);
+        expect(payload.sid).toBe(sessionId);
+        expect(payload.expectedVersion).toBe(session.metadataVersion);
+        session.metadata = payload.metadata;
+        session.metadataVersion += 1;
+        callback({ result: 'success', version: session.metadataVersion, metadata: session.metadata });
+      },
+    });
+    // The canonical boundary stub implements the Socket methods this path consumes.
+    return socket as unknown as ReturnType<typeof socketIo.io>;
+  });
+  return (sessionId: string): unknown => decrypt(
+    automationCredentials.encryption.secret, 'legacy', decodeBase64(getSession(sessionId).metadata, 'base64'),
+  );
+}
+
 function restoreProcessEnvValue(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];
@@ -101,6 +163,9 @@ function restoreProcessEnvValue(name: string, value: string | undefined): void {
 }
 
 async function resetAutomationDaemonTestDefaults(): Promise<void> {
+  const socketIo = await import('socket.io-client');
+  const actualSocketIo = await vi.importActual<typeof socketIo>('socket.io-client');
+  vi.mocked(socketIo.io).mockReset().mockImplementation(actualSocketIo.io);
   harness.setMachineSyncClientOverride(null);
   harness.axiosGet.mockReset().mockRejectedValue(new Error('Unexpected HTTP request in daemon automation test'));
   harness.readAccountChangesCursor.mockReset().mockResolvedValue(0);
@@ -494,10 +559,12 @@ vi.mock('@/backends/catalog', async (importOriginal) => ({
   notifyTerminalAttachmentRetiredThroughCatalog: vi.fn(async () => {}),
 }));
 
-vi.mock('@/persistence', () => {
+vi.mock('@/persistence', async (importOriginal) => {
+  const { requireEncryptionCredentials } = await importOriginal<typeof import('@/persistence')>();
   const writeDaemonState = vi.fn();
   const clearDaemonState = vi.fn(async () => true);
   return {
+    requireEncryptionCredentials,
     clearDaemonState,
     writeDaemonState,
     writeDaemonStateIfLockOwned: vi.fn((state: unknown) => {
@@ -2350,6 +2417,7 @@ describe('startDaemon automation wiring (integration)', () => {
 
     try {
       const webhook = await installActualDaemonClaudeReadinessWebhook(pid);
+      const readPersistedMetadata = await installConnectedServiceSessionPersistenceFixture();
       const { buildConnectedServiceCredentialRecord } = await import('@happier-dev/protocol');
       const credentialRevision = 'csr_qMAFYPwqb7Ulai7se9UH-MHchuy3eVAkTXkJwxwv-lE';
       const record = buildConnectedServiceCredentialRecord({
@@ -2476,6 +2544,11 @@ describe('startDaemon automation wiring (integration)', () => {
       }));
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ status: 'ok' });
+      expect(readPersistedMetadata('session-claude-legacy-fresh-registration')).toMatchObject({
+        connectedServices: { bindingsByServiceId: {
+          'claude-subscription': { appliedProfileId: 'lb_bat' },
+        } },
+      });
       expect(webhook.getTrackedSession()).toMatchObject({
         happySessionId: 'session-claude-legacy-fresh-registration',
         spawnOptions: {
@@ -3329,13 +3402,7 @@ describe('startDaemon automation wiring (integration)', () => {
       });
 
       const { callSessionRpc } = await import('@/session/transport/rpc/sessionRpc');
-      const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
-      vi.mocked(fetchSessionById).mockImplementation(async ({ sessionId }) => ({
-        id: sessionId,
-        active: true,
-        activeAt: 1,
-        metadata: null,
-      }) as never);
+      const readPersistedMetadata = await installConnectedServiceSessionPersistenceFixture();
       const { ClaudeConnectedServiceAuthGroupRequestFence } = await import(
         '@/backends/claude/connectedServices/claudeConnectedServiceAuthGroupRequestFence'
       );
@@ -3556,6 +3623,13 @@ describe('startDaemon automation wiring (integration)', () => {
       ]);
       expect(applySharedGenerationApplication).toHaveBeenCalledOnce();
       expect(vi.mocked(callSessionRpc)).toHaveBeenCalledTimes(3);
+      for (const sessionId of ['f092-claude-1', 'f092-claude-2', 'f092-claude-late']) {
+        expect(readPersistedMetadata(sessionId)).toMatchObject({
+          connectedServices: { bindingsByServiceId: {
+            'claude-subscription': { appliedProfileId: 'claude-backup' },
+          } },
+        });
+      }
       expect(vi.mocked(spawnHappyCLI)).not.toHaveBeenCalled();
       expect(killSpy).not.toHaveBeenCalled();
       expect(providerSurface).toEqual({
