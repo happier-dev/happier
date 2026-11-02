@@ -741,6 +741,114 @@ test('runtime worker eligibility uses the command pool, physical class floor and
   assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved'], 'cached server eligibility bypassed daemon capability filtering');
 });
 
+for (const heavy of [false, true]) test(`AUTO concurrent cached placements spread in proportion to probed cores (${heavy ? 'zero memory headroom' : 'light commands'})`, { skip: process.platform !== 'linux', timeout: 60000 }, async t => {
+  const completions = [];
+  let release;
+  t.after(async () => { if (release) await writeFile(release, ''); await Promise.all(completions); });
+  const fixture = await memoryRoutingFixture(t);
+  fixture.config.commandExecution.loadProbeTtlMs = 300000;
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  const available = heavy ? 0 : 14000000;
+  await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+case "$*" in
+  *getconf*)
+    case "$*" in *starved-host*) cores=2 ;; *) cores=6 ;; esac
+    printf '%s 0 0.5 22000000 20 0 ${available} 28000000 0 0 0 0 0 0 0 linux ${available} 0 28000000 0\\n' "$cores" ;;
+  *) exit 0 ;;
+esac
+`);
+  // Create the cached observation through its real producer so the burst
+  // consumes the same prerequisite/cwd identity that selected the first call.
+  const command = heavy ? ['vitest', 'run', 'fixture.test.ts'] : ['probe-command'];
+  const initial = spawnSync('/bin/sh', [launcher, '--', ...command], fixture.invocation);
+  assert.equal(initial.status, 0, initial.stderr);
+  release = join(fixture.root, 'release-placements');
+  await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+case "$*" in
+  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;
+esac
+while [ ! -f "$PLACEMENT_RELEASE" ]; do sleep 0.02; done
+exit 0
+`);
+  // The incident had 19 simultaneous waiters on an eight-core worker. Keep
+  // every fixture dispatch live so all 24 selections see the same cached probe.
+  // Coordination 2026-10-30 14:41 D5 coalesces identical commands. Placement
+  // distribution still needs 24 distinct payloads, rather than 24 subscribers.
+  const selections = Array.from({ length: 24 }, (_, index) => new Promise((resolveSelection, rejectSelection) => {
+    const child = spawn('/bin/sh', [launcher, '--', ...command, `placement-${index}`], {
+      ...fixture.invocation, env: { ...fixture.invocation.env, PLACEMENT_RELEASE: release },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stdout.resume();
+    child.stderr.on('data', chunk => {
+      stderr += chunk;
+      const selected = stderr.match(/selected (starved|roomy) /);
+      if (selected) resolveSelection(selected[1]);
+    });
+    completions.push(new Promise(resolveExit => child.once('close', code => {
+      if (!/selected (starved|roomy) /.test(stderr)) rejectSelection(new Error(`no placement: exit=${code}\n${stderr}`));
+      resolveExit({ code, stderr });
+    })));
+    child.once('error', rejectSelection);
+  }));
+  const targets = await Promise.all(selections);
+  await writeFile(release, '');
+  const results = await Promise.all(completions);
+  for (const result of results) assert.equal(result.code, 0, result.stderr);
+  const small = targets.filter(name => name === 'starved').length;
+  t.diagnostic(JSON.stringify({ placements: targets.length, small, large: targets.length - small }));
+  assert.ok(small >= 5 && small <= 7, `2:6 cores must share 24 cached placements approximately 6:18; got ${small}:${24 - small}`);
+});
+
+test('AUTO missing controller Mutagen leaves shared worker availability and placements untouched', async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const invoke = env => spawnSync('/bin/sh', [launcher, '--', 'probe-command'], {
+    ...fixture.invocation, env,
+  });
+  const warm = invoke(fixture.invocation.env);
+  assert.equal(warm.status, 0, warm.stderr);
+  assert.match(warm.stdout, /remote:starved/);
+  const cacheDir = join(fixture.stackDir, 'dev-target-command-load-native');
+  const paths = (await readdir(cacheDir)).filter(name => name.endsWith('.cache') || name === 'provenance.jsonl');
+  const before = await Promise.all(paths.map(name => readFile(join(cacheDir, name), 'utf8')));
+  const traceBefore = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
+  const mutagenPath = join(fixture.binDir, 'mutagen');
+  const mutagen = await readFile(mutagenPath, 'utf8');
+  await rm(mutagenPath);
+  // Restrict only the external executable search path. Cached worker facts,
+  // command classification, selection and sync-control logic remain real.
+  const missingEnv = { ...fixture.invocation.env, PATH: `${fixture.binDir}:/usr/bin:/bin` };
+  assert.notEqual(spawnSync('/bin/sh', ['-c', 'command -v mutagen'], { env: missingEnv }).status, 0,
+    'the missing-tool control must not find a system Mutagen installation');
+  const missing = invoke(missingEnv);
+  assert.equal(missing.status, 127, missing.stderr);
+  assert.doesNotMatch(missing.stderr, /selected (starved|roomy) /);
+  assert.deepEqual(await Promise.all(paths.map(name => readFile(join(cacheDir, name), 'utf8'))), before,
+    'a controller prerequisite failure must not rewrite healthy worker facts or publish a placement');
+  assert.equal(await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8'), traceBefore,
+    'a missing controller tool must fail before remote observations or synchronization');
+  await executable(mutagenPath, mutagen);
+  const restored = invoke(fixture.invocation.env);
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.match(restored.stdout, /remote:starved/);
+});
+
+test('AUTO cached placement compares load per core before choosing a smaller worker', async t => {
+  const fixture = await memoryRoutingFixture(t, { roomyLoad: 24 });
+  await writeFile(fixture.samplePath, '8 16 0.5 22000000 20 0 14000000 28000000 0 0 0 0 0 0 0 linux 14000000\n');
+  const sshPath = join(fixture.binDir, 'ssh');
+  await writeFile(sshPath, (await readFile(sshPath, 'utf8')).replace('8 24 ', '48 24 '));
+  // k=1 derives from one runnable load unit per probed core, not a new cap.
+  // 16/8 is above that capacity and must lose to 24/48 despite lower raw load.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], fixture.invocation);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /remote:roomy/);
+  }
+});
+
 test('native runtime control admits web, mixed web and daemon, and all runtime components', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
   const fixture = await runtimeAdmissionTransportFixture(t);
   await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');

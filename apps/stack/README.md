@@ -156,6 +156,13 @@ uses the Linux broker.
 
 If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install hstack for development with:
 
+In current 0.3 development, AUTO ranks CPU load and live controller dispatches
+per probed core, including when it reuses a cached load sample. Linux controllers
+serialize choosing a worker with publishing its existing active dispatch record,
+then release that decision lock before synchronization or worker admission.
+Zero memory headroom stays behind positive headroom within the same placement
+priority without a large numeric penalty hiding recent dispatches.
+
 ### Setup (guided)
 
 ```bash

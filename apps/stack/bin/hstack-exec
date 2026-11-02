@@ -66,6 +66,7 @@ fi
 # native projection before either direct admission or command placement.
 . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
 . "$script_dir/../scripts/utils/dev_targets/native_dispatch_recovery.sh" || exit 1
+. "$script_dir/../scripts/utils/dev_targets/native_placement.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_priority.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
@@ -1014,6 +1015,10 @@ if [ "$policy_placement" = primary-only ]; then
   fi
   run_local -- "$@"
 fi
+if [ "${policy_workspaceSync-1}" != 0 ] && ! command -v mutagen >/dev/null 2>&1; then
+  printf '%s\n' '[preferred-execution] controller synchronization requires mutagen on PATH; install Mutagen or restore the controller PATH before remote execution' >&2
+  exit 127
+fi
 requires_remote_dependencies=$policy_bootstrap
 requires_remote_workspace_preparation=0
 [ "$command_class" = targeted-validation ] && requires_remote_workspace_preparation=1
@@ -1518,6 +1523,10 @@ count_active_dispatches() {
 }
 
 candidates="$probe_tmp/candidates"
+acquire_placement_decision "$cache_dir" || {
+  printf '%s\n' '[preferred-execution] command placement decision state is unavailable' >&2
+  exit 1
+}
 : > "$candidates"
 typecheck_warm_target=
 typecheck_running_target=
@@ -1579,6 +1588,13 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
       # order (native=0, cross-target=1). Keep load ordering when all are busy.
       candidate_native_preference=$(( ${candidate_native_preference:-0} + 2 ))
     fi
+    # Preserve the existing affinity/native/fit order, then put zero headroom
+    # behind positive headroom within each priority. Scores remain finite
+    # enough for every in-flight placement to change the per-core ranking.
+    candidate_native_preference=$(( ${candidate_native_preference:-0} * 2 ))
+    if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -eq 0 ]; then
+      candidate_native_preference=$((candidate_native_preference + 1))
+    fi
   else
     candidate_active=0
     candidate_class_active=0
@@ -1614,6 +1630,7 @@ selected=$(awk '
   }
 ' "$candidates")
 if [ -z "$selected" ]; then
+  release_placement_decision
   if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
     cleanup_probe_tmp
     exit 75
@@ -1647,6 +1664,7 @@ if [ "$_selected_available" = busy ]; then
 fi
 if [ -n "$runtime_build_target" ]; then printf 'HSTACK_RUNTIME_SELECTED:%s\n' "$selected_name" >&2; fi
 if [ "$selected_number" = 0 ]; then
+  release_placement_decision
   run_selected_local "$@"
 fi
 # Active readers may reap unlocked records. Keep construction private until
@@ -1680,6 +1698,7 @@ if [ -z "$reservation_temporary" ] \
   printf '[preferred-execution] command dispatch reservation failed: %s; check directory permissions and disk space.\n' "$cache_dir" >&2
   exit 1
 fi
+release_placement_decision
 release_reservation() {
   rm -f -- "$reservation_path" 2>/dev/null || true
   if [ "$reservation_lock_held" -eq 1 ]; then
