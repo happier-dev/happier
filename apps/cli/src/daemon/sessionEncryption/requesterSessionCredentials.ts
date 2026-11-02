@@ -9,7 +9,7 @@ import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/proto
 import type { SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
-import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { acquireRequesterAccountEncryptionCurrentness, readRequesterAccountEncryptionCurrentness, waitForObservation,
@@ -41,6 +41,47 @@ import { logger } from '@/utils/logger';
 import { performance } from 'node:perf_hooks';
 
 import type { TrackedSession } from '../types';
+import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
+import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
+/** The existing custody owner distinguishes absent private birth from an
+ * unreadable/historical source. Current Account ownership never rewrites birth. */
+export async function resolveRequesterSessionExecutionIdentityForHost(input: Readonly<{
+  happyHomeDir: string; serverId: string; serverHttpBaseUrl: string; sessionId: string; machineId: string;
+  hostHomeServerIdentityId: string | null; sessionCustodianAccountId?: string | null;
+  credentials: StoredCredentials; attribution?: RequesterWorkAttributionV1;
+  runtimeContext: RequesterSessionRuntimeContext | null | undefined;
+  isCurrent(): boolean | Promise<boolean>; signal?: AbortSignal;
+}>): Promise<HostRequesterExecutionIdentity> {
+  const unavailable = (): HostRequesterExecutionIdentity => ({ kind: 'unknown', reason: 'session_requester_unavailable' });
+  input.signal?.throwIfAborted();
+  try {
+    if (!input.hostHomeServerIdentityId || !await input.isCurrent()) return unavailable();
+    const runtime = input.runtimeContext;
+    if (runtime) {
+      const birth = runtime.bootstrap;
+      if (birth.getBoundSessionId() !== input.sessionId || input.attribution && !isDeepStrictEqual(input.attribution, birth.attribution)
+        || !await runtime.isCurrent(input.signal) || !await input.isCurrent()) return unavailable();
+      return selectHostRequesterExecutionIdentity({ sessionRequester: birth.attribution,
+        sessionRequesterHomeServerIdentityId: birth.homeServerIdentityId,
+        hostHomeServerIdentityId: input.hostHomeServerIdentityId, sessionCustodianAccountId: input.sessionCustodianAccountId });
+    }
+    if ('requesterSessionCredentialScope' in input.credentials) return unavailable();
+    const identity = await readHostAccountExecutionIdentity({ credentials: input.credentials, catalogCredentials: input.credentials,
+      kind: 'agent', machineId: input.machineId, hostHomeServerIdentityId: input.hostHomeServerIdentityId,
+      serverHttpBaseUrl: input.serverHttpBaseUrl,
+      exactSession: { sessionId: input.sessionId, serverId: input.serverId, happyHomeDir: input.happyHomeDir },
+      isCurrent: input.isCurrent, signal: input.signal });
+    if (identity.kind !== 'isolated' || identity.separationRequired) return unavailable();
+    // A public owner launch can retain the original Machine attribution without
+    // a private requester birth. It must match the independently qualified
+    // physical owner and exact Session; attribution alone never grants custody.
+    if (input.attribution && !isDeepStrictEqual(input.attribution, {
+      ...identity.requester, serverId: input.serverId,
+    })) return unavailable();
+    return identity;
+  } catch (error) { input.signal?.throwIfAborted(); rethrowRequesterHomeReadFailure(error); return unavailable(); }
+}
 import { readWebLatencyTracePoint, timeWebLatencyPhase } from "../externalActions/webLatencyTrace";
 
 /** Existing requester projection owner; private Account ports stay on the admitted authorization carrier. */
@@ -705,6 +746,23 @@ async function readBoundCustody(path: string, expected: Pick<RequesterSessionCre
   if (value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
   const credentials = decodeStoredCredentials(value.credentials);
   return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId } : null;
+}
+
+/** Constrain an independently authenticated Account/Session source. Only ENOENT
+ * is absence; retained birth must agree with that exact original source. A
+ * different bearer needs successful canonical recovery, never this fallback. */
+export async function readRequesterSessionExecutionCustodyForHost(input: RequesterSessionCredentialBinding & Readonly<{
+  credentials: StoredCredentials;
+  homeServerIdentityId: string;
+}>): Promise<'absent' | 'retained' | 'unavailable'> {
+  try {
+    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
+    return stored?.homeServerIdentityId === input.homeServerIdentityId
+      && sameStoredCredentials(stored.credentials, input.credentials) ? 'retained' : 'unavailable';
+  } catch (error) {
+    return error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+      ? 'absent' : 'unavailable';
+  }
 }
 
 export type RequesterSessionCredentialBindingsResult =

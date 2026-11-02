@@ -1595,3 +1595,15 @@ describe('requester Session lifecycle custody', () => {
     expect(await verifyRequesterSessionMachineAdmissionCurrent(input)).toBe(false);
   });
 });
+
+  it('does not treat a declared but unavailable requester scope as ordinary Account absence', async () => {
+    const host = await home();
+    const unavailable = { ...credentials };
+    Object.defineProperty(unavailable, 'requesterSessionCredentialScope', { value: undefined, enumerable: false });
+    const reads = host.requests.length;
+    expect(await requesterCredentialOwner.resolveRequesterSessionExecutionIdentityForHost({ happyHomeDir: directory!,
+      serverId: attribution.serverId, serverHttpBaseUrl: origin, sessionId: 'session', machineId: 'machine',
+      hostHomeServerIdentityId: 'srv_original_home', credentials: unavailable, runtimeContext: null,
+      isCurrent: () => true })).toEqual({ kind: 'unknown', reason: 'session_requester_unavailable' });
+    expect(host.requests).toHaveLength(reads);
+  });

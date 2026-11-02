@@ -84,6 +84,9 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     executionRun?: RetainedExecutionRunControl & Readonly<{ runId: string }>;
     isCurrent(): boolean | Promise<boolean>;
     resolveRuntime(ingress: RpcHandlerContext): Promise<ProjectFiniteActionRuntime | null>;
+    /** The native invocation's already-qualified installed Account Agent.
+     * This is not a substitute for unknown or unrecovered private birth. */
+    resolveInstalledAccountRuntime?: (signal: AbortSignal) => Promise<ProjectFiniteActionRuntime | null>;
 }>) {
     let owner: ReturnType<typeof createProjectAgentNativeLaunchOwner> | undefined;
     let runSetup: ReturnType<typeof retainRunSetup>;
@@ -119,13 +122,14 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
         ...(input.requester ? { requesterSessionBootstrap: input.requester.bootstrap } : {}) };
     const prepare: HostAgentNativeLaunchPreparation = async (signal, cwd, environment) => {
         await assertCurrent();
-        if (!ingress.requesterSessionBootstrap && !ingress.callerInputAuthorization) {
-            return unavailable('project_requester_credentials_unavailable', 'ingress_missing');
-        }
         if (!owner) {
-            const runtime = await observe('runtime_resolution', () => input.resolveRuntime(ingress));
+            const installedAccount = !ingress.requesterSessionBootstrap && !ingress.callerInputAuthorization && !ingress.machineAdmission;
+            const runtime = await observe('runtime_resolution', () => installedAccount
+                ? input.resolveInstalledAccountRuntime?.(signal) ?? Promise.resolve(null) : input.resolveRuntime(ingress));
             await assertCurrent();
-            if (!runtime) return unavailable('project_finite_execution_unavailable', 'finite_runtime_unavailable');
+            if (!runtime) return installedAccount
+                ? unavailable('project_requester_credentials_unavailable', 'ingress_missing')
+                : unavailable('project_finite_execution_unavailable', 'finite_runtime_unavailable');
             if (!input.operation && input.executionRun) runSetup = retainRunSetup({ runId: input.executionRun.runId,
                 control: input.executionRun, signal: input.signal, runtime, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });
             const operation = input.operation ?? runSetup?.context;

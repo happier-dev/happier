@@ -7,10 +7,9 @@ import { isRemoteProviderGatewayPlacement } from "@/providers/managed/gatewayPla
 import type { ApiMachineClient } from "@/api/apiMachine";
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from "@/configuration";
-import { resolveRequesterSessionExecutionIdentityForHost, type RequesterSessionRuntimeContext, type RequesterSessionRuntimeContextPorts } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { readStoredCredentialsForServerId, sameStoredCredentials, type StoredCredentials } from '@/persistence';
-import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import type { RequesterSessionRuntimeContext, RequesterSessionRuntimeContextPorts } from "@/daemon/sessionEncryption/requesterSessionCredentials";
+import { sameStoredCredentials, type StoredCredentials } from '@/persistence';
+import { createRunnerIsolationIdentity } from '@/daemon/agentRuntime/runnerIsolationIdentity';
 import { createRunnerAgentProjectLaunchInvocation } from "@/daemon/agentRuntime/runnerAgentProjectLaunch";
 import { ExecutionRunGetResponseSchema, ExecutionRunStopResponseSchema } from "@happier-dev/protocol/execution/runs/responseSchemas";
 import { getActiveAccountSettingsSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
@@ -1672,7 +1671,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               // tracked runner. The existing Session resolver owns recovery;
               // demand it only when an actual native launch is authorized.
               const requester = params.resolveRequesterSessionRuntimeContext
-                ? await resolveSessionAccountContext(sessionId)
+                ? await resolveSessionAccountContext(sessionId, undefined, args[0])
                 : tracked.requesterSessionRuntimeContext;
               try {
                 signal.throwIfAborted();
@@ -1711,7 +1710,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     ...(invocationContext.secretReferenceOverlay ? { secretReferenceOverlay: invocationContext.secretReferenceOverlay } : {}),
                   },
                   isCurrent: () => authorizeOperation(undefined, { recordRefusal: true }),
-                  ...(!requester ? { resolveInstalledAccountRuntime: async () => {
+                  ...(!requester ? { resolveInstalledAccountRuntime: async (requestSignal: AbortSignal) => {
                     const refuse = (reason: 'requester_unknown' | 'requester_separated' | 'machine_client_unavailable'
                       | 'finite_runtime_unavailable' | 'account_mismatch' | 'machine_mismatch'
                       | 'credentials_mismatch' | 'home_url_mismatch' | 'origin_retired'): null => {
@@ -1719,18 +1718,18 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                         phase: 'installed_account_qualification', reason, sessionId })); } catch { /* Logging cannot mask the typed refusal. */ }
                       return null;
                     };
-                    const identity = await resolveIsolationIdentity(signal);
+                    const identity = await resolveIsolationIdentity(requestSignal);
                     if (identity.kind !== 'isolated') return refuse('requester_unknown');
                     if (identity.separationRequired) return refuse('requester_separated');
                     const machine = params.getApiMachineForSessions();
                     if (!machine) return refuse('machine_client_unavailable');
-                    const runtime = await machine.resolveProjectFiniteRuntime({ signal });
+                    const runtime = await machine.resolveProjectFiniteRuntime({ signal: requestSignal });
                     if (!runtime) return refuse('finite_runtime_unavailable');
                     if (runtime.accountId !== identity.requester.accountId) return refuse('account_mismatch');
                     if (runtime.machineId !== identity.requester.machineId) return refuse('machine_mismatch');
                     if (!sameStoredCredentials(params.credentials, runtime.credentials)) return refuse('credentials_mismatch');
                     if (normalizeServerHttpBaseUrl(runtime.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverBaseUrl)) return refuse('home_url_mismatch');
-                    if (!await isolationStillCurrent()) return refuse('origin_retired');
+                    if (!await isolationStillCurrent(requestSignal)) return refuse('origin_retired');
                     return runtime;
                   } } : {}),
                   resolveRuntime: async ingress => {
@@ -1751,47 +1750,17 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           // Account/Session custody is independent of whether this Machine has
           // an optional native isolation policy/transport port installed.
           const isolationOrigin = await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null;
-          let isolationIdentity: Promise<HostRequesterExecutionIdentity> | undefined;
-          let identityRuntime: RequesterSessionRuntimeContext | null | undefined;
           const isolationAttribution = tracked.requesterWorkAttributionV1 ?? tracked.spawnOptions?.requesterWorkAttributionV1;
-          const isolationStillCurrent = async () => !signal.aborted && authorizeOperation(undefined)
-            && params.pidToTrackedSession.get(tracked.pid) === tracked
-            && tracked.reportMarkerCustody?.retiring !== true && !!isolationOrigin
-            && isolationOrigin.machineId === params.machineId
-            && isDeepStrictEqual(isolationOrigin, await params.resolveCurrentMachineExecutionOriginContext?.(signal));
-          const resolveIsolationIdentity = async (launchSignal?: AbortSignal): Promise<HostRequesterExecutionIdentity> => {
-            launchSignal?.throwIfAborted();
-            isolationIdentity ??= (async () => {
-              identityRuntime = tracked.requesterSessionRuntimeContext ?? (params.resolveRequesterSessionRuntimeContext
-                ? await resolveSessionAccountContext(sessionId, isolationAttribution, signal) : null);
-              try {
-                return await resolveRequesterSessionExecutionIdentityForHost({
-                  happyHomeDir: configuration.happyHomeDir, serverId: params.serverId,
-                  serverHttpBaseUrl: params.serverBaseUrl, machineId: params.machineId, sessionId,
-                  credentials: params.credentials, attribution: isolationAttribution, runtimeContext: identityRuntime,
-                  hostHomeServerIdentityId: isolationOrigin?.machineId === params.machineId ? isolationOrigin.serverIdentityId : null,
-                  sessionCustodianAccountId: params.externalActionAccountId,
-                  isCurrent: isolationStillCurrent, signal,
-                });
-              } finally { await releaseSessionAccountContext(identityRuntime ?? null); }
-            })();
-            const identity = await isolationIdentity;
-            launchSignal?.throwIfAborted();
-            if (!await isolationStillCurrent() || identityRuntime && (tracked.requesterSessionRuntimeContext !== identityRuntime
-              || !await identityRuntime.isCurrent(launchSignal))) return { kind: 'unknown', reason: 'session_requester_unavailable' };
-            if (!identityRuntime && identity.kind === 'isolated') {
-              try {
-                const credentials = await readStoredCredentialsForServerId(params.serverId);
-                if (!sameStoredCredentials(params.credentials, credentials)
-                  || readInstallationIdentityIfExistsSync()?.installationId !== identity.requester.installationId
-                  || !await isolationStillCurrent()) {
-                  return { kind: 'unknown', reason: 'session_requester_unavailable' };
-                }
-              } catch { launchSignal?.throwIfAborted(); return { kind: 'unknown', reason: 'session_requester_unavailable' }; }
-              launchSignal?.throwIfAborted();
-            }
-            return identity;
-          };
+          const { resolve: resolveIsolationIdentity, isCurrent: isolationStillCurrent } = createRunnerIsolationIdentity({
+            signal, serverId: params.serverId, serverBaseUrl: params.serverBaseUrl, machineId: params.machineId,
+            sessionId, credentials: params.credentials, custodianAccountId: params.externalActionAccountId,
+            tracked, origin: isolationOrigin, readOrigin: params.resolveCurrentMachineExecutionOriginContext,
+            isCurrent: () => authorizeOperation(undefined) && params.pidToTrackedSession.get(tracked.pid) === tracked
+              && tracked.reportMarkerCustody?.retiring !== true,
+            ...(params.resolveRequesterSessionRuntimeContext ? { resolveRuntime: (requestSignal: AbortSignal) =>
+              resolveSessionAccountContext(sessionId, isolationAttribution, requestSignal) } : {}),
+            releaseRuntime: releaseSessionAccountContext,
+          });
           if (!invocationRetainsRegistryLease) {
             await lease.release();
           }
