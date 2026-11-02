@@ -278,6 +278,7 @@ import {
     createMachineContentCodec,
     type MachineContentCodec,
 } from './machine/machineStoredContent';
+import { resolveMachineLiveStreamFramePayloadByteLimit } from './machine/liveStreamFrameBudget';
 import {
     registerMachineConnectedAccountRpcHandlers,
     type ConnectedServicePoolSelectionRead,
@@ -3211,6 +3212,10 @@ export class ApiMachineClient {
     sendPeerTcpTunnelRelayEnvelope(payload: PeerTcpTunnelRelayEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, payload);
+    }
+
+    getMachineLiveStreamFramePayloadByteLimit(envelope: MachineLiveStreamRelayEnvelopeV1, maxFrameBytes: number): number {
+        return resolveMachineLiveStreamFramePayloadByteLimit({ envelope, maxFrameBytes, codec: this.machineContentCodec });
     }
 
     async sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1): Promise<
