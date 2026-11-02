@@ -614,7 +614,7 @@ describe('NpmRegistryProfilesSection', () => {
         await act(async () => { await tree.root.findByProps({ testID: 'settings.plugins.registries.add' }).props.onPress(); });
 
         expect(mocks.show).toHaveBeenCalledTimes(1);
-        expect(mocks.mutate).toHaveBeenCalledWith('machine-a', expect.objectContaining({
+        await vi.waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith('machine-a', expect.objectContaining({
             action: 'add',
             expectedRevision: 2,
             profile: {
@@ -624,11 +624,11 @@ describe('NpmRegistryProfilesSection', () => {
                 useAsDefault: false,
                 allowPrivateNetwork: true,
             },
-        }), expect.objectContaining({ serverId: homeA }));
+        }), expect.objectContaining({ serverId: homeA })));
         // The new profile is checked by its owner at once, against the revision
         // the add produced, so its availability is known rather than "unknown".
         const added = mocks.mutate.mock.calls[0]?.[1] as Readonly<{ profileId: string }>;
-        expect(mocks.mutate).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(2));
         expect(mocks.mutate).toHaveBeenLastCalledWith('machine-a', expect.objectContaining({
             action: 'test', profileId: added.profileId, expectedRevision: 3,
         }), expect.objectContaining({ serverId: homeA }));
@@ -700,7 +700,7 @@ describe('NpmRegistryProfilesSection', () => {
                 }),
             }),
         }));
-        expect(mocks.mutate).toHaveBeenCalledWith('machine-a', expect.objectContaining({
+        await vi.waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith('machine-a', expect.objectContaining({
             action: 'update',
             profileId: 'registry_acme',
             expectedRevision: 2,
@@ -711,7 +711,7 @@ describe('NpmRegistryProfilesSection', () => {
                 useAsDefault: true,
                 allowPrivateNetwork: false,
             },
-        }), expect.objectContaining({ serverId: homeA }));
+        }), expect.objectContaining({ serverId: homeA })));
     });
 
     it('ignores a late profile response from a previously selected machine', async () => {

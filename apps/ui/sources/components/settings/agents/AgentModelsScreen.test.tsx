@@ -497,7 +497,7 @@ describe('AgentModelsScreen provider settings safety', () => {
         runtimeAgentId="codex"
       />,
     );
-    expect(screen.findByTestId('agent-models')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
     expect(screen.getTextContent()).toContain('Account model');
     expect(screen.getTextContent()).toContain('Account model B');
     expect(screen.getTextContent()).not.toContain('Retired machine catalog model');
@@ -1311,7 +1311,7 @@ describe('AgentModelsScreen provider settings safety', () => {
         runtimeAgentId="codex"
       />,
     );
-    expect(loading.findByTestId('agent-models')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(loading.findByTestId('agent-models')).not.toBeNull());
     expect(loading.getTextContent()).not.toContain(getAgentStaticModels('codex')[0]!.name);
     await loading.unmount();
 
@@ -1326,8 +1326,8 @@ describe('AgentModelsScreen provider settings safety', () => {
         runtimeAgentId="codex"
       />,
     );
-    expect(failed.findByTestId('agent-models')).not.toBeNull();
-    expect(failed.getTextContent()).toContain('Provider is unreachable');
+    await waitForHomeGovernance(() => expect(failed.findByTestId('agent-models')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(failed.getTextContent()).toContain('Provider is unreachable'));
   });
 
   it.each(['native visibility', 'agent reset', 'mixed bulk'] as const)(

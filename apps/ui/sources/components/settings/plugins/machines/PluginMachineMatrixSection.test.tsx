@@ -31,7 +31,7 @@ function machine(id: string, online: boolean) {
     return {
         id,
         updatedAt: now,
-        active: true,
+        active: online,
         activeAt: online ? now : now - 86_400_000,
         revokedAt: null,
         metadataVersion: 1,
