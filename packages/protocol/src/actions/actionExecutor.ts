@@ -1277,6 +1277,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     /** Restrictive field currentness retained only by the original blocking UI invocation. */
     retainedPluginSettingsIntent?: () => boolean;
     /** Canonical creation/rejoin matched this native publication's exact subject. */
+    // Only canonical-creation call sites may pass this flag.
     retainedPluginPublication?: boolean;
     /** Page values stay with the original blocking invocation, never durable approval replay. */
     retainedWidgetAreaContext?: ActionExecutorContext['widgetAreaContext'];

@@ -1,4 +1,6 @@
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -35,18 +37,24 @@ describe('native plugin publication approval handover', () => {
         await handover({ withdraw: true });
     });
 
-    it('does not rejoin a changed canonical publication input', async () => {
+    it('asks again for changed canonical publication input', async () => {
         await handover({ changedInput: true });
+    });
+
+    it('cancels an attachment-bearing request on retirement and asks again with fresh paths', async () => {
+        await handover({ attachments: true });
     });
 });
 
-async function handover(scenario: { decision?: 'approve' | 'reject'; withdraw?: boolean; changedInput?: boolean }) {
+type HandoverScenario = { decision?: 'approve' | 'reject'; withdraw?: boolean; changedInput?: boolean; attachments?: boolean };
+
+async function handover(scenario: HandoverScenario) {
     return withConfiguredDaemonTestHome({ prefix: 'publication-handover-', env: {
         HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
     } }, () => runHandover(scenario));
 }
 
-async function runHandover(scenario: { decision?: 'approve' | 'reject'; withdraw?: boolean; changedInput?: boolean }) {
+async function runHandover(scenario: HandoverScenario) {
     const socket = await createRequesterCurrentnessSocketHarness();
     const pluginId = 'happier.channels';
     const accountId = 'publication-owner';
@@ -137,8 +145,13 @@ async function runHandover(scenario: { decision?: 'approve' | 'reject'; withdraw
     }).executor;
     type Module = { state: { started?: number; result?: unknown; error?: unknown; actions?: PluginServices['actions'] }; withdraw(): void };
     const createOccurrence = async (generation: number, predecessor?: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>) => {
-        const publication = scenario.changedInput && generation === 2
-            ? { ...input, content: { v: 1, parts: [{ t: 'text', text: 'Changed inbound message' }] } } : input;
+        const blobId = '11111111-1111-4111-8111-111111111111';
+        const publication = scenario.attachments
+            ? { ...input, content: { ...input.content, parts: [...input.content.parts, { t: 'attachment', attachment: {
+                kind: 'file', id: blobId, name: 'inbound.txt', file: { blobId, mime: 'text/plain', sizeBytes: 1, sha256: 'a'.repeat(64) },
+            } }] }, attachmentSources: [{ blobId, path: join(tmpdir(), `channel-attachments-${generation}`, '0') }] }
+            : scenario.changedInput && generation === 2
+                ? { ...input, content: { v: 1, parts: [{ t: 'text', text: 'Changed inbound message' }] } } : input;
         const plugin = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
             backgroundServices: [{ declaration: { id: 'router', title: 'Channels router' }, runner: async () => {} }] });
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -182,11 +195,23 @@ export function activate(api) { api.backgroundServices.register('router', async 
         }
         successor = await createOccurrence(2, incumbent.fixture);
         successor.fixture.registry.startAdoptedBackgroundServices?.();
-        if (scenario.changedInput) {
-            await vi.waitFor(() => expect(successor!.module.state.error).toBeDefined());
-            expect(successor.module.state.error).toMatchObject({ code: 'approval_request_conflict' });
-            expect(publications).toHaveLength(0);
+        if (scenario.attachments || scenario.changedInput) {
+            if (scenario.attachments) await vi.waitFor(async () => expect((await readRequest()).status).toBe('canceled'));
+            await vi.waitFor(() => {
+                if (successor!.module.state.error) throw successor!.module.state.error;
+                expect(artifacts.size).toBe(2);
+                expect(coordinator.getLiveWaiterCount([...artifacts.keys()][1]!)).toBe(1);
+            });
+            const nextArtifactId = [...artifacts.keys()][1]!;
+            const nextRequest = ApprovalRequestV2Schema.parse(await approvals.approvalsGet({ artifactId: nextArtifactId }));
+            expect(nextRequest.status).toBe('open');
+            if (scenario.attachments) {
+                expect(nextRequest.actionArgs).toMatchObject({ attachmentSources: [{ path: join(tmpdir(), 'channel-attachments-2', '0') }] });
+            } else {
+                expect(nextRequest.actionArgs).toMatchObject({ content: { parts: [{ t: 'text', text: 'Changed inbound message' }] } });
+            }
             expect(coordinator.getLiveWaiterCount(artifactId)).toBe(0);
+            expect(publications).toHaveLength(0);
             return;
         }
         await vi.waitFor(() => { if (successor!.module.state.error) throw successor!.module.state.error;

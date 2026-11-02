@@ -28,7 +28,7 @@ export class ApprovalRequestConflict extends Error {
 
 type PluginPublicationApprovalSubject = Readonly<{
   home: string; accountId: string; machineId: string; pluginId: string; contributionLocalId: string;
-  actionId: 'discussion.post' | 'discussion.reply'; localId: string;
+  actionId: 'discussion.post' | 'discussion.reply'; localId: string; requestInputDigest: ApprovalRequestV2['requestInputDigest'];
 }>;
 
 /** A retained native publication belongs to the obligation, not its executable generation. */
@@ -41,11 +41,14 @@ export function readPluginPublicationApprovalSubject(request: CreationRequest): 
     || !origin.accountId || !origin.machineId || !origin.caller.contributionLocalId
     || origin.externalActionExecutionAuthorization || origin.discussionReplyReturn) return null;
   const input = request.actionArgs;
+  // Attachment paths belong to this attempt's temporary files, not the retained obligation.
+  if (input && typeof input === 'object' && 'attachmentSources' in input
+    && Array.isArray(input.attachmentSources) && input.attachmentSources.length > 0) return null;
   const localId = input && typeof input === 'object' && 'localId' in input ? input.localId : undefined;
   if (typeof localId !== 'string' || !localId.trim()) return null;
   return { home: origin.serverIdentityId ?? origin.serverId, accountId: origin.accountId, machineId: origin.machineId,
     pluginId: origin.caller.pluginId, contributionLocalId: origin.caller.contributionLocalId,
-    actionId: request.actionId, localId };
+    actionId: request.actionId, localId, requestInputDigest: request.requestInputDigest };
 }
 
 /** Identity contains no Action operands, titles, or credential material. */
@@ -60,7 +63,7 @@ function deriveApprovalRequestSourceId(request: CapturedRequest, accountId?: str
     origin.serverIdentityId ?? origin.serverId,
     accountId ?? origin.accountId ?? '',
     request.requesterConfirmation?.requesterAccountId ?? origin.principalId ?? origin.accountId ?? '',
-    publication ? JSON.stringify(['plugin_publication', publication.pluginId, publication.contributionLocalId, publication.localId]) : origin.requestId,
+    publication ? JSON.stringify(['plugin_publication', publication.pluginId, publication.contributionLocalId, publication.localId, publication.requestInputDigest]) : origin.requestId,
     isTargetActionRequest(request) ? request.qualifiedActionId : request.actionId,
     target ? encodeExternalActionResolvedTargetV1(target) : '',
   ]);

@@ -6081,6 +6081,15 @@ and decision remain unchanged: approval permits one publication, rejection none.
 Explicit caller withdrawal still cancels; changed input cannot rejoin. The
 successor's live factory-bound custody supplies execution, never a new person
 authority or an executable origin reconstructed from an Artifact.
+Attachment-bearing publications keep attempt identity: retirement cancels their
+Ask and the successor asks again with its freshly materialized file paths.
+
+Accepted glitch in 0.3 development: if a retained request retires with no
+successor because the plugin is disabled or uninstalled, or the obligation is
+dropped, its Ask stays open without an executor. Approving it cannot publish
+while there is no matching successor. The stale Ask and absent publication are
+visible and recoverable: the person can reject it or restore the plugin and
+obligation so a matching successor can rejoin. There is no sweeper or timer.
 
 In unreleased 0.3 Plugin UI source, `Action.Control` binds a host-rendered control
 to an Action reference and controller. Its button is physically owned by the mounted

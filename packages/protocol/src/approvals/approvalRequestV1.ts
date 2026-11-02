@@ -655,6 +655,8 @@ export const ApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
   requestedSurface: z.optional(ApprovalRequestedSurfaceSchema),
   origin: z.optional(ApprovalRequestOriginV1Schema),
   executionOriginV1: ApprovalExecutionOriginV1Schema,
+  /** Private binding of the original admitted input, including live-only operands. */
+  requestInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
   requesterConfirmation: z.optional(ApprovalRequesterConfirmationV1Schema),
   /** Immutable private presentation fact; it grants no publication or decision authority. */
   discussionDraftReview: z.optional(z.literal(true)),

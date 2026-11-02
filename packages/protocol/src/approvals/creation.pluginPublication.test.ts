@@ -49,15 +49,18 @@ describe('plugin publication canonical approval subject', () => {
     expect(deriveApprovalRequestArtifactId(other)).not.toBe(deriveApprovalRequestArtifactId(original));
   });
 
-  it('refuses changed canonical input under the same localId', async () => {
+  it('asks again for changed canonical input under the same localId', async () => {
     const request = proposal(1);
-    let stored: { header: Record<string, unknown>; body: string; access: string } | null = null;
-    const ports = { accountId: 'account', newId: () => 'unused', read: async () => stored,
-      create: async (_id: string, header: Record<string, unknown>, body: string) => { stored = { header, body, access: 'owner' }; } };
-    await createApprovalRequestArtifact({ ...ports, request });
+    const rows = new Map<string, { header: Record<string, unknown>; body: string; access: string }>();
+    const ports = { accountId: 'account', newId: () => 'unused', read: async (id: string) => rows.get(id) ?? null,
+      create: async (id: string, header: Record<string, unknown>, body: string) => { rows.set(id, { header, body, access: 'owner' }); } };
+    const original = await createApprovalRequestArtifact({ ...ports, request });
     const next = proposal(2);
     const actionArgs = { ...request.actionArgs as Record<string, unknown>, content: { v: 1, parts: [{ t: 'text', text: 'Changed message' }] } };
-    await expect(createApprovalRequestArtifact({ ...ports, request: { ...next, actionArgs,
-      requestInputDigest: computeActionInputApprovalDigestV1('discussion.post', actionArgs) } })).rejects.toMatchObject({ code: 'approval_request_conflict' });
+    const successor = await createApprovalRequestArtifact({ ...ports, request: { ...next, actionArgs,
+      requestInputDigest: computeActionInputApprovalDigestV1('discussion.post', actionArgs) } });
+    expect(successor.artifactId).not.toBe(original.artifactId);
+    expect(successor.request.status).toBe('open');
+    expect(rows.size).toBe(2);
   });
 });
