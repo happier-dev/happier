@@ -20,6 +20,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
+import { canExecuteSessionRuntimeAction } from './sessionRuntimeActionAdmission';
 import { createDaemonControlAuthGuard } from './controlAuth';
 import { PROCESS_LAUNCH_NOTIFICATION_PATH, ProcessLaunchNotificationRequestSchema,
   ProcessLaunchNotificationResultSchema, invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
@@ -1348,6 +1349,10 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request, reply) => {
     if (isDaemonQuiescing()) return reply.code(503).send(daemonAdmissionRefusedResponse());
+    const requester = getChildren().find(child => child.happySessionId === request.body.sessionId)?.requesterSessionRuntimeContext;
+    if (!canExecuteSessionRuntimeAction(request.body, () => requester)) {
+      return { result: { ok: false, errorCode: 'access_denied', error: 'access_denied' } };
+    }
     const lifetime = createDaemonControlRequestLifetime(request, reply);
     try {
       const result = await (runtimeActionExecute ?? createUnavailableRuntimeActionExecutor())({
