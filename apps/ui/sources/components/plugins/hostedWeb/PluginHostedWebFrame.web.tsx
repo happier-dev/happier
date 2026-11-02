@@ -1,7 +1,8 @@
 import type {
-    PluginHostedWebSecurityPolicyV1,
+    PluginHostedWebSecurityPolicyV1} from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
+import type {
     PluginHostedWebBridgeBootstrapConfigV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -24,6 +25,8 @@ export function PluginHostedWebFrame(props: Readonly<{
     /** Ordinary browser frames require URLs; desktop Artifact frames are direct Wry children. */
     url?: string;
     bundle?: ArtifactHtmlBundleV1;
+    /** Host-selected generated Artifact profile; never a caller HTML grant. */
+    generatedArtifact?: boolean;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     network?: 'none' | 'open';
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
@@ -40,6 +43,8 @@ export function PluginHostedWebFrame(props: Readonly<{
     onLoad?: () => void;
     onError?: () => void;
     externalHttpLinks?: boolean;
+    /** Trusted plugin UI: no Artifact egress ceiling (owner ruling 2026-10-29). */
+    pluginAuthored?: boolean;
     bridge?: HostedPluginBridgeConfig | null;
     /** Compatibility-only native-frame input; desktop uses `desktopArtifact` below. */
     nativeArtifact?: Readonly<{
@@ -94,6 +99,7 @@ export function PluginHostedWebFrame(props: Readonly<{
         <HostedPluginTarget
             title={props.title}
             {...source}
+            generatedArtifact={props.generatedArtifact}
             networkOrigins={props.networkOrigins}
             network={props.network}
             bootstrapConfig={props.bootstrapConfig}
@@ -109,6 +115,7 @@ export function PluginHostedWebFrame(props: Readonly<{
             onLoad={props.onLoad}
             onError={props.onError}
             externalHttpLinks={props.externalHttpLinks}
+            pluginAuthored={props.pluginAuthored}
         />
     );
 }

@@ -333,6 +333,8 @@ type HostedInlineDocumentFrameProps = HostedNativeFrameSharedProps & Readonly<{
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     network?: 'none' | 'open';
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
+    /** Trusted plugin UI: no Artifact egress ceiling (owner ruling 2026-10-29). */
+    pluginAuthored?: boolean;
     bridge?: (PluginHostedWebNativeBridgeConfig & Readonly<{
         attachHostMessages?: (send: (message: unknown) => void) => () => void;
     }>) | null;
@@ -408,6 +410,7 @@ export function HostedInlineDocumentFrame(
     const adapter = React.useMemo(resolveNativeAdapter, []);
     const document = useHostedHtmlDocument(props.bundle, props.bootstrapConfig, {
         network: props.network, networkOrigins: props.networkOrigins, externalHttpLinks: props.externalHttpLinks,
+        pluginAuthored: props.pluginAuthored,
     });
     const documentHtml = document.kind === 'ready' ? document.document : null;
     const generation = React.useMemo(

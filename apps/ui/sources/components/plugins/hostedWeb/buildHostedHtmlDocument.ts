@@ -14,6 +14,9 @@ export async function buildHostedHtmlDocument(
         networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
         network?: 'none' | 'open';
         externalHttpLinks?: boolean;
+        generatedArtifactNonce?: string;
+        /** Trusted plugin UI: no Artifact egress ceiling (owner ruling 2026-10-29). */
+        pluginAuthored?: boolean;
     }>,
 ): Promise<string> {
     const requestedCapabilities = UiSurfaceCapabilityRequestV1Schema.parse({
@@ -28,5 +31,7 @@ export async function buildHostedHtmlDocument(
         guestBootstrapScript,
         externalHttpLinks: isolation?.externalHttpLinks,
         requestedCapabilities,
+        generatedArtifactNonce: isolation?.generatedArtifactNonce,
+        pluginAuthored: isolation?.pluginAuthored,
     });
 }

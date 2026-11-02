@@ -1,7 +1,8 @@
 import type {
-    PluginHostedWebBridgeBootstrapConfigV1,
+    PluginHostedWebBridgeBootstrapConfigV1} from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
+import type {
     PluginHostedWebSecurityPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
 import type { UiSurfaceNetworkOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -28,6 +29,8 @@ export function PluginHostedWebFrame(props: Readonly<{
     /** Present only for the legacy daemon/session endpoint frame path. */
     url?: string;
     bundle?: ArtifactHtmlBundleV1;
+    /** Browser-only generated Artifact profile; intentionally inert on native. */
+    generatedArtifact?: boolean;
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     network?: 'none' | 'open';
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
@@ -45,6 +48,8 @@ export function PluginHostedWebFrame(props: Readonly<{
     onLoad?: () => void;
     onError?: () => void;
     externalHttpLinks?: boolean;
+    /** Trusted plugin UI: no Artifact egress ceiling (owner ruling 2026-10-29). */
+    pluginAuthored?: boolean;
     bridge?: (PluginHostedWebNativeBridgeConfig & Partial<BrowserFrameHostMessageAttachment>) | null;
     /**
      * A selected Artifact has already been registered by the native registrar.
@@ -140,6 +145,7 @@ export function PluginHostedWebFrame(props: Readonly<{
                 onLoadError={props.onError}
                 onBlockedNavigation={props.onUnexpectedNavigation}
                 externalHttpLinks={props.externalHttpLinks}
+                pluginAuthored={props.pluginAuthored}
                 testID={props.testID}
             />
         );

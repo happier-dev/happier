@@ -18,16 +18,18 @@ export function useHostedHtmlDocument(
     const networkOrigins = isolation?.networkOrigins;
     const network = isolation?.network;
     const externalHttpLinks = isolation?.externalHttpLinks;
+    const generatedArtifactNonce = isolation?.generatedArtifactNonce;
+    const pluginAuthored = isolation?.pluginAuthored;
     const bundleKey = React.useMemo(() => stableJsonStringify(bundle), [bundle]);
     const configurationKey = React.useMemo(() => stableJsonStringify({
-        bootstrapConfig, networkOrigins, network, externalHttpLinks,
-    }), [bootstrapConfig, networkOrigins, network, externalHttpLinks]);
+        bootstrapConfig, networkOrigins, network, externalHttpLinks, generatedArtifactNonce, pluginAuthored,
+    }), [bootstrapConfig, networkOrigins, network, externalHttpLinks, generatedArtifactNonce, pluginAuthored]);
     // Preparation belongs to the document's facts, not caller object identity.
     // In particular, recording guest readiness must not remove the same frame
     // and retire the bridge that just became ready. Keep bundle serialization
     // separate so fresh bootstrap objects do not rescan unchanged document bytes.
     const request = React.useMemo(() => bundle === null ? null : {
-        bundle, bootstrapConfig, isolation: { networkOrigins, network, externalHttpLinks },
+        bundle, bootstrapConfig, isolation: { networkOrigins, network, externalHttpLinks, generatedArtifactNonce, pluginAuthored },
         // eslint-disable-next-line react-hooks/exhaustive-deps -- complete semantic keys retain equivalent immutable inputs.
     }, [bundleKey, configurationKey]);
     const [result, setResult] = React.useState<Readonly<{

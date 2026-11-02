@@ -13,6 +13,18 @@ function readCsp(document: string): string {
  * its own egress by writing markup.
  */
 describe('buildHostedHtmlDocument', () => {
+    it('keeps generated artifact scripts mount-authorized even when the outer capability requests network access', async () => {
+        const bundle = artifactHtmlBundleFromBodyV1('<script src="main.js"></script><script nonce="mount-nonce">globalThis.injected = true</script>');
+        bundle.files['main.js'] = { mime: 'text/javascript', contentBase64: '' };
+        const document = await buildHostedHtmlDocument(bundle, undefined, {
+            generatedArtifactNonce: 'mount-nonce',
+            network: 'open',
+        });
+        expect(readCsp(document)).toContain("script-src 'nonce-mount-nonce';");
+        expect(readCsp(document)).not.toMatch(/unsafe-inline|unsafe-eval|https:/u);
+        expect(document).toContain('src="data:text/javascript;base64," nonce="mount-nonce"');
+        expect(document).toContain('<script>globalThis.injected = true</script>');
+    });
     it('accepts the canonical bundle and preserves local executable assets without network admission', async () => {
         const bundle = artifactHtmlBundleFromBodyV1('<script type="module" src="main.js"></script>');
         bundle.files['main.js'] = artifactHtmlBundleFromBodyV1("import './dependency.js'; fetch('./data.json')").files['index.html'];
@@ -24,6 +36,13 @@ describe('buildHostedHtmlDocument', () => {
         expect(readCsp(document)).not.toContain('https:');
         expect(readCsp(document)).toContain("frame-src 'none'");
         expect(document).toContain('dependency.js');
+    });
+    it('lets a page follow the viewer\'s light or dark theme when it opts in, and keeps an author\'s own color-scheme choice', async () => {
+        const scheme = (html: string) => [...html.matchAll(/<meta name="color-scheme" content="([^"]*)">/gu)].map(match => match[1]);
+        // Pages that style both schemes (prefers-color-scheme) follow the theme; ones that set their own colours keep them.
+        expect(scheme(await buildHostedHtmlDocument(artifactHtmlBundleFromBodyV1('<p>Plain</p>')))).toEqual(['light dark']);
+        expect(scheme(await buildHostedHtmlDocument(artifactHtmlBundleFromBodyV1('<meta name="color-scheme" content="light"><p>Paper</p>'))))
+            .toEqual(['light']);
     });
     it('denies every egress by default', async () => {
         expect(readCsp(await buildHostedHtmlDocument(artifactHtmlBundleFromBodyV1('<p>Hello</p>')))).toContain('connect-src data:');

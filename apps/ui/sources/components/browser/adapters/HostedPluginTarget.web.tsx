@@ -69,6 +69,8 @@ const DEFAULT_HOSTED_PLUGIN_SANDBOX: PluginHostedWebSandboxPolicy = {
 export function HostedPluginTarget(props: Readonly<{
     title: string;
     bootstrapConfig?: PluginHostedWebBridgeBootstrapConfigV1;
+    /** Only selected, verified generated Artifact bundles use the nonce profile. */
+    generatedArtifact?: boolean;
     sandbox?: PluginHostedWebSandboxPolicy;
     security?: PluginHostedWebSecurityPolicyV1;
     testID: string;
@@ -87,12 +89,19 @@ export function HostedPluginTarget(props: Readonly<{
     networkOrigins?: readonly UiSurfaceNetworkOriginV1[];
     network?: 'none' | 'open';
     externalHttpLinks?: boolean;
+    /** Trusted plugin UI: no Artifact egress ceiling (owner ruling 2026-10-29). */
+    pluginAuthored?: boolean;
 }> & (Readonly<{ bundle: ArtifactHtmlBundleV1; url?: never }> | Readonly<{ url: string; bundle?: never }>)): React.ReactElement {
     const sandbox = props.sandbox ?? DEFAULT_HOSTED_PLUGIN_SANDBOX;
     const security = props.security ?? DEFAULT_HOSTED_PLUGIN_SECURITY;
     const opaqueArtifactFrame = props.opaqueArtifactFrame === true || props.bundle !== undefined;
-    const document = useHostedHtmlDocument(props.bundle ?? null, props.bootstrapConfig, {
+    // Never fall back to caller HTML's broader profile if a generated mount
+    // lacks the host-owned identity needed to authorize its bootstrap.
+    const document = useHostedHtmlDocument(props.generatedArtifact && !props.bootstrapConfig
+        ? null : props.bundle ?? null, props.bootstrapConfig, {
         networkOrigins: props.networkOrigins, network: props.network, externalHttpLinks: props.externalHttpLinks,
+        generatedArtifactNonce: props.generatedArtifact ? props.bootstrapConfig?.identity.mountNonce : undefined,
+        pluginAuthored: props.pluginAuthored,
     });
     const onErrorRef = React.useRef(props.onError);
     onErrorRef.current = props.onError;

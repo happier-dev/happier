@@ -38,6 +38,48 @@ function createHostedPluginSecurityPolicy(
 }
 
 describe('HostedPluginTarget web', () => {
+    it('selects the generated profile from the host identity and never falls back without it', async () => {
+        await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
+        const bundle = artifactHtmlBundleFromBodyV1('<p>Verified generated content</p>');
+        const bootstrapConfig = {
+            identity: { instanceId: 'generated-instance', mountNonce: 'generated-mount-nonce' },
+            frameOrigin: 'null',
+            hostOrigin: 'https://host.happier.test',
+        };
+        const render = (generatedArtifact: boolean, withIdentity = true) => (
+            <HostedPluginTarget
+                title="Generated plugin"
+                bundle={bundle}
+                generatedArtifact={generatedArtifact}
+                {...(withIdentity ? { bootstrapConfig } : {})}
+                testID="generated-plugin"
+            />
+        );
+        const screen = await renderScreen(render(false));
+        await vi.waitFor(() => expect(screen.findByType(WebIframeEngine).props.html).toContain("script-src 'unsafe-inline' data:"));
+
+        await screen.update(render(true));
+        await vi.waitFor(() => {
+            const document = String(screen.findByType(WebIframeEngine).props.html);
+            const policies = [...document.matchAll(/http-equiv="Content-Security-Policy" content="([^"]*)"/gu)].map(match => match[1]);
+            expect(policies).toHaveLength(2);
+            expect(policies[0]).toContain("script-src 'nonce-generated-mount-nonce'");
+            expect(policies[0]).not.toMatch(/unsafe-inline|unsafe-eval/u);
+            // Both policies must permit a request: the URL ceiling cannot
+            // override the nonce policy's refusal of authored inline code.
+            expect(policies[1]).toContain("script-src 'unsafe-inline' data:");
+            expect(policies[1]).not.toMatch(/nonce-|https:|unsafe-eval/u);
+        });
+        expect(screen.findByType(WebIframeEngine).props.sandbox).toBe('allow-scripts');
+        const document = screen.findByType(WebIframeEngine).props.html;
+        await screen.update(render(true));
+        expect(screen.findByType(WebIframeEngine).props.html).toBe(document);
+
+        await screen.update(render(true, false));
+        expect(screen.findAllByType(WebIframeEngine)).toHaveLength(0);
+        expect(screen.findAllByType('iframe')).toHaveLength(0);
+    });
+
     it('retains prepared document bytes across equivalent inputs and replaces real bootstrap, policy, and body changes', async () => {
         // Resolve the real lazy guest bootstrap before the render-readiness assertion;
         // source transformation belongs to the test setup, not a guest deadline.
