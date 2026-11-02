@@ -86,6 +86,37 @@ works and is not yet considered settled.
 | Pi Coding Agent CLI | Supported | Not supported | Not supported | Not supported |
 | Qwen CLI | Supported | Not supported | Supported | Not supported |
 
+## Compacting while idle
+
+**Development only:** these controls are available in the 0.3 development source.
+
+Providers keep a recent conversation in a prompt cache for a limited time, and
+a long conversation that is read again after the cache expires costs its full
+size. With **Compact while idle** on, a long conversation is compacted shortly
+before the cache expires, so the next message you send starts from a small, warm
+context.
+
+You choose it per agent under **Settings → Agents → {agent} → Session defaults**.
+While it is on, **When to compact** holds two refinements, each shown only where
+the agent's runtime honours it:
+
+- **Minimum conversation size** — shorter conversations aren't compacted. Leave
+  it empty to use the agent's default; clearing it returns to that default.
+- **Cache window** — **Automatic** uses the window the provider reports for the
+  session. Pick a documented window or a custom number of minutes to override it.
+
+A change applies to sessions started after it. The compaction appears in the
+transcript as one quiet "Compacted while idle" row, with the measured token
+counts when the agent reports them. It never marks the session unread, moves it
+up the list, shows it as working or sends a notification.
+
+| Agent | Compact while idle | Minimum conversation size |
+| --- | --- | --- |
+| Claude Code CLI | On | 200,000 tokens |
+| OpenAI Codex CLI | Off | 180,000 tokens |
+| OpenCode CLI | Off | 100,000 tokens |
+| Pi Coding Agent CLI | Off | 100,000 tokens |
+
 ## Related
 
 - [Agents](/agents) — setting each one up.

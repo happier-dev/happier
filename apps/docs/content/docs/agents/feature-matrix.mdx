@@ -36,6 +36,7 @@ Status legend:
 | Tool timeline normalization | Stable | App, Web, CLI runtime | Provider tools are normalized to canonical UI tool types. |
 | Subagent timeline visibility | Capability-driven | App, Web | When providers expose subagents, Happier shows their activity in-session. |
 | Tool detail controls (title/summary/full) | Stable | App, Web | Configure default/per-tool timeline detail levels. |
+| Compact while idle | Development only | App, Web, CLI runtime | Per Agent in Settings → Agents → Session defaults: compacts long conversations shortly before the prompt cache expires, with an optional minimum conversation size and cache window. Shows one quiet transcript row; never marks the session unread or sends a notification. Offered by Agents that declare it ([Agent capabilities](/agents/capabilities#compacting-while-idle)). |
 | Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |
 | Permission modes | Capability-driven | App, Web, CLI | Effective behavior varies by provider/backend capabilities. |
 | Model/mode selection + favorites | Capability-driven | App, Web, CLI | Model lists can be dynamic or static; favorites are available from the new-session engine picker. |

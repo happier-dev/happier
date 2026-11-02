@@ -75,6 +75,21 @@ export function sessionModesKind(descriptor) {
   return 'none';
 }
 
+/**
+ * What an agent declares for compacting while idle, across every runtime mode it can start in: the
+ * same any-mode fact that decides whether its Agent page shows the switch. Null when no mode does.
+ */
+export function idleCompactionDeclaration(definition) {
+  const core = definition?.core ?? {};
+  const modes = [
+    core.sessionCapabilities?.compaction,
+    ...Object.values(core.runtimeKinds?.byKind ?? {}).map((kind) => kind?.overrides?.sessionCapabilities?.compaction),
+  ];
+  return modes.map((compaction) => compaction?.idle ?? null).find((idle) => idle !== null) ?? null;
+}
+
+const tokens = (count) => `${new Intl.NumberFormat('en-US').format(count)} tokens`;
+
 function table(headers, rows) {
   return [
     `| ${headers.join(' | ')} |`,
@@ -107,6 +122,19 @@ export async function renderAgentReferenceMarkdown({ definitionsPath = DEFINITIO
       support(caps.sessionFork?.conversation),
     ];
   });
+
+  const idleRows = agents.flatMap((a) => {
+    const idle = idleCompactionDeclaration(a);
+    if (!idle) return [];
+    return [[
+      a.cli?.displayName ?? a.id,
+      idle.defaultEnabled ? 'On' : 'Off',
+      idle.defaultMinContextTokens ? tokens(idle.defaultMinContextTokens) : 'No minimum',
+    ]];
+  });
+  const idleTable = idleRows.length > 0
+    ? table(['Agent', 'Compact while idle', 'Minimum conversation size'], idleRows)
+    : 'No agent in this build offers it yet.';
 
   return `---
 title: Agent capabilities
@@ -149,6 +177,32 @@ ${table(['Agent', 'Session modes', 'Switching mid-session'], modeRows)}
 works and is not yet considered settled.
 
 ${table(['Agent', 'Resume', 'Handoff', 'Listing', 'Fork'], sessionRows)}
+
+## Compacting while idle
+
+**Development only:** these controls are available in the 0.3 development source.
+
+Providers keep a recent conversation in a prompt cache for a limited time, and
+a long conversation that is read again after the cache expires costs its full
+size. With **Compact while idle** on, a long conversation is compacted shortly
+before the cache expires, so the next message you send starts from a small, warm
+context.
+
+You choose it per agent under **Settings → Agents → {agent} → Session defaults**.
+While it is on, **When to compact** holds two refinements, each shown only where
+the agent's runtime honours it:
+
+- **Minimum conversation size** — shorter conversations aren't compacted. Leave
+  it empty to use the agent's default; clearing it returns to that default.
+- **Cache window** — **Automatic** uses the window the provider reports for the
+  session. Pick a documented window or a custom number of minutes to override it.
+
+A change applies to sessions started after it. The compaction appears in the
+transcript as one quiet "Compacted while idle" row, with the measured token
+counts when the agent reports them. It never marks the session unread, moves it
+up the list, shows it as working or sends a notification.
+
+${idleTable}
 
 ## Related
 
