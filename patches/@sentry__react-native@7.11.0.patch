@@ -14,3 +14,24 @@ index 3461af87af4fb2456cff3ffd809e2337e5404e9c..78373e234fdfa3a757adaa5e3842ed9d
  #endif
  
      resolve(@YES);
+diff --git a/android/build.gradle b/android/build.gradle
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -55,5 +55,5 @@
+ dependencies {
+     compileOnly files('libs/replay-stubs.jar')
+     implementation 'com.facebook.react:react-native:+'
+-    api 'io.sentry:sentry-android:8.31.0'
++    api 'io.sentry:sentry-android:8.53.0'
+ }
+diff --git a/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java b/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
+--- a/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
++++ b/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
+@@ -1018,6 +1018,6 @@
+             tracesFilesDirPath,
+             (int) SECONDS.toMicros(1) / profilingTracesHz,
+             new SentryFrameMetricsCollector(reactApplicationContext, logger, buildInfo),
+-            executorService,
++            () -> executorService,
+             logger);
+   }

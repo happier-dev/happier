@@ -217,7 +217,7 @@ patchedDependencies:
   '@prisma/client@6.19.2': e5dd0d3885c73a50f8ad342ae6e59bcbe9b9c972b635b98b4b4d75981fae4f83
   '@react-native/gradle-plugin@0.83.5': c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784
   '@react-navigation/core@7.21.5': 71a4729e813c532f803d10de2ce44b97574c6bc1b94e85ce03aebb877c1ab70c
-  '@sentry/react-native@7.11.0': 4712205262361e4205c169fae1ea55caa710ebb6a4eefb9cf236843bce3ae0a4
+  '@sentry/react-native@7.11.0': a0750e7934a6b09bb3e29d3d5802d58b1bf751182a3c0a70a0182dc14f362a1d
   '@socket.io/redis-streams-adapter@0.3.1': 3f43e186d5a6ea68f11acb84b85b8d592540b5d431183964560cf55421cc1467
   '@tauri-apps/plugin-http@2.5.2': de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64
   expo-crypto@55.0.12: e38a87b4c4c7be4f007034850901d7ef8f4723685ad1ab89a2ed6054da68070e
@@ -1578,7 +1578,7 @@ importers:
         version: 0.0.30
       '@sentry/react-native':
         specifier: 7.11.0
-        version: 7.11.0(patch_hash=4712205262361e4205c169fae1ea55caa710ebb6a4eefb9cf236843bce3ae0a4)(expo@55.0.11)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)
+        version: 7.11.0(patch_hash=a0750e7934a6b09bb3e29d3d5802d58b1bf751182a3c0a70a0182dc14f362a1d)(expo@55.0.11)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)
       '@shopify/react-native-skia':
         specifier: 2.4.18
         version: 2.4.18(react-native-reanimated@4.3.0(patch_hash=03e74b9dbd188a51623480ccf5fe551c2cad7366145e5303f0a83041334cb593)(react-native-worklets@0.8.1(patch_hash=e454d57b9619286283e7676e877ebb3049b962e0db584a2b9ed9b479b1caceb7)(@babel/core@7.29.0(supports-color@8.1.1))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
@@ -21697,7 +21697,7 @@ snapshots:
       - '@opentelemetry/exporter-trace-otlp-http'
       - supports-color
 
-  '@sentry/react-native@7.11.0(patch_hash=4712205262361e4205c169fae1ea55caa710ebb6a4eefb9cf236843bce3ae0a4)(expo@55.0.11)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)':
+  '@sentry/react-native@7.11.0(patch_hash=a0750e7934a6b09bb3e29d3d5802d58b1bf751182a3c0a70a0182dc14f362a1d)(expo@55.0.11)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)':
     dependencies:
       '@sentry/babel-plugin-component-annotate': 4.8.0
       '@sentry/browser': 10.37.0
