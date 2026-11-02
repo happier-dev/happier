@@ -727,9 +727,12 @@ export function useMachineCapabilitiesCache(params: {
     staleMs?: number;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
+    accountLifetime?: ServerAccountScopeLifetime;
 }): { state: MachineCapabilitiesCacheState; refresh: (next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number; bypassCache?: boolean }) => void } {
     const { machineId, enabled, staleMs = DEFAULT_STALE_MS, serverId, cacheKeySalt } = params;
-    const cacheKey = machineId ? toCacheKey(machineId, serverId, cacheKeySalt) : null;
+    const accountLifetime = params.accountLifetime;
+    const accountId = accountLifetime?.scope.accountId;
+    const cacheKey = machineId ? toCacheKey(machineId, serverId, cacheKeySalt, accountId) : null;
 
     // Keep the refresh function referentially stable even when callers pass a new request
     // object each render. This prevents effect churn (and, in extreme cases, navigation
@@ -739,16 +742,16 @@ export function useMachineCapabilitiesCache(params: {
     const timeoutMsRef = React.useRef<number | undefined>(params.timeoutMs);
     timeoutMsRef.current = params.timeoutMs;
     const consumerControllerRef = React.useRef<{ controller: AbortController } | null>(null);
+    const currentCacheKeyRef = React.useRef(cacheKey);
+    currentCacheKeyRef.current = cacheKey;
 
-    const [state, setState] = React.useState<MachineCapabilitiesCacheState>(() => {
-        if (!cacheKey) return { status: 'idle' };
-        const entry = getEntry(cacheKey);
-        return entry?.state ?? { status: 'idle' };
-    });
+    const [observed, setObserved] = React.useState(() => ({ cacheKey,
+        state: (cacheKey ? getEntry(cacheKey)?.state : undefined) ?? { status: 'idle' as const } }));
 
     const refresh = React.useCallback((next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number; bypassCache?: boolean }) => {
         const consumer = consumerControllerRef.current;
-        if (!machineId || !consumer) return;
+        if (currentCacheKeyRef.current !== cacheKey || !machineId || !consumer
+            || (accountLifetime && !accountLifetime.isCurrent())) return;
         const previousController = consumer.controller;
         const controller = new AbortController();
         consumer.controller = controller;
@@ -762,15 +765,16 @@ export function useMachineCapabilitiesCache(params: {
                 : (next?.request ?? requestRef.current),
             timeoutMs: typeof next?.timeoutMs === 'number' ? next.timeoutMs : timeoutMsRef.current,
             signal: controller.signal,
+            accountLifetime,
             ...(enabled ? { retryWhileObserved: controller.signal } : {}),
         });
-        const entry = getEntry(toCacheKey(machineId, serverId, cacheKeySalt));
-        if (entry) setState(entry.state);
-    }, [cacheKeySalt, enabled, machineId, serverId]);
+        const entry = getEntry(toCacheKey(machineId, serverId, cacheKeySalt, accountId));
+        if (entry) setObserved({ cacheKey, state: entry.state });
+    }, [cacheKeySalt, enabled, machineId, serverId, accountLifetime, accountId, cacheKey]);
 
     React.useEffect(() => {
         if (!cacheKey || !machineId) {
-            setState({ status: 'idle' });
+            setObserved({ cacheKey, state: { status: 'idle' } });
             return;
         }
 
@@ -779,7 +783,7 @@ export function useMachineCapabilitiesCache(params: {
         consumerControllerRef.current = consumer;
         let subscribed = true;
         const unsubscribeState = subscribe(cacheKey, (nextState) => {
-            setState(nextState);
+            setObserved({ cacheKey, state: nextState });
             // A server switch interrupted the read and left the entry `idle` (unanswered). A later
             // ask retries at once; a mounted reader is that ask, so once the interrupted read has
             // settled it asks again instead of idling.
@@ -797,7 +801,7 @@ export function useMachineCapabilitiesCache(params: {
         };
 
         const entry = getEntry(cacheKey);
-        if (entry) setState(entry.state);
+        setObserved({ cacheKey, state: entry?.state ?? { status: 'idle' } });
 
         if (!enabled) {
             return unsubscribe;
@@ -806,11 +810,14 @@ export function useMachineCapabilitiesCache(params: {
         void prefetchMachineCapabilitiesIfStale({
             machineId, serverId, cacheKeySalt, staleMs,
             request: requestRef.current, timeoutMs: timeoutMsRef.current, signal: controller.signal,
+            accountLifetime,
             retryWhileObserved: controller.signal,
         });
 
         return unsubscribe;
-    }, [cacheKey, enabled, refresh, staleMs]);
+    }, [cacheKey, enabled, refresh, staleMs, accountLifetime]);
 
+    const state = accountLifetime && !accountLifetime.isCurrent() ? { status: 'idle' as const }
+        : observed.cacheKey === cacheKey ? observed.state : (cacheKey ? getEntry(cacheKey)?.state : undefined) ?? { status: 'idle' as const };
     return { state, refresh };
 }
