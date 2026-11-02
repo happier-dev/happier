@@ -8,6 +8,7 @@ const LOCAL_SERVICE_PREVIEW_BASE_IFRAME_SANDBOX = [
     'allow-forms',
     'allow-modals',
     'allow-popups',
+    'allow-pointer-lock',
     'allow-scripts',
 ] as const;
 
@@ -55,6 +56,7 @@ const EXTERNAL_URL_IFRAME_SANDBOX = [
     'allow-forms',
     'allow-modals',
     'allow-popups',
+    'allow-pointer-lock',
     'allow-scripts',
 ] as const;
 

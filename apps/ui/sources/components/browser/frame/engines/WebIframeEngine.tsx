@@ -502,6 +502,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         ].join(':');
         const owner = createWebIframeAutomationOwner({
             ownerId,
+            hostFrame: iframeRef.current ?? undefined,
             browserSessionId: automation.browserSessionId,
             viewId: automation.viewId,
             navigationGeneration: automation.navigationGeneration,

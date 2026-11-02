@@ -67,6 +67,8 @@ export type CreateWebIframeAutomationOwnerInput = Omit<
         postMessage: (message: string, targetOrigin: string) => void;
     }> | null;
     targetOrigin: string | null;
+    /** The host owns its focused field; guest DOM access is neither needed nor granted. */
+    hostFrame?: HTMLIFrameElement;
     subscribeToMessages: (listener: (raw: string) => void) => () => void;
 }>;
 
@@ -327,10 +329,17 @@ export function createInjectedPageAutomationOwner(
     };
 }
 
+// Concurrent actions can run in several guests of the same host document. Keep the
+// host field until the last action settles, rather than saving another guest as it.
+const pointerFocusByDocument = new WeakMap<Document, {
+    frames: Map<Element, number>;
+    saved: { element: Element; restore: () => void } | null;
+}>();
+
 export function createWebIframeAutomationOwner(
     input: CreateWebIframeAutomationOwnerInput,
 ): BrowserAutomationOwner {
-    return createInjectedPageAutomationOwner({
+    const owner = createInjectedPageAutomationOwner({
         ...input,
         transport: {
             sendCommand(command) {
@@ -342,6 +351,39 @@ export function createWebIframeAutomationOwner(
             subscribeToResults: input.subscribeToMessages,
         },
     });
+    return {
+        ...owner,
+        async executeAction(request, context) {
+            const frame = input.hostFrame;
+            const document = frame?.ownerDocument;
+            const active = document?.activeElement;
+            const pointerAction = request.actionKind === 'click' || request.actionKind === 'tap'
+                || request.actionKind === 'hover' || request.actionKind === 'drag' || request.actionKind === 'scroll';
+            let focusState: ReturnType<typeof pointerFocusByDocument.get>;
+            if (request.requestedBy === 'agent' && pointerAction && frame && document) {
+                focusState = pointerFocusByDocument.get(document) ?? { frames: new Map(), saved: null };
+                if (active && active !== document.body && !focusState.frames.has(active)
+                    && active !== frame && 'focus' in active && typeof active.focus === 'function') {
+                    const focus = active.focus;
+                    focusState.saved = { element: active, restore: () => focus.call(active, { preventScroll: true }) };
+                }
+                focusState.frames.set(frame, (focusState.frames.get(frame) ?? 0) + 1);
+                pointerFocusByDocument.set(document, focusState);
+            }
+            try {
+                return await owner.executeAction(request, context);
+            } finally {
+                // Restore only focus stolen by this guest; a person's newer host choice wins.
+                if (focusState && frame && document) {
+                    if (focusState.saved?.element.isConnected && document.activeElement === frame) focusState.saved.restore();
+                    const pending = focusState.frames.get(frame)! - 1;
+                    if (pending === 0) focusState.frames.delete(frame);
+                    else focusState.frames.set(frame, pending);
+                    if (focusState.frames.size === 0) pointerFocusByDocument.delete(document);
+                }
+            }
+        },
+    };
 }
 
 export function createNativeWebViewAutomationOwner(

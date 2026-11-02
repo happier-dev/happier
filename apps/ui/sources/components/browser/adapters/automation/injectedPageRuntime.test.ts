@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createBrowserAutomationControlService } from '@/sync/domains/browser/automation/controlService';
 import { selectBrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import { createInjectedPageAutomationOwner } from './injectedPageRuntime';
+import { createWebIframeAutomationOwner } from './injectedPageRuntime';
+import { JSDOM } from 'jsdom';
 
 type InjectedAutomationCommandMessage = Readonly<{
     v: 1;
@@ -241,6 +243,58 @@ function runtimeResultMessage(
 }
 
 describe('injected-page browser automation runtime', () => {
+    it.each([false, true])('keeps the saved composer across overlapping agent pointer actions (different frames: %s)', async differentFrames => {
+        const dom = new JSDOM('<textarea></textarea><iframe></iframe><iframe></iframe>', { url: 'https://host.test' });
+        try {
+            const composer = dom.window.document.querySelector('textarea')!;
+            const frame = dom.window.document.querySelector('iframe')!;
+            const listeners = new Set<(raw: string) => void>();
+            const makeOwner = (hostFrame: HTMLIFrameElement) => createWebIframeAutomationOwner({ ...runtimeIdentity, ownerId: 'overlap', adapterKind: 'localPreview',
+                supportedActions: ['click'], nowMs: Date.now, hostFrame,
+                targetOrigin: 'https://preview.test', targetWindow: { postMessage: () => { hostFrame.focus(); } },
+                subscribeToMessages: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            });
+            const owner = makeOwner(frame);
+            const secondOwner = differentFrames ? makeOwner(dom.window.document.querySelectorAll('iframe')[1]!) : owner;
+            composer.focus();
+            const first = owner.executeAction(createAutomationRequest({ actionKind: 'click' }), { signal: new AbortController().signal });
+            const second = secondOwner.executeAction(createAutomationRequest({ actionKind: 'click', automationRequestId: 'second' }), { signal: new AbortController().signal });
+            for (const receive of [...listeners]) receive(runtimeResultMessage({ commandId: 'second' }));
+            expect(await second).toMatchObject({ status: 'succeeded' });
+            expect(dom.window.document.activeElement).toBe(composer);
+            for (const receive of [...listeners]) receive(runtimeResultMessage());
+            expect(await first).toMatchObject({ status: 'succeeded' });
+            expect(dom.window.document.activeElement).toBe(composer);
+            expect(listeners.size).toBe(0);
+        } finally { dom.window.close(); }
+    });
+    it.each(['agent', 'user'] as const)('preserves composer focus for %s pointer actions only', async requestedBy => {
+        const dom = new JSDOM('<textarea></textarea><iframe></iframe><button>Other host control</button>', { url: 'https://host.test' });
+        try {
+            const document = dom.window.document;
+            const composer = document.querySelector('textarea')!;
+            const frame = document.querySelector('iframe')!;
+            let receive: ((raw: string) => void) | undefined;
+            const owner = createWebIframeAutomationOwner({ ...runtimeIdentity, ownerId: 'focus', adapterKind: 'localPreview',
+                supportedActions: ['click'], nowMs: Date.now, hostFrame: frame,
+                targetOrigin: 'https://preview.test', targetWindow: { postMessage: () => { frame.focus(); } },
+                subscribeToMessages: listener => { receive = listener; return () => { receive = undefined; }; },
+            });
+            composer.focus();
+            const pending = owner.executeAction(createAutomationRequest({ actionKind: 'click', requestedBy }), { signal: new AbortController().signal });
+            expect(document.activeElement).toBe(frame);
+            receive?.(runtimeResultMessage());
+            expect(await pending).toMatchObject({ status: 'succeeded' });
+            expect(document.activeElement?.tagName).toBe(requestedBy === 'agent' ? 'TEXTAREA' : 'IFRAME');
+            composer.focus();
+            const next = owner.executeAction(createAutomationRequest({ actionKind: 'click', requestedBy }), { signal: new AbortController().signal });
+            const other = document.querySelector('button')!;
+            other.focus();
+            receive?.(runtimeResultMessage());
+            await next;
+            expect(document.activeElement).toBe(other);
+        } finally { dom.window.close(); }
+    });
     it('builds and parses automation commands through the shared injected runtime module', async () => {
         const mod = await loadAutomationModule();
 
