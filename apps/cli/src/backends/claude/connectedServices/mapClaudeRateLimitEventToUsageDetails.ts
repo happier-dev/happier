@@ -4,6 +4,7 @@ import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 import { parseProviderResetAt, parseProviderTimestampMs } from '@/daemon/connectedServices/quotas/normalization';
 
 import { readSessionHookSidechainAgentId } from '../utils/sessionHookAttribution';
+import { readClaudeJsonlTimestampMs } from '../utils/claudeJsonlTimestamp';
 
 export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
   v: 1;
@@ -24,6 +25,8 @@ export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
   connectedService: null;
   sourceProviderAccountId?: string | null;
   sourceProviderOrganizationId?: string | null;
+  /** Provider chronology retained for turn identity cross-checks. */
+  providerObservedAtMs?: number;
   /**
    * Set when the evidence row was imported from a subagent transcript (`isSidechain: true`).
    * Sidechain limits are real account-level evidence (quota snapshots may consume them) but
@@ -476,7 +479,9 @@ function markSidechainSourcedUsageDetails(
 /** Availability telemetry does not establish that the parent operation failed. */
 export function mapClaudeProviderFailureToUsageDetails(event: unknown): NormalizedProviderUsageLimitDetailsV1 | null {
   if (!isRecord(event) || isClaudeSidechainRuntimeEvidence(event)) return null;
-  return mapSyntheticClaudeApiErrorToUsageDetails(event);
+  const details = mapSyntheticClaudeApiErrorToUsageDetails(event);
+  const providerObservedAtMs = readClaudeJsonlTimestampMs(event);
+  return details && providerObservedAtMs !== null ? { ...details, providerObservedAtMs } : details;
 }
 
 export function mapClaudeRateLimitEventToUsageDetails(event: unknown): NormalizedProviderUsageLimitDetailsV1 | null {
@@ -507,6 +512,7 @@ export function mapClaudeRateLimitEventToUsageDetails(event: unknown): Normalize
 
   return markSidechainSourcedUsageDetails(record, {
     v: 1,
+    ...(readClaudeJsonlTimestampMs(record) !== null ? { providerObservedAtMs: readClaudeJsonlTimestampMs(record)! } : {}),
     resetAtMs: declaredResetAtMs ?? fallbackTiming?.resetAtMs ?? null,
     retryAfterMs: fallbackTiming?.retryAfterMs ?? null,
     // RD-CLD-5: the rejection is authoritative usage-limit evidence — the surfaced meter's

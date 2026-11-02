@@ -193,6 +193,15 @@ export function applyAuthorizedRuntimeAuthFailureSourceBinding(
     return { ...classification, serviceId: binding.serviceId, groupId: binding.groupId,
       profileId: null, groupGeneration: null, credentialRevision: null };
   }
+  if (
+    classification.profileId === binding.profileId
+    && classification.groupId === binding.groupId
+    && (classification.credentialRevision || classification.providerReportedOrganizationId !== undefined)
+  ) {
+    // A current binding routes recovery. It cannot replace the generation or token revision
+    // captured for the failed request, even when the same member has refreshed since issuance.
+    return classification;
+  }
   return {
     ...classification,
     serviceId: binding.serviceId,
@@ -276,7 +285,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
   let classification = input.classification;
   if (
     classification
-    && classification.sourceProviderAccountId
+    && (classification.sourceProviderAccountId || classification.providerReportedOrganizationId !== undefined)
     && input.resolveProviderQualifiedRuntimeAuthFailureSource
   ) {
     const resolvedClassification = await input.resolveProviderQualifiedRuntimeAuthFailureSource({
@@ -287,6 +296,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
       resolvedClassification.serviceId === classification.serviceId
       && resolvedClassification.groupId === classification.groupId
       && !resolvedClassification.profileId
+      && classification.providerReportedOrganizationId === undefined
     ) {
       return {
         status: 'recovery_superseded',

@@ -82,6 +82,7 @@ export function mergePersistedMemberRuntimeState(
     ...(parsed.success && parsed.data.autoDisabledReason
       ? { autoDisabledReason: parsed.data.autoDisabledReason } : {}),
     lastFailureCode: readString(record.lastFailureCode),
+    lastFailureProviderLimitId: readString(record.lastFailureProviderLimitId),
     validationBlockedUntilMs: readNonNegativeNumber(record.validationBlockedUntilMs),
     providerResetsAtMs,
     lastFailureKind: persistedLastFailureKind,

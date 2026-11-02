@@ -57,6 +57,20 @@ describe('isClaudeGoalStatusAttachmentValue', () => {
 });
 
 describe('createClaudeGoalStatusTranscriptTail', () => {
+  it('shares its existing raw attachment channel with credential identity observations', async () => {
+    const follow = fakeFollow();
+    const observed: unknown[] = [];
+    const tail = createClaudeGoalStatusTranscriptTail({
+      onGoalStatusValue: () => {}, onRawTranscriptValue: (value) => observed.push(value),
+      createFollow: follow.createFollow,
+    });
+    await tail.start('/tmp/claude-session.jsonl');
+    const credential = { type: 'attachment', sessionId: SESSION_ID, timestamp: '2026-11-02T13:50:20.213Z',
+      attachment: { type: 'credential_org', organizationUuid: 'org-current' } };
+    follow.emit(credential);
+    expect(observed).toEqual([credential]);
+    await tail.stop();
+  });
   function setup() {
     const published: SessionWorkStateV1[] = [];
     // publishWorkStateSnapshot is the metadata-write BOUNDARY; the goal source itself is real.

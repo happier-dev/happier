@@ -47,10 +47,12 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
     }, {
       providerResetsAtMs: 10_000,
       lastFailureKind: 'usage_limit',
+      lastFailureProviderLimitId: 'five_hour',
       lastObservedAtMs: 9_000,
     })).toMatchObject({
       providerResetsAtMs: 10_000,
       lastFailureKind: 'usage_limit',
+      lastFailureProviderLimitId: 'five_hour',
       lastObservedAtMs: 9_000,
     });
   });

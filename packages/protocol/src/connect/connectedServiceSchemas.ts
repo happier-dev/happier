@@ -658,6 +658,7 @@ export const ConnectedServiceAuthGroupMemberStateV1Schema = lazySchema(() => z
         validationBlockedUntilMs: z.number().int().nonnegative().nullable().optional(),
         lastFailureKind: z.string().trim().min(1).nullable().optional(),
         lastFailureCode: z.string().trim().min(1).nullable().optional(),
+        lastFailureProviderLimitId: z.string().trim().min(1).nullable().optional(),
         lastObservedPlanType: z.string().trim().min(1).nullable().optional(),
         lastObservedAtMs: z.number().int().nonnegative().nullable().optional(),
         providerResetsAtMs: z.number().int().nonnegative().nullable().optional(),

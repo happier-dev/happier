@@ -249,7 +249,7 @@ describe('ConnectedServiceQuotasCoordinator PAU-only invariant guard', () => {
                 state: {
                   providerResetsAtMs: now - 1,
                   lastFailureKind: 'usage_limit',
-                  lastObservedAtMs: now - 2,
+                  lastObservedAtMs: now - group.policy.cooldownMs,
                 },
               }
             : member),

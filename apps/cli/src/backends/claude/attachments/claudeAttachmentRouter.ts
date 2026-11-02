@@ -1,6 +1,7 @@
 import { parseClaudeGoalStatusAttachment } from '../workState/claudeGoalStatus';
 import {
   parseClaudeQueuedCommandAttachment,
+  parseClaudeCredentialOrganizationAttachment,
   readClaudeAttachmentRecord,
   type ClaudeAttachmentHandlers,
 } from './claudeAttachmentTypes';
@@ -22,6 +23,12 @@ export function routeClaudeAttachment(value: unknown, handlers: ClaudeAttachment
   if (!record) return;
 
   switch (record.attachment.type) {
+    case 'credential_org': {
+      if (!handlers.onCredentialOrganization) break;
+      const event = parseClaudeCredentialOrganizationAttachment(record);
+      if (event) handlers.onCredentialOrganization(event);
+      break;
+    }
     case 'goal_status': {
       if (!handlers.onGoalStatus) break;
       const event = parseClaudeGoalStatusAttachment(record);

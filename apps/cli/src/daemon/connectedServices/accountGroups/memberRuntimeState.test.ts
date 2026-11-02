@@ -15,6 +15,17 @@ import {
 } from './memberRuntimeState';
 
 describe('buildObservedFailureMemberRuntimeState', () => {
+  it('keeps the failing usage window with its blocker', () => {
+    expect(buildObservedFailureMemberRuntimeState({
+      existing: null,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      reason: 'usage_limit',
+      providerLimitId: 'five_hour',
+      retryAtMs: 100_000,
+      planType: null,
+      observedAtMs: 1_000,
+    })).toMatchObject({ lastFailureProviderLimitId: 'five_hour' });
+  });
   it('cools down an unsupported ChatGPT model for 24 hours without blocking other models', () => {
     expect(buildObservedFailureMemberRuntimeState({
       existing: null,
@@ -275,6 +286,36 @@ describe('persistMemberRuntimeStateWithPositiveEvidence', () => {
 });
 
 describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
+  it.each([
+    { name: 'same window after cooldown', meterId: 'five_hour', capturedAtMs: 31_000, nowMs: 31_000, clears: true },
+    { name: 'different positive window', meterId: 'seven_day', capturedAtMs: 31_000, nowMs: 31_000, clears: false },
+    { name: 'same window during cooldown', meterId: 'five_hour', capturedAtMs: 30_999, nowMs: 31_000, clears: false },
+    { name: 'stale same window', meterId: 'five_hour', capturedAtMs: 31_000, nowMs: 91_000, clears: false },
+    { name: 'future same window', meterId: 'five_hour', capturedAtMs: 31_001, nowMs: 31_000, clears: false },
+  ])('admits quota positive evidence only for $name', ({ meterId, capturedAtMs, nowMs, clears }) => {
+    const state = {
+      lastFailureKind: 'usage_limit',
+      lastFailureProviderLimitId: 'five_hour',
+      lastObservedAtMs: 1_000,
+      quotaExhaustedUntilMs: 500_000,
+      providerResetsAtMs: 500_000,
+      authInvalidUntilMs: 500_000,
+    };
+    const reconciled = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
+      quotaFreshnessMs: 60_000,
+      state,
+      quotaSnapshot: {
+        capturedAtMs,
+        effectiveRemainingPercent: 98,
+        meters: [{ meterId, providerLimitId: meterId, limitCategory: 'usage_limit', remainingPct: 98, resetAtMs: 500_000 }],
+      },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, cooldownMs: 30_000 },
+      nowMs,
+    });
+    if (clears) expect(reconciled).toEqual({ authInvalidUntilMs: 500_000 });
+    else expect(reconciled).toBe(state);
+  });
+
   it('retains model exclusions when a successful turn carries no model entitlement proof', () => {
     expect(reconcileMemberRuntimeStateWithPositiveEvidence({
       state: { lastObservedAtMs: 1_000, lastFailureCode: 'model_not_entitled',
@@ -345,6 +386,7 @@ describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
 
   it('does not use generic headroom to clear an exact usage-limit failure without a matching usage meter', () => {
     expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({
+      quotaFreshnessMs: 60_000,
       state: allBlockers,
       quotaSnapshot: {
         capturedAtMs: 2_000,
@@ -358,9 +400,10 @@ describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
 
   it('uses a matching fresh usage meter only for the quota failure class', () => {
     expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({
+      quotaFreshnessMs: 60_000,
       state: allBlockers,
       quotaSnapshot: {
-        capturedAtMs: 2_000,
+        capturedAtMs: 31_000,
         effectiveMeterId: 'weekly',
         effectiveRemainingPercent: 80,
         meters: [{
@@ -372,7 +415,7 @@ describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
         }],
       },
       policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-      nowMs: 2_000,
+      nowMs: 31_000,
     })).toEqual({
       authInvalidUntilMs: 10_000,
       capacityLimitedUntilMs: 10_000,
@@ -385,6 +428,7 @@ describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
 
   it('lets current quota evidence supersede a failure timestamp poisoned by a future clock', () => {
     expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({
+      quotaFreshnessMs: 60_000,
       state: {
         lastFailureKind: 'usage_limit',
         lastObservedAtMs: 100_000,

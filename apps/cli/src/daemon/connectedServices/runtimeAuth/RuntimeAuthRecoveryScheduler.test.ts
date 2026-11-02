@@ -19,7 +19,7 @@ import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAut
   type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, type ConnectedServiceAuthGroupMemberRuntimeState } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
-import { handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
+import { authorizeConnectedServiceRuntimeAuthFailureSource, handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
 import type { TrackedSession } from '@/daemon/types';
 import { ConnectedServiceAuthGroupGenerationConsumer } from '../accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import { resolveConnectedServiceContinuationOriginId, settleSupersedingRuntimeAuthGenerationForSource } from '@/daemon/startDaemon';
@@ -63,6 +63,21 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
+function createSerializedRecoveryStore(initial: ReadonlyArray<readonly [string, unknown]> = []): DurableRecoveryStore<RuntimeAuthRecoveryIntent> {
+  // Persisted JSON is the genuine storage boundary; keep scheduler and recovery logic real.
+  const rows = new Map(initial.map(([key, value]) => [key, JSON.stringify(value)]));
+  const read = (key: string): unknown => {
+    const value = rows.get(key);
+    return value === undefined ? null : JSON.parse(value) as unknown;
+  };
+  return {
+    read,
+    readAll: () => [...rows.keys()].map((key) => [key, read(key)] as const),
+    write: (key, intent) => { rows.set(key, JSON.stringify(intent)); },
+    remove: (key) => { rows.delete(key); },
+  };
+}
+
 async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0]['settleSupersedingRuntimeGroupGeneration']>>[0]) {
   const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
     resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'test-runtime' }),
@@ -83,6 +98,137 @@ async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters
 }
 
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it('retains the failed ai1 turn through batiplus adoption, daemon replacement, retry and outbox replay', async () => {
+    const durableStore = createSerializedRecoveryStore();
+    const sessionId = 'ai1-failed-turn';
+    const failure = classificationFor({ serviceId: 'claude-subscription', groupId: 'claude-pool',
+      profileId: 'ai1', groupGeneration: 1, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+      providerLimitId: 'five_hour', resetsAtMs: 100_000 });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'claude-subscription', groupId: 'claude-pool', activeProfileId: 'ai1', generation: 1,
+      runtimeStateRevision: 0, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['ai1', 'batiplus_ai'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([['batiplus_ai', {
+        quotaSnapshot: { capturedAtMs: 1_000, effectiveRemainingPercent: 98 },
+      }]]),
+    };
+    const blockedProfiles: string[] = [];
+    const continuations: string[] = [];
+    const retriedFailures: ConnectedServiceRuntimeFailureClassification[] = [];
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000, loadState: async () => current,
+      // Group persistence and provider application are genuine external boundaries.
+      recordObservedFailureState: async ({ observedProfileId }) => {
+        if (!observedProfileId) throw new Error('Expected an attributed failed profile');
+        blockedProfiles.push(observedProfileId);
+      },
+      commitSwitch: async ({ toProfileId }) => (current = { ...current, activeProfileId: toProfileId,
+        generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+      applyGeneration: async () => ({ mode: 'hot_apply' }),
+    });
+    const tracked = { startedBy: 'daemon', happySessionId: sessionId, pid: 123 } satisfies TrackedSession;
+    const handlerDeps = {
+      getChildren: () => [tracked], switchCoordinator: coordinator,
+      resolveRegisteredRuntimeAuthFailureSource: () => {
+        if (!current.activeProfileId) throw new Error('Expected an active registered profile');
+        return { serviceId: 'claude-subscription' as const,
+          groupId: 'claude-pool', profileId: current.activeProfileId, generation: current.generation,
+          credentialRevision: current.credentialRevision ?? null };
+      },
+      settleSupersedingRuntimeGroupGeneration: settleRecoveryGeneration,
+      continueAfterRuntimeAuthSwitch: async ({ target }: Parameters<NonNullable<Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0]['continueAfterRuntimeAuthSwitch']>>[0]) => {
+        continuations.push(target?.profileId ?? 'unknown');
+      },
+    };
+    const makeScheduler = () => new RuntimeAuthRecoveryScheduler({ durableStore,
+      nowMs: () => 1_000, recover: async (input) => {
+        retriedFailures.push(input.classification);
+        return await handleConnectedServiceRuntimeAuthFailureForSession({ ...handlerDeps, ...input,
+          recoveryInvocationSource: input.source });
+      } });
+    const makeIntake = (scheduler: RuntimeAuthRecoveryScheduler) => createRuntimeAuthFailureReportIntake({
+      runtimeAuthRecoveryScheduler: scheduler,
+      authorizeConnectedServiceRuntimeAuthFailure: async (input) => await authorizeConnectedServiceRuntimeAuthFailureSource({ ...handlerDeps, ...input }),
+      handleConnectedServiceRuntimeAuthFailure: async (input) => await handleConnectedServiceRuntimeAuthFailureForSession({ ...handlerDeps, ...input }),
+    });
+    const body = { reportId: 'runtime-auth-report:ai1-turn', sessionId, switchesThisTurn: 0, classification: failure };
+    const key = buildRuntimeAuthRecoveryKey({ sessionId, ...failure });
+    const first = makeScheduler();
+    let replacement: RuntimeAuthRecoveryScheduler | undefined;
+    try {
+      await expect(makeIntake(first)(body)).resolves.toMatchObject({ ok: true });
+      expect(first.readByKeyPassive(key)).toMatchObject({ classification: failure,
+        profileId: 'ai1', status: 'resumed_awaiting_proof', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+      first.dispose();
+      replacement = makeScheduler();
+      expect(replacement.hydratePassive()).toEqual([expect.objectContaining({ classification: failure,
+        profileId: 'ai1', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 })]);
+      await replacement.wakeByKey({ recoveryKey: key, reason: 'manual' });
+      await expect(makeIntake(replacement)(body)).resolves.toMatchObject({ ok: true });
+      expect(retriedFailures).toEqual([expect.objectContaining(failure)]);
+      expect(replacement.readByKeyPassive(key)).toMatchObject({ classification: failure,
+        profileId: 'ai1', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+      expect(blockedProfiles.length).toBeGreaterThan(0);
+      expect(blockedProfiles.every((profileId) => profileId === 'ai1')).toBe(true);
+      expect(continuations).toContain('batiplus_ai');
+      expect(continuations.every((profileId) => profileId === 'batiplus_ai')).toBe(true);
+    } finally { first.dispose(); replacement?.dispose(); }
+  });
+
+  it('starts a new failure attempt when provider-reported organization evidence changes', async () => {
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000,
+      recover: async () => ({ status: 'credential_refreshed' }) });
+    try {
+      const first = await scheduler.beginClassifiedFailure({ sessionId: 'changed-provider-evidence',
+        reportId: 'runtime-auth-report:org-ai1', switchesThisTurn: 0,
+        classification: classificationFor({ providerReportedOrganizationId: 'org-ai1' }) });
+      const changed = await scheduler.beginClassifiedFailure({ sessionId: 'changed-provider-evidence',
+        reportId: 'runtime-auth-report:org-batiplus', switchesThisTurn: 0,
+        classification: classificationFor({ providerReportedOrganizationId: 'org-batiplus' }) });
+      expect(changed.attemptId).not.toBe(first.attemptId);
+      expect(scheduler.read('changed-provider-evidence')).toMatchObject({ attemptId: changed.attemptId,
+        classification: { providerReportedOrganizationId: 'org-batiplus' } });
+    } finally { scheduler.dispose(); }
+  });
+
+  it('hydrates the released 0.2.18 and 0.2.19 intent shape without replacing the failed identity with its pending target', async () => {
+    const failure = classificationFor({ serviceId: 'claude-subscription', groupId: 'claude-pool', profileId: 'ai1',
+      groupGeneration: 1, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+      providerLimitId: 'five_hour', resetsAtMs: 100_000 });
+    const key = buildRuntimeAuthRecoveryKey({ sessionId: 'released-failure', ...failure });
+    // Producer basis: CLI 0.2.18 (0895032a51), CLI 0.2.19 (93147767e4).
+    // Both releases have identical enqueue and file-snapshot writers. This v2 shape
+    // contains no new-reader-only additions and crosses a JSON serialization boundary.
+    const durableStore = createSerializedRecoveryStore([[key, {
+      v: 2, attemptId: 'runtime-auth-attempt:released-failure', lastSettledTransition: 'working',
+      sessionId: 'released-failure', serviceId: 'claude-subscription', profileId: 'ai1', groupId: 'claude-pool',
+      resumePromptMode: 'off', status: 'resumed_awaiting_proof', armedAtMs: 1_000, nextRetryAtMs: 2_000,
+      attemptCount: 0, maxAttempts: 5, switchesThisTurn: 0, classification: failure,
+      failurePhase: 'handler', failureReason: 'source_tuple_superseded',
+      lastError: 'recovery_unproven_awaiting_provider_outcome',
+      lastErrorClassification: { kind: 'rate_limited', retryable: true },
+      pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2, terminalAtMs: null, terminalReason: null,
+    }]]);
+    let retried: ConnectedServiceRuntimeFailureClassification | undefined;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ durableStore, nowMs: () => 2_000,
+      recover: async (input) => { retried = input.classification; return { status: 'credential_refreshed' }; } });
+    try {
+      expect(scheduler.hydratePassive()).toEqual([expect.objectContaining({
+        classification: expect.objectContaining(failure), profileId: 'ai1',
+        pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2,
+      })]);
+      expect(retried).toBeUndefined();
+      await scheduler.wakeByKey({ recoveryKey: key, reason: 'manual' });
+      expect(retried).toMatchObject(failure);
+      expect(scheduler.readByKeyPassive(key)).toMatchObject({ profileId: 'ai1',
+        classification: failure, pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+    } finally { scheduler.dispose(); }
+  });
+
   it.each([
     { reason: 'deadline_exceeded', retryAtMs: undefined, expectedRetryAtMs: 33_000 },
     { reason: 'probe_unavailable', retryAtMs: 90_000, expectedRetryAtMs: 90_000 },

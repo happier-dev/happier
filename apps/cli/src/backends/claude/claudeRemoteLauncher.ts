@@ -160,6 +160,8 @@ import {
     recordClaudeRateLimitQuotaEvidence,
     surfaceClaudeRuntimeAuthFailure,
     surfaceClaudeRateLimitRuntimeIssue,
+    captureClaudeRuntimeAuthRequestIdentity,
+    observeClaudeRuntimeAuthTranscript,
 } from './connectedServices/surfaceClaudeRuntimeIssues';
 import type { NormalizedProviderUsageLimitDetailsV1 } from './connectedServices/mapClaudeRateLimitEventToUsageDetails';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
@@ -734,6 +736,7 @@ export async function claudeRemoteLauncher(
     // source, goal_status-only (workflow activity rides the richer SDK `onMessage` stream instead).
     const goalStatusTranscriptTail = createClaudeGoalStatusTranscriptTail({
         onGoalStatusValue: (value) => goalWorkStateSource.observeTranscriptMessage(value),
+        onRawTranscriptValue: (value) => observeClaudeRuntimeAuthTranscript(session, value),
         logPrefix: '[remote]',
     });
     const maybeStartAgentSdkGoalStatusTail = (transcriptPath: string | null | undefined): void => {
@@ -1759,6 +1762,7 @@ export async function claudeRemoteLauncher(
                                 : null;
                             permissionHandler.handleModeChange(p.mode.permissionMode);
                             const providerMessage = await resolveQueuedPromptForProvider(p);
+                            if (p.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                             if (p.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(p.mode)) {
                                 await beginPromptTurn();
                             } else {
@@ -1801,6 +1805,7 @@ export async function claudeRemoteLauncher(
                         unifiedTerminalLaunchOptionsHash = nextUnifiedTerminalLaunchOptionsHash;
                         permissionHandler.handleModeChange(nextMode.permissionMode);
                         const providerMessage = await resolveQueuedPromptForProvider(msg);
+                        if (msg.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();
                         } else {
@@ -1886,6 +1891,7 @@ export async function claudeRemoteLauncher(
                         value: unknown,
                         observation: ClaudeWorkflowActivityObservationContext,
                     ) => {
+                        observeClaudeRuntimeAuthTranscript(session, value, observation);
                         goalWorkStateSource.observeTranscriptMessage(value);
                         // Claude workflow ACTIVITY rides the SAME raw transcript channel as the goal
                         // source (workflow task_started/task_progress/task_completed rows).

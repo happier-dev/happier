@@ -3531,6 +3531,19 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
         requestedAction: { v: 1, kind: 'steer_if_active' },
         activeTurnId: 'session-turn:exact-1',
       });
+      const providerIdentity = {
+        serviceId: 'claude-subscription', groupId: 'pool', providerOrganizationId: 'org-live',
+        sourceSessionId: 'claude-session', observedAtMs: 200,
+      };
+      const observation = await app.inject({
+        method: 'POST', url: '/connected-service-turn-lifecycle',
+        headers: { 'x-happier-daemon-token': 'token' },
+        payload: { sessionId: 'sess_1', event: 'provider_identity_observed', providerIdentity },
+      });
+      expect(observation.statusCode).toBe(200);
+      expect(handleConnectedServiceTurnLifecycle).toHaveBeenLastCalledWith({
+        sessionId: 'sess_1', event: 'provider_identity_observed', providerIdentity,
+      });
     } finally {
       await app.close();
     }

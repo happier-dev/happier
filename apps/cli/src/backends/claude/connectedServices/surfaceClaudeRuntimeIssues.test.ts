@@ -1,6 +1,6 @@
 import type { notifyDaemonConnectedServiceRuntimeAuthFailure, notifyDaemonConnectedServiceQuotaSnapshot } from '@/daemon/controlClient';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,18 +25,26 @@ import type { FailTurnInput } from '@/agent/runtime/session/turn/types';
 import { createClaudeUnifiedHookLifecycleBridge } from '../unifiedTerminal/createClaudeUnifiedHookLifecycleBridge';
 import { createClaudeUnifiedInputArbiter } from '../unifiedTerminal/createClaudeUnifiedInputArbiter';
 import type { SessionHookData } from '../utils/startHookServer';
+import type { Session } from '../session';
+import { createSessionScanner } from '../utils/sessionScanner';
+import { createClaudeSessionTranscriptProjector } from '../localControl/createClaudeSessionTranscriptProjector';
+import { mapClaudeProviderFailureToUsageDetails } from './mapClaudeRateLimitEventToUsageDetails';
 
 import {
   recordClaudeRateLimitQuotaEvidence,
+  captureClaudeRuntimeAuthRequestIdentity,
+  observeClaudeRuntimeAuthTranscript,
   surfaceClaudeRuntimeAuthFailure,
   surfaceClaudeRateLimitRuntimeIssue,
 } from './surfaceClaudeRuntimeIssues';
 
 const mockNotifyDaemonConnectedServiceRuntimeAuthFailure = vi.hoisted(() => vi.fn<(input: Parameters<typeof notifyDaemonConnectedServiceRuntimeAuthFailure>[0]) => Promise<unknown>>(async () => ({})));
 const mockNotifyDaemonConnectedServiceQuotaSnapshot = vi.hoisted(() => vi.fn<(input: Parameters<typeof notifyDaemonConnectedServiceQuotaSnapshot>[0]) => Promise<unknown>>(async () => ({ ok: true })));
+const mockNotifyDaemonConnectedServiceTurnLifecycle = vi.hoisted(() => vi.fn<(_input: unknown) => Promise<unknown>>(async () => ({ ok: true })));
 vi.mock('@/daemon/controlClient', () => ({
   notifyDaemonConnectedServiceRuntimeAuthFailure: mockNotifyDaemonConnectedServiceRuntimeAuthFailure,
   notifyDaemonConnectedServiceQuotaSnapshot: mockNotifyDaemonConnectedServiceQuotaSnapshot,
+  notifyDaemonConnectedServiceTurnLifecycle: mockNotifyDaemonConnectedServiceTurnLifecycle,
 }));
 
 type ClaudeFailTurn = (params: FailTurnInput) => Promise<void>;
@@ -1488,6 +1496,96 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
     if (!call) throw new Error('expected a quota snapshot delivery');
     return call;
   }
+
+  it.each(['auth', 'quota'] as const)('cross-checks a %s failure against the last credential_org at or before its timestamp', async (kind) => {
+    await writeMaterializedClaudeConfig({ accountUuid: 'later-account', organizationUuid: 'later-org' });
+    const transcriptPath = join(tmpDir, 'native-session.jsonl');
+    await writeFile(transcriptPath, [
+      { type: 'attachment', sessionId: 'native-session', timestamp: '2026-11-02T13:50:20.213Z',
+        attachment: { type: 'credential_org', organizationUuid: 'failing-org' } },
+      { type: 'attachment', sessionId: 'native-session', timestamp: '2026-11-02T13:59:39.000Z',
+        attachment: { type: 'credential_org', organizationUuid: 'later-org' } },
+      { type: 'attachment', sessionId: 'foreign-session', timestamp: '2026-11-02T13:57:00.000Z',
+        attachment: { type: 'credential_org', organizationUuid: 'foreign-org' } },
+      { type: 'attachment', sessionId: 'native-session', isSidechain: true, timestamp: '2026-11-02T13:57:01.000Z',
+        attachment: { type: 'credential_org', organizationUuid: 'sidechain-org' } },
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const session = {
+      sessionId: 'native-session', transcriptPath,
+      client: { sessionId: `failed-native-turn-${kind}`, sessionTurnLifecycle: { failTurn: createClaudeFailTurnSpy() } },
+    };
+    if (kind === 'auth') {
+      await surfaceClaudeRuntimeAuthFailure(session, { type: 'assistant', isApiErrorMessage: true, apiErrorStatus: 401,
+        message: 'OAuth token has expired', timestamp: '2026-11-02T13:58:11.000Z' }, '[test]');
+    } else {
+      const details = mapClaudeProviderFailureToUsageDetails({ type: 'assistant', isApiErrorMessage: true,
+        apiErrorStatus: 429, error: 'rate_limit_error', providerLimitId: 'five_hour', timestamp: '2026-11-02T13:58:11.000Z' });
+      if (!details) throw new Error('Expected native quota failure classification');
+      await surfaceClaudeRateLimitRuntimeIssue(session, details, '[test]');
+    }
+    expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
+      classification: expect.objectContaining({ providerReportedOrganizationId: 'failing-org' }),
+    }), expect.anything());
+  });
+
+  it('reconciles only fresh credential_org observations through the real scanner raw channel', async () => {
+    const transcriptPath = join(tmpDir, 'native-session.jsonl');
+    const credential = (organizationUuid: string, timestamp: string) => ({ type: 'attachment',
+      sessionId: 'native-session', timestamp, attachment: { type: 'credential_org', organizationUuid } });
+    await writeFile(transcriptPath, JSON.stringify(credential('historical-org', '2026-11-02T13:50:20.213Z')) + '\n');
+    const session = { sessionId: 'native-session', transcriptPath,
+      client: { sessionId: 'identity-observer', sendClaudeSessionMessage: vi.fn(),
+        sendClaudeSessionMessageCommittedExact: vi.fn(async () => {}) } };
+    const projector = createClaudeSessionTranscriptProjector({ session: session as unknown as Session, logPrefix: '[test]' });
+    mockNotifyDaemonConnectedServiceTurnLifecycle.mockClear();
+    const scanner = await createSessionScanner({ sessionId: 'native-session', transcriptPath, workingDirectory: tmpDir,
+      onMessage: (message) => projector.observe(message),
+      onRawJsonlValue: (value, observation) => projector.observeRaw(value, observation) });
+    try {
+      expect(mockNotifyDaemonConnectedServiceTurnLifecycle).not.toHaveBeenCalled();
+      await appendFile(transcriptPath, JSON.stringify(credential('live-org', '2026-11-02T13:59:39.000Z')) + '\n');
+      await vi.waitFor(() => expect(mockNotifyDaemonConnectedServiceTurnLifecycle).toHaveBeenCalledWith({
+        sessionId: 'identity-observer', event: 'provider_identity_observed', providerIdentity: {
+          serviceId: 'claude-subscription', groupId: 'team-pool', providerOrganizationId: 'live-org',
+          sourceSessionId: 'native-session', observedAtMs: 1793627979000,
+        },
+      }));
+      expect(session.client.sendClaudeSessionMessage).not.toHaveBeenCalled();
+    } finally { await scanner.cleanup(); }
+  });
+
+  it('retains the issued request account and generation after a shared home and selection switch', async () => {
+    await writeMaterializedClaudeConfig({ accountUuid: 'issued-account', organizationUuid: 'issued-org' });
+    const session = { client: { sessionId: 'request-snapshot', sessionTurnLifecycle: { failTurn: createClaudeFailTurnSpy() } } };
+    await captureClaudeRuntimeAuthRequestIdentity(session);
+    await writeMaterializedClaudeConfig({ accountUuid: 'later-account', organizationUuid: 'later-org' });
+    process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] = JSON.stringify([{
+      kind: 'group', serviceId: 'claude-subscription', groupId: 'team-pool', activeProfileId: 'later-profile',
+      fallbackProfileId: 'claude-backup', generation: 5, credentialRevision: 'csr_8123456789ABCDEFGHJKMNPQRS',
+    }]);
+    await surfaceClaudeRateLimitRuntimeIssue(session, {
+      ...passiveUtilizationDetails(), limitCategory: 'usage_limit', utilization: 100,
+    }, '[test]');
+    expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
+      classification: expect.objectContaining({ profileId: 'claude-main', groupGeneration: 4,
+        credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS', sourceProviderAccountId: 'issued-account',
+        sourceProviderOrganizationId: 'issued-org' }),
+    }), expect.anything());
+  });
+
+  it('reports a rejected provider organization acknowledgement on the default log', async () => {
+    const warning = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
+    mockNotifyDaemonConnectedServiceTurnLifecycle.mockResolvedValueOnce({ error: 'metadata_publication_failed' });
+    try {
+      observeClaudeRuntimeAuthTranscript({ sessionId: 'native-session', client: { sessionId: 'identity-rejected' } }, {
+        type: 'attachment', sessionId: 'native-session', timestamp: '2026-11-02T13:59:39.000Z',
+        attachment: { type: 'credential_org', organizationUuid: 'live-org' },
+      });
+      await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(
+        '[claude] Failed to report observed provider organization', { error: 'metadata_publication_failed' },
+      ));
+    } finally { warning.mockRestore(); }
+  });
 
   it('enriches passive quota evidence with the live account identity → source-linked PAU (soft-switch eligible)', async () => {
     await writeMaterializedClaudeConfig({ accountUuid: 'acct_live_uuid', emailAddress: 'pool@happier.dev', organizationUuid: 'org-pool' });

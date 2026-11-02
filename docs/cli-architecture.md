@@ -1884,6 +1884,13 @@ It also drains stranded runtime-auth reports in-process through the same
 authorization, report-ID deduplication and durable intake used by local HTTP
 reports. The session-side fast-path drain remains active.
 
+The failed request's profile, pool generation, credential revision and provider
+identity are captured at request issuance. That classification remains separate
+from the recovery intent's pending or adopted target through report replay,
+scheduled retries and restart hydration. A current binding cannot replace a
+captured failure tuple. Existing V1/V2 recovery intents remain readable; hydration
+does not invent missing historical provider evidence.
+
 An older failure whose pool has since moved to another member does not by itself
 prove that the interrupted turn resumed. A late report with a proven adopted
 successor obtains durable custody through the existing scheduler, including a
@@ -1960,6 +1967,30 @@ recovery wait. An explicit `usage_limit_reached` remains a usage failure even wh
 the accompanying meter is below 100 percent. Standard account-switch continuation
 uses neutral text; a resume after the reset retains the limits-lifted text. Both
 paths use the existing prompt owner and preserve custom resume prompts.
+
+Claude's existing transcript router also reads `credential_org` attachments. A
+failure uses the latest organization observation at or before its timestamp.
+The daemon resolves it through pool-member credential identity. Unknown,
+ambiguous or contradictory evidence leaves the failure unattributed, logs the
+discrepancy, and uses the existing quota-recovery path without exhausting a guessed
+member. Fresh live observations update the session registry's recorded account;
+an organization alone proves neither a credential revision nor a pool generation.
+Only the existing generation reconciler applies a newer committed generation.
+Historical failure evidence never updates the session's current account.
+The existing session binding metadata carries optional `appliedProfileId` for
+this observed account. The session label consumes that fact while `profileId`
+retains its fallback meaning and the pool's active profile remains desired state.
+Auth-choice writes omit the observation; exact account application replaces it.
+
+Codex app-server 0.162.1 exposes no account or organization identity on its turn
+or error events. Its request-issued identity remains the failure evidence;
+current-account routing and quota observations do not attest an earlier turn.
+
+The member-state positive-evidence owner can clear a failure-derived quota
+blocker when a fresh, reliable observation shows remaining quota for the same
+provider allowance. The existing policy cooldown must elapse after the failure,
+and stale observations cannot clear it. This does not relax the selector's
+freshness requirement for predictive soft switches.
 
 After a primary Claude limit failure, the existing quota outbox and runtime-auth
 reporter deliver their observations independently; recovery reporting does not

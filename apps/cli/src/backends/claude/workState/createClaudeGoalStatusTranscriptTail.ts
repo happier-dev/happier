@@ -52,6 +52,8 @@ type FollowController = Readonly<{
 export function createClaudeGoalStatusTranscriptTail(params: Readonly<{
   /** Forward one `goal_status` transcript value to the goal source (`observeTranscriptMessage`). */
   onGoalStatusValue: (value: unknown) => void;
+  /** Share this existing JSONL observation with provider identity; do not create another follower. */
+  onRawTranscriptValue?: (value: unknown) => void;
   logPrefix?: string;
   /** Test seam: inject the follow primitive (defaults to the real file-watching controller). */
   createFollow?: (opts: JsonlFollowControllerOptions) => FollowController;
@@ -92,6 +94,7 @@ export function createClaudeGoalStatusTranscriptTail(params: Readonly<{
       filePath: transcriptPath,
       startOffsetBytes,
       onJson: (value) => {
+        params.onRawTranscriptValue?.(value);
         if (!isClaudeGoalStatusAttachmentValue(value)) return;
         try {
           params.onGoalStatusValue(value);

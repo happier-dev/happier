@@ -1,4 +1,5 @@
 import { connectedServiceUsageRequiresOrganizationId, ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import { logger } from '@/ui/logger';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import { resolveConnectedServiceGroupMemberByProviderAccountId, type ConnectedServiceGroupMemberProviderAccountIdentity } from '../shared/resolveConnectedServiceGroupMemberByProviderAccountId';
 
@@ -28,7 +29,8 @@ export async function resolveRuntimeAuthFailureSourceProfile(input: Readonly<{
 }>): Promise<ConnectedServiceRuntimeFailureClassification> {
   const groupId = readNonEmptyString(input.classification.groupId);
   const sourceProviderAccountId = readNonEmptyString(input.classification.sourceProviderAccountId);
-  if (!groupId || !sourceProviderAccountId) return input.classification;
+  const hasProviderEvidence = input.classification.providerReportedOrganizationId !== undefined;
+  if (!groupId || (!sourceProviderAccountId && !hasProviderEvidence)) return input.classification;
 
   const unattributed = {
     ...input.classification,
@@ -36,28 +38,43 @@ export async function resolveRuntimeAuthFailureSourceProfile(input: Readonly<{
     groupGeneration: null,
     credentialRevision: null,
   };
+  const providerReportedOrganizationId = readNonEmptyString(input.classification.providerReportedOrganizationId);
+  const capturedOrganizationId = readNonEmptyString(input.classification.sourceProviderOrganizationId);
+  const unproven = (reason: string) => {
+    logger.warnFile('[CONNECTED SERVICE] Runtime failure account attribution unproven; quota probe required', {
+      serviceId: input.classification.serviceId, groupId,
+      reportedProfileId: input.classification.profileId,
+      sourceProviderOrganizationId: capturedOrganizationId,
+      providerReportedOrganizationId, reason,
+    });
+    return unattributed;
+  };
+  if (hasProviderEvidence && !providerReportedOrganizationId) return unproven('provider_organization_unknown');
+  if (providerReportedOrganizationId && capturedOrganizationId && providerReportedOrganizationId !== capturedOrganizationId) {
+    return unproven('provider_organization_mismatch');
+  }
   const serviceId = ConnectedServiceIdSchema.safeParse(input.classification.serviceId);
   if (
     input.classification.kind === 'usage_limit'
-    && !readNonEmptyString(input.classification.sourceProviderOrganizationId)
+    && !capturedOrganizationId && !providerReportedOrganizationId
     && serviceId.success
     && connectedServiceUsageRequiresOrganizationId(serviceId.data)
-  ) return unattributed;
+  ) return unproven('source_organization_unknown');
   let members: readonly RuntimeAuthFailureGroupMember[] | null;
   try {
     members = await input.getGroupMembers();
   } catch {
-    return unattributed;
+    return unproven('group_read_failed');
   }
-  if (!members || members.length === 0) return unattributed;
+  if (!members || members.length === 0) return unproven('group_members_unavailable');
 
   const sourceProfileId = await resolveConnectedServiceGroupMemberByProviderAccountId({
-    providerAccountId: sourceProviderAccountId,
-    providerOrganizationId: input.classification.sourceProviderOrganizationId,
+    providerAccountId: hasProviderEvidence ? null : sourceProviderAccountId,
+    providerOrganizationId: providerReportedOrganizationId ?? capturedOrganizationId,
     members,
     resolveProviderAccountIdentity: input.resolveProviderAccountIdentity,
   });
-  if (!sourceProfileId) return unattributed;
+  if (!sourceProfileId) return unproven('member_identity_ambiguous_or_unknown');
   if (sourceProfileId === readNonEmptyString(input.classification.profileId)) {
     return input.classification;
   }

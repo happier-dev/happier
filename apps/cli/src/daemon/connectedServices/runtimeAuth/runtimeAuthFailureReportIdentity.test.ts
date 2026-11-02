@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildStableRuntimeAuthFailureReportDedupeKey } from './runtimeAuthFailureReportIdentity';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 
 describe('runtimeAuthFailureReportIdentity', () => {
+  it('preserves explicitly unknown request identity through report sanitization', () => {
+    expect(sanitizeConnectedServiceRuntimeFailureClassification({
+      kind: 'usage_limit', source: 'structured_provider_error', serviceId: 'claude-subscription',
+      sourceProviderAccountId: null, sourceProviderOrganizationId: null, providerReportedOrganizationId: null,
+    })).toMatchObject({ sourceProviderAccountId: null, sourceProviderOrganizationId: null, providerReportedOrganizationId: null });
+  });
+
   const baseClassification = {
     kind: 'auth_expired',
     source: 'structured_provider_error',

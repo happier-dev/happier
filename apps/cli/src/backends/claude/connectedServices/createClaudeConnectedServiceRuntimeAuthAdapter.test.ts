@@ -20,6 +20,23 @@ const FUTURE_EXPIRES_AT_MS = Date.now() + 60 * 60 * 1000;
 const ORIGINAL_PLATFORM_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'platform');
 
 describe('createClaudeConnectedServiceRuntimeAuthAdapter', () => {
+  it('does not replace explicitly unknown issued-request identity with the current credential record', () => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1000, serviceId: 'claude-subscription', profileId: 'later', kind: 'oauth',
+      expiresAt: FUTURE_EXPIRES_AT_MS,
+      oauth: { accessToken: 'placeholder', refreshToken: 'placeholder', idToken: null,
+        scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE, tokenType: 'Bearer',
+        providerAccountId: 'later-account', providerEmail: null,
+        raw: { claudeAiOauth: { organizationUuid: 'later-org' } } },
+    });
+    const classification = createClaudeConnectedServiceRuntimeAuthAdapter().classifyRuntimeAuthFailure({
+      target: { agentId: 'claude' },
+      selection: { serviceId: 'claude-subscription', activeProfileId: 'later', record },
+      error: { type: 'assistant', isApiErrorMessage: true, apiErrorStatus: 429, error: 'rate_limit_error',
+        sourceProviderAccountId: null, sourceProviderOrganizationId: null },
+    });
+    expect(classification).toMatchObject({ sourceProviderAccountId: null, sourceProviderOrganizationId: null });
+  });
   beforeEach(() => {
     if (ORIGINAL_PLATFORM_DESCRIPTOR) {
       Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });

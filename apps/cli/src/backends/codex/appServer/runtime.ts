@@ -1229,6 +1229,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const activeProviderTurnItemIds = new Set<string>();
     let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeAppliedIdentity | null =
         params.initialConnectedServiceRuntimeIdentity ?? null;
+    const capturePendingTurnRequestIdentity = (turn: PendingTurn): PendingTurn => {
+        // Preparation can await persistence or media reads while hot auth applies. Capture only
+        // when issuing the provider request, then retain this tuple through its terminal report.
+        const identity = latestConnectedServiceRuntimeIdentity;
+        const captured = {
+            ...turn,
+            connectedServiceRuntimeIdentityAtStart: identity ? Object.freeze({ ...identity }) : null,
+        };
+        if (pendingTurn?.promise === turn.promise) pendingTurn = captured;
+        return captured;
+    };
     // A disposed process has no live proof. Retain its applied selection only as
     // the seed for the next process, whose external tokens must be applied again.
     let nextClientConnectedServiceIdentity = latestConnectedServiceRuntimeIdentity;
@@ -1666,18 +1677,22 @@ export function createCodexAppServerRuntime(params: Readonly<{
         target: 'thread' | 'turn',
         requestParams: Record<string, unknown>,
         options?: CodexAppServerRequestOptions,
+        onRequestIssued?: () => void,
     ): Promise<unknown> => {
         const approvalPolicy = requestParams.approvalPolicy;
         if (normalizePermissionModeToIntent(getCurrentPermissionMode()) !== 'safe-yolo'
             || !approvalPolicy || typeof approvalPolicy !== 'object' || Array.isArray(approvalPolicy)
             || !Object.prototype.hasOwnProperty.call(approvalPolicy, 'granular')
             || requestParams.approvalsReviewer !== 'auto_review') {
+            onRequestIssued?.();
             return client.request(method, requestParams, options);
         }
+        onRequestIssued?.();
         return client.request(method, requestParams, options).catch(async (error: unknown) => {
             if (!isCodexAppServerManagedGranularApprovalRejection(error, method)) throw error;
             managedScalarFallback = true;
             logger.warn('[codex-app-server] Managed policy rejected Auto granular approvals; using on-request with user review for this session');
+            onRequestIssued?.();
             return await client.request(method, {
                 ...requestParams,
                 ...buildCurrentPermissionParams(target),
@@ -4513,9 +4528,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
         activeTurnHasMeaningfulContextWindowRecoveryActivity = false;
         const changeTrackingReady = beginTurnChangeTracking();
-        const activeTurn = createPendingTurn(activeThreadId, {
-            connectedServiceRuntimeIdentityAtStart: latestConnectedServiceRuntimeIdentity,
-        });
+        let activeTurn = createPendingTurn(activeThreadId);
         activeTurn.promise.catch(() => undefined);
         pendingTurn = activeTurn;
         pendingTurnHasProviderAttributedActivity = false;
@@ -4527,6 +4540,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         recordInProgressBestEffort();
         await changeTrackingReady;
         try {
+            activeTurn = capturePendingTurnRequestIdentity(activeTurn);
             const response = await client.request('thread/compact/start', {
                 threadId: activeThreadId,
             });
@@ -4613,7 +4627,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
         const changeTrackingReady = beginTurnChangeTracking();
         const activeTurn = createPendingTurn(activeThreadId, {
             providerPrompt: options?.providerPrompt ?? null,
-            connectedServiceRuntimeIdentityAtStart: latestConnectedServiceRuntimeIdentity,
         });
         activeTurn.promise.catch(() => undefined);
         pendingTurn = activeTurn;
@@ -4651,8 +4664,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 throw new Error('Codex app-server already has a turn in flight');
             }
             const client = await ensureClient();
-            const activeTurn = await beginPendingTurnForThread(activeThreadId);
+            let activeTurn = await beginPendingTurnForThread(activeThreadId);
             try {
+                activeTurn = capturePendingTurnRequestIdentity(activeTurn);
                 const response = await client.request('review/start', {
                     threadId: activeThreadId,
                     target: request.target,
@@ -5067,7 +5081,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const clientUserMessageId = pendingProviderPrompt.localIds?.length === 1
                     ? pendingProviderPrompt.localIds[0]
                     : null;
-                const activeTurn = await beginPendingTurnForThread(activeThreadId, {
+                let activeTurn = await beginPendingTurnForThread(activeThreadId, {
                     localId: clientUserMessageId,
                     userMessageSeq: optionsForAttempt?.userMessageSeq ?? null,
                     providerPrompt: pendingProviderPrompt,
@@ -5102,8 +5116,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         ...buildCurrentPermissionParams('turn'),
                     };
                     let response: unknown;
+                    const captureRequestIdentity = (): void => {
+                        activeTurn = capturePendingTurnRequestIdentity(activeTurn);
+                    };
                     try {
-                        response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams);
+                        response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams, undefined, captureRequestIdentity);
                         if (Object.prototype.hasOwnProperty.call(turnStartParams, 'permissions')) {
                             permissionSupport = 'supported';
                         }
@@ -5114,7 +5131,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 ...baseTurnStartParams,
                                 ...buildCurrentLegacyPermissionParams('turn'),
                             };
-                            response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams);
+                            response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams, undefined, captureRequestIdentity);
                         } else {
                             throw error;
                         }

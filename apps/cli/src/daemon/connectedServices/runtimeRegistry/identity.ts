@@ -67,7 +67,13 @@ export function normalizeConnectedServicesBindingsRaw(raw: unknown): Readonly<{
     : {};
   return {
     ...(raw.v !== undefined ? { v: raw.v } : {}),
-    bindingsByServiceId: { ...bindings },
+    // Applied account evidence is a public projection, not a new requested binding.
+    bindingsByServiceId: Object.fromEntries(Object.entries(bindings).map(([serviceId, binding]) => {
+      if (!isRecord(binding)) return [serviceId, binding];
+      const selection = { ...binding };
+      delete selection.appliedProfileId;
+      return [serviceId, selection];
+    })),
   };
 }
 

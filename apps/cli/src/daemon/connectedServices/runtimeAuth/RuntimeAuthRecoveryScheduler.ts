@@ -1042,6 +1042,7 @@ function isSameRuntimeFailureClassification(
     && left.sourceProviderAccountId === right.sourceProviderAccountId
     && left.runtimeIssueFingerprint === right.runtimeIssueFingerprint
     && left.sourceProviderOrganizationId === right.sourceProviderOrganizationId
+    && left.providerReportedOrganizationId === right.providerReportedOrganizationId
     && left.failingAccessTokenFingerprint === right.failingAccessTokenFingerprint
     && left.planType === right.planType
     && left.source === right.source;

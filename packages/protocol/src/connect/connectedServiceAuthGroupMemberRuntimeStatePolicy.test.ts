@@ -48,6 +48,7 @@ describe('connectedServiceAuthGroupMemberRuntimeStatePolicy', () => {
             providerResetsAtMs: 10_000,
             credentialHealthStatus: 'needs_reauth',
             lastFailureKind: 'auth_failed',
+            lastFailureProviderLimitId: 'five_hour',
             lastObservedAtMs: 11_000,
         })).toEqual({
             v: 1,

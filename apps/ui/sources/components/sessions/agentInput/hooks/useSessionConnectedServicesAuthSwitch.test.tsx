@@ -135,7 +135,7 @@ function renderChipPopover(
     });
 }
 
-const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+const { buildSessionConnectedServicesBindings, useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
 describe('useSessionConnectedServicesAuthSwitch', () => {
     beforeEach(() => {
@@ -237,6 +237,32 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(renderedChip.props.testID).toBe('session-connected-services-auth-chip');
         expect(renderedChip.props.dataSet?.authSource).toBe('connected');
+        await hook.unmount();
+    });
+
+    it('updates the session account label from applied identity without changing the pool default or fallback', async () => {
+        profileState.current.connectedServicesV2[0].profiles.push({
+            profileId: 'observed', status: 'connected', kind: 'token', providerEmail: 'observed@example.com',
+        });
+        const hook = await renderHook((props: { appliedProfileId?: string }) => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1', agentId: 'claude', machineId: 'machine-1',
+            agentCore: { ...AGENTS_CORE.claude, connectedServices: { supportedServiceIds: ['anthropic'] } },
+            sessionMetadata: { connectedServices: { v: 1, bindingsByServiceId: {
+                anthropic: { source: 'connected', selection: 'group', groupId: 'team', profileId: 'work', ...props },
+            } } },
+            settings: { connectedServicesProfileLabelByKey: {}, connectedServicesDefaultProfileByServiceId: {} },
+            switchingDisabledReason: null,
+        }), { initialProps: {} });
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).toContain('work@example.com');
+        await hook.rerender({ appliedProfileId: 'observed' });
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).toContain('observed@example.com');
+        expect(profileState.current.connectedServicesV2[0].groups[0].activeProfileId).toBe('work');
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
+        expect(buildSessionConnectedServicesBindings({ supportedServiceIds: ['anthropic'], bindingsByServiceId: {
+            anthropic: { source: 'connected', selection: 'group', groupId: 'team', profileId: 'work', appliedProfileId: 'observed' },
+        } })).toEqual({ v: 1, bindingsByServiceId: {
+            anthropic: { source: 'connected', selection: 'group', groupId: 'team', profileId: 'work' },
+        } });
         await hook.unmount();
     });
 

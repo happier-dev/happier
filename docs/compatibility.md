@@ -570,6 +570,36 @@ readers use the shared protocol interpretation; no new event enum or persisted
 recovery state is introduced. Primary-session failures remain visible even when
 independently owned background runs continue.
 
+### Failed-request account attribution (development)
+
+Runtime-auth failure classifications add optional `providerReportedOrganizationId`
+evidence. Explicit `null` means the provider organization is unproven; absence
+retains predecessor classification behavior. Request-issued provider account and
+organization fields likewise preserve explicit unknown values. Recovery intents
+keep their existing V1/V2 versions and keep the failed classification separate
+from their pending or adopted target. Intents written by the 0.2.18 and 0.2.19
+writers remain readable without migration; missing evidence cannot reconstruct
+an identity that was already recorded incorrectly.
+
+Member runtime state adds optional `lastFailureProviderLimitId` so fresh positive
+quota evidence can be matched to the failed allowance. Absence retains the
+conservative account-level rule. Existing freshness and policy cooldown govern
+clearing failure-derived blockers; the soft-switch freshness gate is unchanged.
+These are additive daemon/member-state facts, with no new server operation or
+recovery event version.
+
+Session group-binding metadata adds optional `appliedProfileId`. Updated session
+labels use it as observed account evidence; absent values retain the previous
+pool-account presentation. The existing `profileId` remains the fallback.
+Auth-choice writes omit observed evidence. Predecessor readers ignore this
+optional metadata fact without changing their selection behavior.
+
+Live Claude identity observations use the runner/daemon local turn-lifecycle
+transport. A predecessor daemon rejects the new observation event; the runner
+logs that rejection by default and retains existing session-account behavior.
+This evidence event is separate from turn success and failure, so it cannot
+clear blockers or prove a failed request's credential.
+
 ### Account-pool expiry-first strategy (development)
 
 The canonical V1 policy defaults to `expiry_first` for newly created or absent

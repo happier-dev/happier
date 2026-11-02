@@ -412,6 +412,17 @@ describe('daemon control client (HTTP error responses)', () => {
         terminalStatus: 'completed',
         turnId: 'session-turn:exact-1',
       });
+      const providerIdentity = {
+        serviceId: 'claude-subscription' as const, groupId: 'pool',
+        providerOrganizationId: 'org-current', observedAtMs: 200,
+        sourceSessionId: 'provider-session',
+      };
+      await expect(notifyDaemonConnectedServiceTurnLifecycle({
+        sessionId: 'sess_1', event: 'provider_identity_observed', providerIdentity,
+      })).resolves.toMatchObject({ status: 'continue' });
+      expect(observedBodies[2]).toEqual({
+        sessionId: 'sess_1', event: 'provider_identity_observed', providerIdentity,
+      });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

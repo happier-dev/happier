@@ -1,4 +1,5 @@
 import type { ClaudeGoalStatusTranscriptEvent } from '../workState/claudeGoalStatus';
+import { readClaudeJsonlTimestampMs } from '../utils/claudeJsonlTimestamp';
 
 /**
  * A native Claude Code transcript `attachment` record. The inner `attachment`
@@ -18,6 +19,12 @@ export type ClaudeQueuedCommandAttachment = Readonly<{
   prompt: string;
 }>;
 
+export type ClaudeCredentialOrganizationAttachment = Readonly<{
+  sourceSessionId: string;
+  organizationId: string | null;
+  timestampMs: number;
+}>;
+
 /**
  * Typed dispatch callbacks for {@link routeClaudeAttachment}. All optional and
  * forward-compatible: unknown `attachment.type` values are ignored (or routed
@@ -26,6 +33,7 @@ export type ClaudeQueuedCommandAttachment = Readonly<{
 export type ClaudeAttachmentHandlers = Readonly<{
   onGoalStatus?: (event: ClaudeGoalStatusTranscriptEvent) => void;
   onQueuedCommand?: (command: ClaudeQueuedCommandAttachment) => void;
+  onCredentialOrganization?: (event: ClaudeCredentialOrganizationAttachment) => void;
   onUnknown?: (record: ClaudeAttachmentRecord) => void;
 }>;
 
@@ -67,4 +75,18 @@ export function parseClaudeQueuedCommandAttachment(value: unknown): ClaudeQueued
   if (!record || record.attachment.type !== 'queued_command') return null;
   const prompt = record.attachment.prompt;
   return typeof prompt === 'string' && prompt.length > 0 ? { prompt } : null;
+}
+
+export function parseClaudeCredentialOrganizationAttachment(value: unknown): ClaudeCredentialOrganizationAttachment | null {
+  const record = readClaudeAttachmentRecord(value);
+  if (!record || record.attachment.type !== 'credential_org') return null;
+  const timestampMs = readClaudeJsonlTimestampMs(record);
+  const sourceSessionId = record.sessionId?.trim();
+  if (!sourceSessionId || timestampMs === null) return null;
+  const organizationUuid = record.attachment.organizationUuid;
+  return {
+    sourceSessionId,
+    organizationId: typeof organizationUuid === 'string' && organizationUuid.trim() ? organizationUuid.trim() : null,
+    timestampMs,
+  };
 }

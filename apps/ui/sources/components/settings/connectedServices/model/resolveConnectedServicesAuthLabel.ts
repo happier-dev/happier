@@ -157,8 +157,8 @@ function resolveConnectedBindingState(
                 effectiveSource: 'connected',
                 effectiveSelection: 'group',
                 groupId: explicitGroupId,
-                activeProfileId: readOptionalString(group.activeProfileId) || viableProfileId,
-                profileId: viableProfileId,
+                activeProfileId: readOptionalString(binding.appliedProfileId) || readOptionalString(group.activeProfileId) || viableProfileId,
+                profileId: readOptionalString(binding.appliedProfileId) || viableProfileId,
             };
         }
         return {
@@ -224,7 +224,9 @@ function resolveConnectedBindingLabel(
         );
         if (!group) return requested ? `${params.resolveServiceTitle(serviceId)}: ${state.groupId}` : null;
         const identity = resolveConnectedServiceGroupIdentityDisplay({
-            group,
+            group: state.activeProfileId && state.activeProfileId !== group.activeProfileId
+                ? { ...group, activeProfileId: state.activeProfileId }
+                : group,
             profiles: params.profileOptionsByServiceId[serviceId] ?? [],
         });
         return `${params.resolveServiceTitle(serviceId)}: ${identity.compactLabel}`;

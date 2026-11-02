@@ -9409,7 +9409,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
   });
 
-  it('clears stale persisted member quota blockers after a fresh usable group quota probe', async () => {
+  it.each([
+    { name: 'matching fresh probe after cooldown', limitId: 'weekly', ageMs: 0, failureAgeMs: 10_000, clears: true },
+    { name: 'different quota window', limitId: 'daily', ageMs: 0, failureAgeMs: 10_000, clears: false },
+    { name: 'stale quota probe', limitId: 'weekly', ageMs: 60_000, failureAgeMs: 100_000, clears: false },
+    { name: 'probe during limiter cooldown', limitId: 'weekly', ageMs: 0, failureAgeMs: 499, clears: false },
+  ])('clears persisted member quota blockers only for $name', async ({ limitId, ageMs, failureAgeMs, clears }) => {
     const now = 1_000_000;
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
@@ -9459,7 +9464,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           state: {
             quotaExhaustedUntilMs: now + 500_000,
             lastFailureKind: 'usage_limit',
-            lastObservedAtMs: now - 10_000,
+            lastFailureProviderLimitId: limitId,
+            lastObservedAtMs: now - failureAgeMs,
             providerResetsAtMs: now + 500_000,
           },
           createdAt: 1,
@@ -9494,13 +9500,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         v: 1,
         serviceId: inputRecord.serviceId,
         profileId: inputRecord.profileId,
-        fetchedAt: now,
+        fetchedAt: now - ageMs,
         staleAfterMs: 300_000,
         planLabel: 'Pro',
         accountLabel: null,
         meters: [
           {
             meterId: 'weekly',
+            providerLimitId: 'weekly',
             label: 'Weekly',
             used: null,
             limit: null,
@@ -9523,6 +9530,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
       discoveryEnabled: false,
       runtimeQuotaSnapshots,
+      quotaLifecycleFreshnessMs: 60_000,
     });
     const probeGroupQuotaSnapshots = (coordinator as unknown as {
       probeGroupQuotaSnapshots?: (input: Readonly<{
@@ -9541,7 +9549,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       profileIds: ['backup'],
     });
 
-    expect(updateConnectedServiceAuthGroupRuntimeState).toHaveBeenCalledTimes(1);
+    expect(updateConnectedServiceAuthGroupRuntimeState).toHaveBeenCalledTimes(clears ? 1 : 0);
+    if (!clears) return;
     const patch = updateConnectedServiceAuthGroupRuntimeState.mock.calls[0]?.[0];
     expect(patch).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
@@ -9555,6 +9564,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     // quota blocker; retaining it would let old quota state influence later selection.
     expect(memberState?.providerResetsAtMs).toBeUndefined();
     expect(memberState?.lastObservedAtMs).toBeUndefined();
+    expect(memberState?.lastFailureProviderLimitId).toBeUndefined();
   });
 
   it('does not emit quota lifecycle transitions from probe state', async () => {

@@ -1,4 +1,4 @@
-import { PendingRequestedActionV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, PendingRequestedActionV1Schema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import {
@@ -14,11 +14,19 @@ export const ConnectedServiceTurnLifecycleRequestBodySchema = lazySchema(() => z
     'task_started',
     'assistant_message_end',
     'turn_cancelled',
+    'provider_identity_observed',
   ]),
   terminalStatus: z.enum(['completed', 'failed']).optional(),
   turnId: z.string().trim().min(1).max(512).optional(),
   requestedAction: PendingRequestedActionV1Schema.optional(),
   activeTurnId: z.string().trim().min(1).max(512).nullable().optional(),
+  providerIdentity: z.object({
+    serviceId: ConnectedServiceIdSchema,
+    groupId: z.string().trim().min(1),
+    providerOrganizationId: z.string().trim().min(1).nullable(),
+    observedAtMs: z.number().int().nonnegative(),
+    sourceSessionId: z.string().trim().min(1),
+  }).strict().optional(),
 }).strict());
 
 export type ConnectedServiceTurnLifecycleRequestBody =

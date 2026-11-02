@@ -358,6 +358,48 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     expect(registry.getBySessionId('sess-a')).toBe(original);
   });
 
+  it('records provider-observed accounts without inventing generation or credential proof and retains them across re-registration', () => {
+    let nowMs = 100;
+    const registry = new ConnectedServiceRuntimeRegistry({ nowMs: () => nowMs });
+    const original = registerFullTarget(registry);
+    const observed = registry.adoptProviderObservedGroupAccountForSession({
+      sessionId: 'sess-a', serviceId: 'openai-codex', groupId: 'team',
+      profileId: 'codex-b', observedAtMs: 200,
+    });
+
+    expect(observed?.activeBindings).toEqual([{
+      serviceId: 'openai-codex', groupId: 'team', profileId: 'codex-b',
+      generation: null, credentialRevision: null,
+    }]);
+    expect(observed?.connectedServiceSelectionsEnv).toEqual(original.connectedServiceSelectionsEnv);
+    expect(registry.updateTarget({ pid: 42, sessionDirectory: '/workspace/b' })?.activeBindings)
+      .toEqual(observed?.activeBindings);
+    expect(registerFullTarget(registry).activeBindings).toEqual(observed?.activeBindings);
+    expect(registry.updateTarget({ pid: 42, connectedServicesBindingsRaw: {
+      ...connectedServicesBindingsRaw,
+      bindingsByServiceId: {
+        'openai-codex': { ...connectedServicesBindingsRaw.bindingsByServiceId['openai-codex'], appliedProfileId: 'codex-b' },
+      },
+    } })?.activeBindings).toEqual(observed?.activeBindings);
+
+    expect(registry.adoptProviderObservedGroupAccountForSession({
+      sessionId: 'sess-a', serviceId: 'openai-codex', groupId: 'team',
+      profileId: 'codex-a', observedAtMs: 150,
+    })).toBeNull();
+    expect(registry.getBySessionId('sess-a')?.activeBindings).toEqual(observed?.activeBindings);
+    nowMs = 300;
+    const exact = registry.adoptExactGroupApplicationForSession({
+      sessionId: 'sess-a', serviceId: 'openai-codex', groupId: 'team',
+      profileId: 'codex-a', generation: 7, credentialRevision: null,
+    });
+    expect(exact?.activeBindings[0]).toMatchObject({ profileId: 'codex-a', generation: 7 });
+    expect(registry.adoptProviderObservedGroupAccountForSession({
+      sessionId: 'sess-a', serviceId: 'openai-codex', groupId: 'team',
+      profileId: 'codex-b', observedAtMs: 250,
+    })).toBeNull();
+    expect(registry.getBySessionId('sess-a')).toBe(exact);
+  });
+
   it('adopts a refreshed credential revision only for represented runtime identities that applied it', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     const firstRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';

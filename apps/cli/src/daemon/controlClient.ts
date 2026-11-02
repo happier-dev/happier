@@ -578,6 +578,7 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
     ...(body.turnId ? { turnId: body.turnId } : {}),
     ...(body.requestedAction ? { requestedAction: body.requestedAction } : {}),
     ...(body.activeTurnId !== undefined ? { activeTurnId: body.activeTurnId } : {}),
+    ...(body.providerIdentity ? { providerIdentity: body.providerIdentity } : {}),
   }, options);
   if (
     response

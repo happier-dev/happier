@@ -24,6 +24,19 @@ import { resolveRuntimeAuthFailureSourceProfile } from './resolveRuntimeAuthFail
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
 
+it('keeps unknown issued generation and revision when provider evidence identifies the same member', () => {
+  const classification: ConnectedServiceRuntimeFailureClassification = {
+    kind: 'usage_limit', serviceId: 'claude-subscription', groupId: 'pool', profileId: 'work',
+    groupGeneration: null, credentialRevision: null, providerReportedOrganizationId: 'org-work',
+    resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
+  };
+  expect(applyAuthorizedRuntimeAuthFailureSourceBinding(classification, {
+    status: 'authorized', tracked: null,
+    sourceBinding: { serviceId: 'claude-subscription', groupId: 'pool', profileId: 'work',
+      generation: 8, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' },
+  })).toEqual(classification);
+});
+
 const exactLiveRuntimeIdentityCapability = {
   directLiveHotAuth: {
     supportsInTurnApply: true,
@@ -72,6 +85,47 @@ function createTemporaryThrottleClassification(
 }
 
 describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
+  it('preserves the failing request revision and generation when recovery routes through a newer same-member binding', () => {
+    const classification: ConnectedServiceRuntimeFailureClassification = {
+      kind: 'usage_limit', serviceId: 'claude-subscription', profileId: 'ai1', groupId: 'main',
+      groupGeneration: 4, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+      resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
+    };
+    expect(applyAuthorizedRuntimeAuthFailureSourceBinding(classification, {
+      status: 'authorized', tracked: null,
+      sourceBinding: { serviceId: 'claude-subscription', profileId: 'ai1', groupId: 'main',
+        generation: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' },
+    })).toEqual(classification);
+  });
+
+  it('keeps recovery routed to the pool when transcript evidence contradicts the captured failing account', async () => {
+    const tracked = { startedBy: 'daemon' as const, happySessionId: 'contradictory-provider-org', pid: 123,
+      spawnOptions: { directory: '/tmp/project' } } satisfies TrackedSession;
+    const classification: ConnectedServiceRuntimeFailureClassification = {
+      kind: 'usage_limit', serviceId: 'claude-subscription', profileId: 'captured', groupId: 'main',
+      sourceProviderAccountId: 'captured-account', sourceProviderOrganizationId: 'captured-org',
+      providerReportedOrganizationId: 'observed-org',
+      resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
+    };
+    const sourceBinding = { serviceId: 'claude-subscription' as const, groupId: 'main', profileId: 'current',
+      generation: 8, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' };
+    const authorization = await authorizeConnectedServiceRuntimeAuthFailureSource({
+      getChildren: () => [tracked], sessionId: tracked.happySessionId, classification,
+      resolveRegisteredRuntimeAuthFailureSource: () => sourceBinding,
+      resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => (
+        await resolveRuntimeAuthFailureSourceProfile({ classification,
+          getGroupMembers: async () => [{ profileId: 'current', enabled: true }],
+          resolveProviderAccountIdentity: async () => ({ providerAccountId: 'observed-account', providerOrganizationId: 'observed-org' }),
+        })
+      ),
+    });
+    expect(authorization).toMatchObject({ status: 'authorized', sourceAttribution: 'unattributed' });
+    expect(applyAuthorizedRuntimeAuthFailureSourceBinding(classification, authorization)).toMatchObject({
+      groupId: 'main', profileId: null, credentialRevision: null, providerReportedOrganizationId: 'observed-org',
+    });
+  });
+
   it('authorizes an unattributed failure against the tracked pool without attributing it to its current member', async () => {
     const tracked = { startedBy: 'daemon' as const, happySessionId: 'unattributed-goal', pid: 123,
       spawnOptions: { directory: '/tmp/project' } } satisfies TrackedSession;

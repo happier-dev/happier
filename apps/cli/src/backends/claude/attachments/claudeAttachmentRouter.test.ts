@@ -15,6 +15,16 @@ function readFixtureLine(name: string): unknown {
 }
 
 describe('routeClaudeAttachment', () => {
+  it('routes provider-attested credential organizations with transcript chronology', () => {
+    const events: unknown[] = [];
+    routeClaudeAttachment({
+      type: 'attachment', sessionId: 'native-session', timestamp: '2026-11-02T13:50:20.213Z',
+      attachment: { type: 'credential_org', organizationUuid: 'org-failing' },
+    }, { onCredentialOrganization: (event) => events.push(event) });
+    expect(events).toEqual([{
+      sourceSessionId: 'native-session', organizationId: 'org-failing', timestampMs: 1793627420213,
+    }]);
+  });
   it('routes a goal_status attachment to onGoalStatus with the parsed event', () => {
     const events: ClaudeGoalStatusTranscriptEvent[] = [];
     routeClaudeAttachment(readFixtureLine('edit-active.jsonl'), {

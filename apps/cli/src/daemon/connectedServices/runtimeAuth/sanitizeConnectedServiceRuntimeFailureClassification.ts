@@ -154,6 +154,7 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
   const providerLimitId = readNullableSafeProviderString(value.providerLimitId);
   const sourceProviderAccountId = readNullableSafeProviderString(value.sourceProviderAccountId);
   const sourceProviderOrganizationId = readNullableSafeProviderString(value.sourceProviderOrganizationId);
+  const providerReportedOrganizationId = readNullableSafeProviderString(value.providerReportedOrganizationId);
   const failingAccessTokenFingerprint = normalizeConnectedServiceAccessTokenFingerprint(value.failingAccessTokenFingerprint);
   const sourceAccountLabel = sourceProviderAccountId
     ? readNullableSafeProviderString(value.sourceAccountLabel)
@@ -188,8 +189,13 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
     ...(value.retryAfterMs === undefined ? {} : { retryAfterMs }),
     ...(quotaScope ? { quotaScope } : {}),
     ...(value.providerLimitId === undefined ? {} : { providerLimitId }),
-    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
-    ...(sourceProviderAccountId && sourceProviderOrganizationId ? { sourceProviderOrganizationId } : {}),
+    ...(value.sourceProviderAccountId === null
+      ? { sourceProviderAccountId: null }
+      : sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(value.sourceProviderOrganizationId === null
+      ? { sourceProviderOrganizationId: null }
+      : sourceProviderAccountId && sourceProviderOrganizationId ? { sourceProviderOrganizationId } : {}),
+    ...(value.providerReportedOrganizationId === undefined ? {} : { providerReportedOrganizationId }),
     ...(sourceProviderAccountId && value.sourceAccountLabel !== undefined ? { sourceAccountLabel } : {}),
     ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
     ...(value.action === undefined ? {} : { action }),

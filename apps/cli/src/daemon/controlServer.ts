@@ -1262,6 +1262,7 @@ export function createDaemonControlApp({
       ...(request.body.turnId ? { turnId: request.body.turnId } : {}),
       ...(request.body.requestedAction ? { requestedAction: request.body.requestedAction } : {}),
       ...(request.body.activeTurnId !== undefined ? { activeTurnId: request.body.activeTurnId } : {}),
+      ...(request.body.providerIdentity ? { providerIdentity: request.body.providerIdentity } : {}),
     });
     return { ok: true as const, result };
   });

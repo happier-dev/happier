@@ -72,6 +72,7 @@ export type ConnectedServiceAuthGroupMemberRuntimeState = Readonly<{
   providerResetsAtMs?: number | null;
   lastFailureKind?: string | null;
   lastFailureCode?: string | null;
+  lastFailureProviderLimitId?: string | null;
   autoDisabledReason?: 'model_not_entitled' | null;
   lastObservedAtMs?: number | null;
   quotaSnapshot?: ConnectedServiceAuthGroupQuotaSnapshot | null;
@@ -697,6 +698,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     const effectiveState = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
       state,
       quotaSnapshot,
+      quotaFreshnessMs: params.quotaFreshnessMs,
       policy: params.policy,
       nowMs: params.nowMs,
     });

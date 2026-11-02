@@ -76,7 +76,10 @@ import {
   resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence,
   type ConnectedServiceAuthGroupMemberRuntimeState,
 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
-import { reconcileMemberRuntimeStateWithFreshQuotaEvidence } from '../accountGroups/memberRuntimeState';
+import {
+  logMemberRuntimeStatePositiveEvidenceClear,
+  reconcileMemberRuntimeStateWithFreshQuotaEvidence,
+} from '../accountGroups/memberRuntimeState';
 import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher, type ConnectedServiceSubscriptionFetcher } from './types';
 import {
   buildQuotaPersistenceKey,
@@ -2561,12 +2564,13 @@ export class ConnectedServiceQuotasCoordinator {
       const reconciledState = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
         state: member.state as ConnectedServiceAuthGroupMemberRuntimeState,
         quotaSnapshot,
+        quotaFreshnessMs: this.quotaLifecycleFreshnessMs,
         policy: normalizeConnectedServiceAuthGroupPolicy(group.policy),
         nowMs: input.now,
       });
       if (!reconciledState || reconciledState === member.state) return null;
       try {
-        return await this.api.updateConnectedServiceAuthGroupRuntimeState({
+        const updated = await this.api.updateConnectedServiceAuthGroupRuntimeState({
           serviceId: input.serviceId,
           groupId: input.groupId,
           expectedGeneration: group.generation,
@@ -2576,6 +2580,15 @@ export class ConnectedServiceQuotasCoordinator {
             state: reconciledState,
           }],
         });
+        logMemberRuntimeStatePositiveEvidenceClear({
+          serviceId: input.serviceId,
+          groupId: input.groupId,
+          profileId: input.profileId,
+          evidenceKind: 'fresh_quota',
+          before: member.state,
+          after: reconciledState,
+        });
+        return updated;
       } catch (error) {
         if (!(error instanceof ConnectedServiceAuthGroupRuntimeStateRevisionConflictError) || attempt === 1) return null;
         const latest = await this.api.getConnectedServiceAuthGroup?.({

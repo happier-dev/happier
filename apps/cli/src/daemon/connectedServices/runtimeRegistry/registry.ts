@@ -174,6 +174,8 @@ function buildExactGroupApplicationSelectionEnv(
 }
 
 export class ConnectedServiceRuntimeRegistry {
+  private readonly nowMs: () => number;
+  private readonly providerObservationTimes = new WeakMap<ConnectedServiceRuntimeTarget, ReadonlyMap<string, number>>();
   private readonly targetsByPid = new Map<number, IndexedTarget>();
   // Exact application changes the snapshot, not the recipient's registration lineage.
   // Other updates/replacements deliberately do not inherit this lineage.
@@ -200,8 +202,9 @@ export class ConnectedServiceRuntimeRegistry {
     nowMs?: () => number;
     runtimeAccountIdentityTtlMs?: number;
   }> = {}) {
+    this.nowMs = params.nowMs ?? (() => Date.now());
     this.runtimeAccountIdentities = new RuntimeAccountIdentityIndex({
-      nowMs: params.nowMs ?? (() => Date.now()),
+      nowMs: this.nowMs,
       ttlMs: params.runtimeAccountIdentityTtlMs,
     });
   }
@@ -324,6 +327,10 @@ export class ConnectedServiceRuntimeRegistry {
       && binding.generation === generation
       && binding.credentialRevision === input.credentialRevision
     ))) {
+      const observations = new Map(this.providerObservationTimes.get(existing));
+      const key = `${input.serviceId}\0${groupId}`;
+      observations.set(key, Math.max(observations.get(key) ?? 0, this.nowMs()));
+      this.providerObservationTimes.set(existing, observations);
       return existing;
     }
     const connectedServiceSelectionsEnv = buildExactGroupApplicationSelectionEnv(existing, {
@@ -334,15 +341,58 @@ export class ConnectedServiceRuntimeRegistry {
       credentialRevision: input.credentialRevision,
     });
     if (!connectedServiceSelectionsEnv) return null;
-    const updated = this.updateTarget({
+    const updated = this.writeTarget(existing.pid, {
       pid: existing.pid,
       connectedServiceSelectionsEnv,
-    });
+    }, existing, { preserveObservedBindings: false });
     if (updated) {
       const lineage = this.exactApplicationLineageByTarget.get(existing) ?? {};
       this.exactApplicationLineageByTarget.set(existing, lineage);
       this.exactApplicationLineageByTarget.set(updated, lineage);
+      const observations = new Map(this.providerObservationTimes.get(updated));
+      const key = `${input.serviceId}\0${groupId}`;
+      observations.set(key, Math.max(observations.get(key) ?? 0, this.nowMs()));
+      this.providerObservationTimes.set(updated, observations);
     }
+    return updated;
+  }
+
+  /** Provider identity proves the account, independently of desired child materialization. */
+  public adoptProviderObservedGroupAccountForSession(input: Readonly<{
+    sessionId: string;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    profileId: string;
+    observedAtMs: number;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const existing = this.getBySessionId(input.sessionId);
+    const profileId = normalizeString(input.profileId);
+    const groupId = normalizeString(input.groupId);
+    if (!existing || !profileId || !groupId || !Number.isFinite(input.observedAtMs) || input.observedAtMs < 0) return null;
+    const binding = existing.activeBindings.find((candidate) => (
+      candidate.serviceId === input.serviceId && candidate.groupId === groupId
+    ));
+    if (!binding) return null;
+    const key = `${input.serviceId}\0${groupId}`;
+    const observations = new Map(this.providerObservationTimes.get(existing));
+    if (input.observedAtMs <= (observations.get(key) ?? -1)) return null;
+    observations.set(key, input.observedAtMs);
+    if (binding.profileId === profileId) {
+      this.providerObservationTimes.set(existing, observations);
+      return existing;
+    }
+    const updated = this.writeTarget(existing.pid, {
+      pid: existing.pid,
+      // Desired/spawn selections cease to be account proof after contrary provider evidence.
+      runtimeAccountIdentitySelections: existing.runtimeAccountIdentitySelections.filter(
+        (selection) => selection.serviceId !== input.serviceId,
+      ),
+    }, existing, {
+      activeBindings: existing.activeBindings.map((candidate) => candidate === binding ? {
+        ...candidate, profileId, generation: null, credentialRevision: null,
+      } : candidate),
+    });
+    this.providerObservationTimes.set(updated, observations);
     return updated;
   }
 
@@ -424,6 +474,8 @@ export class ConnectedServiceRuntimeRegistry {
     this.targetsByPid.delete(fromPid);
     this.deleteSessionIndex(existing.target);
     const next = nextBase as ConnectedServiceRuntimeTarget;
+    const observations = this.providerObservationTimes.get(existing.target);
+    if (observations) this.providerObservationTimes.set(next, observations);
     this.targetsByPid.set(toPid, { target: next, fingerprint });
     this.indexSession(next);
     return next;
@@ -574,6 +626,10 @@ export class ConnectedServiceRuntimeRegistry {
     pid: number,
     patch: ConnectedServiceRuntimeTargetInput | ConnectedServiceRuntimeTargetUpdate,
     previous: ConnectedServiceRuntimeTarget | null,
+    options: Readonly<{
+      activeBindings?: ConnectedServiceRuntimeTarget['activeBindings'];
+      preserveObservedBindings?: boolean;
+    }> = {},
   ): Readonly<{ base: Omit<ConnectedServiceRuntimeTarget, 'revision'>; fingerprint: string }> {
     const connectedServiceSelectionsEnv = patch.connectedServiceSelectionsEnv !== undefined
       ? normalizeRuntimeRegistryEnv(patch.connectedServiceSelectionsEnv)
@@ -602,14 +658,27 @@ export class ConnectedServiceRuntimeRegistry {
     const accessTokenRefresh = patch.accessTokenRefresh !== undefined
       ? patch.accessTokenRefresh ?? null
       : previous?.accessTokenRefresh ?? null;
-    const boundProfiles = buildRuntimeBoundProfiles({
+    let boundProfiles = buildRuntimeBoundProfiles({
       connectedServicesBindingsRaw,
       connectedServiceSelections,
     });
-    const activeBindings = buildRuntimeActiveBindings({
+    let activeBindings = buildRuntimeActiveBindings({
       connectedServicesBindingsRaw,
       connectedServiceSelections,
     });
+    if (options.activeBindings) {
+      activeBindings = [...options.activeBindings];
+    } else if (options.preserveObservedBindings !== false && previous?.sessionId === sessionId
+      && stableRuntimeRegistryFingerprint(previous.connectedServiceSelectionsEnv) === stableRuntimeRegistryFingerprint(connectedServiceSelectionsEnv)
+      && stableRuntimeRegistryFingerprint(previous.connectedServicesBindingsRaw) === stableRuntimeRegistryFingerprint(connectedServicesBindingsRaw)) {
+      activeBindings = activeBindings.map((binding) => previous.activeBindings.find((observed) => (
+        observed.serviceId === binding.serviceId && observed.groupId !== null
+        && observed.groupId === binding.groupId && observed.generation === null
+      )) ?? binding);
+    }
+    if (options.activeBindings || activeBindings.some((binding) => binding.groupId !== null && binding.generation === null)) {
+      boundProfiles = activeBindings.map(({ serviceId, profileId }) => ({ serviceId, profileId }));
+    }
     const identity = readConnectedServiceRuntimeTargetIdentity({
       pid,
       sessionId,
@@ -655,6 +724,10 @@ export class ConnectedServiceRuntimeRegistry {
     pidRaw: number,
     patch: ConnectedServiceRuntimeTargetInput | ConnectedServiceRuntimeTargetUpdate,
     previousAtPid: ConnectedServiceRuntimeTarget | null,
+    options: Readonly<{
+      activeBindings?: ConnectedServiceRuntimeTarget['activeBindings'];
+      preserveObservedBindings?: boolean;
+    }> = {},
   ): ConnectedServiceRuntimeTarget {
     const pid = normalizePid(pidRaw) ?? 0;
     const provisionalSessionId = patch.sessionId !== undefined
@@ -665,7 +738,7 @@ export class ConnectedServiceRuntimeRegistry {
       ? this.targetsByPid.get(previousSessionPid)?.target ?? null
       : null;
     const previous = previousAtPid ?? previousForSameSession;
-    const { base, fingerprint } = this.composeTargetBase(pid, patch, previous);
+    const { base, fingerprint } = this.composeTargetBase(pid, patch, previous, options);
     if (previous) {
       const previousIndexed = this.targetsByPid.get(previous.pid);
       if (previousIndexed?.fingerprint === fingerprint) {
@@ -677,6 +750,9 @@ export class ConnectedServiceRuntimeRegistry {
       ...base,
       revision: (previous?.revision ?? 0) + 1,
     };
+    // Registration is not proof that credentials were adopted after a provider row.
+    // Only exact adoption and provider observations establish the observation cutoff.
+    this.providerObservationTimes.set(next, new Map(previous ? this.providerObservationTimes.get(previous) : undefined));
     if (previousAtPid) {
       this.deleteSessionIndex(previousAtPid);
     }

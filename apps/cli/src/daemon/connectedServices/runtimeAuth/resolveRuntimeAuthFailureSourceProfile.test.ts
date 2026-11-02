@@ -19,6 +19,55 @@ const classification = {
 };
 
 describe('resolveRuntimeAuthFailureSourceProfile', () => {
+  it('uses a unique provider-reported organization without borrowing a different account from current credentials', async () => {
+    const resolved = await resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, sourceProviderAccountId: null, sourceProviderOrganizationId: null,
+        providerReportedOrganizationId: 'org-live' },
+      getGroupMembers: async () => [{ profileId: 'live-profile', enabled: true }],
+      resolveProviderAccountIdentity: async () => ({ providerAccountId: 'acct-live', providerOrganizationId: 'org-live' }),
+    });
+    expect(resolved).toMatchObject({ profileId: 'live-profile', groupGeneration: null, credentialRevision: null });
+  });
+
+  it.each([
+    { name: 'contradictory request identity', reported: 'org-other', members: ['org-live', 'org-other'] },
+    { name: 'ambiguous shared organization', reported: 'org-live', members: ['org-live', 'org-live'] },
+    { name: 'unknown provider organization', reported: null, members: ['org-live'] },
+  ])('leaves $name unattributed instead of exhausting a guessed member', async ({ reported, members }) => {
+    const resolved = await resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, providerReportedOrganizationId: reported },
+      getGroupMembers: async () => members.map((_, i) => ({ profileId: `member-${i}`, enabled: true })),
+      resolveProviderAccountIdentity: async (profileId) => ({ providerAccountId: 'acct-live',
+        providerOrganizationId: members[Number(profileId.split('-')[1])] }),
+    });
+    expect(resolved).toMatchObject({ profileId: null, groupGeneration: null, credentialRevision: null });
+  });
+
+  it('retains the captured tuple when unique transcript evidence agrees', async () => {
+    const original = { ...classification, providerReportedOrganizationId: 'org-live' };
+    const resolved = await resolveRuntimeAuthFailureSourceProfile({
+      classification: original,
+      getGroupMembers: async () => [{ profileId: 'spawn-profile', enabled: true }],
+      resolveProviderAccountIdentity: async () => ({ providerAccountId: 'acct-live', providerOrganizationId: 'org-live' }),
+    });
+    expect(resolved).toBe(original);
+  });
+
+  it.each(['missing', 'unreadable'])('does not claim an organization is unique with a %s member identity', async (state) => {
+    const resolved = await resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, providerReportedOrganizationId: 'org-live' },
+      getGroupMembers: async () => [{ profileId: 'spawn-profile', enabled: true }, { profileId: 'unknown', enabled: true }],
+      resolveProviderAccountIdentity: async (profileId) => {
+        if (profileId === 'unknown') {
+          if (state === 'unreadable') throw new Error('credential unavailable');
+          return null;
+        }
+        return { providerAccountId: 'acct-live', providerOrganizationId: 'org-live' };
+      },
+    });
+    expect(resolved).toMatchObject({ profileId: null, groupGeneration: null, credentialRevision: null });
+  });
+
   it('replaces stale spawn profile identity with the unique provider-qualified group member', async () => {
     const resolved = await resolveRuntimeAuthFailureSourceProfile({
       classification,

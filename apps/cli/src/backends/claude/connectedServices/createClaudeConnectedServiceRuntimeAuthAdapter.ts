@@ -95,6 +95,14 @@ function attachClaudeSourceAccountIdentity(
   input: ConnectedServiceRuntimeFailureInput,
 ): ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure> {
   if (!classification) return classification;
+  const error = readRecord(input.error);
+  if (error && Object.prototype.hasOwnProperty.call(error, 'sourceProviderAccountId')) {
+    return {
+      ...classification,
+      sourceProviderAccountId: readString(error.sourceProviderAccountId),
+      sourceProviderOrganizationId: readString(error.sourceProviderOrganizationId),
+    };
+  }
   if (classification.sourceProviderAccountId && classification.sourceProviderOrganizationId) return classification;
   const record = readCredentialRecord(input);
   const sourceIdentity = readClaudeSubscriptionCredentialIdentity(record);

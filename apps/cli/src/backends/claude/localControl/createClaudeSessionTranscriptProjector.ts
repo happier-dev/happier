@@ -18,7 +18,7 @@ import {
 import type { ClaudeWorkflowActivitySource, ClaudeWorkflowActivityObservationContext } from '../workflows/claudeWorkflowActivitySource';
 import { filterWorkflowOwnedWorkStateItems } from '../workflows/claudeWorkflowOwnedWorkState';
 import { mapClaudeRateLimitEventToQuotaEvidence, mapClaudeProviderFailureToUsageDetails, type NormalizedProviderUsageLimitDetailsV1 } from '../connectedServices/mapClaudeRateLimitEventToUsageDetails';
-import { recordClaudeRateLimitQuotaEvidence, surfaceClaudeRateLimitRuntimeIssue } from '../connectedServices/surfaceClaudeRuntimeIssues';
+import { observeClaudeRuntimeAuthTranscript, recordClaudeRateLimitQuotaEvidence, surfaceClaudeRateLimitRuntimeIssue } from '../connectedServices/surfaceClaudeRuntimeIssues';
 import {
   buildClaudeCompactBoundaryEventIdentity,
   buildClaudeCompactionCompletedEvent,
@@ -392,6 +392,7 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
     // `observe` — reach the goal source. `routeClaudeAttachment` + the source
     // already tolerate raw objects. This NEVER emits to the visible transcript.
     observeRaw(value, observation) {
+      observeClaudeRuntimeAuthTranscript(params.session, value, observation);
       if (observation?.historicalReplay !== true) params.session.observeClaudePermissionTranscript?.(value);
       goalWorkStateSource.observeTranscriptMessage(value);
       // The Claude workflow ACTIVITY source rides the SAME raw transcript channel as the goal source

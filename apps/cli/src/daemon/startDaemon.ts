@@ -509,7 +509,9 @@ import {
   resolveTrackedConnectedServiceBindingsRaw,
 } from './connectedServices/trackedSessionConnectedServiceBindings';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './connectedServices/sessionAuthSwitch/materializeSessionConnectedServiceRuntimeAuthSelection';
-import { resolveTrackedConnectedServiceSwitchContinuityContext } from './connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
+import { resolveTrackedConnectedServiceSwitchContinuityContext, resolveTrackedConnectedServiceVendorResumeId } from './connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
+import { handleProviderObservedSessionAccount } from './connectedServices/sessionAuthSwitch/reconcileProviderObservedSessionAccount';
+import { projectProviderObservedAccountMetadata } from './connectedServices/sessionAuthSwitch/providerObservedAccountMetadata';
 import {
   createConnectedServiceMaterializationIdentity,
   readConnectedServiceMaterializationIdentityV1,
@@ -892,9 +894,15 @@ async function resolveDurableConnectedServiceRuntimeAuthRecoverySession(params: 
 async function persistSessionConnectedServiceBindings(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
-  normalizedBindings: ReturnType<typeof readConnectedServiceBindingsOrEmpty>;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
-}>): Promise<void> {
+}> & (
+  | Readonly<{ normalizedBindings: ReturnType<typeof readConnectedServiceBindingsOrEmpty>; providerObservedAccount?: never; isCurrent?: never }>
+  | Readonly<{
+    normalizedBindings?: never;
+    providerObservedAccount: Readonly<{ serviceId: ConnectedServiceId; groupId: string; profileId: string }>;
+    isCurrent: () => boolean;
+  }>
+)): Promise<void> {
   const rawSession = await fetchSessionByIdCompat({
     token: params.credentials.token,
     sessionId: params.sessionId,
@@ -908,6 +916,11 @@ async function persistSessionConnectedServiceBindings(params: Readonly<{
     sessionId: params.sessionId,
     rawSession,
     updater: (metadata) => {
+      if (params.isCurrent && !params.isCurrent()) return metadata;
+      const projected = params.providerObservedAccount
+        ? projectProviderObservedAccountMetadata(metadata, params.providerObservedAccount)
+        : { ...metadata, connectedServices: params.normalizedBindings };
+      if (projected === metadata) return metadata;
       const existingUpdatedAt = typeof metadata.connectedServicesUpdatedAt === 'number'
         && Number.isFinite(metadata.connectedServicesUpdatedAt)
         ? metadata.connectedServicesUpdatedAt
@@ -918,8 +931,7 @@ async function persistSessionConnectedServiceBindings(params: Readonly<{
       const nextMaterializationIdentity =
         existingMaterializationIdentity ?? params.connectedServiceMaterializationIdentityV1 ?? null;
       return {
-        ...metadata,
-        connectedServices: params.normalizedBindings,
+        ...projected,
         connectedServicesUpdatedAt: Math.max(Date.now(), existingUpdatedAt + 1),
         ...(nextMaterializationIdentity
           ? { connectedServiceMaterializationIdentityV1: nextMaterializationIdentity }
@@ -7164,6 +7176,63 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       runtimeAuthFailureReportIntake,
       runtimeAuthRecoveryScheduler: runtimeAuthRecoveryScheduler ?? undefined,
       handleConnectedServiceTurnLifecycle: async (input) => {
+        if (input.event === 'provider_identity_observed') {
+          const tracked = getCurrentChildren().find((child) => child.happySessionId === input.sessionId) ?? null;
+          const observation = input.providerIdentity;
+          const agentId = tracked ? resolveTrackedSessionCatalogAgentId(tracked) : null;
+          const sourceSessionId = tracked && agentId
+            ? resolveTrackedConnectedServiceVendorResumeId({ agentId, tracked })
+            : null;
+          const getCurrentProviderSessionId = () => {
+            const current = getCurrentChildren().find((child) => child.happySessionId === input.sessionId);
+            const currentAgentId = current ? resolveTrackedSessionCatalogAgentId(current) : null;
+            return current && currentAgentId
+              ? resolveTrackedConnectedServiceVendorResumeId({ agentId: currentAgentId, tracked: current })
+              : null;
+          };
+          if (tracked && observation && sourceSessionId === observation.sourceSessionId) {
+            await handleProviderObservedSessionAccount({
+              runtimeRegistry: connectedServiceRuntimeRegistry,
+              sessionId: input.sessionId,
+              ...observation,
+              getCurrentProviderSessionId,
+              getGroup: async () => await api.getConnectedServiceAuthGroup({
+                serviceId: observation.serviceId, groupId: observation.groupId,
+              }),
+              resolveProviderAccountIdentity: async (profileId) => {
+                const resolved = await resolveConnectedServiceCredentialsWithRevisions({
+                  credentials, api,
+                  bindings: [{ serviceId: observation.serviceId, profileId }],
+                }).then((byServiceId) => byServiceId.get(observation.serviceId) ?? null);
+                return resolved ? readCredentialAccountIdentity(resolved.record) : null;
+              },
+              publishAccount: async (target) => {
+                const binding = target.activeBindings.find((candidate) => (
+                  candidate.serviceId === observation.serviceId && candidate.groupId === observation.groupId
+                ));
+                if (binding) await persistSessionConnectedServiceBindings({
+                  credentials, sessionId: input.sessionId,
+                  providerObservedAccount: { serviceId: binding.serviceId, groupId: observation.groupId, profileId: binding.profileId },
+                  isCurrent: () => connectedServiceRuntimeRegistry.getBySessionId(input.sessionId) === target
+                    && getCurrentProviderSessionId() === observation.sourceSessionId,
+                });
+              },
+              reconcileGeneration: async (target) => {
+                await enqueueConnectedServiceRuntimeTargetRegistrationReconciliation({
+                  key: { kind: 'session', pid: target.pid }, target,
+                }, true);
+              },
+            });
+          } else {
+            logger.warn('[ConnectedServices] Provider account observation session does not match current runner', {
+              sessionId: input.sessionId, errorCode: 'provider_session_account_observation_source_mismatch',
+            });
+          }
+          return connectedServiceTurnLifecycleContinue({
+            status: tracked ? 'ignored_missing_exact_turn' : 'ignored_session_not_found',
+            activeTurnId: tracked?.activeTurnId ?? null,
+          });
+        }
         const lifecycleObservedAtMs = Date.now();
         // A starting turn must be visible to restart gates before the awaited marker write; turn
         // ends are recorded once the marker is settled, before any slower recovery cleanup, so a
@@ -8328,6 +8397,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           if (!settledRuntimeTarget) {
             throw new Error('connected-service exact recipient runtime binding unavailable');
           }
+          await persistSessionConnectedServiceBindings({
+            credentials, sessionId,
+            providerObservedAccount: {
+              serviceId: providerAdoptedTarget.serviceId,
+              groupId: providerAdoptedTarget.groupId,
+              profileId: providerAdoptedTarget.profileId,
+            },
+            isCurrent: () => connectedServiceRuntimeRegistry.getBySessionId(sessionId) === settledRuntimeTarget,
+          });
         },
         continueAfterExactRecipientApplication: async ({ sessionId, providerAdoptedTarget }) => {
           await continueAfterExactConnectedServiceGenerationApplication({

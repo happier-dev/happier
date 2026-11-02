@@ -244,7 +244,9 @@ function readBinding(value: unknown): ConnectedServicesServiceBinding | null {
 
     if (source === 'native') return { source: 'native' };
     if (selection === 'group' && groupId) {
-        return { source: 'connected', selection: 'group', groupId, ...(profileId ? { profileId } : {}) };
+        const appliedProfileId = typeof raw.appliedProfileId === 'string' ? raw.appliedProfileId.trim() : '';
+        return { source: 'connected', selection: 'group', groupId, ...(profileId ? { profileId } : {}),
+            ...(appliedProfileId ? { appliedProfileId } : {}) };
     }
     if (profileId) return { source: 'connected', selection: 'profile', profileId };
     return null;
@@ -277,6 +279,11 @@ function areBindingsEqual(
     const serviceIds = new Set([...Object.keys(left), ...Object.keys(right)]);
     for (const serviceId of serviceIds) {
         if (!areServiceBindingsEqual(left[serviceId], right[serviceId])) return false;
+        const leftBinding = left[serviceId];
+        const rightBinding = right[serviceId];
+        if (leftBinding?.source === 'connected' && leftBinding.selection === 'group'
+            && rightBinding?.source === 'connected' && rightBinding.selection === 'group'
+            && leftBinding.appliedProfileId !== rightBinding.appliedProfileId) return false;
     }
     return true;
 }
@@ -305,7 +312,12 @@ export function buildSessionConnectedServicesBindings(params: Readonly<{
 
     for (const serviceId of params.supportedServiceIds) {
         const binding = params.bindingsByServiceId[serviceId] ?? { source: 'native' };
-        bindingsByServiceId[serviceId] = binding;
+        if (binding.source === 'connected' && binding.selection === 'group') {
+            const { appliedProfileId: _appliedProfileId, ...selection } = binding;
+            bindingsByServiceId[serviceId] = selection;
+        } else {
+            bindingsByServiceId[serviceId] = binding;
+        }
     }
 
     return {

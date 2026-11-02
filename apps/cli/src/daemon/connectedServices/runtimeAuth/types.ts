@@ -57,6 +57,8 @@ export type ConnectedServiceRuntimeFailureClassification = Readonly<{
   providerLimitId?: string | null;
   sourceProviderAccountId?: string | null;
   sourceProviderOrganizationId?: string | null;
+  /** Provider transcript evidence for the failed request; null explicitly means unproven. */
+  providerReportedOrganizationId?: string | null;
   /** Exact public issue associated with this accepted runtime failure. */
   runtimeIssueFingerprint?: string | null;
   sourceAccountLabel?: string | null;

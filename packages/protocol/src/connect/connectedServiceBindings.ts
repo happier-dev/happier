@@ -50,6 +50,8 @@ const ConnectedServiceGroupBindingV1Schema = lazySchema(() => z
         selection: z.literal('group'),
         groupId: ConnectedServiceAuthGroupIdSchema,
         profileId: ConnectedServiceProfileIdSchema.optional(),
+        // Runtime account evidence; profileId remains the requested fallback.
+        appliedProfileId: ConnectedServiceProfileIdSchema.optional(),
     })
     .passthrough());
 
