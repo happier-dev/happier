@@ -66,7 +66,11 @@ test('Windows self-host prepares and validates the native launcher before packag
   const compile = job.indexOf('node scripts\\pipeline\\release\\build-windows-service-launcher.mjs');
   const lifecycle = job.indexOf('-File packages/cli-common/native/windows/service-launcher.test.ps1');
   const integration = job.indexOf('node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs');
+  const install = job.indexOf('uses: ./.github/actions/install-yarn-dependencies');
+  const workspaceBuild = job.indexOf('node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common');
 
+  assert.ok(workspaceBuild > install && workspaceBuild < integration,
+    'build cli-common service exports after dependency installation and before importing the self-host harness');
   assert.ok(compile >= 0, 'the clean Windows checkout must produce the packaged launcher');
   assert.match(job.slice(0, compile), /VsDevCmd\.bat" -arch=x64/);
   assert.ok(lifecycle > compile, 'validate the launcher built in this job');
