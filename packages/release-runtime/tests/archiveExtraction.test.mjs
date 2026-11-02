@@ -1482,6 +1482,25 @@ const CFT_BUNDLE_ENTRIES = [
   },
 ];
 
+test('extension ZIP admission refuses even contained symlinks before publishing files', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extension-zip-'));
+  const archivePath = join(rootDir, 'extension.zip');
+  const extractDir = join(rootDir, 'extract');
+  try {
+    await writeFile(archivePath, createStoredZip([
+      { name: 'manifest.json', contents: '{}' },
+      { name: 'alias', contents: 'manifest.json', unixMode: 0o120755 },
+    ]));
+    await assert.rejects(extractArchivePayloadToDirectory({
+      archiveName: 'extension.zip', archivePath, extractDir, zipLinkPolicy: 'reject',
+    }), /symlink/iu);
+    await assert.rejects(lstat(extractDir), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(rootDir), ['extension.zip']);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('extractArchivePayloadToDirectory extracts the pinned Chrome-for-Testing symlink graph', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-link-ok-'));
   const archivePath = join(rootDir, 'chrome-mac-arm64.zip');

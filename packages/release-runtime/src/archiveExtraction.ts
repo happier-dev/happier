@@ -650,6 +650,7 @@ function createZipEntryValidator(params: Readonly<{
   allowedEntryRoots?: readonly string[];
   abortContext: ArchiveAbortContext;
   budget?: ArchiveBudget;
+  zipLinkPolicy?: 'reject';
 }>): (entry: ZipArchiveEntry) => ValidatedZipArchiveEntry {
   const validatePath = createArchiveEntryValidator(params.allowedEntryRoots);
   return (entry) => {
@@ -682,6 +683,9 @@ function createZipEntryValidator(params: Readonly<{
       || unixFileType === 0o040000
       || (madeBy === 0 && entry.externalFileAttributes === 16);
     if (unixFileType === 0o120000) {
+      if (params.zipLinkPolicy === 'reject') {
+        throw new Error(`[release-runtime] archive symlink entries are forbidden (${entry.fileName})`);
+      }
       if (isDirectory) {
         throw new Error(
           `[release-runtime] archive symlink entry also declares a directory (${entry.fileName})`,
@@ -1688,6 +1692,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
   extractDir: string;
   limits: ArchiveExtractionLimits;
   expectedEntries?: readonly ClosedZipArchiveEntry[];
+  zipLinkPolicy?: 'reject';
 }>): Promise<void> {
   const budget = createArchiveBudget({
     archiveBytes: params.archiveBytes,
@@ -1697,6 +1702,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
     allowedEntryRoots: params.allowedEntryRoots,
     abortContext: params.abortContext,
     budget,
+    zipLinkPolicy: params.zipLinkPolicy,
   });
   const entries = await readValidatedZipEntries({
     abortContext: params.abortContext,
@@ -1771,6 +1777,8 @@ export type ArchiveExtractionParams = Readonly<{
   limits?: Partial<ArchiveExtractionLimits>;
   signal?: AbortSignal;
   tarLinkPolicy?: TarLinkPolicy;
+  /** Some package contracts, including browser extensions, forbid every ZIP link. */
+  zipLinkPolicy?: 'reject';
 }>;
 
 export async function extractFirstPartyReleaseArchiveToDirectory(params: ArchiveExtractionParams): Promise<void> {
@@ -1838,6 +1846,7 @@ export async function extractArchivePayloadToDirectory(params: ArchiveExtraction
         extractDir: stagingDir,
         limits,
         expectedEntries: params.closedZipLayout?.entries,
+        zipLinkPolicy: params.zipLinkPolicy,
       });
     } else {
       await extractTarArchiveToDirectory({
