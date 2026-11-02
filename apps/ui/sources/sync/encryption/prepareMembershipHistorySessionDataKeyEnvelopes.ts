@@ -8,6 +8,7 @@ import {
     SESSION_DATA_KEY_SEAL_CHUNK_SIZE,
 } from './directShareEncryption';
 import { mapCryptoBatchWithYield } from './cryptoBatchYield';
+import { isSessionKeyBoundToServedMetadata } from './readTransferableSessionDataKey';
 import type { EncryptionGenerationScopeAuthority, EncryptionScopeInput } from './encryption';
 import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import {
@@ -71,6 +72,12 @@ export type MembershipHistoryPreparationOutcome = Readonly<{
     skippedCount: number;
     /** Qualified addresses of Sessions whose own caller envelope needs repair. */
     repairRequiredSessions: readonly SessionAddress[];
+    /**
+     * Sessions whose served key did not prove it is that Session's — the item carried no Session
+     * metadata (an older Home), its layout proves nothing (layout 0), or the key does not open it.
+     * Nothing was sealed for them.
+     */
+    sessionKeyUnprovenSessions: readonly SessionAddress[];
     recipientUnavailableReason: RecipientUnavailableReason | null;
     /** Truthful counts of manageable-but-not-actionable Sessions, as reported by the last page. */
     exceptions: MembershipSessionDataKeyEnvelopeExceptionsV1 | null;
@@ -140,6 +147,7 @@ export async function prepareMembershipHistorySessionDataKeyEnvelopes(
     let binding: VerifiedTargetBinding | null = null;
     let exceptions: MembershipSessionDataKeyEnvelopeExceptionsV1 | null = null;
     const repairRequiredSessions: SessionAddress[] = [];
+    const sessionKeyUnprovenSessions: SessionAddress[] = [];
 
     const passResult = await runSessionDataKeyPreparationPass<
         MembershipSessionDataKeyEnvelopeItemV1,
@@ -189,16 +197,26 @@ export async function prepareMembershipHistorySessionDataKeyEnvelopes(
 
             const sealable: Array<Readonly<{ sessionId: string; dataKey: Uint8Array }>> = [];
             const failedItemKeys: string[] = [];
-            items.forEach((item, index) => {
+            const skip = (sessionId: string, bucket: SessionAddress[]) => {
+                failedItemKeys.push(sessionId);
+                const address = normalizeSessionAddress(scope.serverId, sessionId);
+                if (address) bucket.push(address);
+            };
+            for (const [index, item] of items.entries()) {
                 const dataKey = openedKeys[index] ?? null;
                 if (!dataKey || dataKey.byteLength !== ENCRYPTED_DATA_KEY_V1_BYTES) {
-                    failedItemKeys.push(item.sessionId);
-                    const address = normalizeSessionAddress(scope.serverId, item.sessionId);
-                    if (address) repairRequiredSessions.push(address);
-                    return;
+                    skip(item.sessionId, repairRequiredSessions);
+                    continue;
+                }
+                // The Home names each key as a Session's; only that Session's own metadata proves it.
+                if (!await isSessionKeyBoundToServedMetadata({
+                    key: dataKey, metadata: item.metadata, metadataLayoutVersion: item.metadataLayoutVersion,
+                })) {
+                    skip(item.sessionId, sessionKeyUnprovenSessions);
+                    continue;
                 }
                 sealable.push({ sessionId: item.sessionId, dataKey });
-            });
+            }
 
             const entries = await mapCryptoBatchWithYield(
                 sealable,
@@ -235,6 +253,7 @@ export async function prepareMembershipHistorySessionDataKeyEnvelopes(
         preparedCount: passResult.preparedCount,
         skippedCount: passResult.skippedCount,
         repairRequiredSessions,
+        sessionKeyUnprovenSessions,
         recipientUnavailableReason: stopReason?.recipientUnavailableReason ?? null,
         exceptions,
     };

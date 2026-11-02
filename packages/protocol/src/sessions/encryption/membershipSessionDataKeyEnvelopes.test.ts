@@ -171,6 +171,20 @@ describe('MembershipSessionDataKeyEnvelopePageV1', () => {
     }).success).toBe(false);
   });
 
+  it('carries each Session\'s stored metadata for the binding proof, and still reads an older Home without it', () => {
+    const withMetadata = MembershipSessionDataKeyEnvelopePageV1Schema.parse({
+      ...readyPage,
+      items: [{ sessionId: 'ses_1', callerDataKeyEnvelope: envelope, metadata: 'c2VhbGVk', metadataLayoutVersion: 1 }],
+    });
+    if (withMetadata.status !== 'ready') throw new Error('expected a ready page');
+    expect(withMetadata.items[0]).toMatchObject({ metadata: 'c2VhbGVk', metadataLayoutVersion: 1 });
+    // Mixed versions: an older Home omits both; the client then reseals nothing for that item.
+    expect(MembershipSessionDataKeyEnvelopePageV1Schema.safeParse({
+      ...readyPage,
+      items: [{ sessionId: 'ses_1', callerDataKeyEnvelope: envelope }],
+    }).success).toBe(true);
+  });
+
   it('never pairs a page status with a contradictory recipient readiness', () => {
     // Work without a usable binding, or an unavailable page carrying one, would
     // let a client seal to a recipient the Account owner says cannot receive it.

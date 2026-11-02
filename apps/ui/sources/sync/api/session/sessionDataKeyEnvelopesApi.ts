@@ -9,6 +9,9 @@ import {
     type CurrentSessionPreparationProgress,
 } from '@/sync/encryption/prepareCurrentSessionDataKeyEnvelopes';
 import { captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
+import { readTransferableSessionDataKey } from '@/sync/encryption/readTransferableSessionDataKey';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { migrateSessionForSharing } from '@/sync/ops/sessions/migrateSessionForSharing';
 import {
     runWithServerRequestAuthorityForServerAccountScope,
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
@@ -24,6 +27,7 @@ import {
 import type { SessionAccessRequestOptions } from './sessionAccessApi';
 import { SessionAccessApiError } from './sessionAccessHttpFailure';
 import { createEnvelopeTransport, type BoundEnvelopeCollection, type SessionDataKeyEnvelopeCollectionState } from './sessionDataKeyEnvelopeTransport';
+import { readServedSessionKeyRow } from './servedSessionKeyRow';
 export type { SessionDataKeyEnvelopeCollectionState } from './sessionDataKeyEnvelopeTransport';
 
 /**
@@ -143,12 +147,37 @@ export async function readSessionDataKeyEnvelopeCollectionPage(
 }
 
 /**
+ * The Session key this pass may reseal: opened from the served row and proven to be this
+ * Session's by its own shared metadata, never taken from the hydrated key map, which proves
+ * nothing about which resource the Home named. Layout 0 proves nothing either, so the first
+ * share of a historical Session moves it to layout 1 once through the tuple owner
+ * (`session.access.layout.update`) and reads the row again.
+ */
+async function openBoundSessionDataKey(
+    bound: BoundEnvelopeCollection,
+    encryption: Parameters<typeof readTransferableSessionDataKey>[0]['encryption'],
+    isCurrent: () => boolean,
+): Promise<Uint8Array | null> {
+    const readRow = () => readServedSessionKeyRow({ authority: bound.authority, sessionId: bound.sessionId, check: () => {} });
+    let row = await readRow();
+    if (!isCurrent()) return null;
+    // Only a Session this device holds an envelope for can be moved; without one there is nothing to share.
+    if (row && typeof row.dataEncryptionKey === 'string' && readSessionMetadataLayoutVersion(row.metadataLayoutVersion) === 0) {
+        await migrateSessionForSharing({ scope: bound.authority.scope, sessionId: bound.sessionId, isCurrent });
+        if (!isCurrent()) return null;
+        row = await readRow();
+        if (!isCurrent()) return null;
+    }
+    return await readTransferableSessionDataKey({ session: row, encryption });
+}
+
+/**
  * One preparation pass for the current Session, under one captured authority.
  *
- * The admitted Session context supplies both facts this client cannot infer: the storage
- * mode, and the caller's own envelope. Neither is derived from the other — an
- * E2EE Session whose envelope this device cannot open must stay distinguishable
- * from a plain Session that never had one.
+ * The admitted Session context supplies the storage mode, and the served row supplies the
+ * caller's own envelope with the metadata that proves it is this Session's. Neither is derived
+ * from the other — an E2EE Session whose envelope this device cannot open must stay
+ * distinguishable from a plain Session that never had one.
  */
 export async function prepareSessionDataKeyEnvelopesForScope(
     options: SessionDataKeyEnvelopeRequestOptions & Readonly<{
@@ -165,7 +194,6 @@ export async function prepareSessionDataKeyEnvelopesForScope(
             serverId: bound.authority.scope.serverId,
         });
         const isCurrent = () => bound.guard.isCurrent() && encryptionCurrentness.isCurrent();
-        const sessionDataKeys = new Map<string, Uint8Array>();
         const credentials = bound.authority.context.credentials;
         if (!credentials) throw new Error('Session request requires credentials');
         const currentness = createOperationAccountCurrentnessSource({ credentials,
@@ -176,7 +204,7 @@ export async function prepareSessionDataKeyEnvelopesForScope(
                 authority: bound.authority, serverId: bound.authority.scope.serverId, sessionId: bound.sessionId,
                 contentDemand: 'encryption-context', activeCredentials: credentials,
                 activeEncryption: encryption, activeRequest: bound.authority.request,
-                sessionDataKeys, sessionDataKeyEnvelopes: new Map(),
+                sessionDataKeys: new Map(), sessionDataKeyEnvelopes: new Map(),
                 accountCurrentnessSource: currentness, isCurrent, signal: bound.guard.signal,
                 applySessions: () => {}, log: { log() {} },
             });
@@ -218,9 +246,9 @@ export async function prepareSessionDataKeyEnvelopesForScope(
         // A keyless plain Session opens nothing at all. A stale envelope on a Session the Home now
         // reports as plain is not a reason to run recipient cryptography, so this is decided from
         // the mode rather than from whether some bytes happen to be present.
-        const sessionDataKey = sessionEncryptionMode === 'plain'
+        const sessionDataKey = sessionEncryptionMode === 'plain' || keyUnavailable
             ? null
-            : sessionDataKeys.get(bound.sessionId) ?? null;
+            : await openBoundSessionDataKey(bound, encryption ?? null, isCurrent);
         if (!isCurrent()) {
             return {
                 status: 'scope_changed',

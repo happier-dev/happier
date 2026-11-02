@@ -18,6 +18,44 @@ afterEach(() => {
  */
 const MANAGER_CONTENT_KEYS = tweetnacl.box.keyPair();
 
+/** A Session's stored shared metadata ciphertext as the Home serves it, sealed with `key`. */
+async function sealSharedMetadata(key: Uint8Array, plaintext: unknown): Promise<string> {
+    const { AES256Encryption } = await import('@/sync/encryption/encryptor');
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const [sealed] = await new AES256Encryption(key).encrypt([plaintext]);
+    return encodeBase64(sealed!, 'base64');
+}
+
+/** The canonical layout-1 owner tuple sealed to the manager, as the Home serves it beside shared metadata. */
+async function sealedOwnerMetadata() {
+    const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { sealSessionOwnerMetadataEnvelopeV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+    const current = createPlainSessionCurrentProjectionRecordFixture({ metadata: null });
+    if (current.ownerMetadata?.t !== 'plain') throw new Error('Expected the canonical owner fixture');
+    return sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'dataKey', machineKey: MANAGER_CONTENT_KEYS.secretKey },
+        ownerMetadata: current.ownerMetadata.v, randomBytes: tweetnacl.randomBytes });
+}
+
+/** A recipient with a real content key and a binding its own signing key signed. */
+async function createAvailableRecipient(recipientAccountId: string) {
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const { encodeHex } = await import('@/encryption/hex');
+    const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
+    const content = tweetnacl.box.keyPair();
+    const signing = tweetnacl.sign.keyPair();
+    return { content, item: {
+        recipientAccountId, envelopeState: 'missing' as const,
+        contentKey: {
+            status: 'available' as const,
+            accountSigningPublicKey: encodeHex(signing.publicKey),
+            contentPublicKey: encodeBase64(content.publicKey, 'base64'),
+            contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+                accountSigningSecretKey: signing.secretKey, contentPublicKey: content.publicKey,
+            }), 'base64'),
+        },
+    } };
+}
+
 async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }>) {
     vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', `envelope-${crypto.randomUUID()}`);
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
@@ -46,6 +84,13 @@ async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }
     setRuntimeFetch(async (url, init) => {
         const targetUrl = new URL(String(url));
         if (targetUrl.pathname === '/v1/auth/ping') return new Response('{}');
+        // The persisted key binding the Account encryption owner admits material against comes from
+        // the canonical currentness fixture, derived from the same real manager key pair.
+        if (targetUrl.pathname === '/v1/account/encryption/currentness' && options?.accountEncryption === 'e2ee') {
+            const { createDataKeyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+            return Response.json(createDataKeyAccountEncryptionCurrentnessFixture({
+                machineKey: MANAGER_CONTENT_KEYS.secretKey, publicKey: MANAGER_CONTENT_KEYS.publicKey }));
+        }
         if (targetUrl.pathname === '/v2/sessions/read-batch') {
             const response = await sessionBoundary.handle({ home: targetUrl.origin, method: init?.method ?? 'GET',
                 path: targetUrl.pathname, url: targetUrl, accountId: null, headers: new Headers(init?.headers),
@@ -258,7 +303,8 @@ describe('Session envelope exact Account transport', () => {
                 return new Response(JSON.stringify({ session: {
                     id: 'same', createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
                     encryptionMode: 'e2ee', dataEncryptionKey: callerEnvelope,
-                    metadataLayoutVersion: 0, metadataVersion: 4, metadata: 'sealed-metadata',
+                    metadataLayoutVersion: 1, metadataVersion: 4, metadata: await sealSharedMetadata(sessionDataKey, { v: 1 }),
+                    ownerMetadata: await sealedOwnerMetadata(),
                     agentStateVersion: 5, agentState: null, share: null,
                 } }));
             }
@@ -307,8 +353,9 @@ describe('Session envelope exact Account transport', () => {
             envelope: decodeBase64(uploaded!.encryptedDataKey, 'base64'),
             recipientSecretKeyOrSeed: MANAGER_CONTENT_KEYS.secretKey,
         })).toBeNull();
-        // Snapshot before discovery, and progress only after the server acknowledged the commit.
-        expect(events).toEqual(['session', 'get:1', 'patch', 'progress', 'get:2']);
+        // Snapshot, then the served row that proves the key, before discovery; progress only after
+        // the server acknowledged the commit.
+        expect(events).toEqual(['session', 'session', 'get:1', 'patch', 'progress', 'get:2']);
         expect(onProgress).toHaveBeenCalledWith({
             preparedCount: 1,
             pagesCommitted: 1,
@@ -317,6 +364,112 @@ describe('Session envelope exact Account transport', () => {
         // The rendered aggregate is the server's own, refreshed by the final recheck page.
         expect(outcome.summary).toEqual({ prepared: envelopeState === 'prepared' ? 2 : 1, pending: 0, invalid: 0, recipientKeyUnavailable: 0 });
     });
+
+    it.each([
+        ['Saved Secret', 'its own non-Session content', { name: 'deploy token', value: 'redacted' }, null],
+        ['Workflow', 'Session metadata it cannot open', { v: 1 }, new Uint8Array(32).fill(1)],
+        ['Machine', 'layout-1 claimed over a flat record', { host: 'alice', platform: 'linux' }, null],
+    ] as const)('seals nothing when a malicious Home serves a %s key as the Session key with %s', async (_resource, _case, plaintext, metadataKey) => {
+        const env = await setup({ accountEncryption: 'e2ee' });
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
+        const { prepareSessionDataKeyEnvelopesForScope } = await import('./sessionDataKeyEnvelopesApi');
+        // A resource key this manager can open, listed by the Home as this Session's envelope.
+        const foreignResourceKey = new Uint8Array(32).fill(0x5a);
+        const metadata = await sealSharedMetadata(metadataKey ?? foreignResourceKey, plaintext);
+        const ownerMetadata = await sealedOwnerMetadata();
+        const recipient = await createAvailableRecipient('recipient-1');
+        const patches: string[] = [];
+        env.request.mockImplementation(async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path.includes('/account/encryption')) return Response.json({ mode: 'e2ee', version: 1,
+                signingKeyFingerprint: 'signing-current', contentKeyFingerprint: 'content-current', updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'available' } });
+            if (path === '/v2/sessions/same') return Response.json({ session: {
+                id: 'same', createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+                encryptionMode: 'e2ee',
+                dataEncryptionKey: encryptDataKeyForRecipientV0(foreignResourceKey, encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64')),
+                metadataLayoutVersion: 1, metadataVersion: 4, metadata, ownerMetadata,
+                agentStateVersion: 5, agentState: null, share: null,
+            } });
+            if (path.endsWith('/turns')) return Response.json({ error: 'not_found' }, { status: 404 });
+            if (init?.method === 'PATCH') { patches.push(path); return Response.json({ appliedCount: 1 }); }
+            if (path.endsWith('/data-key/envelopes')) return Response.json({ status: 'required',
+                summary: { prepared: 0, pending: 1, invalid: 0, recipientKeyUnavailable: 0 }, items: [recipient.item], nextCursor: null });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        await expect(prepareSessionDataKeyEnvelopesForScope({
+            scope: { serverId: env.target.id, accountId: 'target-account' },
+            sessionId: 'same', availability: 'available', isCurrent: () => true,
+        })).resolves.toMatchObject({ status: 'session_data_key_unavailable', preparedCount: 0 });
+        expect(patches).toEqual([]);
+    });
+
+    it('moves a layout-0 Session to layout 1 once through the tuple owner, then shares the proven key', async () => {
+        // The app entry registers this runtime; the tuple owner under it stays real.
+        await import('@/sync/syncEngine');
+        const env = await setup({ accountEncryption: 'e2ee' });
+        const { encodeBase64, decodeBase64 } = await import('@/encryption/base64');
+        const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
+        const { openEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
+        const { createDataKeyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { prepareSessionDataKeyEnvelopesForScope } = await import('./sessionDataKeyEnvelopesApi');
+        const sessionDataKey = new Uint8Array(32).fill(21);
+        const recipient = await createAvailableRecipient('recipient-1');
+        // A released 0.2 Session: one flat record sealed with its own key, no layout marker.
+        let row: Record<string, unknown> = {
+            id: 'same', createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2, encryptionMode: 'e2ee',
+            dataEncryptionKey: encryptDataKeyForRecipientV0(sessionDataKey, encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64')),
+            metadataLayoutVersion: 0, metadataVersion: 4,
+            metadata: await sealSharedMetadata(sessionDataKey, { path: '/repo', host: 'owner-laptop', summary: { text: 'Old work', updatedAt: 1 } }),
+            agentStateVersion: 5, agentState: null, share: null,
+        };
+        const writes: string[] = [];
+        let uploaded: string | null = null;
+        let pages = 0;
+        env.request.mockImplementation(async (url, init) => {
+            const path = new URL(url).pathname;
+            const method = init?.method ?? 'GET';
+            if (path === '/v1/account/encryption/currentness') return Response.json(createDataKeyAccountEncryptionCurrentnessFixture({
+                machineKey: MANAGER_CONTENT_KEYS.secretKey, publicKey: MANAGER_CONTENT_KEYS.publicKey }));
+            if (path.includes('/account/encryption')) return Response.json({ mode: 'e2ee', version: 1,
+                signingKeyFingerprint: 'signing-current', contentKeyFingerprint: 'content-current', updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'available' } });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (path === '/v2/sessions/same' && method === 'PATCH') {
+                writes.push('layout');
+                const body = JSON.parse(String(init?.body)) as { target: { metadataLayoutVersion: number;
+                    sharedMetadata: { ciphertext: string }; ownerMetadata: unknown } };
+                row = { ...row, metadataLayoutVersion: body.target.metadataLayoutVersion, metadataVersion: 5,
+                    metadata: body.target.sharedMetadata.ciphertext, ownerMetadata: body.target.ownerMetadata, agentStateVersion: 6 };
+                return Response.json({ success: true, metadataLayoutVersion: 1,
+                    sharedMetadata: { version: 5 }, agentState: { version: 6 } });
+            }
+            if (path === '/v2/sessions/same') return Response.json({ session: row });
+            if (path.endsWith('/turns')) return Response.json({ error: 'not_found' }, { status: 404 });
+            if (path.endsWith('/data-key/envelopes') && method === 'PATCH') {
+                writes.push('envelope');
+                uploaded = (JSON.parse(String(init?.body)) as { entries: Array<{ encryptedDataKey: string }> }).entries[0]!.encryptedDataKey;
+                return Response.json({ appliedCount: 1 });
+            }
+            if (path.endsWith('/data-key/envelopes')) {
+                pages += 1;
+                return Response.json({ status: 'required',
+                    summary: { prepared: pages === 1 ? 0 : 1, pending: pages === 1 ? 1 : 0, invalid: 0, recipientKeyUnavailable: 0 },
+                    items: pages === 1 ? [recipient.item] : [], nextCursor: null });
+            }
+            throw new Error(`Unexpected request ${method} ${path}`);
+        });
+        await expect(prepareSessionDataKeyEnvelopesForScope({
+            scope: { serverId: env.target.id, accountId: 'target-account' },
+            sessionId: 'same', availability: 'available', isCurrent: () => true,
+        })).resolves.toMatchObject({ status: 'complete', preparedCount: 1 });
+        // One layout move, before the key is sealed to anyone.
+        expect(writes).toEqual(['layout', 'envelope']);
+        expect(openEncryptedDataKeyEnvelopeV1({
+            envelope: decodeBase64(uploaded!, 'base64'), recipientSecretKeyOrSeed: recipient.content.secretKey,
+        })).toEqual(sessionDataKey);
+    }, 180_000);
 
     it.each(['missing', 'legacy'] as const)('keeps %s standalone-key custody unavailable without turns or recipient discovery', async custody => {
         const env = await setup({ accountEncryption: 'e2ee' });

@@ -33,24 +33,7 @@ import { migrateSessionForSharing } from '@/sync/ops/sessions/migrateSessionForS
 import { recordSessionTeamShareStatement } from '@/sync/ops/sessions/recordSessionTeamShareStatement';
 import { log } from '@/log';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
-import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
-
-/** The served Session row a reseal binds its key to; the hydrated snapshot keeps no ciphertext. */
-async function readServedSessionKeyRow(params: Readonly<{
-    authority: ServerAccountRequestAuthority;
-    sessionId: string;
-    check(): void;
-}>): Promise<Readonly<Record<string, unknown>> | null> {
-    const token = params.authority.context.credentials?.token;
-    if (!token) return null;
-    const read = await readSessionByIdHttp({ sessionId: params.sessionId, serverId: params.authority.scope.serverId,
-        token, request: params.authority.request, projection: 'detail' });
-    params.check();
-    const session = read.ok && read.body && typeof read.body === 'object'
-        ? (read.body as Readonly<{ session?: unknown }>).session : null;
-    return session && typeof session === 'object' && (session as Readonly<{ id?: unknown }>).id === params.sessionId
-        ? session as Readonly<Record<string, unknown>> : null;
-}
+import { readServedSessionKeyRow } from './servedSessionKeyRow';
 
 /** Batch preview from the same Home policy owner that admits a grant. Older Homes fail closed. */
 export async function inspectSessionAccessCandidates(options: SessionAccessRequestOptions & Readonly<{

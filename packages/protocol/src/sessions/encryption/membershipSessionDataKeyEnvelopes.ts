@@ -99,10 +99,18 @@ export type MembershipSessionDataKeyEnvelopeErrorV1 =
 /**
  * The caller's own current envelope travels with each actionable Session so a
  * cold client never needs one Session-detail request per item.
+ *
+ * The Session's stored shared `metadata` ciphertext and `metadataLayoutVersion`
+ * travel with it so the client can prove, with `readSessionKeyBoundSharedMetadataV1`,
+ * that the key the Home names is this Session's before resealing it to someone
+ * else. Both are optional only for mixed versions: an older Home omits them, and
+ * a client then reseals nothing for that item.
  */
 const MembershipSessionDataKeyEnvelopeItemV1Schema = z.strictObject({
   sessionId: MembershipHistorySessionIdV1Schema,
   callerDataKeyEnvelope: SessionDataKeyEnvelopeBytesV1Schema,
+  metadata: z.optional(z.string()),
+  metadataLayoutVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
 });
 export type MembershipSessionDataKeyEnvelopeItemV1 =
   Readonly<z.infer<typeof MembershipSessionDataKeyEnvelopeItemV1Schema>>;

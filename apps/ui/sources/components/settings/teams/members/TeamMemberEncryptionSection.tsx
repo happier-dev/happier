@@ -145,7 +145,10 @@ export function projectTeamMemberPreparationOutcome(
             // locally unopenable envelope is repair work even when the Home saw none.
             callerRepairRequired: (server?.callerEnvelopeRepairRequiredCount ?? 0) > 0
                 || outcome.repairRequiredCount > 0,
-            nonTransferableHistory: (server?.callerVisibleNonTransferableSessionCount ?? 0) > 0,
+            // A Session whose served key did not prove it is that Session's (an older Home, or
+            // layout 0 until its owner upgrades it) is history this device cannot share either.
+            nonTransferableHistory: (server?.callerVisibleNonTransferableSessionCount ?? 0) > 0
+                || outcome.sessionKeyUnprovenCount > 0,
         };
     }
     // An unverifiable recipient binding is the one stable cryptographic failure left:

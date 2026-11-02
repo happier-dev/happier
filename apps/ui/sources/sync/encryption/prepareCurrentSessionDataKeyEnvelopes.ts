@@ -106,7 +106,8 @@ export type PrepareCurrentSessionParams = Readonly<{
     scope: CurrentSessionPreparationScope;
     transport: CurrentSessionDataKeyEnvelopeTransport;
     /**
-     * The standalone per-Session DEK this client already opened. `null` (or any non-32-byte value)
+     * The standalone per-Session DEK this client already opened and proved is this Session's
+     * (`readTransferableSessionDataKey`). `null` (or any non-32-byte value)
      * means there is nothing transferable to share: an Account-scoped compatibility reader is not a
      * Session key and must never be sealed to another Account.
      */

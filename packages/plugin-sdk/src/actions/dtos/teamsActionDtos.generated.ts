@@ -2353,6 +2353,7 @@ export type TeamsActionResultById = {
         preparedCount: number;
         skippedCount: number;
         repairRequiredCount: number;
+        sessionKeyUnprovenCount: number;
         recipientUnavailableReason: 'plain_account' | 'encryption_setup_required' | 'encryption_inconsistent' | null;
         exceptions: {
             callerVisibleNonTransferableSessionCount: number;

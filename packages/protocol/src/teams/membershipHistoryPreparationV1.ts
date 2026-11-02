@@ -33,6 +33,8 @@ export const TeamMembershipHistoryPreparationResultV1Schema = z.strictObject({
     'recipient_changed', 'membership_changed', 'invalid_recipient_binding']),
   preparedCount: z.number().check(z.int(), z.nonnegative()), skippedCount: z.number().check(z.int(), z.nonnegative()),
   repairRequiredCount: z.number().check(z.int(), z.nonnegative()),
+  /** Sessions whose served key did not prove it is that Session's, so nothing was sealed for them. */
+  sessionKeyUnprovenCount: z.number().check(z.int(), z.nonnegative()),
   recipientUnavailableReason: z.nullable(SessionDataKeyRecipientUnavailableReasonV1Schema),
   exceptions: z.nullable(MembershipSessionDataKeyEnvelopeExceptionsV1Schema),
 });

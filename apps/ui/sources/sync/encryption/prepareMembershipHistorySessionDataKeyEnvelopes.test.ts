@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import type {
     MembershipSessionDataKeyEnvelopePageV1,
@@ -24,6 +24,7 @@ import { Encryption } from './encryption';
 import { createFakeCryptoWorker } from './nativeCryptoWorker/fakeCryptoWorker';
 import { SESSION_DATA_KEY_SEAL_CHUNK_SIZE } from './directShareEncryption';
 import { DEFAULT_CRYPTO_BATCH_YIELD_CHUNK_SIZE } from './cryptoBatchYield';
+import { AES256Encryption } from './encryptor';
 
 const SERVER_ID = 'home-1';
 const RECIPIENT_ACCOUNT_ID = 'account-recipient';
@@ -47,6 +48,19 @@ function dataKeyFor(seed: number): Uint8Array {
 /** The caller's own canonical Session envelope, exactly as the historical GET returns it. */
 function callerEnvelopeFor(seed: number): string {
     return encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+/**
+ * Each Session's own strict layout-1 shared metadata sealed with its key, which is what proves to
+ * the pass that the key the Home names is that Session's. `dataKeyFor` wraps at one byte, so one
+ * ciphertext per byte value covers every seed.
+ */
+const boundMetadataByKeyByte = new Map<number, string>();
+beforeAll(async () => {
+    for (let byte = 0; byte < 256; byte += 1) {
+        const [sealed] = await new AES256Encryption(new Uint8Array(32).fill(byte)).encrypt([{ v: 1 }]);
+        boundMetadataByKeyByte.set(byte, encodeBase64(sealed!, 'base64'));
+    }
+});
+
         dataKey: dataKeyFor(seed),
         recipientPublicKey: callerContentKeyPair.publicKey,
         randomBytes: (length) => tweetnacl.randomBytes(length),
@@ -87,6 +101,8 @@ function readyPage(params: Readonly<{
         })),
         exceptions: params.exceptions === undefined ? {
             callerVisibleNonTransferableSessionCount: 0,
+            metadata: boundMetadataByKeyByte.get(seed & 0xff)!,
+            metadataLayoutVersion: 1,
             callerEnvelopeRepairRequiredCount: 0,
         } : params.exceptions,
         nextCursor: params.nextCursor ?? null,

@@ -24,6 +24,7 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { t } from '@/text';
+import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import {
@@ -47,6 +48,13 @@ vi.mock('react-native', async () => {
 });
 
 afterEach(() => {
+
+/** Session `session-1`'s own layout-1 shared metadata, sealed with its key (fill 7) as the Home serves it. */
+const SESSION_1_BOUND_METADATA = {
+    metadata: encodeBase64((await new AES256Encryption(new Uint8Array(32).fill(7)).encrypt([{ v: 1 }]))[0]!, 'base64'),
+    metadataLayoutVersion: 1,
+};
+
     standardCleanup();
     storage.setState(storage.getInitialState(), true);
     resetServerFeaturesClientForTests();
@@ -185,6 +193,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 1,
             repairRequiredCount: 1,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: {
                 callerEnvelopeRepairRequiredCount: 0,
                 callerVisibleNonTransferableSessionCount: 2,
@@ -205,6 +214,7 @@ describe('member encrypted-access state', () => {
             // Nothing failed on this device, which must not erase what the Home reported.
             repairRequiredCount: 0,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: {
                 callerEnvelopeRepairRequiredCount: 1,
                 callerVisibleNonTransferableSessionCount: 4,
@@ -218,6 +228,24 @@ describe('member encrypted-access state', () => {
     });
 
     it('reloads the membership for a replacement Account instead of reporting a failure', () => {
+    it('explains Sessions whose served key did not prove it is theirs as history this device cannot share', () => {
+        expect(projectTeamMemberPreparationOutcome({
+            status: 'incomplete',
+            preparedCount: 3,
+            skippedCount: 2,
+            repairRequiredCount: 0,
+            // An older Home without Session metadata, or a layout-0 Session: nothing was sealed.
+            sessionKeyUnprovenCount: 2,
+            recipientUnavailableReason: null,
+            exceptions: { callerEnvelopeRepairRequiredCount: 0, callerVisibleNonTransferableSessionCount: 0 },
+        })).toEqual({
+            kind: 'ready',
+            actionable: true,
+            callerRepairRequired: false,
+            nonTransferableHistory: true,
+        });
+    });
+
         // A provider reset keeps the Team-membership id while replacing its Account.
         // Continuing would seal history to the person who left.
         expect(projectTeamMemberPreparationOutcome({
@@ -226,6 +254,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             repairRequiredCount: 0,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: null,
         })).toEqual({ kind: 'recipient_changed' });
     });
@@ -237,6 +266,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             repairRequiredCount: 0,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: null,
         })).toEqual({ kind: 'membership_changed' });
     });
@@ -248,6 +278,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             repairRequiredCount: 0,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: null,
         })).toEqual({ kind: 'checking' });
     });
@@ -259,6 +290,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             repairRequiredCount: 0,
             recipientUnavailableReason: null,
+            sessionKeyUnprovenCount: 0,
             exceptions: null,
         })).toEqual({ kind: 'failed' });
     });
@@ -270,6 +302,7 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             repairRequiredCount: 0,
             recipientUnavailableReason: 'encryption_setup_required',
+            sessionKeyUnprovenCount: 0,
             exceptions: null,
         })).toEqual({ kind: 'setup_required', reason: 'encryption_setup_required' });
     });
@@ -342,7 +375,7 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
                         accountSigningSecretKey: recipientSigning.secretKey, contentPublicKey: recipientContent.publicKey,
                     }), 'base64') },
                 items: [{ sessionId: 'session-1', callerDataKeyEnvelope: encryptDataKeyForRecipientV0(
-                    new Uint8Array(32).fill(7), encodeBase64(managerKeys.publicKey, 'base64')) }],
+                    new Uint8Array(32).fill(7), encodeBase64(managerKeys.publicKey, 'base64')), ...SESSION_1_BOUND_METADATA }],
                 exceptions: { callerEnvelopeRepairRequiredCount: 0, callerVisibleNonTransferableSessionCount: 0 },
                 nextCursor: null,
             });
@@ -389,7 +422,7 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
                         accountSigningSecretKey: recipientSigning.secretKey, contentPublicKey: recipientContent.publicKey,
                     }), 'base64') },
                 items: prepared ? [] : [{ sessionId: 'session-1', callerDataKeyEnvelope: encryptDataKeyForRecipientV0(
-                    new Uint8Array(32).fill(7), encodeBase64(managerKeys.publicKey, 'base64')) }],
+                    new Uint8Array(32).fill(7), encodeBase64(managerKeys.publicKey, 'base64')), ...SESSION_1_BOUND_METADATA }],
                 exceptions: { callerEnvelopeRepairRequiredCount: 0, callerVisibleNonTransferableSessionCount: 0 }, nextCursor: null,
             }));
         });
@@ -477,6 +510,7 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
                         encodeBase64(managerKeys.publicKey, 'base64'),
                     ),
                 }],
+                    ...SESSION_1_BOUND_METADATA,
                 exceptions: {
                     callerEnvelopeRepairRequiredCount: 0,
                     callerVisibleNonTransferableSessionCount: 0,

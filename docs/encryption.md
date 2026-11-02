@@ -4885,16 +4885,26 @@ Every path that seals a Session key the Home served to someone else first proves
 that Session's. The Protocol predicate `readSessionKeyBoundSharedMetadataV1` accepts only
 bytes that decrypt into this Session's strict layout-1 shared metadata. The CLI opens such
 keys only through `openSessionDataEncryptionKeyForReseal`: the daemon's Team delivery, a
-direct grant, the creation-time recipient pass and the statement writer. The app's
-`readTransferableSessionDataKey` applies the same predicate. This proves key possession,
-not who a person is. The Home stores the statement but cannot forge it, so a forged wake for
-a private Session, or a Saved Secret, Workflow or Machine key served as a Session key, seals
-nothing. Layout 0 proves nothing, because that layout accepts any record. A layout-0 Session
-therefore keeps the manager path: a direct grant falls back to the recipient's retained
-envelope, and the CLI error names `session.access.layout.update` as the repair. The app
-moves a layout-0 Session to layout 1 before sharing it. Sessions with no statement also keep
-the manager path, including shares from a device without the key and Sessions shared before
-this check existed.
+direct grant, the creation-time recipient pass and the statement writer. The app applies the
+same predicate through `readTransferableSessionDataKey` and
+`isSessionKeyBoundToServedMetadata` on each of its reseal paths: a direct grant, a public
+link, the Team statement writer, the manager's current-Session pass over the recipient
+collection, and membership-history preparation. The current-Session pass opens the key from
+the served Session row, not from the hydrated key map. Each membership-history item carries
+its Session's stored `metadata` and `metadataLayoutVersion`. An item without them, sent by an
+older Home, is not resealed, and neither is an item whose key does not open that metadata.
+The manager sees these Sessions as history this device cannot share (`sessionKeyUnprovenCount`).
+This proves key possession, not who a person is. The Home stores the statement but cannot
+forge it, so a forged wake for a private Session, or a Saved Secret, Workflow or Machine key
+served as a Session key, seals nothing. Layout 0 proves nothing, because that layout accepts
+any record. On the CLI, a layout-0 Session therefore keeps the manager path: a direct grant
+falls back to the recipient's retained envelope, and the CLI error names
+`session.access.layout.update` as the repair. The app moves a layout-0 Session to layout 1
+once, through the same tuple owner as `session.access.layout.update`, before a direct grant
+or its first current-Session pass seals the key. Membership history skips a layout-0 Session
+until its owner's ordinary sync upgrades it. Sessions with no statement also keep the manager
+path, including shares from a device without the key and Sessions shared before this check
+existed.
 
 Two residuals are accepted for 0.3 (`.project/OWNER-RULINGS.md`, 2026-10-31):
 

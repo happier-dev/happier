@@ -388,6 +388,21 @@ export async function readMembershipSessionDataKeyEnvelopePage(input: Readonly<{
             if (chunk.length < SESSION_SCAN_CHUNK) break;
         }
 
+        // Each item carries its Session's stored shared metadata and layout, so the client can
+        // prove the key it is about to reseal is this Session's (`readSessionKeyBoundSharedMetadataV1`).
+        // One read for the delivered page only; scanned rows that are not work never load it.
+        if (items.length > 0) {
+            const metadataRows = await tx.session.findMany({
+                where: { id: { in: items.map(item => item.sessionId) } },
+                select: { id: true, metadata: true, metadataLayoutVersion: true },
+            });
+            const metadataById = new Map(metadataRows.map(row => [row.id, row]));
+            for (const [index, item] of items.entries()) {
+                const row = metadataById.get(item.sessionId);
+                if (row) items[index] = { ...item, metadata: row.metadata, metadataLayoutVersion: row.metadataLayoutVersion };
+            }
+        }
+
         // Separate set-oriented exception aggregate over the whole authorized
         // eligible set. Missing-caller buckets are indexed COUNTs; present-but-
         // invalid caller envelopes are one filtered envelope fetch checked with

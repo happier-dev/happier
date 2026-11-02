@@ -72,7 +72,8 @@ export async function executeMembershipHistoryActionForScope(options: Readonly<{
         }
         const outcome = await prepareMembershipHistoryEnvelopesDetached(request);
         return { status: outcome.status, preparedCount: outcome.preparedCount, skippedCount: outcome.skippedCount,
-            repairRequiredCount: outcome.repairRequiredSessions.length, recipientUnavailableReason: outcome.recipientUnavailableReason,
+            repairRequiredCount: outcome.repairRequiredSessions.length,
+            sessionKeyUnprovenCount: outcome.sessionKeyUnprovenSessions.length, recipientUnavailableReason: outcome.recipientUnavailableReason,
             exceptions: outcome.exceptions };
     } catch (error) {
         if (error instanceof SessionAccessApiError) return { ok: false, errorCode: error.code, error: error.code };
@@ -249,6 +250,7 @@ export async function prepareMembershipHistoryEnvelopesForScope(
         preparedCount: 0,
         skippedCount: 0,
         repairRequiredSessions: [],
+        sessionKeyUnprovenSessions: [],
         recipientUnavailableReason: null,
         exceptions: null,
     });

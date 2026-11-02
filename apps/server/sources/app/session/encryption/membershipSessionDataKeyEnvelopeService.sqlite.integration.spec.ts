@@ -194,6 +194,15 @@ describe("Membership session data-key envelope history (SQLite)", () => {
             callerEnvelopeRepairRequiredCount: 0,
         });
 
+        // The Session's own stored shared metadata and layout travel with the item, so the client
+        // can prove the key the Home names is this Session's before resealing it.
+        const sessionRow = await db.session.findUniqueOrThrow({ where: { id: granted.sessionId },
+            select: { metadata: true, metadataLayoutVersion: true } });
+        expect(page.items[0]).toEqual({
+            sessionId: granted.sessionId, callerDataKeyEnvelope: expect.any(String),
+            metadata: sessionRow.metadata, metadataLayoutVersion: sessionRow.metadataLayoutVersion,
+        });
+
         // The page alone is enough to prepare: no Session-detail request, no warm cache.
         const callerEnvelope = decodeBase64(page.items[0]!.callerDataKeyEnvelope);
         const openedByCaller = openEncryptedDataKeyEnvelopeV1({

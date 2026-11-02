@@ -29,6 +29,14 @@ afterEach(() => {
  */
 const MANAGER_CONTENT_KEYS = tweetnacl.box.keyPair();
 
+/** A Session's stored shared metadata ciphertext as the Home serves it, sealed with `key`. */
+async function sessionBoundMetadata(key: Uint8Array, plaintext: unknown) {
+    const { AES256Encryption } = await import('@/sync/encryption/encryptor');
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const [sealed] = await new AES256Encryption(key).encrypt([plaintext]);
+    return { metadata: encodeBase64(sealed!, 'base64'), metadataLayoutVersion: 1 };
+}
+
 const TEAM_ID = 'acme/1';
 const ENCODED_TEAM = 'acme%2F1';
 
@@ -60,7 +68,15 @@ async function setup(options?: Readonly<{ accountEncryption?: 'plain' | 'e2ee' }
     const request = vi.fn(async (_url: string, _init?: RequestInit): Promise<Response> => new Response('{}'));
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     setRuntimeFetch(async (url, init) => {
-        if (new URL(String(url)).pathname === '/v1/auth/ping') return new Response('{}');
+        const pathname = new URL(String(url)).pathname;
+        if (pathname === '/v1/auth/ping') return new Response('{}');
+        // The persisted key binding the Account encryption owner admits material against comes from
+        // the canonical currentness fixture, derived from the same real manager key pair.
+        if (pathname === '/v1/account/encryption/currentness' && options?.accountEncryption === 'e2ee') {
+            const { createDataKeyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+            return Response.json(createDataKeyAccountEncryptionCurrentnessFixture({
+                machineKey: MANAGER_CONTENT_KEYS.secretKey, publicKey: MANAGER_CONTENT_KEYS.publicKey }));
+        }
         return request(String(url), init);
     });
     return { active, target, request, token, TokenStorage };
@@ -498,13 +514,15 @@ describe('membership history preparation host', () => {
             ['session-1', new Uint8Array(32).fill(11)],
             ['session-2', new Uint8Array(32).fill(22)],
         ]);
-        const items = [...sessionDataKeys].map(([sessionId, dataKey]) => ({
+        const items = await Promise.all([...sessionDataKeys].map(async ([sessionId, dataKey]) => ({
             sessionId,
             callerDataKeyEnvelope: encryptDataKeyForRecipientV0(
                 dataKey,
                 encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'),
             ),
-        }));
+            // Each Session's own strict layout-1 shared metadata, sealed with its key.
+            ...await sessionBoundMetadata(dataKey, { v: 1 }),
+        })));
 
         const events: string[] = [];
         const patched: Array<{ recipientAccountId: string; entries: Array<{ sessionId: string; encryptedDataKey: string }> }> = [];
@@ -572,6 +590,75 @@ describe('membership history preparation host', () => {
         }
     });
 
+    it('reseals only keys that prove they are their Session\'s, and reports the rest as typed skips', async () => {
+        const env = await setup({ accountEncryption: 'e2ee' });
+        const { encodeBase64, decodeBase64 } = await import('@/encryption/base64');
+        const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
+        const { openEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
+        const recipient = await createRecipient();
+        const sealToManager = (key: Uint8Array) => encryptDataKeyForRecipientV0(key, encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'));
+
+        const genuineKey = new Uint8Array(32).fill(11);
+        // Saved Secret, Workflow and Machine keys this manager can open, which a malicious Home
+        // lists as Session envelopes under the history it serves.
+        const savedSecretKey = new Uint8Array(32).fill(0x5a);
+        const workflowKey = new Uint8Array(32).fill(0x5b);
+        const machineKey = new Uint8Array(32).fill(0x5c);
+        const items = [
+            { sessionId: 'session-genuine', callerDataKeyEnvelope: sealToManager(genuineKey),
+                ...await sessionBoundMetadata(genuineKey, { v: 1 }) },
+            // The resource's own non-Session plaintext, claimed as layout-1 shared metadata.
+            { sessionId: 'session-saved-secret', callerDataKeyEnvelope: sealToManager(savedSecretKey),
+                ...await sessionBoundMetadata(savedSecretKey, { name: 'deploy token', value: 'redacted' }) },
+            // Genuine-looking Session metadata the served key cannot open.
+            { sessionId: 'session-workflow', callerDataKeyEnvelope: sealToManager(workflowKey),
+                ...await sessionBoundMetadata(new Uint8Array(32).fill(1), { v: 1 }) },
+            // Layout 0 accepts any record, so it proves nothing.
+            { sessionId: 'session-machine', callerDataKeyEnvelope: sealToManager(machineKey),
+                ...await sessionBoundMetadata(machineKey, { host: 'alice', platform: 'linux' }), metadataLayoutVersion: 0 },
+            // An older Home that does not send the Session metadata at all.
+            { sessionId: 'session-older-home', callerDataKeyEnvelope: sealToManager(new Uint8Array(32).fill(33)) },
+        ];
+
+        const patched: Array<{ entries: Array<{ sessionId: string; encryptedDataKey: string }> }> = [];
+        let pages = 0;
+        env.request.mockImplementation(async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path.includes('/account/encryption')) return new Response(E2EE_ACCOUNT_ENCRYPTION);
+            if (path.endsWith('/data-key/envelopes') && init?.method === 'PATCH') {
+                const body = JSON.parse(String(init.body)) as (typeof patched)[number];
+                patched.push(body);
+                return new Response(JSON.stringify({ appliedCount: body.entries.length }));
+            }
+            if (path.endsWith('/data-key/envelopes')) {
+                pages += 1;
+                return new Response(JSON.stringify({
+                    status: 'ready', recipientAccountId: 'recipient-1', contentKey: recipient.contentKey,
+                    items: pages === 1 ? items : items.slice(1),
+                    exceptions: { callerVisibleNonTransferableSessionCount: 0, callerEnvelopeRepairRequiredCount: 0 },
+                    nextCursor: null,
+                }));
+            }
+            throw new Error(`Unexpected request ${path}`);
+        });
+
+        const result = await actionExecutor(env.target.id).execute('teams.members.history.prepare', {
+            teamId: TEAM_ID, target: TEAM_TARGET, recipientAccountId: 'recipient-1',
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            presentUserConfirmation: { actionId: 'teams.members.history.prepare' } });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.errorCode);
+        const outcome = TeamMembershipHistoryPreparationResultV1Schema.parse(result.result);
+
+        // Only the genuine Session key reached the recipient; nothing else was sealed at all.
+        expect(patched.flatMap(page => page.entries.map(entry => entry.sessionId))).toEqual(['session-genuine']);
+        expect(openEncryptedDataKeyEnvelopeV1({
+            envelope: decodeBase64(patched[0]!.entries[0]!.encryptedDataKey, 'base64'),
+            recipientSecretKeyOrSeed: recipient.content.secretKey,
+        })).toEqual(genuineKey);
+        expect(outcome).toMatchObject({ status: 'incomplete', preparedCount: 1, sessionKeyUnprovenCount: 4, repairRequiredCount: 0 });
+    });
+
     it('stops without committing when the membership resolves to a replacement Account', async () => {
         const env = await setup({ accountEncryption: 'e2ee' });
         const { prepareMembershipHistoryEnvelopesForScope } = await import('./membershipSessionDataKeyEnvelopesApi');
@@ -624,6 +711,7 @@ describe('membership history preparation host', () => {
                         new Uint8Array(32).fill(31),
                         encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'),
                     ),
+                    ...await sessionBoundMetadata(new Uint8Array(32).fill(31), { v: 1 }),
                 }] : [],
                 exceptions: {
                     callerVisibleNonTransferableSessionCount: 0,
@@ -665,6 +753,7 @@ describe('membership history preparation host', () => {
                         new Uint8Array(32).fill(41),
                         encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'),
                     ),
+                    ...await sessionBoundMetadata(new Uint8Array(32).fill(41), { v: 1 }),
                 }],
                 exceptions: {
                     callerVisibleNonTransferableSessionCount: 0,
@@ -707,6 +796,7 @@ describe('membership history preparation host', () => {
                         new Uint8Array(32).fill(11),
                         encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'),
                     ),
+                    ...await sessionBoundMetadata(new Uint8Array(32).fill(11), { v: 1 }),
                 }],
                 exceptions: { callerVisibleNonTransferableSessionCount: 0, callerEnvelopeRepairRequiredCount: 0 },
                 nextCursor: null,
