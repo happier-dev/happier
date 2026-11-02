@@ -1,7 +1,10 @@
 import { z } from 'zod/mini';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionListFilterV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { ActionSessionAddressV1Schema } from './sessionAddressV1.js';
+export { ActionSessionAddressV1Schema, type ActionSessionAddressV1 } from './sessionAddressV1.js';
 
 const ExactSessionReferenceV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
@@ -26,6 +29,8 @@ export const SessionTargetV1Schema: z.ZodMiniType<SessionTargetV1, SessionTarget
   () => z.union([ExactSessionReferenceV1Schema, SessionTargetSelectorV1Schema]),
 );
 
+export const SessionTargetV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionTargetV1Schema));
+
 /** The sole shorthand adapter; clients send its input unchanged to the Actions front door. */
 export function normalizeSessionTargetV1(input: unknown): SessionTargetV1 {
   const target = SessionTargetV1Schema.parse(input);
@@ -48,11 +53,7 @@ export const ActionSessionTargetDeclarationV1Schema = lazyZodSchema(() => z.stri
 }));
 export type ActionSessionTargetDeclarationV1 = z.infer<typeof ActionSessionTargetDeclarationV1Schema>;
 
-export const ActionSessionAddressV1Schema = lazyZodSchema(() => z.strictObject({
-  serverId: z.string().check(z.minLength(1)),
-  sessionId: ExactSessionReferenceV1Schema,
-}));
-export type ActionSessionAddressV1 = z.infer<typeof ActionSessionAddressV1Schema>;
+export const ActionSessionAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionSessionAddressV1Schema));
 
 /** Read-only inspection; an unavailable corpus never publishes a sendable subset. */
 export const SessionTargetPreviewV1Schema = lazyZodSchema(() => z.strictObject({

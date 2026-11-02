@@ -1,4 +1,9 @@
 export type { AgentPermissionIntentV1 } from '../services/sessions.js';
+export { SessionTargetV1Schema, ActionSessionAddressV1Schema } from './sessionTargets.js';
+export type { SessionTargetV1, SessionTargetSelectorV1, ActionSessionTargetDeclarationV1, ActionSessionAddressV1 } from './sessionTargets.js';
+export type { ActionResolvedSessionTargetsV1 } from './sessionTargets.js';
+export { SessionMessageSendResultV1ProtocolSchema } from './messageSendResult.js';
+export { PluginSessionInputAttachmentsV1ProtocolSchema } from './inputAuthoring.js';
 export { AgentPermissionIntentV1Schema } from '../services/sessions.js';
 export { CHANGE_TITLE_TOOL_NAME_ALIASES } from '../services/sessions.js';
 export type { CurrentSessionHandle } from '../services/sessions.js';
@@ -107,3 +112,5 @@ export { sanitizeHappierStructuredInputV1 } from '../services/sessions.js';
 
 export type { AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '../services/sessions.js';
 export { summarizeAgentRequestQuestions, StructuredQuestionAnswersV1Schema } from '../services/sessions.js';
+export { SessionInputForgeEvidenceV1Schema, renderSessionInputContextPromptV1, readSessionInputForgeEvidenceV1 } from './forgeEvidence.js';
+export type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';
