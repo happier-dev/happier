@@ -19,8 +19,9 @@ describe('PLUGIN_UI_COMMON_JS_HOST_MODULES', () => {
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/presentation');
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/presentation/typeScale');
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-ui/testing');
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/plugin-sdk');
+        expect(Object.getOwnPropertyDescriptor(PLUGIN_UI_COMMON_JS_HOST_MODULES, '@happier-dev/plugin-sdk')?.get).toBeTypeOf('function');
         expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('@happier-dev/protocol');
-        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES).not.toHaveProperty('zod');
+        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES.zod).toBeDefined();
+        expect(PLUGIN_UI_COMMON_JS_HOST_MODULES['zod/mini']).toBeDefined();
     });
 });

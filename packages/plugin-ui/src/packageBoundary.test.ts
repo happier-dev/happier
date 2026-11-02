@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'node:path';
 
 import * as ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui';
 
 const forbiddenPrivateImportPattern = /^(?:apps\/ui|@\/components|@\/sync|@\/theme|@happier-dev\/protocol)(?:\/|$)/u;
 
@@ -477,15 +478,10 @@ describe('author package boundary', () => {
     expect(publicHostApiProviderProps).not.toContain('ephemeralSharedScope');
   });
 
-  it('host-provides the complete plugin-ui runtime family as one narrow singleton closure', () => {
-    const packageRoot = resolve(new URL('.', import.meta.url).pathname, '..');
-    const repositoryRoot = resolve(packageRoot, '../..');
-    const runtimeFacts = readFileSync(
-      join(repositoryRoot, 'packages/protocol/src/plugins/ui/hostRuntimeExternals.ts'),
-      'utf8',
-    );
-    const babelConfig = readFileSync(join(repositoryRoot, 'apps/ui/babel.config.js'), 'utf8');
-    const webClosure = runtimeFacts.match(/PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS\s*=\s*Object\.freeze\(\[([\s\S]*?)\]\s+as const\)/u)?.[1] ?? '';
+  it('host-provides the portable SDK and schema identities while excluding private runtime packages', () => {
+    // The compiler/evaluator identity test lives at the app runtime boundary:
+    // components/plugins/reactNative/commonJsEvaluator.test.ts. Hosted-web
+    // artifacts retain their independent bundling contract.
     for (const specifier of [
       '@happier-dev/plugin-ui',
       '@happier-dev/plugin-ui/components',
@@ -493,22 +489,42 @@ describe('author package boundary', () => {
       '@happier-dev/plugin-ui/data',
       '@happier-dev/plugin-ui/environment',
       '@happier-dev/plugin-ui/advanced',
+      '@happier-dev/plugin-sdk/protocol',
+      'zod', 'zod/mini', 'zod/v4/core', 'zod/v4/locales/en.js',
     ]) {
-      expect(webClosure).toContain(`'${specifier}'`);
+      expect(PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS).toContain(specifier);
     }
-    for (const forbidden of ['@happier-dev/plugin-ui/presentation', '@happier-dev/plugin-ui/presentation/typeScale', 'zod', '@happier-dev/protocol', 'ajv', 'semver', '@happier-dev/plugin-sdk']) {
-      expect(webClosure).not.toContain(`'${forbidden}'`);
+    for (const forbidden of ['@happier-dev/plugin-ui/presentation', '@happier-dev/plugin-ui/presentation/typeScale', '@happier-dev/protocol', 'ajv', 'semver']) {
+      expect(PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS).not.toContain(forbidden);
     }
-    expect(babelConfig).toContain("autoProcessPaths: ['packages/plugin-ui/src']");
   });
 
-  it('keeps the external NodeNext, browser, and native fixtures on public package imports', () => {
+  it('keeps the external NodeNext, browser, and native fixtures on public package imports', async () => {
     const packageRoot = resolve(new URL('.', import.meta.url).pathname, '..');
     const fixtureRoot = join(packageRoot, 'fixtures/external-authoring');
     const fixtureSources = collectSourceFiles(join(fixtureRoot, 'src'));
     const imports = fixtureSources.flatMap((filePath) =>
       importedSpecifiers(readFileSync(filePath, 'utf8')),
     );
+
+    // Read the JavaScript inventory owner through its real Node ESM boundary.
+    const sdkInventoryOwner: {
+      readCurrentApiSurfaceInventory(options: { packageRoot: string }): Promise<{
+        entrypoints: readonly { specifier: string; visibility: 'author' | 'host' }[];
+      }>;
+    } = await import(new URL('../../plugin-sdk/scripts/apiSurfaceCli.mjs', import.meta.url).href);
+    const sdkInventory = await sdkInventoryOwner.readCurrentApiSurfaceInventory({
+      packageRoot: join(packageRoot, '../plugin-sdk'),
+    });
+    const uiManifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+      exports: Record<string, unknown>;
+    };
+    const publicPackageImports = new Set([
+      ...sdkInventory.entrypoints.filter(entry => entry.visibility === 'author')
+        .map(entry => entry.specifier === '.' ? '@happier-dev/plugin-sdk' : `@happier-dev/plugin-sdk${entry.specifier.slice(1)}`),
+      ...Object.keys(uiManifest.exports)
+        .map(specifier => specifier === '.' ? '@happier-dev/plugin-ui' : `@happier-dev/plugin-ui${specifier.slice(1)}`),
+    ]);
 
     expect(fixtureSources.length).toBeGreaterThan(0);
     expect(imports).toEqual(expect.arrayContaining([
@@ -521,17 +537,7 @@ describe('author package boundary', () => {
       || specifier === 'react'
       || specifier === 'react-dom/client'
       || specifier === 'node:assert/strict'
-      || specifier === '@happier-dev/plugin-sdk'
-      || specifier === '@happier-dev/plugin-ui'
-      || specifier.startsWith('@happier-dev/plugin-ui/')
-      || specifier === '@happier-dev/plugin-sdk/browser'
-      || specifier === '@happier-dev/plugin-sdk/actions'
-      || specifier === '@happier-dev/plugin-sdk/manifest'
-      || specifier === '@happier-dev/plugin-sdk/protocol'
-      || specifier === '@happier-dev/plugin-sdk/contributions'
-      || specifier === '@happier-dev/plugin-sdk/ui'
-      || specifier === '@happier-dev/plugin-sdk/testing'
-      || specifier === '@happier-dev/plugin-sdk/voice/client'
+      || publicPackageImports.has(specifier)
     ))).toEqual([]);
     expect(imports).not.toContain('@happier-dev/plugin-ui/testing');
     expect(imports).not.toContain('@happier-dev/plugin-ui/compatibility');
