@@ -13,7 +13,7 @@ Evidence root: `.project/tmp/replica-plugin-ui-artifacts-1102/`.
 | Entry-loads | PASS 7/7 exit0 | entry-loads.log: daemon preparation/daemon/CLI/voice worker/server/UI catalog/SDK browser. |
 | Adjacent preparation paths | PASS 2/2 exit0 | adjacent.log: existing cold CLI publisher and UI source-test atmosphere cases. |
 | Commit coherence / CAS | Terminal record | commit.log; machine identity verified; private index; no push. |
-| Initial broad-preparation attempt | Non-deciding, retained | red.log / red.exit; detached controller PID2370051; no cancellation. Source RED/GREEN above is deciding proof. |
+| Initial broad-preparation attempt | FAIL exit1 before subject | red.log / red.exit: protocol publication TS7056 declaration errors; no cancellation. Source RED/GREEN above is deciding proof. |
 
 Observed canonical owner: `apps/stack/scripts/utils/dev_targets/remote_validation_workspace.mjs#prepareRemoteValidationWorkspace`.
 The replica path previously prepared plugin manifests/package outputs, then returned without rebuilding its excluded UI inventory.
@@ -25,4 +25,4 @@ Lane mechanism delta: +1 existing-producer invocation / −0; +1 regression file
 Documentation: restores the existing replica-preparation contract; no public feature, schema or wire contract changed. Shared package typecheck remains Systemic's rolling baseline under the 10-31 generator/reload ruling; no TypeScript source changed.
 Safety: no Metro8082/8083/8084/8086, simulator, QA app, stack lifecycle or DB was touched. Canonical Mac tooling owned its dependency refresh; no dependency inputs were edited.
 Scratch: local detached basis `/tmp/happier-replica-plugin-ui-artifacts-1102`; cleanup terminal record `cleanup.log`. No worker basis mirror was created.
-Residual risk: FSP's native Find replay is separate and unclaimed; direct raw Expo outside hstack still bypasses preparation. Actual Windows was not exercised (macOS and Linux were). The initial broad publication attempt is not counted as a pass.
+Residual risk: FSP's native Find replay is separate and unclaimed; direct raw Expo outside hstack still bypasses preparation. Actual Windows was not exercised (macOS and Linux were). The broad attempt failed in protocol publication before the regression; those diagnostics are outside this lane's changed paths.
