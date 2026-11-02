@@ -84,16 +84,14 @@ import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUt
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { markSessionHidden, markSessionVisible } from './domains/session/activeViewingSession';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { Encryption } from '@/sync/encryption/encryption';
+import type { SessionByIdEncryption } from '@/sync/engine/sessions/sessionById';
 
 const initialStorageState = storage.getState();
 
 type SyncMetadataPatchTestAccess = {
     credentials: { token: string; secret: string } | null;
-    encryption: {
-        decryptEncryptionKey: (encryptedKey: string | null | undefined) => Promise<null>;
-        initializeSessions: () => Promise<void>;
-        getSessionEncryption: (sessionId: string) => null;
-    };
+    encryption: SessionByIdEncryption;
 };
 
 function createSession(sessionId: string): Session {
@@ -1014,6 +1012,69 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             }),
             serverId: 'server_override',
         });
+    });
+
+    it.each(['sendMessage', 'submitMessage'] as const)(
+        'preserves a failed cold-session hydration before %s',
+        async (entryPoint) => {
+            const sessionId = 'message_hydration_failure';
+            requestMock.mockRejectedValueOnce(new TypeError('Network request failed'));
+            const { sync } = await import('./sync');
+            const syncForHydration = sync as unknown as SyncMetadataPatchTestAccess;
+            syncForHydration.credentials = { token: 'active-token', secret: 'active-secret' };
+            syncForHydration.encryption = Encryption.createWithoutKeyMaterial();
+
+            await expect(sync[entryPoint](sessionId, 'Must not be sent')).rejects.toThrow('server_unavailable');
+
+            expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        },
+    );
+
+    it.each((['sendMessage', 'submitMessage'] as const).flatMap((entryPoint) => (
+        [404, 401].map((status) => ({ entryPoint, status }))
+    )))('preserves a terminal $status hydration before $entryPoint', async ({ entryPoint, status }) => {
+        const sessionId = 'message_terminal_hydration_failure';
+        requestMock.mockImplementation(async () => Response.json({ error: 'Session not found' }, { status }));
+        const { sync } = await import('./sync');
+        const syncForHydration = sync as unknown as SyncMetadataPatchTestAccess;
+        syncForHydration.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncForHydration.encryption = Encryption.createWithoutKeyMaterial();
+
+        const send = sync[entryPoint](sessionId, 'Must not be sent');
+        if (status === 401) {
+            await expect(send).rejects.toMatchObject({ kind: 'auth', code: 'not_authenticated' });
+        } else {
+            await expect(send).rejects.toThrow('not_found');
+        }
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    });
+
+    it.each([
+        {
+            failure: 'transport failure',
+            request: () => Promise.reject(new TypeError('Network request failed')),
+            errorCode: 'network_error',
+        },
+        {
+            failure: 'server rejection',
+            request: () => Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 })),
+            errorCode: 'http_error',
+        },
+    ])('preserves the hydration failure before patching metadata after a $failure', async ({ request, errorCode }) => {
+        const sessionId = 'metadata_hydration_failure';
+        requestMock.mockImplementationOnce(request);
+        const { sync } = await import('./sync');
+        const syncForMetadataPatch = sync as unknown as SyncMetadataPatchTestAccess;
+        syncForMetadataPatch.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncForMetadataPatch.encryption = Encryption.createWithoutKeyMaterial();
+
+        await expect(sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
+            ...metadata,
+            summary: { text: 'Must not be applied', updatedAt: 123 },
+        }))).rejects.toThrow(errorCode);
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
     });
 
     it('hydrates lightweight session rows before patching metadata', async () => {

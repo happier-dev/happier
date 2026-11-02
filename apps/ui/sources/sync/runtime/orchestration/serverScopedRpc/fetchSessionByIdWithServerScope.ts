@@ -4,6 +4,7 @@ import { fetchAndApplySessionById, type SessionByIdEncryption } from '@/sync/eng
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveUiClientEncryptionRequirement } from '@/sync/domains/settings/clientEncryptionRequirement';
+import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
 
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
 
@@ -41,6 +42,22 @@ function getScopedSessionByIdEncryption(context: Readonly<{
             };
         },
     };
+}
+
+export function throwForFailedSessionHydration(result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>): void {
+    if (result.ok) return;
+
+    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : '';
+    if (
+        isAuthenticationResponseStatus(result.httpStatus)
+        || errorCode === 'unauthorized'
+        || errorCode === 'forbidden'
+        || errorCode === 'not_authenticated'
+    ) {
+        throw createNotAuthenticatedError();
+    }
+
+    throw new Error(errorCode || 'Failed to hydrate session');
 }
 
 export async function fetchSessionByIdWithServerScope(params: Readonly<{

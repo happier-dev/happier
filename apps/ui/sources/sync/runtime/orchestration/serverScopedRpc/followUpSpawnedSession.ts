@@ -2,10 +2,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
 import { delay } from '@/utils/timing/time';
 
-import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
+import { fetchSessionByIdWithServerScope, throwForFailedSessionHydration } from './fetchSessionByIdWithServerScope';
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
 import {
     createServerScopedSessionSendMessage,
@@ -64,24 +63,6 @@ function attachRecoverableFollowUpPayload(error: unknown, payload: RecoverableFo
         decoratedError.recoverableFollowUpPayload = payload;
     }
     return decoratedError;
-}
-
-function throwForFailedScopedHydration(result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>): void {
-    if (result.ok) {
-        return;
-    }
-
-    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : '';
-    if (
-        isAuthenticationResponseStatus(result.httpStatus)
-        || errorCode === 'unauthorized'
-        || errorCode === 'forbidden'
-        || errorCode === 'not_authenticated'
-    ) {
-        throw createNotAuthenticatedError();
-    }
-
-    throw new Error(errorCode || 'Failed to hydrate created session');
 }
 
 /**
@@ -353,7 +334,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                 getExistingSession: (targetSessionId) => getStoredSession(targetSessionId),
                 log: { log: () => {} },
             });
-            throwForFailedScopedHydration(hydrationResult);
+            throwForFailedSessionHydration(hydrationResult);
 
             if (trimmedInitialMessage.length > 0) {
                 const result = await sendScopedMessage({

@@ -367,7 +367,7 @@ import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionCont
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
-import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import { fetchSessionByIdWithServerScope, throwForFailedSessionHydration } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
 import type {
     EnsureSessionVisibleForRouteResult,
     SessionRouteHydrationMissingCause,
@@ -737,6 +737,11 @@ function mapSessionByIdTerminalCodeToMissingCause(code: string): SessionRouteHyd
         return code;
     }
     return null;
+}
+
+function throwForFailedSessionRouteHydration(result: EnsureSessionVisibleForRouteResult): void {
+    if (result.kind === 'available') return;
+    throwForFailedSessionHydration({ ok: false, session: null, errorCode: result.cause });
 }
 
 function mapSessionByIdRetryableCodeToCause(code: string): SessionRouteHydrationRetryCause {
@@ -2566,16 +2571,19 @@ class Sync {
     ) {
         let session = storage.getState().sessions[sessionId] ?? null;
         if (!session) {
+            let hydration: EnsureSessionVisibleForRouteResult;
             try {
-                await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
-            } catch {
-                // Best effort only. Fall through to the missing-session error below if the hydrate did not land.
+                hydration = await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
+            } catch (error) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                throw error;
             }
             session = storage.getState().sessions[sessionId] ?? null;
-        }
-        if (!session) {
-            storage.getState().clearSessionOptimisticThinking(sessionId);
-            throw new Error(`Session ${sessionId} not found in storage`);
+            if (!session) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                throwForFailedSessionRouteHydration(hydration);
+                throw new Error(`Session ${sessionId} not found in storage`);
+            }
         }
 
         this.markSessionLiveTailIntent(sessionId);
@@ -3274,16 +3282,13 @@ class Sync {
         let state = storage.getState();
         let session = state.sessions[sessionId] ?? null;
         if (!session) {
-            try {
-                await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
-            } catch {
-                // Best effort only. Fall through to the low-level missing-session error if hydrate did not land.
-            }
+            const hydration = await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
             state = storage.getState();
             session = state.sessions[sessionId] ?? null;
-        }
-        if (!session) {
-            throw new Error(`Session ${sessionId} not available for pending-aware submit`);
+            if (!session) {
+                throwForFailedSessionRouteHydration(hydration);
+                throw new Error(`Session ${sessionId} not available for pending-aware submit`);
+            }
         }
 
         const port = this.createSessionSubmitPort();
@@ -3338,7 +3343,7 @@ class Sync {
             if (!this.credentials) {
                 throw new Error('Sync credentials not available');
             }
-            await fetchSessionByIdWithServerScope({
+            const hydrationResult = await fetchSessionByIdWithServerScope({
                 sessionId,
                 serverId: resolvedServerIdOverride ?? resolvePreferredServerIdForSessionId(sessionId),
                 activeCredentials: this.credentials,
@@ -3350,6 +3355,7 @@ class Sync {
                 getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
                 log,
             });
+            throwForFailedSessionHydration(hydrationResult);
         };
 
         const resolvePatchContext = () => {
