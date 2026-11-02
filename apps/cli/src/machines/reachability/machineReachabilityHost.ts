@@ -83,14 +83,14 @@ function providerHost(deps: MachineReachabilityHostDependencies, actionId: strin
 
 async function readCredentialPreparation(deps: MachineReachabilityHostDependencies) {
   const isolation = deps.agentIsolation.read();
-  if (!isolation?.enabled || isolation.status.kind !== 'effective') return refuse('credential_unavailable');
+  if (!isolation?.enabled || isolation.status.kind !== 'effective') return refuse('agent_isolation_unavailable');
   const observation = await deps.elevation.observe();
   const identity = await readAgentIsolationNativeIdentity(deps.context.signal, undefined, observation.daemonPrimaryGroup ?? undefined);
   if (!observation.daemonUsername || observation.daemonUid === null || !observation.daemonPrimaryGroup
     || identity.agentUid === observation.daemonUid || !identity.groups
-    || identity.groups.agentGroupIds.includes(identity.groups.daemonGroupId)) return refuse('credential_unavailable');
+    || identity.groups.agentGroupIds.includes(identity.groups.daemonGroupId)) return refuse('agent_isolation_unavailable');
   const stillIsolated = deps.agentIsolation.read();
-  if (!stillIsolated?.enabled || stillIsolated.status.kind !== 'effective') return refuse('credential_unavailable');
+  if (!stillIsolated?.enabled || stillIsolated.status.kind !== 'effective') return refuse('agent_isolation_unavailable');
   const review: NonNullable<MachineReachabilityPlanBasisV1['credentialFileReview']> = {
     purpose: 'network.join', path: credentialFilePath(deps.target.installationId),
     owner: 'root', group: 'root', mode: 0o600, ownerUid: 0, groupGid: 0,
