@@ -2,6 +2,7 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/i
 import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol';
 
 import type { CanonicalPluginManifest } from './types';
+import { normalizeParsedPluginManifestV2 } from './normalize';
 import { assertPluginManifestSettingsValid } from '@/plugins/settings/manifestSettings';
 import { PluginLocalSettingsDeclarationError } from '@/plugins/settings/localSettingsContributions';
 import { PluginSettingsProjectionError } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -25,11 +26,28 @@ export type CanonicalPluginManifestIngestionResult =
 
 export type PluginManifestReadPurpose = 'admission' | 'installedRead';
 
+type CanonicalPluginManifestIngestionOptions =
+  Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'sourceProvenance' | 'enforceEngineCompatibility'>
+  & Readonly<{ purpose?: PluginManifestReadPurpose }>;
+
+export function ingestCanonicalPluginManifest(
+  input: CanonicalPluginManifest,
+  options: CanonicalPluginManifestIngestionOptions
+    & Readonly<{ admission: 'build'; manifestAuthority: 'bundled_first_party' }>,
+): CanonicalPluginManifestIngestionResult;
 export function ingestCanonicalPluginManifest(
   input: unknown,
-  options: Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'sourceProvenance' | 'enforceEngineCompatibility'>
-    & Readonly<{ purpose?: PluginManifestReadPurpose }>,
+  options: CanonicalPluginManifestIngestionOptions,
+): CanonicalPluginManifestIngestionResult;
+export function ingestCanonicalPluginManifest(
+  input: unknown,
+  options: CanonicalPluginManifestIngestionOptions & Readonly<{ admission?: 'build' }>,
 ): CanonicalPluginManifestIngestionResult {
+  // The bundled publisher serialized this owner's admitted shape in the same
+  // shipped closure. The typed overload consumes that result without admission.
+  if (options.admission === 'build') {
+    return { ok: true, manifest: normalizeParsedPluginManifestV2(input as CanonicalPluginManifest) };
+  }
   const ingestion = ingestPluginManifestV2(input);
   if (!ingestion.ok) return ingestion;
   const validation = validatePluginManifest(ingestion.manifest, {

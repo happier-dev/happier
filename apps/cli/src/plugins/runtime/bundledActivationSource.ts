@@ -9,6 +9,7 @@ import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolv
 import { projectPathFromModuleUrl } from '@/projectPath';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { readBundledPluginManifest, loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { ingestBundledPluginManifest } from '@/plugins/projection/registry/builtIn/manifestFile';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 
@@ -159,9 +160,8 @@ export function resolvePackagedBundledActivationPaths(params: Readonly<{
         ) continue;
         const metadata = metadataByPluginId.get(target.pluginId);
         const locator = locatorByPluginId.get(target.pluginId);
-        const manifest = locator
-            ? readCanonicalPluginManifest(readBundledPluginManifest(locator, runtimeRoot))
-            : null;
+        const admission = locator ? ingestBundledPluginManifest(locator, readBundledPluginManifest(locator, runtimeRoot)) : null;
+        const manifest = admission?.ok ? admission.manifest : null;
         const daemonEntrypoint = manifest?.entrypoints?.daemon;
         if (
             !metadata

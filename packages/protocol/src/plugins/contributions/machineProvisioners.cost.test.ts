@@ -115,6 +115,10 @@ it('normalizes each declared document once when serialized provisioners reuse ro
       validatingComparisons: validatingComparisons.mock.calls.length,
       comparisons: comparisons.mock.calls.length }));
     expect(normalizations.mock.calls.length).toBeLessThanOrEqual(admissions * declaredDocuments);
+    // A total alone could hide one definition being repeated while another is
+    // skipped. Each fresh serialized definition may cross normalization once.
+    const normalizedDefinitions = normalizations.mock.calls.map(([definition]) => definition);
+    expect(new Set(normalizedDefinitions).size).toBe(normalizedDefinitions.length);
     expect(validatingComparisons.mock.calls.length).toBe(0);
     expect(comparisons.mock.calls.length).toBeLessThanOrEqual(admissions * roleBindings * 2);
   } finally {

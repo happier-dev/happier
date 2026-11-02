@@ -13,6 +13,10 @@ import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/
 import { createBundledPluginPublicationFailure } from '../../../../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { projectBundledPluginCatalogEntries } from '@/plugins/projection/catalog/installed';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import * as protocolIngestion from '@happier-dev/protocol/plugins/manifest/ingest';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { readPluginManifest } from '@/plugins/manifest/read';
+import { resolvePackagedBundledActivationPaths } from '@/plugins/runtime/bundledActivationSource';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPluginManifests';
 import {
@@ -51,6 +55,57 @@ function locator(
 }
 
 describe('bundled plugin locators', () => {
+    it('consumes build-admitted files without runtime admission while inline and foreign files still admit', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-build-admitted-bundled-'));
+        const execPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+        const bundled = locator({ daemonEntryPath: '@happier-dev/plugins-fixture',
+            manifest: createPluginManifestV2Fixture({ id: 'happier.provider.fixture', entrypoints: { daemon: './daemon.js' } }) });
+        // The build publisher serializes this admission owner's successful result.
+        const built = ingestCanonicalPluginManifest(bundled.manifest, {
+            manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+        });
+        expect(built.ok).toBe(true);
+        if (!built.ok) throw new Error('Invalid build fixture');
+        const admissions = vi.spyOn(protocolIngestion, 'ingestPluginManifestV2');
+        try {
+            writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
+            writeFileSync(join(root, 'bundled.json'), JSON.stringify(built.manifest));
+            Object.defineProperty(process, 'execPath', { ...execPathDescriptor, value: join(root, 'happier') });
+            const { manifest: _inline, ...metadata } = bundled;
+            const result = loadBundledPluginLocatorResult([{ ...metadata, manifestRelativePath: 'bundled.json' }]);
+            expect(result.pluginFailures).toEqual([]);
+            expect(result.loadedPlugins[0]?.manifest).toEqual(built.manifest);
+            expect(admissions.mock.calls).toHaveLength(0);
+            const activation = resolvePackagedBundledActivationPaths({ runtimeRoot: root,
+                activationTargets: [bundled], metadata: [{ pluginId: bundled.pluginId, packageName: bundled.sourceSpec.locator }],
+                locators: [{ ...metadata, manifestRelativePath: 'bundled.json' }],
+            });
+            expect(activation.entryPathsByPackageName.get(bundled.sourceSpec.locator)).toBe(
+                join(root, 'node_modules', '@happier-dev', 'plugins-fixture', 'daemon.js'));
+            expect(admissions.mock.calls).toHaveLength(0);
+
+            expect(loadBundledPluginLocatorResult([bundled]).loadedPlugins).toHaveLength(1);
+            expect(admissions.mock.calls).toHaveLength(1);
+            const invalid = loadBundledPluginLocatorResult([{ ...bundled, manifest: { ...built.manifest, unknownRestriction: true } }]);
+            expect(invalid.loadedPlugins).toHaveLength(0);
+            expect(invalid.pluginFailures).toHaveLength(1);
+            expect(admissions.mock.calls).toHaveLength(2);
+
+            const manifestPath = join(root, 'foreign.json');
+            for (const sourceProvenance of ['localSource', 'registryCustodied'] as const) {
+                writeFileSync(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ entrypoints: {} })));
+                expect((await readPluginManifest({ manifestPath, sourceProvenance })).ok).toBe(true);
+                writeFileSync(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ unknownRestriction: true })));
+                expect((await readPluginManifest({ manifestPath, sourceProvenance })).ok).toBe(false);
+            }
+            expect(admissions.mock.calls).toHaveLength(6);
+            console.info('bundled-runtime-admission-cost', JSON.stringify({ bundled: 0, inline: 2, installedAndDev: 4 }));
+        } finally {
+            admissions.mockRestore();
+            Object.defineProperty(process, 'execPath', execPathDescriptor);
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
     it('reads an admitted bundled declaration with invalid Settings without dropping healthy families', () => {
         const bundled = locator();
         const result = loadBundledPluginLocatorResult([{ ...bundled, manifest: createPluginManifestV2Fixture({
@@ -65,7 +120,12 @@ describe('bundled plugin locators', () => {
         const execPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!;
         try {
             writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
-            writeFileSync(join(root, 'manifest.json'), JSON.stringify(readBundledPluginManifest(locator())));
+            const built = ingestCanonicalPluginManifest(readBundledPluginManifest(locator()), {
+                manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+            });
+            expect(built.ok).toBe(true);
+            if (!built.ok) throw new Error('Invalid build fixture');
+            writeFileSync(join(root, 'manifest.json'), JSON.stringify(built.manifest));
             // Native executable identity selects the physical runtime asset root.
             Object.defineProperty(process, 'execPath', { ...execPathDescriptor, value: join(root, 'happier') });
             const { manifest: _inline, ...metadata } = locator();
@@ -73,9 +133,12 @@ describe('bundled plugin locators', () => {
             expect(loadBundledPluginLocators([fileLocator])[0]?.manifest.id).toBe(metadata.pluginId);
             writeFileSync(join(root, 'manifest.json'), '{invalid');
             const healthyPluginId = 'happier.provider.healthy';
-            writeFileSync(join(root, 'healthy.json'), JSON.stringify(createPluginManifestV2Fixture({
+            const healthy = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({
                 id: healthyPluginId, entrypoints: {}, contributes: {},
-            })));
+            }), { manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource' });
+            expect(healthy.ok).toBe(true);
+            if (!healthy.ok) throw new Error('Invalid healthy build fixture');
+            writeFileSync(join(root, 'healthy.json'), JSON.stringify(healthy.manifest));
             const healthyLocator = { ...fileLocator, pluginId: healthyPluginId,
                 manifestRelativePath: 'healthy.json', manifestPath: `bundled:${healthyPluginId}`,
                 sourceSpec: { ...fileLocator.sourceSpec, locator: '@happier-dev/plugins-healthy' } };

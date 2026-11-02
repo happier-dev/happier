@@ -12,12 +12,10 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { defaultCanImportFirstPartyPluginSource, isExecutingFirstPartySourceRuntime } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
-import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import { projectPluginManifestCompatibilityDiagnostic } from '../../../manifest/diagnostics';
-import { pluginSourceProvenanceForKind } from '../../../manifest/sourceProvenance';
 import type { BundledPluginPublicationFailure } from '@/plugins/validation/diagnostics/types';
 import * as generatedBundledPluginManifests from '../sources/generatedBundledPluginManifests';
-import { readBundledPluginManifest, readBundledPluginManifestInput } from './manifestFile';
+import { ingestBundledPluginManifest, readBundledPluginManifest } from './manifestFile';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
 import { admitPluginContributionGraph, isPluginAdmissionExclusion, type AdmittedPluginContributionGraph } from '../normalize/admission';
 import type { BundledAgentRegistrationBinding } from './agentIdentity';
@@ -170,17 +168,8 @@ export function loadBundledPluginLocatorResult(
 
         try {
 
-        // File JSON already supplies the data boundary. Avoid decoding it into
-        // an object only for ingress to normalize, serialize and decode again.
-        // A managed-facet rewrite still needs the parsed declaration.
-        const manifest = unavailableProviderKeys.size === 0
-            ? readBundledPluginManifestInput(locator)
-            : projectManagedRuntimePublicationManifest(locator, unavailableProviderKeys, unmatchedProviderKeys);
-        const ingestion = ingestCanonicalPluginManifest(manifest, {
-            purpose: 'installedRead',
-            manifestAuthority: 'bundled_first_party',
-            sourceProvenance: pluginSourceProvenanceForKind('bundled'),
-        });
+        const manifest = projectManagedRuntimePublicationManifest(locator, unavailableProviderKeys, unmatchedProviderKeys);
+        const ingestion = ingestBundledPluginManifest(locator, manifest);
         if (!ingestion.ok) {
             throw new Error(
                 `Invalid bundled plugin manifest '${locator.pluginId}': ${formatPluginManifestIngestionDiagnostics(ingestion.diagnostics)}`,

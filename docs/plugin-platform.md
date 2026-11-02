@@ -229,6 +229,18 @@ retained results and freshness checks.
 
 ## Declaration, activation and projection
 
+### Bundled manifest admission (0.3 development source)
+
+Bundled first-party file declarations are admitted by the bundled-plugin publisher
+and serialized inside the same shipped CLI closure. Runtime locator and packaged
+activation readers consume that result through the canonical ingester's typed
+build-admitted input, with zero repeated manifest admissions. Generic inline
+`manifest: unknown`, installed, development and foreign inputs retain full admission.
+Managed-runtime publication may remove an unavailable provider facet from that
+admitted declaration; locator identity, entrypoint agreement and contribution-graph
+reference resolution remain enforced by their existing owners.
+
+
 Generators, projections, catalogs and registries built from independent contributions isolate per contribution. An invalid or unprojectable contribution fails alone, with a diagnostic naming the plugin and the field, while host faults still propagate. Policy for one caller's intent stays at that caller; the shared reader returns facts.
 
 In 0.3 development source, the existing Machine registry projection carries
