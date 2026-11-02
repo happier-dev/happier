@@ -143,11 +143,11 @@ function createBundledVoiceActivationScope(input: Readonly<{
  * every other provider and take down the shell that mounts this composition,
  * which the plugin platform's activation isolation contract forbids.
  */
-export function createBundledConversationRuntimes(input: Readonly<{
+export async function createBundledConversationRuntimes(input: Readonly<{
   bundledEntries: readonly BundledConversationRuntimeEntry[];
   hostedConversationEntries?: readonly BundledConversationRuntimeEntry[];
   host: BundledConversationRuntimeHost;
-}>): readonly BundledVoiceRuntimeContribution[] {
+}>): Promise<readonly BundledVoiceRuntimeContribution[]> {
   const runtimes: BundledVoiceRuntimeContribution[] = [];
   const seen = new Set<string>();
   for (const entry of input.bundledEntries) {
@@ -166,6 +166,9 @@ export function createBundledConversationRuntimes(input: Readonly<{
       if (seen.has(providerId)) {
         throw excluded('voice_bundled_runtime_duplicate_identity');
       }
+      const activate = entry.loadActivate ? await entry.loadActivate() : entry.activate;
+      // Imports settle before entering the existing synchronous registration
+      // transaction. A retired host cannot publish a late module's adapter.
       if (getCurrentBundledConversationRuntimeHost() !== input.host) {
         throw excluded('voice_runtime_host_unavailable');
       }
@@ -198,7 +201,7 @@ export function createBundledConversationRuntimes(input: Readonly<{
           }),
         }),
       });
-      entry.activate(scope.api as Parameters<typeof entry.activate>[0]);
+      activate(scope.api as Parameters<typeof activate>[0]);
       const commit = scope.commit();
       if (commit) {
         void commit.catch(() => undefined);

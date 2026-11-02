@@ -46,7 +46,10 @@ export type ExternalVoiceProviderRegistration = ExternalVoiceProviderRegistratio
 );
 
 const registrationsByProviderId = new Map<string, ExternalVoiceProviderRegistration>();
-const authoritativeProvidersByToken = new Map<object, ReadonlyMap<string, string>>();
+const authoritativeProvidersByToken = new Map<object, Readonly<{
+  providers: ReadonlyMap<string, string>;
+  descriptors: readonly VoiceProviderRegistryEntry[];
+}>>();
 const listeners = new Set<() => void>();
 let revision = 0;
 
@@ -60,6 +63,7 @@ function emitChange(): void {
 }
 
 export function commitExternalVoiceProviderRegistration(registration: ExternalVoiceProviderRegistration): void {
+  if (registrationsByProviderId.get(registration.providerId) === registration) return;
   registrationsByProviderId.set(registration.providerId, registration);
   emitChange();
 }
@@ -93,24 +97,48 @@ export function replaceExternalVoiceProviderProjectionAuthority(
   previousToken: object | null,
   token: object,
   providers: ReadonlyMap<string, string>,
+  /** Complete projection-owned speech set; runtime activation keeps its own tokens. */
+  registrations?: readonly ExternalVoiceProviderRegistration[],
+  descriptors: readonly VoiceProviderRegistryEntry[] = [],
 ): void {
-  if (previousToken) {
+  const previous = authoritativeProvidersByToken.get(previousToken ?? token);
+  const previousProviders = previous?.providers;
+  let changed = !previousProviders || previousProviders.size !== providers.size
+    || [...providers].some(([id, occurrenceId]) => previousProviders.get(id) !== occurrenceId)
+    || previous?.descriptors.length !== descriptors.length
+    || descriptors.some((descriptor, index) => previous?.descriptors[index] !== descriptor);
+  const nextRegistrations = registrations === undefined ? null
+    : new Map(registrations.map(registration => [registration.providerId, registration]));
+  if (previousToken && (previousToken !== token || nextRegistrations !== null)) {
     for (const [providerId, registration] of registrationsByProviderId) {
-      if (registration.token === previousToken) registrationsByProviderId.delete(providerId);
+      if (registration.token !== previousToken || nextRegistrations?.get(providerId) === registration) continue;
+      registrationsByProviderId.delete(providerId);
+      changed = true;
     }
-    authoritativeProvidersByToken.delete(previousToken);
+    if (previousToken !== token) authoritativeProvidersByToken.delete(previousToken);
   }
-  authoritativeProvidersByToken.set(token, Object.freeze(new Map(providers)));
-  emitChange();
+  authoritativeProvidersByToken.set(token, previous && !changed
+    ? previous : Object.freeze({ providers: Object.freeze(new Map(providers)), descriptors: Object.freeze([...descriptors]) }));
+  for (const registration of nextRegistrations?.values() ?? []) {
+    if (registrationsByProviderId.get(registration.providerId) === registration) continue;
+    registrationsByProviderId.set(registration.providerId, registration);
+    changed = true;
+  }
+  // Authority and all projection-owned descriptors are visible before any reader wakes.
+  if (changed) emitChange();
 }
 
 export function getExternalVoiceProviderProjectionAuthority(): ReadonlyMap<string, string> | null {
   if (authoritativeProvidersByToken.size === 0) return null;
   const providers = new Map<string, string>();
-  for (const entries of authoritativeProvidersByToken.values()) {
+  for (const { providers: entries } of authoritativeProvidersByToken.values()) {
     for (const [id, occurrenceId] of entries) providers.set(id, occurrenceId);
   }
   return Object.freeze(providers);
+}
+
+export function listExternalVoiceProviderProjectionDescriptors(): readonly VoiceProviderRegistryEntry[] {
+  return [...authoritativeProvidersByToken.values()].flatMap(projection => projection.descriptors);
 }
 
 export function listExternalVoiceProviderRegistrations(): readonly ExternalVoiceProviderRegistration[] {

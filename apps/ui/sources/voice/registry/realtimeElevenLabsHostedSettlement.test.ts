@@ -14,7 +14,7 @@ import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceCo
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { buildVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/voiceTranscriptHistorySession';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
 } from './generatedBundledVoiceRuntimeEntries';
@@ -42,7 +42,7 @@ const sourceEntry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
 const entry = sourceEntry;
 const initialSettings = storage.getState().settings;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let completionFailures = 0;
 let releaseFailures = 0;
 let settlements = 0;
@@ -119,7 +119,7 @@ describe('hosted ElevenLabs settlement through host teardown', () => {
       }) },
     }));
     voiceConversationRuntimeMachine.reset();
-    assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     voiceSessionBindingStore.getState().bind({
       adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'hosted-session',
@@ -190,7 +190,7 @@ describe('hosted ElevenLabs settlement through host teardown', () => {
     await start();
     const retiring = assembly;
     completionFailures = 4;
-    const replacement = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    const replacement = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
     const replacementHost = getCurrentBundledConversationRuntimeHost();
     await expect(retiring.dispose()).rejects.toThrow();
     expect(sdk.endSession).toHaveBeenCalledTimes(1);
@@ -204,7 +204,7 @@ describe('hosted ElevenLabs settlement through host teardown', () => {
     completionFailures = 0;
     // No manually retained runtime is the retry owner: the existing generation
     // subscription must keep the failed activation cleanup reachable.
-    const retryGeneration = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    const retryGeneration = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
     const retryHost = getCurrentBundledConversationRuntimeHost();
     try {
       expect(await TokenStorage.getCredentials()).toEqual(replacementCredentials);

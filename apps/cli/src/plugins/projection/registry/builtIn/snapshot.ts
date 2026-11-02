@@ -5,6 +5,8 @@ import type { ResolvedContributionRegistry, ResolvedPluginEnablement, Unavailabl
 import { resolveBundledPluginEnablement } from './enablement';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundledPluginManifests';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
+import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
+import { getAllAgentDefinitionContracts } from '@happier-dev/agents/definitions';
 
 /** Read desired scope facts once for this admission, never from its consumers. */
 export async function readCurrentBundledPluginEnablement(params?: Readonly<{
@@ -46,21 +48,24 @@ let builtInResolvedContributionRegistry: ResolvedContributionRegistry | null = n
 export function getResolvedContributionRegistry(params?: Readonly<{
   pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): ResolvedContributionRegistry {
-  builtInResolvedContributionRegistry ??= Object.freeze(
-    createResolvedContributionRegistry(resolveBuiltInContributions()),
-  );
-  if (!params) return builtInResolvedContributionRegistry;
+  const declarations = Object.values(params?.pluginEnablementById ?? {}).some(fact => !fact.enabled)
+    ? createResolvedContributionRegistry(resolveBuiltInContributions(params))
+    : (builtInResolvedContributionRegistry ??= Object.freeze(
+        createResolvedContributionRegistry(resolveBuiltInContributions()),
+      ));
+  if (!params) return declarations;
   const unavailableAgentPluginsByBackendId: Record<string, UnavailableAgentPlugin> = {};
-  for (const agent of builtInResolvedContributionRegistry.agents) {
-    const fact = agent.pluginId ? params.pluginEnablementById[agent.pluginId] : undefined;
-    if (!fact || fact.enabled || !agent.pluginId) continue;
-    const unavailable = Object.freeze({ ...fact, pluginId: agent.pluginId, code: fact.unavailableCode ?? 'plugin_disabled' as const });
-    for (const backendId of new Set([agent.id, ...(agent.definition.ownedBackendIds ?? [])])) {
+  const definitions = new Map(getAllAgentDefinitionContracts().map(definition => [definition.id, definition]));
+  for (const binding of BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS) {
+    const pluginId = binding.identity.pluginId;
+    const fact = params.pluginEnablementById[pluginId];
+    if (!fact || fact.enabled) continue;
+    const unavailable = Object.freeze({ ...fact, pluginId, code: fact.unavailableCode ?? 'plugin_disabled' as const });
+    const definition = definitions.get(binding.implementationOwnerId);
+    for (const backendId of new Set([binding.implementationOwnerId, ...(definition?.ownedBackendIds ?? [])])) {
       unavailableAgentPluginsByBackendId[backendId] = unavailable;
     }
   }
-  const declarations = Object.values(params.pluginEnablementById).some(fact => !fact.enabled)
-    ? createResolvedContributionRegistry(resolveBuiltInContributions(params)) : builtInResolvedContributionRegistry;
   return Object.freeze({ ...declarations, pluginEnablementById: params.pluginEnablementById,
     unavailableAgentPluginsByBackendId: Object.freeze(unavailableAgentPluginsByBackendId) });
 }

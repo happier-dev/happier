@@ -1,10 +1,10 @@
 import React from 'react';
-import { VoiceSessionRuntime } from '@/voice/session/VoiceSessionRuntime';
+import { VoiceSessionRuntimeHost } from '@/voice/session/VoiceSessionRuntimeHost';
 
 export const RealtimeProvider = ({ children }: { children: React.ReactNode }) => {
     return (
         <>
-            <VoiceSessionRuntime />
+            <VoiceSessionRuntimeHost />
             {children}
         </>
     );

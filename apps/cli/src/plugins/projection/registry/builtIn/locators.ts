@@ -286,39 +286,41 @@ export function loadBundledPluginLocators(
 
 let admittedBundledPlugins: ReturnType<typeof loadBundledPluginLocatorResult> | null = null;
 
-/** Scope intent withdraws declarations from the existing admission graph. */
+/** Consume the admitted scope decision before acquiring declarations. */
 export function loadEnabledBundledPluginLocatorResult(params?: Readonly<{
     pluginIds?: readonly string[];
     pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): ReturnType<typeof loadBundledPluginLocatorResult> {
-    // Withdrawals can affect references outside an exact selection; admit that
-    // universe once before the existing family projection selects its output.
-    const hasWithdrawal = Object.values(params?.pluginEnablementById ?? {}).some(fact => !fact.enabled);
-    const bundled = loadCurrentBundledPluginLocatorResult(!hasWithdrawal && params?.pluginIds
-        ? { pluginIds: params.pluginIds } : undefined);
-    if (!hasWithdrawal) return bundled;
-    const admittedGraph = admitPluginContributionGraph({ loadedPlugins: bundled.loadedPlugins,
-        pluginEnablementById: params?.pluginEnablementById });
-    return Object.freeze({ ...bundled, loadedPlugins: admittedGraph.loadedPlugins, admittedGraph });
+    return loadCurrentBundledPluginLocatorResult(params);
 }
 
-export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{ pluginIds: readonly string[] }>): ReturnType<typeof loadBundledPluginLocatorResult> {
-    if (params) {
-        const selected = new Set(params.pluginIds);
-        if (!admittedBundledPlugins) {
+export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
+    pluginIds?: readonly string[];
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
+}>): ReturnType<typeof loadBundledPluginLocatorResult> {
+    const hasWithdrawal = Object.values(params?.pluginEnablementById ?? {}).some(fact => !fact.enabled);
+    const enabledLocators = hasWithdrawal
+        ? generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator =>
+            params?.pluginEnablementById?.[locator.pluginId]?.enabled !== false)
+        : generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS;
+    if (params?.pluginIds) {
+        const requested = new Set(params.pluginIds);
+        const selected = new Set(enabledLocators.filter(locator => requested.has(locator.pluginId))
+            .map(locator => locator.pluginId));
+        if (hasWithdrawal || !admittedBundledPlugins) {
             const result = loadBundledPluginLocatorResult(
-                generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator => selected.has(locator.pluginId)),
+                enabledLocators.filter(locator => selected.has(locator.pluginId)),
                 defaultCanImportFirstPartyPluginSource()
                     ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => selected.has(failure.pluginId)),
                 BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => selected.has(binding.identity.pluginId)),
                 selected,
             );
-            // A real cross-plugin reference demands its existing full admission
-            // universe. Never withdraw a valid selected declaration just because
+            // A real cross-plugin reference demands the enabled admission
+            // graph. Never withdraw a valid selected declaration just because
             // a narrow read omitted its dependency, or bypass graph validation.
             if (Object.keys(result.admittedGraph.diagnosticsByPluginId).length === 0) return result;
         }
-        const full = loadCurrentBundledPluginLocatorResult();
+        const full = loadCurrentBundledPluginLocatorResult({ pluginEnablementById: params.pluginEnablementById });
         const loadedPlugins = Object.freeze(full.loadedPlugins.filter(plugin => selected.has(plugin.pluginId)));
         return Object.freeze({
             loadedPlugins,
@@ -332,16 +334,20 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{ plugin
     // Admit the executing closure's bundled declarations on the first catalog
     // demand. Installed-plugin discovery then reuses that graph instead of
     // rereading and validating every bundled manifest on each refresh.
-    if (admittedBundledPlugins) return admittedBundledPlugins;
+    if (!hasWithdrawal && admittedBundledPlugins) return admittedBundledPlugins;
     // Direct TypeScript loading has no publication claim. Compiled source
     // runtimes carry their own derived declarations and failure inventory,
     // just as package runtimes carry their own publication inventory.
-    return admittedBundledPlugins = loadBundledPluginLocatorResult(
-        generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
+    const enabledPluginIds = new Set(enabledLocators.map(locator => locator.pluginId));
+    const result = loadBundledPluginLocatorResult(
+        enabledLocators,
         defaultCanImportFirstPartyPluginSource()
-            ? [] : readCurrentBundledPluginPublicationFailures(),
-        BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
+            ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => enabledPluginIds.has(failure.pluginId)),
+        BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => enabledPluginIds.has(binding.identity.pluginId)),
+        enabledPluginIds,
     );
+    if (!hasWithdrawal) admittedBundledPlugins = result;
+    return result;
 }
 
 export type BundledPluginAdmissionFailure = Readonly<{

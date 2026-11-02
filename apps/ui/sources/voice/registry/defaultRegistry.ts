@@ -12,6 +12,7 @@ import {
   getExternalVoiceProviderRegistrationsRevision,
   getExternalVoiceProviderProjectionAuthority,
   listExternalVoiceProviderRegistrations,
+  listExternalVoiceProviderProjectionDescriptors,
   subscribeExternalVoiceProviderRegistrations,
 } from './externalVoiceProviderRegistrations';
 
@@ -44,6 +45,12 @@ export function createDefaultVoiceProviderRegistry(input: Readonly<{
       if (entry.source.kind === 'bundled' && enabledPluginIds !== null && !enabledPluginIds.has(entry.pluginId)) continue;
       if (entry.source.kind === 'bundled' && projectionAuthority !== null) continue;
       byProviderId.set(entry.providerId, entry);
+    }
+    for (const descriptor of listExternalVoiceProviderProjectionDescriptors()) {
+      if (enabledPluginIds !== null && !enabledPluginIds.has(descriptor.pluginId)) continue;
+      const bundled = base.get(descriptor.providerId);
+      byProviderId.set(descriptor.providerId, bundled?.source.kind === 'bundled'
+        && bundled.pluginId === descriptor.pluginId ? bundled : descriptor);
     }
     for (const registration of listExternalVoiceProviderRegistrations()) {
       if (enabledPluginIds !== null && !enabledPluginIds.has(registration.pluginId)) continue;

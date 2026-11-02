@@ -349,7 +349,8 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
                 }),
             }),
         });
-        entry.activate(scope.api);
+        const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+        (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
         await scope.commit();
         const registration = getExternalVoiceProviderRegistration(providerId);
         if (!registration?.adapter) {

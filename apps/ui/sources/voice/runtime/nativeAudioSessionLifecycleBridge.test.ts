@@ -52,7 +52,7 @@ const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settin
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { normalizeAccountSettingsForLocalStorage } = await import('@/sync/domains/settings/accountSettingsNormalization');
 const { resolveSettingsSecretsKeySet } = await import('@/sync/encryption/resolveSettingsSecretsKeySet');
-const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
 const { resetVoiceSessionRuntimeStateForTests } = await import('@/voice/session/voiceSessionStore');
 const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
@@ -150,7 +150,7 @@ async function withNativeBridge(
   } });
   const history = await sync.ensureSessionVisibleForMessageRoute('bridge-history', { forceRefresh: true, serverId: account.home.id });
   if (history.kind !== 'available') throw new Error('Native fixture history must hydrate through its Home');
-  const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+  const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
   registerVoiceAdapters(assembly.adapters);
   voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'bridge-history', conversationSessionAddress: { serverId: account.home.id, sessionId: 'bridge-history' }, targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
   const lifecycle = createVoiceSessionLifecycleController();
@@ -287,7 +287,8 @@ async function withNativePcmBridge(run: (fixture: Readonly<{
       }),
     } },
   });
-  entry.activate(scope.api);
+  const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+  (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
   await scope.commit();
   const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
   if (!adapter) throw new Error('Generated native xAI entry was not activated');
@@ -665,7 +666,7 @@ describe('createNativeAudioSessionLifecycleBridge', () => {
       if (!entry) throw new Error('Missing generated ElevenLabs contribution');
       const replacement = createVendorConversation();
       vendor.startSession.mockResolvedValueOnce(replacement);
-      const replacementAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+      const replacementAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
       const replacementAdapter = replacementAssembly.adapters.find(adapter => adapter.id === entry.providerId);
       if (!replacementAdapter) throw new Error('Missing generated replacement adapter');
       try {

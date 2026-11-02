@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -158,18 +158,6 @@ describe('bundled voice runtime contract ownership', () => {
     const metadataEntries = source(
       'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts',
     );
-    const webRuntimeEntries = source(
-      'apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts',
-    );
-    const nativeRuntimeEntries = [
-      'ios',
-      'android',
-    ].map((platform) => {
-      const path = `apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.${platform}.ts`;
-      // The canonical generator removes byte-identical platform overrides;
-      // those platforms consume the same portable activation projection.
-      return existsSync(resolve(repoRoot, path)) ? source(path) : webRuntimeEntries;
-    });
     const registration = source(
       'apps/ui/sources/voice/adapters/registerBuiltinVoiceAdapters.ts',
     );
@@ -184,16 +172,6 @@ describe('bundled voice runtime contract ownership', () => {
     expect(metadataEntries).toContain('BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS');
     expect(metadataEntries).not.toContain('activate as');
     expect(metadataEntries).not.toContain('BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES');
-    expect(webRuntimeEntries).toContain('activate as OPENAI_BUNDLED_VOICE_ACTIVATE');
-    expect(webRuntimeEntries).toContain('activate as ELEVENLABS_BUNDLED_VOICE_ACTIVATE');
-    expect(webRuntimeEntries).toContain('activate as XAI_BUNDLED_VOICE_ACTIVATE');
-    expect(webRuntimeEntries).toContain('activate as CODEX_BUNDLED_VOICE_ACTIVATE');
-    for (const nativeRuntimeEntry of nativeRuntimeEntries) {
-      expect(nativeRuntimeEntry).toContain('activate as OPENAI_BUNDLED_VOICE_ACTIVATE');
-      expect(nativeRuntimeEntry).toContain('activate as CODEX_BUNDLED_VOICE_ACTIVATE');
-      expect(nativeRuntimeEntry).toContain('activate as ELEVENLABS_BUNDLED_VOICE_ACTIVATE');
-      expect(nativeRuntimeEntry).toContain('activate as XAI_BUNDLED_VOICE_ACTIVATE');
-    }
     expect(registration).toContain(
       "from '@/voice/registry/generatedBundledVoiceRuntimeEntries'",
     );

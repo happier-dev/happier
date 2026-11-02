@@ -5,7 +5,7 @@ import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/Voi
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import { resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -43,7 +43,7 @@ vi.mock('expo-audio', () => ({ AudioModule: { setAudioModeAsync: vi.fn(async () 
 await loadSyncSingletonForTests();
 
 let lifecycle: ReturnType<typeof createVoiceSessionLifecycleController>;
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 const initialStorage = storage.getState();
 const initialBindings = voiceSessionBindingStore.getState();
@@ -127,7 +127,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
       sessions: Object.fromEntries(['s1', 'named-session'].map((id) => [id, createSessionFixture({ id, serverId: account.home.id, encryptionMode: 'plain' })])),
     }));
     voiceConversationRuntimeMachine.reset();
-    assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     registerVoiceAdapters(assembly.adapters);
     lifecycle = createVoiceSessionLifecycleController({ captureAdmission: createVoiceCaptureAdmissionController() });
     setVoiceSessionLifecycleController(lifecycle);

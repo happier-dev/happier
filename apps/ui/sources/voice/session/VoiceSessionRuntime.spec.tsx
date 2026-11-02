@@ -2164,4 +2164,30 @@ describe('VoiceSessionRuntime', () => {
     });
     expect(lifecycleController.getConfiguredProviderId()).toBeNull();
   });
+  it('does not activate a source provider while declaration admission is establishing', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const originalSettings = storage.getState().settings;
+    storage.setState(state => ({ settings: { ...state.settings, voiceSettingsV1: {
+      ...state.settings.voiceSettingsV1, providerId: ELEVENLABS_PROVIDER_ID,
+    } } }));
+    const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    function EstablishingDeclarations() {
+      const value = useAppShellPluginUiProjection();
+      return <AppShellPluginUiProjectionValueProvider value={value} declarationReady={false}><VoiceSessionRuntime /></AppShellPluginUiProjectionValueProvider>;
+    }
+    const screen = await renderRuntimeScreen(<EstablishingDeclarations />);
+    generatedRuntimeScreens.push(screen);
+    // Settle the real plugin-module boundary before checking host publication;
+    // the compiled graph test separately counts module evaluation.
+    await act(async () => { await import('@happier-dev/plugins-elevenlabs/happier-plugin-ui/voice-runtime'); });
+    const { getExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
+    try {
+      expect(getExternalVoiceProviderRegistration(ELEVENLABS_PROVIDER_ID)).toBeNull();
+      expect(sdk.startSession).not.toHaveBeenCalled();
+    } finally {
+      storage.setState({ settings: originalSettings });
+    }
+  });
+
 });

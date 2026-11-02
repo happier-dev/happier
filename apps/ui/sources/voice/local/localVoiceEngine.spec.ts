@@ -67,8 +67,8 @@ describe('local voice engine (turn-based) smoke', () => {
     it('does not start a local voice turn while another contributed realtime adapter owns the machine', async () => {
         const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
-        const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
-        const assembly = createBuiltinVoiceAdapterAssembly();
+        const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+        const assembly = (await createBuiltinVoiceAdapterAssembly());
         const contributed = assembly.adapters.find(adapter => adapter.engineKind === 'realtime'
             && adapter.id !== 'happier.voice.elevenlabs/realtime-elevenlabs');
         if (!contributed) throw new Error('Expected another first-party realtime contribution');

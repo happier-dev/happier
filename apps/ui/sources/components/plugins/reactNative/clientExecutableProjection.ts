@@ -494,6 +494,7 @@ function candidateSortKey(candidate: ResolvedProjectedClientExecutableContributi
 export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
     voiceProjection?: PluginUiClientExecutableProjectionSource | null;
+    voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
 }>): readonly PluginUiProjectedClientExecutableTarget[] {
     const candidates: ResolvedProjectedClientExecutableContribution[] = [];
@@ -519,14 +520,22 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
         }
     }
     if (input.voiceProjection) {
-        for (const entry of Object.values(input.voiceProjection.projection.voiceProvidersById)) {
-            const candidate = readVoiceCandidate({
-                entry,
-                source: input.voiceProjection,
-                platform: input.platform,
-            });
-            if (candidate) candidates.push(candidate);
-        }
+        const source = input.voiceProjection;
+        const voiceCandidates = Object.values(source.projection.voiceProvidersById).flatMap(entry => {
+            const candidate = readVoiceCandidate({ entry, source, platform: input.platform });
+            return candidate ? [candidate] : [];
+        });
+        // Demand is for an executable target. Its public activate(api) registers
+        // every co-declared leaf, including Voice alongside an already demanded
+        // Action. Keep that one transaction's complete rights without demanding
+        // any additional Voice-only module.
+        const demandedTargets = new Set([
+            ...candidates,
+            ...voiceCandidates.filter(candidate => candidate.voiceProvider && input.voiceProviderIds?.has(candidate.voiceProvider.entry.id)),
+        ].map(getPluginUiClientExecutableTargetAddressKey));
+        candidates.push(...voiceCandidates.filter(candidate => demandedTargets.has(
+            getPluginUiClientExecutableTargetAddressKey(candidate),
+        )));
     }
 
     const grouped = new Map<string, ProjectedClientExecutableTargetGroup>();

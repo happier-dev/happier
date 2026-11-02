@@ -581,8 +581,9 @@ export async function startDaemon(
     const admissionDrain = createDaemonAdmissionDrain({
       isPluginHandoffQuiescing: () => pluginChangeService?.isQuiescing() === true,
     });
-    const workflowRuntime = externalActionAccountId
-      ? createProductionDaemonWorkflowRuntime({
+    let workflowRuntime: ReturnType<typeof createProductionDaemonWorkflowRuntime> | null = null;
+    const getWorkflowRuntime = externalActionAccountId
+      ? () => workflowRuntime ??= createProductionDaemonWorkflowRuntime({
           credentials,
           accountId: externalActionAccountId,
           serverId: configuration.activeServerId,
@@ -2187,10 +2188,10 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       serverId: configuration.activeServerId,
       serverBaseUrl: resolveServerHttpBaseUrl(),
       runtimeActionExecute: browserRuntimeActionExecute,
-      ...(workflowRuntime
+      ...(getWorkflowRuntime
         ? {
             workflowAcceptedAuthorizationCurrentness:
-              workflowRuntime.isAcceptedAuthorizationCurrent,
+              async input => await workflowRuntime?.isAcceptedAuthorizationCurrent(input) ?? false,
           }
         : {}),
       currentMachineHost: metadataForRegistration.host,
@@ -3913,15 +3914,16 @@ agentIsolation,
           automationWorker = worker;
           automationActivity.notifyChanged();
         },
-        ...(workflowRuntime
+        ...(getWorkflowRuntime
           ? {
               isWorkflowFeatureEnabled: () => isWorkflowRuntimeEnabled(
                 process.env,
                 serverFeaturesSnapshotStore.getSnapshot(),
               ),
               createWorkflowRunCoordinatorForMachine: (input) => {
+                const runtime = getWorkflowRuntime();
                 const installation = readInstallationIdentityIfExistsSync();
-                return workflowRuntime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter,
+                return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter,
                   postWorkflowMessage,
                   sessionStartup: async request => {
                     const client = apiMachineForSessions;
@@ -3931,7 +3933,7 @@ agentIsolation,
                       && stamp && stamp.accountId === externalActionAccountId && stamp.machineId === input.machineId
                       && stamp.serverId === requesterRuntimeServerId && configuration.activeServerId === requesterRuntimeServerId
                       && stamp.installationId === readInstallationIdentityIfExistsSync()?.installationId
-                      && request.authorization && await workflowRuntime.isAcceptedAuthorizationCurrent({ authorization: request.authorization }));
+                      && request.authorization && await runtime.isAcceptedAuthorizationCurrent({ authorization: request.authorization }));
                     if (!client || !stamp || !externalActionAccountId || !sameStoredCredentials(request.request.credentials, credentials) || !await current()) {
                       throw Object.assign(new Error('Workflow requester Session authority unavailable'), { code: 'project_requester_credentials_unavailable' });
                     }
@@ -3979,7 +3981,7 @@ agentIsolation,
                   } });
               },
               createWorkflowRecoveryForMachine: (input) =>
-                workflowRuntime.createRecoveryForMachine({ ...input, postWorkflowMessage }),
+                getWorkflowRuntime().createRecoveryForMachine({ ...input, postWorkflowMessage }),
             }
           : {}),
         prepareApiMachineForSessions:

@@ -4,12 +4,14 @@ import type { VoiceProviderContribution } from '@happier-dev/plugin-sdk/voice';
 import { projectBundledVoiceManifestContributions } from './bundledVoiceManifestProjection';
 import type { BundledVoiceManifestProjection } from './bundledVoiceManifestProjection';
 
+type BundledConversationActivate = (api: Pick<PluginApi, 'voiceProviders'>) => void;
+
 export type BundledConversationRuntimeEntry = Readonly<{
   pluginId: string;
   providerId: string;
   declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
-  activate(api: Pick<PluginApi, 'voiceProviders'>): void;
-}>;
+}> & (Readonly<{ activate: BundledConversationActivate; loadActivate?: never }>
+  | Readonly<{ loadActivate(): Promise<BundledConversationActivate>; activate?: never }>);
 
 /**
  * Dependency-neutral generated projection. Keep this separate from runtime
@@ -17,7 +19,7 @@ export type BundledConversationRuntimeEntry = Readonly<{
  */
 export function createBundledConversationRuntimeEntries(
   manifest: BundledVoiceManifestProjection,
-  activate: BundledConversationRuntimeEntry['activate'],
+  loadActivate: () => Promise<BundledConversationActivate>,
 ): readonly BundledConversationRuntimeEntry[] {
   return Object.freeze(projectBundledVoiceManifestContributions(manifest).flatMap((entry) => (
     entry.declaration.kind === 'conversation'
@@ -25,7 +27,7 @@ export function createBundledConversationRuntimeEntries(
           pluginId: entry.pluginId,
           providerId: entry.providerId,
           declaration: entry.declaration,
-          activate,
+          loadActivate,
         })]
       : []
   )));

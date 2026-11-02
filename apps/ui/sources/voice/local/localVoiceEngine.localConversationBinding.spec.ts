@@ -557,7 +557,7 @@ describe('local voice engine local conversation binding', () => {
             { answerVoiceRealtimePreparationHttpRequest }, { PROMPT_LIBRARY_ROWS_ROUTE_V1 }] = await Promise.all([
             import('@/sync/domains/settings/voiceSettings'),
             import('../../../../../packages/plugins/elevenlabs/src/protocol/voice/index'),
-            import('@/voice/adapters/registerBuiltinVoiceAdapters'),
+            import('@/dev/testkit/harness/builtinVoiceAdapters'),
             import('@/dev/testkit/harness/sessionMetadataHttpBoundary'),
             import('@/voice/persistence/voiceTranscriptHistorySession'),
             import('@happier-dev/protocol/sessions/control/contract'),
@@ -610,7 +610,7 @@ describe('local voice engine local conversation binding', () => {
             return { getId: () => 'binding-provider-conversation', endSession: async () => {},
                 setMicMuted() {}, setVolume() {}, sendUserMessage() {}, sendContextualUpdate() {} };
         });
-        const assembly = createBuiltinVoiceAdapterAssembly();
+        const assembly = (await createBuiltinVoiceAdapterAssembly());
         const newerAdapter = assembly.adapters.find(adapter => adapter.id === providerId);
         if (!newerAdapter) throw new Error('Expected generated ElevenLabs adapter');
         const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');

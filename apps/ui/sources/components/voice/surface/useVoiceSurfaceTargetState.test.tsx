@@ -10,7 +10,7 @@ import {
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import { createLocalConversationVoiceAdapter } from '@/voice/adapters/localConversation/localConversationAdapter';
 import { createLocalDirectVoiceAdapter } from '@/voice/adapters/localDirect/localDirectAdapter';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { voiceSettingsParse, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
@@ -23,7 +23,7 @@ function localVoiceSettings(global: boolean) {
         local_direct: { schemaVersion: 1, config: {} },
     } });
 }
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | undefined;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | undefined;
 
 describe('useVoiceSurfaceTargetState', () => {
     beforeEach(() => {
@@ -279,7 +279,7 @@ describe('useVoiceSurfaceTargetState', () => {
             providerId: buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId, localId: source.declaration.id })),
             declaration: { ...source.declaration, capabilities: { ...source.declaration.capabilities,
                 turn: { ...source.declaration.capabilities.turn, bargeIn: true, interruptionPolicy: 'client_two_stage' as const } } } };
-        assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+        assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
         registerVoiceAdapters(assembly.adapters);
         const sourceSettings = writeVoiceProviderSettingsConfig(voiceSettingsParse({}), source.providerId, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
         const voice = voiceSettingsParse({ providerId: entry.providerId,

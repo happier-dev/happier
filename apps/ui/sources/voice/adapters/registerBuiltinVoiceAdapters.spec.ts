@@ -32,7 +32,7 @@ const [
   { voiceSessionBindingStore }, { clearDaemonMergedProjectionCacheForTests },
   { getCurrentBundledConversationRuntimeHost },
 ] = await Promise.all([
-  import('@/sync/domains/state/storage'), import('./registerBuiltinVoiceAdapters'),
+  import('@/sync/domains/state/storage'), import('@/dev/testkit/harness/builtinVoiceAdapters'),
   import('@/voice/registry/generatedBundledVoiceRuntimeEntries'),
   import('@/voice/binding/voiceConversationBindingStore'),
   import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
@@ -157,6 +157,63 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     }
   });
 
+  it('keeps provider modules cold until demanded and shares one selected activation', async () => {
+    const { createBuiltinVoiceAdapterAssembly: createColdAssembly } = await import('./registerBuiltinVoiceAdapters');
+    const evaluations: string[] = [];
+    const entries = ['openai', 'unselected'].map(providerId => {
+      const { activate, ...entry } = createPublicEntry({ providerId });
+      if (!activate) throw new Error('Fixture requires a synchronous public activation export');
+      return { ...entry, loadActivate: async () => { evaluations.push(providerId); return activate; } };
+    });
+    const assembly = createColdAssembly({ bundledEntries: entries });
+    expect(evaluations).toEqual([]);
+    expect(assembly.adapters.map(adapter => adapter.id)).toEqual(['local_direct', 'local_conversation']);
+    const first = assembly.activateProvider('test.voice/openai');
+    const second = assembly.activateProvider('test.voice/openai');
+    expect(second).toBe(first);
+    await first;
+    expect(evaluations).toEqual(['openai']);
+    expect(assembly.adapters.map(adapter => adapter.id)).toEqual(['test.voice/openai', 'local_direct', 'local_conversation']);
+    await assembly.dispose();
+  });
+
+  it('retires a pending module import without publishing a provider after disposal', async () => {
+    const { createBuiltinVoiceAdapterAssembly: createColdAssembly } = await import('./registerBuiltinVoiceAdapters');
+    const { activate, ...entry } = createPublicEntry({ providerId: 'pending' });
+    if (!activate) throw new Error('Fixture requires a synchronous public activation export');
+    const imported = createDeferred<typeof activate>();
+    const assembly = createColdAssembly({ bundledEntries: [{ ...entry, loadActivate: () => imported.promise }] });
+    const pending = assembly.activateProvider('test.voice/pending');
+    const disposal = assembly.dispose();
+    imported.resolve(activate);
+    await Promise.all([pending, disposal]);
+    expect(assembly.adapters.map(adapter => adapter.id)).toEqual(['local_direct', 'local_conversation']);
+    const { getExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
+    expect(getExternalVoiceProviderRegistration('test.voice/pending')).toBeNull();
+  });
+
+  it('does not load a selected source provider excluded by the projected catalog', async () => {
+    const { createBuiltinVoiceAdapterAssembly: createColdAssembly } = await import('./registerBuiltinVoiceAdapters');
+    const { replaceExternalVoiceProviderProjectionAuthority, removeExternalVoiceProviderRegistration } = await import('@/voice/registry/externalVoiceProviderRegistrations');
+    const token = Object.freeze({});
+    const { activate, ...entry } = createPublicEntry({ providerId: 'disabled' });
+    if (!activate) throw new Error('Fixture requires a synchronous public activation export');
+    const evaluations: string[] = [];
+    replaceExternalVoiceProviderProjectionAuthority(null, token, new Map(), []);
+    const assembly = createColdAssembly({ bundledEntries: [{ ...entry, loadActivate: async () => {
+      evaluations.push(entry.providerId);
+      return activate;
+    } }] });
+    try {
+      await assembly.activateProvider(entry.providerId);
+      expect(evaluations).toEqual([]);
+      expect(assembly.adapters.map(adapter => adapter.id)).toEqual(['local_direct', 'local_conversation']);
+    } finally {
+      await assembly.dispose();
+      removeExternalVoiceProviderRegistration(token);
+    }
+  });
+
   it('uses generated public entries as the only production realtime adapter owners', async () => {
     for (const localId of [
       'realtime-elevenlabs',
@@ -168,11 +225,11 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         (candidate) => candidate.declaration.id === localId,
       );
       expect(entry).toBeDefined();
-      expect(entry?.activate).toBeTypeOf('function');
+      expect(entry?.loadActivate).toBeTypeOf('function');
       expect(entry?.providerId).toContain('/');
     }
 
-    const assembly = createBuiltinVoiceAdapterAssembly();
+    const assembly = (await createBuiltinVoiceAdapterAssembly());
     const generatedProviderIds = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
       readBundledEntryProviderId,
     );
@@ -223,9 +280,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
 
     // The shell mounting this assembly must keep booting, and Voice must stay
     // available for every provider the broken leaf does not own.
-    const assembly = createBuiltinVoiceAdapterAssembly({
+    const assembly = (await createBuiltinVoiceAdapterAssembly({
       bundledEntries: [failingEntry, ...BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES],
-    });
+    }));
 
     expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
       ...BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(readBundledEntryProviderId),
@@ -236,7 +293,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
   });
 
   it('removes executable bundled adapters when their first-party package contribution is absent', async () => {
-    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
     const ids = assembly.adapters.map((adapter) => adapter.id);
 
     expect(ids).toEqual(['local_direct', 'local_conversation']);
@@ -244,8 +301,8 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
   });
 
   it('does not let a retired assembly stop the process-global Local Voice owner after remount', async () => {
-    const retiredAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
-    const freshAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    const retiredAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
+    const freshAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
     const localDirect = freshAssembly.adapters.find(adapter => adapter.id === 'local_direct');
     if (!localDirect) throw new Error('Fresh Local Direct adapter unavailable');
     storage.setState(state => ({ settings: {
@@ -267,16 +324,16 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
   });
 
   it('re-enables a fresh executable runtime after a physically absent contribution without retaining cached state', async () => {
-    const enabled = createBuiltinVoiceAdapterAssembly();
+    const enabled = (await createBuiltinVoiceAdapterAssembly());
     const firstRealtime = enabled.adapters.find((adapter) => adapter.engineKind === 'realtime');
     expect(firstRealtime).toBeDefined();
     await enabled.dispose();
 
-    const disabled = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+    const disabled = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
     expect(disabled.adapters.some((adapter) => adapter.engineKind === 'realtime')).toBe(false);
     await disabled.dispose();
 
-    const reEnabled = createBuiltinVoiceAdapterAssembly();
+    const reEnabled = (await createBuiltinVoiceAdapterAssembly());
     const secondRealtime = reEnabled.adapters.find((adapter) => adapter.engineKind === 'realtime');
     expect(secondRealtime).toBeDefined();
     expect(secondRealtime).not.toBe(firstRealtime);
@@ -300,7 +357,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         } }, state.settings),
       },
     }));
-    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     const host = capturedHostRef.current;
     if (!host) throw new Error('tool projection test runtime did not receive a host');
 
@@ -376,9 +433,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       onCreate(host) { freshHostRef.current = host; },
     });
 
-    const oldAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] });
+    const oldAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] }));
     const oldDisposePromise = oldAssembly.dispose();
-    const freshAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [freshEntry] });
+    const freshAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [freshEntry] }));
     const freshHost = freshHostRef.current;
     if (!freshHost) throw new Error('fresh test runtime did not receive a host');
     freshHost.machine.transitionToConnecting('fresh-session', 'test_fresh');
@@ -414,11 +471,11 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       providerId: 'test_fresh_audio',
       onCreate(host) { freshHostRef.current = host; },
     });
-    const oldAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] });
+    const oldAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] }));
     if (!oldHost) throw new Error('old test runtime did not receive a host');
     await oldAudioLease;
     expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(1);
-    const freshAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [freshEntry] });
+    const freshAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [freshEntry] }));
 
     await oldAssembly.dispose();
 
@@ -443,7 +500,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         host = runtimeHost;
       },
     });
-    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     const runtimeHost = requireBundledRuntimeHost(
       host,
       'Agent realtime binding test runtime did not receive a host',
@@ -536,7 +593,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
           host = runtimeHost;
         },
       });
-      const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+      const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
       const runtimeHost = requireBundledRuntimeHost(
         host,
         'Agent realtime race test runtime did not receive a host',
@@ -606,11 +663,11 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       await projectionEntered.promise;
       expect(machineRpcBoundary.machineRpc).toHaveBeenCalledTimes(1);
 
-      let replacementAssembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
+      let replacementAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
       if (invalidation === 'binding rebind') {
         bindConversation(conversationSessionIdB, 2);
       } else if (invalidation === 'generation revoke') {
-        replacementAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+        replacementAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
       } else if (invalidation === 'attempt abort') {
         attemptLifetime.abort();
       } else {
@@ -735,7 +792,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
         throw new Error(`unexpected session RPC: ${input.method}`);
       });
 
-      const oldAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] });
+      const oldAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [oldEntry] }));
       const oldRuntimeHost = requireBundledRuntimeHost(
         oldHost,
         'old Agent realtime runtime did not receive a host',
@@ -812,7 +869,7 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
       );
 
       const replacementAssembly = installReplacement
-        ? createBuiltinVoiceAdapterAssembly({ bundledEntries: [replacementEntry] })
+        ? (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [replacementEntry] }))
         : null;
       let replacementService: PluginVoiceAgentSessionRealtimeService | null = null;
       let replacementBoundApplicationAttemptId: string | null = null;

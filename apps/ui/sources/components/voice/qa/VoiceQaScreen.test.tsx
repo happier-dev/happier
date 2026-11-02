@@ -76,7 +76,7 @@ const daemonRpcRequests: DaemonRpcRequest[] = [];
 let transcriptionError: string | null = null;
 let heldTranscription: Promise<unknown> | null = null;
 let transcriptionStarted = createDeferred<void>();
-let assembly: ReturnType<typeof import('@/voice/adapters/registerBuiltinVoiceAdapters').createBuiltinVoiceAdapterAssembly> | null = null;
+let assembly: Awaited<ReturnType<typeof import('@/dev/testkit/harness/builtinVoiceAdapters').createBuiltinVoiceAdapterAssembly>> | null = null;
 let lifecycle: ReturnType<typeof import('@/voice/session/voiceSessionLifecycleController').createVoiceSessionLifecycleController> | null = null;
 let unsubscribeLifecycle: (() => void) | null = null;
 const pendingWrites: Array<Readonly<{ sessionId: string; body: Record<string, unknown> }>> = [];
@@ -216,11 +216,11 @@ async function prepareRealtimeQa(targetSessionId: string) {
     serverId: account!.home.id, encryptionMode: 'plain', active: false,
     metadata: { path: '/target', host: 'test' } });
   storage.getState().applySessions(Object.values(homeSessions));
-  const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+  const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
   const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
   const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
   voiceConversationRuntimeMachine.reset();
-  assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+  assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
   registerVoiceAdapters(assembly.adapters);
   voiceSessionBindingStore.getState().bind({
     adapterId: entry.providerId, controlSessionId: targetSessionId, conversationSessionId: targetSessionId,

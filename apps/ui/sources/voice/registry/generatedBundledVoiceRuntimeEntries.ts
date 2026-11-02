@@ -9,10 +9,10 @@
  */
 
 import { createBundledConversationRuntimeEntries, type BundledConversationRuntimeEntry } from './bundledConversationRuntimeEntries';
-import { activate as CODEX_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-codex/happier-plugin-ui/voice-runtime-web';
-import { activate as ELEVENLABS_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-elevenlabs/happier-plugin-ui/voice-runtime';
-import { activate as OPENAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-openai/happier-plugin-ui/voice-runtime-web';
-import { activate as XAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-xai/happier-plugin-ui/voice-runtime-web';
+const CODEX_BUNDLED_VOICE_ACTIVATE = async () => (await import('@happier-dev/plugins-codex/happier-plugin-ui/voice-runtime-web')).activate;
+const ELEVENLABS_BUNDLED_VOICE_ACTIVATE = async () => (await import('@happier-dev/plugins-elevenlabs/happier-plugin-ui/voice-runtime')).activate;
+const OPENAI_BUNDLED_VOICE_ACTIVATE = async () => (await import('@happier-dev/plugins-openai/happier-plugin-ui/voice-runtime-web')).activate;
+const XAI_BUNDLED_VOICE_ACTIVATE = async () => (await import('@happier-dev/plugins-xai/happier-plugin-ui/voice-runtime-web')).activate;
 import { CODEX_BUNDLED_VOICE_MANIFEST, ELEVENLABS_BUNDLED_VOICE_MANIFEST, OPENAI_BUNDLED_VOICE_MANIFEST, XAI_BUNDLED_VOICE_MANIFEST } from './generatedBundledVoiceEntries';
 const CODEX_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(
   CODEX_BUNDLED_VOICE_MANIFEST,

@@ -24,7 +24,7 @@ import { getVoiceAdapterRegistry, registerVoiceAdapters } from '@/voice/session/
 import { resetVoiceSessionRuntimeStateForTests } from '@/voice/session/voiceSessionStore';
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { getVoiceSessionLifecycleController, setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@/voice/persistence/voiceTranscriptHistorySession';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -155,7 +155,7 @@ describe('bundled conversation runtime host current UI lifecycle', () => {
       return remove;
     });
     const currentUiContext = { ...actualPort, subscribe };
-    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry], currentUiContext });
+    const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry], currentUiContext }));
     registerVoiceAdapters(assembly.adapters);
     voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'ui-voice-history', conversationSessionAddress: { serverId: home.id, sessionId: 'ui-voice-history' }, targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
     const lifecycle = createVoiceSessionLifecycleController();

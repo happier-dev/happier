@@ -173,7 +173,8 @@ async function activateCodexEntry(input: Readonly<{
       }),
     }),
   });
-  entry.activate(scope.api as Parameters<typeof entry.activate>[0]);
+  const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+  (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
   await scope.commit();
   const registration = getExternalVoiceProviderRegistration(providerId);
   if (!registration?.adapter) {

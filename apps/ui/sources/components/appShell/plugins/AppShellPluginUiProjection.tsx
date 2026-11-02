@@ -88,6 +88,7 @@ import {
     subscribeBundledConversationRuntimeGeneration,
 } from '@/voice/registry/bundledConversationRuntimeGeneration';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
+import { useVoiceProviderRuntimeDemand } from '@/voice/session/useVoiceProviderRuntimeDemand';
 
 import { PluginAppPageLaunchInputScope } from './pluginAppPageNavigation';
 import {
@@ -449,6 +450,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         ? currentnessForActiveAccountByMachineId.get(projectionUnion.machineId)?.pluginBrowserProjection ?? null
         : null;
     const voiceExecutionMachineId = useVoiceExecutionMachineId();
+    const voiceProviderIds = useVoiceProviderRuntimeDemand();
     // Voice execution stays bound to the USER-selected execution machine. When
     // that machine is already a union member its probe owns the description; a
     // voice machine outside the eligible set (active but past the presence
@@ -577,6 +579,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         voicePluginUiProjection,
         voiceRuntimeGenerationRevision,
         voiceServerId,
+        voiceProviderIds,
         availabilityReader: clientExecutableAvailabilityReader,
         accountLifetime,
     }), [
@@ -589,6 +592,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         voicePluginUiProjection,
         voiceRuntimeGenerationRevision,
         voiceServerId,
+        voiceProviderIds,
     ]);
     const clientExecutableActivationRequest = React.useMemo(() => Object.freeze({
         basis: clientExecutableActivationBasis,
@@ -617,7 +621,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         const next = basis.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
         let cancelled = false;
         const voice = basis.voiceInteractionEnabled && basis.voiceMachineId && basis.voicePluginUiProjection
-            ? Object.freeze({ projection: basis.voicePluginUiProjection, machineId: basis.voiceMachineId, serverId: basis.voiceServerId })
+            ? Object.freeze({ projection: basis.voicePluginUiProjection, machineId: basis.voiceMachineId, serverId: basis.voiceServerId, providerIds: basis.voiceProviderIds })
             : null;
         // Withdrawal is synchronous inside the existing composition owner,
         // before this request waits on prior cleanup or successor Artifact bytes.

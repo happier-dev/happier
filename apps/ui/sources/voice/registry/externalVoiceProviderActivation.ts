@@ -77,8 +77,7 @@ import { fetchVoiceSettingsCatalog, type VoiceCatalogRow } from '@/voice/setting
 import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import {
-  projectVoiceProviderAccountCredentialSlot,
-  projectVoiceProviderDeclarationRegistryBase,
+  projectExternalConversationVoiceDescriptor,
 } from './providerRegistry';
 import {
   commitExternalVoiceProviderRegistration,
@@ -442,10 +441,6 @@ function createVoiceAttemptInvocationUi(input: Readonly<{
       input.base.diagnostic(diagnostic);
     },
   });
-}
-
-function declarationTitle(declaration: VoiceProviderContribution): string {
-  return typeof declaration.title === 'string' ? declaration.title : declaration.title.fallback;
 }
 
 function createVoiceCredentialAccess<P extends 'settings' | 'prepare' | 'connection'>(input: Readonly<{
@@ -1356,10 +1351,6 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
           const recipientContract = hostBinding?.recipientContract
             ?? input.recipientContractsByLocalId?.[declaration.id]
             ?? null;
-          const accountCredentialSlot = projectVoiceProviderAccountCredentialSlot(
-            declaration,
-            recipientContract,
-          );
           const createSettingsCredentials = (signal: AbortSignal) => createVoiceCredentialAccess({
             declaration,
             phase: 'settings',
@@ -1427,36 +1418,14 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
             : occurrenceId
               ? Object.freeze({ occurrenceId })
               : Object.freeze({});
-          const selectionOptions = Object.freeze([Object.freeze({
-            id: 'default', modeId: 'default', order: 10_000,
-            titleKey: declarationTitle(declaration),
-            subtitleKey: '',
-            configPatch: providerSettings.defaultConfig,
-          })]);
-          const declarationBase = projectVoiceProviderDeclarationRegistryBase({
-            declaration,
-            providerSettings,
-            selectionOptions,
-          });
           commitExternalVoiceProviderRegistration(Object.freeze({
             token,
             pluginId: input.pluginId,
             localId: declaration.id,
             providerId,
             ...settingsActionRegistration,
-            descriptor: hostBinding?.descriptor === 'bundled' ? null : Object.freeze({
-              pluginId: input.pluginId,
-              providerId,
-              settingsSectionId: providerId,
-              kind: 'voice.conversation-provider.v1' as const,
-              ...declarationBase,
-              declaration,
-              ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
-              source: Object.freeze({
-                kind: 'external' as const,
-                pluginId: input.pluginId,
-                localId: declaration.id,
-              }),
+            descriptor: hostBinding?.descriptor === 'bundled' ? null : projectExternalConversationVoiceDescriptor({
+              pluginId: input.pluginId, declaration, recipientContract, providerSettings,
             }),
             adapter,
             ...(settingsOperations ? { settingsOperations } : {}),

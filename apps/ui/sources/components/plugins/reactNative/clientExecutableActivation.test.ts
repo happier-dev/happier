@@ -309,6 +309,7 @@ function reconciliationInput(input: Readonly<{
 }>) {
     return {
         actionProjection: Object.freeze({ projection: input.model }),
+        voiceProviderIds: new Set(Object.keys(input.model.voiceProvidersById)),
         voiceProjection: Object.freeze({
             projection: input.model,
             directMachineAuthority: Object.freeze({ machineId, serverId }),

@@ -81,6 +81,7 @@ function targetAdmission(target: PluginUiProjectedClientExecutableTarget): Plugi
 export function retainProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
     voiceProjection?: PluginUiClientExecutableProjectionSource | null;
+    voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
     executableHost?: PluginUiExecutableModuleHost;
@@ -218,6 +219,7 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
 export async function reconcileProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
     voiceProjection?: PluginUiClientExecutableProjectionSource | null;
+    voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
     executableHost?: PluginUiExecutableModuleHost;
     loaderBackend?: PluginReactNativeLoaderBackend;
@@ -233,6 +235,7 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
     const targets = resolveProjectedPluginUiClientExecutables({
         actionProjection: input.actionProjection,
         voiceProjection: input.voiceProjection,
+        voiceProviderIds: input.voiceProviderIds,
         platform: input.platform,
     });
     const cache = getInstalledPluginReactNativeBundleCache();

@@ -54,6 +54,8 @@ the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
 
+In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
+
 The `plugins.enable` and `plugins.disable` Actions accept an optional `scope` of
 `account` or `machine`; omitted scope selects the Machine. Plugin administration
 exposes both switches for the selected Machine. A Session whose Agent plugin is
@@ -4655,6 +4657,8 @@ messages and stacks must stay out of these diagnostics. An absent logger does
 not change read results or failure semantics.
 
 ### Voice schema composition (0.3 development)
+
+Conversation provider declarations remain discoverable before their executable modules load. The client demands the selected provider and retains the live attempt's provider when selection changes or turns Off. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
 
 Voice schema exports at `@happier-dev/plugin-sdk/voice` and its client entry
 are native `zod/mini` schemas with the exact runtime identity of their Protocol

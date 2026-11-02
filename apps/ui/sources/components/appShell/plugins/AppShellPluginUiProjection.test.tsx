@@ -2064,6 +2064,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
         localServicePreviewPlatformState.platform = 'desktop';
         storageState.machines = [createLiveMachine('machine-newer'), createLiveMachine('machine-voice')];
         storageState.voiceExecutionMachine = { mode: 'fixed', machineId: 'machine-voice' };
+        persistentStorage.setState(state => ({ settings: { ...state.settings,
+            voiceSettingsV1: { ...state.settings.voiceSettingsV1, providerId: `${pluginId}/${declaration.id}` },
+        } }));
         artifactByteRead.mockResolvedValue({
             ok: true,
             artifactFamily: 'reactNative',

@@ -37,7 +37,7 @@ await loadSyncSingletonForTests();
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { removePendingOutboxMessage, markPendingOutboxMessageCancelRequested, loadPendingOutboxForSession } = await import('@/sync/domains/state/pendingOutboxPersistence');
-const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
 const { buildVoiceTranscriptHistorySessionMetadata } = await import('@/voice/persistence/voiceTranscriptHistorySession');
@@ -75,7 +75,7 @@ let refreshBeforeEnqueueAck = false;
 let changeControlBeforeEnqueueAck = false;
 let rejectBlock = false;
 let providerSendFailure: Error | null = null;
-let composerAssembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
+let composerAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 const httpEvents: string[] = [];
 let homeSequence = 0;
@@ -237,7 +237,7 @@ describe('Voice composer through Sync HTTP custody', () => {
         await restorePendingHttpAccount();
         if (!account) throw new Error('Actual composer Account fixture is unavailable');
         await sync.refreshAccountSettingsFromServer(1, { serverId: account.home.id, accountId: 'composer-account' });
-        composerAssembly = createBuiltinVoiceAdapterAssembly();
+        composerAssembly = (await createBuiltinVoiceAdapterAssembly());
         registerVoiceAdapters(composerAssembly.adapters);
         const adapter = getVoiceAdapterRegistry().get('happier.voice.elevenlabs/realtime-elevenlabs');
         if (!adapter || !account) throw new Error('Actual composer provider fixture is unavailable');
@@ -462,7 +462,7 @@ describe('Voice composer through Sync HTTP custody', () => {
 
     it('keeps unconfirmed synthetic composer input pending through the real adapter assembly', async () => {
         terminalResponse = 'missing_handoff';
-        const assembly = createBuiltinVoiceAdapterAssembly();
+        const assembly = (await createBuiltinVoiceAdapterAssembly());
         registerVoiceAdapters(assembly.adapters);
         const adapterId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const store = createVoiceSessionBindingStore();
@@ -482,7 +482,7 @@ describe('Voice composer through Sync HTTP custody', () => {
 
     it('returns typed cancellation without dispatching a native composer row whose durable outbox cancellation wins', async () => {
         cancelAfterEnqueue = true;
-        const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
+        const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [] }));
         registerVoiceAdapters(assembly.adapters);
         const store = createVoiceSessionBindingStore();
         store.getState().bind({ adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'carrier-s1',

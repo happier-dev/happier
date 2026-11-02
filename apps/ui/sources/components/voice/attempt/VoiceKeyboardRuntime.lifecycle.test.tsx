@@ -18,7 +18,7 @@ import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -57,7 +57,7 @@ function seedVoiceSettings(voice: unknown) {
 }
 const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(value => value.declaration.id === 'realtime-elevenlabs')!;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
 let locks: ReturnType<typeof installWebLockManagerMock> | null = null;
 
 describe('Voice default-target lifecycle', () => {
@@ -144,7 +144,7 @@ describe('Voice default-target lifecycle', () => {
         voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             conversationSessionId: 'keyboard-history', conversationSessionAddress: { serverId: account.home.id, sessionId: 'keyboard-history' },
             targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
-        assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+        assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
         registerVoiceAdapters(assembly.adapters);
         const controller = createVoiceSessionLifecycleController({ captureAdmission: createVoiceCaptureAdmissionController() });
         controller.setConfiguredProviderId(entry.providerId);

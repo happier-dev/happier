@@ -190,6 +190,7 @@ function resolve(projectionInput: PluginUiProjectionModel) {
     return resolveProjectedPluginUiClientExecutables({
         actionProjection: Object.freeze({ projection: projectionInput }),
         voiceProjection: Object.freeze({ projection: projectionInput }),
+        voiceProviderIds: new Set(Object.keys(projectionInput.voiceProvidersById)),
         platform: 'web',
     });
 }
@@ -238,6 +239,31 @@ function bundleCacheIdentity(bundleInput: ReturnType<typeof firstBundle>) {
 }
 
 describe('resolveProjectedPluginUiClientExecutables', () => {
+    it('prepares only demanded Voice providers and retains the active provider alongside a new selection', () => {
+        const current = voiceOnlyProjection();
+        const source = { projection: current };
+        expect(resolveProjectedPluginUiClientExecutables({ voiceProjection: source, voiceProviderIds: new Set(), platform: 'web' })).toEqual([]);
+        const selected = resolveProjectedPluginUiClientExecutables({ voiceProjection: source,
+            voiceProviderIds: new Set([voiceKey]), platform: 'web' });
+        expect(selected).toHaveLength(1);
+        expect(selected[0]?.voiceProviders.map(provider => provider.entry.id)).toEqual([voiceKey]);
+        expect(resolveProjectedPluginUiClientExecutables({ voiceProjection: source,
+            voiceProviderIds: new Set(['other/next', voiceKey]), platform: 'web' })).toEqual(selected);
+    });
+    it('retains co-declared Voice rights when an Action already demands the same executable', () => {
+        const actions = projection();
+        const voice = voiceOnlyProjection();
+        const current = { ...actions,
+            voiceProvidersById: { [voiceKey]: { ...voice.voiceProvidersById[voiceKey]!,
+                occurrenceId: actions.actionsById[firstActionKey]!.occurrenceId } },
+            reactNativeBundlesById: { ...actions.reactNativeBundlesById, ...voice.reactNativeBundlesById },
+        };
+        const targets = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection: current },
+            voiceProjection: { projection: current }, voiceProviderIds: new Set(), platform: 'web' });
+        expect(targets).toHaveLength(1);
+        expect(targets[0]?.contributes.voiceProviders).toEqual([voiceDeclaration]);
+        expect(targets[0]?.actions).toHaveLength(2);
+    });
     it('activates source and target rights from their exact shared answering artifact without an Action declaration', () => {
         const definitions = PluginContributesV2Schema.parse({
             workItems: [{ id: 'work-items', client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] }],
@@ -296,6 +322,7 @@ describe('resolveProjectedPluginUiClientExecutables', () => {
                 projection: directSource,
                 directMachineAuthority: Object.freeze({ machineId: 'machine-2', serverId: 'server-1' }),
             }),
+            voiceProviderIds: new Set([voiceKey]),
             platform: 'web',
         })).toEqual([]);
     });

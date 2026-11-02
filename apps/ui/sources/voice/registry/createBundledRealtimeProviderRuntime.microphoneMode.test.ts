@@ -6,7 +6,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storage';
 import { writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { getVoiceAdapterRegistry, registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import { resetVoiceSessionRuntimeStateForTests } from '@/voice/session/voiceSessionStore';
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
@@ -184,8 +184,8 @@ describe('public provider microphone mode', () => {
 async function withGeneratedElevenLabs(
   run: (fixture: Readonly<{
     lifecycle: ReturnType<typeof createVoiceSessionLifecycleController>;
-    adapter: ReturnType<typeof createBuiltinVoiceAdapterAssembly>['adapters'][number];
-    assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+    adapter: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>['adapters'][number];
+    assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
     getUserMedia: MockInstance<MediaDevices['getUserMedia']>;
   }>) => Promise<void>,
   platform: 'web' | 'ios' = 'web',
@@ -217,7 +217,7 @@ async function withGeneratedElevenLabs(
   // The incumbent environment restored the Account through real TokenStorage
   // and hydrated the canonical settings document through Sync.
   const account = environment.accountConnection;
-  const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+  const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
   const adapter = assembly.adapters.find(value => value.id === entry.providerId);
   if (!adapter) throw new Error('Generated ElevenLabs entry was not activated');
   registerVoiceAdapters(assembly.adapters);

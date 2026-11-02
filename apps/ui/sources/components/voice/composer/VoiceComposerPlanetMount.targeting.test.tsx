@@ -7,7 +7,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
@@ -51,7 +51,7 @@ const initialStorageState = getStorage().getState();
 const initialBindings = voiceSessionBindingStore.getState();
 const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(value => value.pluginId === 'happier.voice.elevenlabs');
 if (!entry) throw new Error('Composer targeting requires the ElevenLabs contribution');
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let lifecycle: ReturnType<typeof createVoiceSessionLifecycleController>;
 let captureAdmission: ReturnType<typeof createVoiceCaptureAdmissionController>;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
@@ -116,7 +116,7 @@ describe('VoiceComposerPlanetMount targeting', () => {
         voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             conversationSessionId: 'composer-conversation', conversationSessionAddress: { serverId: account.home.id, sessionId: 'composer-conversation' },
             targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
-        assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+        assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
         registerVoiceAdapters(assembly.adapters);
         captureAdmission = createVoiceCaptureAdmissionController();
         lifecycle = createVoiceSessionLifecycleController({ captureAdmission });

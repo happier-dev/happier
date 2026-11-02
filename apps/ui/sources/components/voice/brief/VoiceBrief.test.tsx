@@ -104,7 +104,8 @@ async function transport() {
         isRuntimeHostCurrent: () => getCurrentBundledConversationRuntimeHost() === hostLease.host,
         hostBindingsByLocalId: { [entry.declaration.id]: { recipientContract: createBundledVoiceRecipientContract({ pluginId: entry.pluginId, declaration: entry.declaration }), descriptor: 'bundled' } },
     });
-    entry.activate(scope.api as Parameters<typeof entry.activate>[0]);
+    const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+    (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
     await scope.commit();
     const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
     if (!adapter) throw new Error('OpenAI Voice adapter was not activated');

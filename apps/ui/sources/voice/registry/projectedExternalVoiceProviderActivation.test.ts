@@ -54,7 +54,7 @@ const { projectVoiceProviderAgentRealtimePassiveSetup } = await import("@/voice/
 
 const { createBundledConversationRuntimeHostLease } = await import("./bundledConversationRuntimeHost");
 const { createDefaultVoiceProviderRegistry } = await import("./defaultRegistry");
-const { listExternalVoiceProviderRegistrations } = await import("./externalVoiceProviderRegistrations");
+const { listExternalVoiceProviderRegistrations, getExternalVoiceProviderRegistrationsRevision, subscribeExternalVoiceProviderRegistrations } = await import("./externalVoiceProviderRegistrations");
 import type {
   ExternalVoiceProviderRuntimeRegistration,
   VoiceConversationProviderContribution,
@@ -275,6 +275,75 @@ function projectConversationVoiceEntries(input: Readonly<{
 }
 
 describe('projected external Voice provider activation', () => {
+  it.each(['equal', 'changed', 'removed', 'occurrence'] as const)(
+    'publishes one coherent speech snapshot only for changed Voice facts: %s', async (change) => {
+      const pluginId = 'acme.speech-publication';
+      const executableHost = createPluginUiExecutableModuleHost();
+      onTestFinished(() => unloadAppShellProjectedClientExecutables(executableHost));
+      const fixture = PluginManifestV2Schema.parse(JSON.parse(await readFile(new URL(
+        '../../../../cli/src/plugins/testkit/fixtures/packed-external-voice-provider/.happier-plugin/plugin.json',
+        import.meta.url,
+      ), 'utf8'))).contributes.voiceProviders.find(entry => entry.kind === 'speech');
+      if (!fixture) throw new Error('expected speech fixture');
+      const declarations = ['first', 'sibling'].map(id => ({ ...fixture, id, title: id }));
+      const project = (generation: number) => normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+        v: 2, generation, installedPackagesById: {}, agentsById: {}, actionsById: {},
+        resourcesById: {}, settingsById: {}, diagnostics: [],
+        familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: Object.fromEntries(
+          declarations.filter(definition => change !== 'removed' || generation === 1 || definition.id !== 'first')
+            .map(definition => {
+              const id = `${pluginId}/${definition.id}`;
+              return [id, { id, pluginId, generation, contributionKey: id,
+                occurrenceId: change === 'occurrence' && generation === 2 && definition.id === 'first'
+                  ? 'replacement-occurrence' : 'original-occurrence',
+                definition: change === 'changed' && generation === 2 && definition.id === 'first'
+                  ? { ...definition, title: 'Changed speech' } : definition }];
+            }),
+        ) } },
+      }));
+      const reconcile = (projection: PluginUiProjectionModel | null) => reconcileAppShellProjectedClientExecutables({
+        projection: null, voice: null, voiceProviderProjection: projection, platform: 'web', executableHost,
+      });
+      await reconcile(project(1));
+      const registry = createDefaultVoiceProviderRegistry();
+      const firstId = `${pluginId}/first`;
+      const siblingId = `${pluginId}/sibling`;
+      const before = listExternalVoiceProviderRegistrations().filter(entry => entry.pluginId === pluginId);
+      const first = before.find(entry => entry.providerId === firstId)!;
+      const sibling = before.find(entry => entry.providerId === siblingId)!;
+      const snapshots: Array<Readonly<{ first: typeof first | null; sibling: typeof sibling | null;
+        visibleFirst: ReturnType<typeof registry.get>; visibleSibling: ReturnType<typeof registry.get> }>> = [];
+      const revision = getExternalVoiceProviderRegistrationsRevision();
+      const stop = subscribeExternalVoiceProviderRegistrations(() => {
+        const registrations = listExternalVoiceProviderRegistrations();
+        snapshots.push({ first: registrations.find(entry => entry.providerId === firstId) ?? null,
+          sibling: registrations.find(entry => entry.providerId === siblingId) ?? null,
+          visibleFirst: registry.get(firstId), visibleSibling: registry.get(siblingId) });
+      });
+      onTestFinished(stop);
+      await reconcile(project(2)); // Fresh wire objects and unrelated generation; exact occurrences stay stable.
+      expect({ notifications: snapshots.length, revisionDelta: getExternalVoiceProviderRegistrationsRevision() - revision })
+        .toEqual({ notifications: change === 'equal' ? 0 : 1, revisionDelta: change === 'equal' ? 0 : 1 });
+      const after = listExternalVoiceProviderRegistrations().filter(entry => entry.pluginId === pluginId);
+      expect(after.find(entry => entry.providerId === siblingId)).toBe(sibling);
+      if (change === 'equal') expect(after.find(entry => entry.providerId === firstId)).toBe(first);
+      else if (change === 'removed') expect(snapshots[0]?.first).toBeNull();
+      else {
+        expect(snapshots[0]?.first).not.toBe(first);
+        expect(snapshots[0]?.first?.descriptor).not.toBe(first.descriptor);
+        expect(registry.get(firstId)).toBe(snapshots[0]?.first?.descriptor);
+      }
+      expect(snapshots.every(snapshot => snapshot.sibling === sibling)).toBe(true);
+      expect(snapshots.every(snapshot => snapshot.visibleSibling === sibling.descriptor)).toBe(true);
+      if (change !== 'removed') expect(snapshots.every(snapshot => snapshot.first !== null
+        && snapshot.visibleFirst === snapshot.first.descriptor)).toBe(true);
+      stop();
+      await reconcile(null);
+      expect(registry.get(firstId)).toBeNull();
+      expect(registry.get(siblingId)).toBeNull();
+    },
+  );
+
   it('keeps complete-set reconciliation at the AppShell boundary', async () => {
     expect(reconcileAppShellProjectedClientExecutables).toBeTypeOf('function');
 
@@ -609,6 +678,7 @@ describe('projected external Voice provider activation', () => {
       projection: null,
       platform: 'web',
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(removedProjection.voiceProvidersById)),
         projection: removedProjection,
         machineId: 'machine-1',
         serverId: null,
@@ -733,6 +803,7 @@ describe('projected external Voice provider activation', () => {
       projection: null,
       platform: 'web',
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: null,
@@ -886,6 +957,7 @@ describe('projected external Voice provider activation', () => {
       projection: null,
       platform: 'web',
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: account.home.id,
@@ -1010,6 +1082,7 @@ describe('projected external Voice provider activation', () => {
       projection,
       platform,
       voice: {
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: account.home.id,
@@ -1023,6 +1096,7 @@ describe('projected external Voice provider activation', () => {
       projection,
       platform,
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: account.home.id,
@@ -1277,6 +1351,7 @@ describe('projected external Voice provider activation', () => {
       projection: actionProjection,
       platform: 'web' as const,
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: account.home.id,
@@ -1387,6 +1462,7 @@ describe('projected external Voice provider activation', () => {
       ...activationInput,
       projection: actionProjectionB,
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projectionB.voiceProvidersById)),
         projection: projectionB,
         machineId: 'machine-2',
         serverId: replacementHome.home.id,
@@ -1630,6 +1706,7 @@ describe('projected external Voice provider activation', () => {
       projection,
       platform: 'web',
       voice: Object.freeze({
+        providerIds: new Set(Object.keys(projection.voiceProvidersById)),
         projection,
         machineId: 'machine-1',
         serverId: account.home.id,

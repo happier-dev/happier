@@ -186,10 +186,10 @@ describe('createBundledConversationRuntimes', () => {
   it('keeps activated bundled services when the daemon catalog settles, and removes withdrawn services', async () => {
     const lease = createBundledConversationRuntimeHostLease();
     const host = createPluginUiExecutableModuleHost();
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
       host: lease.host,
-    });
+    }));
     const registry = createDefaultVoiceProviderRegistry();
     const settings = voiceSettingsParse({ providerId: 'local_direct' });
     const rows = () => projectVoiceProviderSelectionRows(settings, registry).map(({ entry, ...row }) => row);
@@ -257,10 +257,10 @@ describe('createBundledConversationRuntimes', () => {
       });
       vi.stubGlobal('fetch', fetch);
       const hostLease = createBundledConversationRuntimeHostLease();
-      const runtimes = createBundledConversationRuntimes({
+      const runtimes = (await createBundledConversationRuntimes({
         bundledEntries: [entry],
         host: hostLease.host,
-      });
+      }));
 
       try {
         const registration = getExternalVoiceProviderRegistration('happier.voice.xai/realtime-grok');
@@ -300,10 +300,10 @@ describe('createBundledConversationRuntimes', () => {
     });
     vi.stubGlobal('fetch', fetch);
     const hostLease = createBundledConversationRuntimeHostLease();
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [entry],
       host: hostLease.host,
-    });
+    }));
 
     try {
       const registration = getExternalVoiceProviderRegistration('happier.voice.xai/realtime-grok');
@@ -323,10 +323,10 @@ describe('createBundledConversationRuntimes', () => {
   it('preserves composition for a valid bundled runtime with no recipient contract', async () => {
     const entry = createPublicEntry({ providerId: 'contract_free_provider' });
     const hostLease = createBundledConversationRuntimeHostLease();
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [entry],
       host: hostLease.host,
-    });
+    }));
 
     try {
       expect(runtimes).toHaveLength(1);
@@ -364,10 +364,10 @@ describe('createBundledConversationRuntimes', () => {
     });
     const thirdEntry = createPublicEntry({ providerId: 'third_provider' });
 
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [firstEntry, throwingEntry, thirdEntry],
       host: hostLease.host,
-    });
+    }));
 
     try {
       // One plugin leaf cannot disable Voice for every other provider.
@@ -394,10 +394,10 @@ describe('createBundledConversationRuntimes', () => {
     const entry = createPublicEntry({ providerId: 'only_provider' });
     const duplicate = createPublicEntry({ providerId: 'only_provider' });
 
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [entry, duplicate],
       host: hostLease.host,
-    });
+    }));
 
     try {
       // Denial of the second claim, never a takeover of the first registration.
@@ -432,10 +432,10 @@ describe('createBundledConversationRuntimes', () => {
     });
     const thirdEntry = createPublicEntry({ providerId: 'third_provider' });
 
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [firstEntry, lateFailingEntry, thirdEntry],
       host: hostLease.host,
-    });
+    }));
 
     try {
       expect(runtimes.map((runtime) => runtime.adapter.id)).toEqual([
@@ -489,10 +489,10 @@ describe('createBundledConversationRuntimes', () => {
     });
     const thirdEntry = createPublicEntry({ providerId: 'third_provider' });
 
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [firstEntry, observedEntry, thirdEntry],
       host: hostLease.host,
-    });
+    }));
 
     try {
       // One broken observer withdraws only the leaf it rejected.
@@ -520,21 +520,21 @@ describe('createBundledConversationRuntimes', () => {
   it('withdraws a composed generation from the registry when a replacement host takes over', async () => {
     const retiredDispose = vi.fn(async () => {});
     const retiredLease = createBundledConversationRuntimeHostLease();
-    const retired = createBundledConversationRuntimes({
+    const retired = (await createBundledConversationRuntimes({
       bundledEntries: [createPublicEntry({
         providerId: 'replaced_provider',
         dispose: retiredDispose,
       })],
       host: retiredLease.host,
-    });
+    }));
     expect(getExternalVoiceProviderRegistration('test.voice/replaced-provider')?.adapter)
       .toBe(retired[0]?.adapter);
 
     const replacementLease = createBundledConversationRuntimeHostLease();
-    const replacement = createBundledConversationRuntimes({
+    const replacement = (await createBundledConversationRuntimes({
       bundledEntries: [createPublicEntry({ providerId: 'replacement_provider' })],
       host: replacementLease.host,
-    });
+    }));
 
     try {
       await flushPendingActivationWork();

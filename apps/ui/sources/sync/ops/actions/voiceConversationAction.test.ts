@@ -204,7 +204,8 @@ async function createHarness(start = true, featureEnabled = true) {
             createInvocationAccountOperations: (signal, _sessionId, isCurrent, phase) => createAccountVoiceOperationService({
                 providerId: entry.providerId, contribution, declaration: entry.declaration, phase, recipientContract, signal, isCurrent, fetch: providerFetch }) } } });
     runtimeCleanup.push(async () => { await scope.unwind(); });
-    entry.activate(scope.api);
+    const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+    (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
     await scope.commit();
     const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
     if (!adapter) throw new Error('Generated OpenAI adapter did not activate');

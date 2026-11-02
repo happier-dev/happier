@@ -27,6 +27,7 @@ type AppShellVoiceExecutableProjection = Readonly<{
     projection: PluginUiProjectionModel;
     machineId: string;
     serverId: string | null;
+    providerIds: ReadonlySet<string>;
 }>;
 
 export function retainAppShellProjectedClientExecutables(input: Readonly<{
@@ -40,6 +41,7 @@ export function retainAppShellProjectedClientExecutables(input: Readonly<{
         voiceProjection: input.voice ? { projection: input.voice.projection, directMachineAuthority: {
             machineId: input.voice.machineId, serverId: input.voice.serverId,
         } } : null,
+        voiceProviderIds: input.voice?.providerIds,
         platform: input.platform, accountLifetime: input.accountLifetime,
     });
 }
@@ -86,6 +88,7 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
                 }),
             })
             : null,
+        voiceProviderIds: input.voice?.providerIds,
         platform: input.platform,
         executableHost,
         loaderBackend: input.loaderBackend,

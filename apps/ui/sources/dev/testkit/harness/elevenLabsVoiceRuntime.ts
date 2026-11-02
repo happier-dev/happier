@@ -28,7 +28,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const { createSessionReadBatchHttpBoundary } = await import('./sessionReadBatchHttpBoundary');
     const { answerVoiceRealtimePreparationHttpRequest } = await import('./voiceRealtimePreparationHttpBoundary');
     const { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } = await import('@/voice/registry/generatedBundledVoiceRuntimeEntries');
-    const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+    const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
     const { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } = await import('../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index');
     const { getVoiceAdapterRegistry, registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
@@ -78,7 +78,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
         }).handle,
     });
     let disconnect: (() => Promise<void>) | undefined;
-    const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    const assembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     registerVoiceAdapters(assembly.adapters);
     const lifecycle = createVoiceSessionLifecycleController();
     lifecycle.setConfiguredProviderId(entry.providerId);

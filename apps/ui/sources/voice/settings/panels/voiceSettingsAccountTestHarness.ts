@@ -169,7 +169,8 @@ export function createElevenLabsSettingsRuntimeTestHarness() {
                     }),
                 } },
             });
-            entry.activate(next.api);
+            const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+            (await loadBundledVoiceRuntimeActivate(entry))(next.api);
             await next.commit();
             const previous = scope;
             scope = next;

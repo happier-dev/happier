@@ -11,7 +11,7 @@ import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/ma
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForTestEvent } from '@/dev/testkit';
-import type { BuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import type { BuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -49,7 +49,7 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { sync } = await import('@/sync/sync');
-const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } = await import('@/voice/session/voiceAdapterRegistry');
 const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
 const { writeVoiceConversationScopeMetadata, readVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
@@ -143,7 +143,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
         metadata: { machineId: 'machine-1', path: `/project/${id}`, host: 'tester.local', flavor: 'codex' } }), carrier(`voice-root-${id}`, id)]),
     ].map(session => [session.id, session])) });
     resetVoiceAdapterRegistryForTests();
-    assembly = createBuiltinVoiceAdapterAssembly();
+    assembly = (await createBuiltinVoiceAdapterAssembly());
     registerVoiceAdapters(assembly.adapters);
     metadata.writes.length = 0;
     network.requests.length = 0;

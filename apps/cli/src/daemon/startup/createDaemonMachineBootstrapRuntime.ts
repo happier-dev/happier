@@ -545,19 +545,21 @@ agentIsolation: params.agentIsolation,
           });
         });
       }
-      const recoverWorkflowRuns = params.createWorkflowRecoveryForMachine?.({
-        machineId: registeredMachine.id,
-        machineAdmissionTransport: async (request, options) =>
-          await apiMachine.enqueueSessionPendingByMachine(request, options),
-        machineActionDirectTargetTransport: {
-          machineId: registeredMachine.id,
-          machineServiceAction: request => apiMachine.executeMachineServiceAction(request),
-          invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
-        },
-      });
-      workflowRecovery = recoverWorkflowRuns
+      const createWorkflowRecovery = params.createWorkflowRecoveryForMachine;
+      let recoverWorkflowRuns: ReturnType<NonNullable<typeof createWorkflowRecovery>> | undefined;
+      workflowRecovery = createWorkflowRecovery
         ? async (trigger) => {
             if (params.isWorkflowFeatureEnabled?.() !== true) return;
+            recoverWorkflowRuns ??= createWorkflowRecovery({
+              machineId: registeredMachine.id,
+              machineAdmissionTransport: async (request, options) =>
+                await apiMachine.enqueueSessionPendingByMachine(request, options),
+              machineActionDirectTargetTransport: {
+                machineId: registeredMachine.id,
+                machineServiceAction: request => apiMachine.executeMachineServiceAction(request),
+                invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
+              },
+            });
             await recoverWorkflowRuns(trigger);
           }
         : null;

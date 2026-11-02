@@ -26,12 +26,12 @@ const { createVoiceSessionBindingManager } = await import('./voiceConversationBi
 const { writeVoiceConversationBindingMetadata, readVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
 const { appendVoiceTargetSessionSwitchNote } = await import('./appendVoiceTargetSessionSwitchNote');
 const { selectVoiceTranscriptEntriesForConversationSession } = await import('@/voice/transcript/voiceTranscriptSelectors');
-const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { registerVoiceAdapters, resetVoiceAdapterRegistryForTests, getVoiceAdapterRegistry } = await import('@/voice/session/voiceAdapterRegistry');
 
 let account: Awaited<ReturnType<typeof createVoiceSettingsAccountTestHarness>>;
 let http: ReturnType<typeof createSessionMetadataHttpBoundary>;
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let store: ReturnType<typeof createVoiceSessionBindingStore>;
 let manager: ReturnType<typeof createVoiceSessionBindingManager>;
 let now = 123;
@@ -81,7 +81,7 @@ beforeEach(async () => {
     // Real persisted-binding policy and Sync persistence; only Home HTTP and the clock are controlled.
     const resolver = createVoiceConversationBindingResolver({ store: createVoiceSessionBindingStore() });
     resetVoiceAdapterRegistryForTests();
-    assembly = createBuiltinVoiceAdapterAssembly();
+    assembly = (await createBuiltinVoiceAdapterAssembly());
     registerVoiceAdapters(assembly.adapters);
     now = 123;
     manager = createVoiceSessionBindingManager({

@@ -138,7 +138,7 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
   let accountProfile = AccountProfileSchema.parse({ id: 'openai-composed-account' });
 
   function openAiEntry() {
-    const entry = createBundledConversationRuntimeEntries(OPENAI_SOURCE_MANIFEST, activateOpenAiVoice)
+    const entry = createBundledConversationRuntimeEntries(OPENAI_SOURCE_MANIFEST, async () => activateOpenAiVoice)
       .find((candidate) => candidate.declaration.id === 'realtime-openai');
     if (!entry) throw new Error('realtime_openai bundled entry missing');
     return entry;
@@ -420,7 +420,8 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
         }),
       }),
     });
-    entry.activate(scope.api as Parameters<typeof entry.activate>[0]);
+    const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+    (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
     await scope.commit();
     const registration = getExternalVoiceProviderRegistration(
       providerId,

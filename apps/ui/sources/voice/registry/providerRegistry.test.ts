@@ -588,4 +588,22 @@ describe('voice provider registry', () => {
       removeExternalVoiceProviderRegistration(token);
     }
   });
+
+  it('keeps an admitted conversation selectable before its executable is demanded', () => {
+    const registry = createDefaultVoiceProviderRegistry();
+    const providerId = 'happier.voice.openai/realtime-openai';
+    const descriptor = registry.get(providerId);
+    if (!descriptor) throw new Error('missing bundled conversation descriptor');
+    const token = Object.freeze({});
+    try {
+      replaceExternalVoiceProviderProjectionAuthority(null, token, new Map([[providerId, 'cold-openai']]),
+        [], [descriptor]);
+      expect(registry.get(providerId)).toBe(descriptor);
+      expect(registry.get('happier.voice.xai/realtime-xai')).toBeNull();
+      expect(registry.list().filter(entry => entry.kind === 'voice.conversation-provider.v1'
+        && entry.source.kind !== 'built_in')).toEqual([descriptor]);
+    } finally {
+      removeExternalVoiceProviderRegistration(token);
+    }
+  });
 });

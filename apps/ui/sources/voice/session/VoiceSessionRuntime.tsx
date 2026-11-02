@@ -60,6 +60,8 @@ import { Platform } from 'react-native';
 import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { readVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { VoiceSetupFirstSuccessRuntime } from '@/voice/settings/setup/VoiceSetupFirstSuccessRuntime';
+import { useVoiceProviderRuntimeDemand } from './useVoiceProviderRuntimeDemand';
+import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -68,6 +70,8 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   useForegroundVoiceTextTurnQaBridge();
   const voice = useSetting('voice') as any;
   const canonicalVoiceSettings = useSetting('voiceSettingsV1');
+  const providerRuntimeDemand = useVoiceProviderRuntimeDemand();
+  const declarationSources = useAppShellPluginUiDeclarationSources();
   const savedSecretCatalog = useSavedSecretCatalog();
   const secrets = [...savedSecretCatalog.usableSecrets];
   const profile = useProfile(profile => ({
@@ -187,6 +191,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     }
   })();
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
+  const assemblyRef = React.useRef<ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null>(null);
   const accountLifetimeRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
   const accountScopeAtLastLayoutCommitRef = React.useRef<typeof accountScope | undefined>(undefined);
   const credentialAuthorityRef = React.useRef<(VoiceCredentialRuntimeAuthoritySnapshot & Readonly<{ agentDefaultKey: string | null }>) | null>(null);
@@ -205,6 +210,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     const assembly = createBuiltinVoiceAdapterAssembly({
       ...(currentUiContext ? { currentUiContext } : {}),
     });
+    assemblyRef.current = assembly;
     registerVoiceAdapters(assembly.adapters);
     const continuation = createVoiceContinuationProjection();
     const controller = createVoiceSessionLifecycleController({
@@ -279,6 +285,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     };
     controller.setConfiguredProviderId(providerId);
     return () => {
+      if (assemblyRef.current === assembly) assemblyRef.current = null;
       if (currentUiContextToolSetSyncRef.current?.controller === controller) {
         currentUiContextToolSetSyncRef.current = null;
       }
@@ -308,6 +315,17 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       })();
     };
   }, [currentUiContext]);
+
+  React.useEffect(() => {
+    // Account-scoped activation belongs to AppShell's executable owner. The
+    // standalone source bridge waits for its existing declaration admission.
+    if (!declarationSources.ready || declarationSources.accountLifetime) return;
+    const assembly = assemblyRef.current;
+    if (!assembly) return;
+    for (const demandedProviderId of providerRuntimeDemand) {
+      fireAndForget(assembly.activateProvider(demandedProviderId), { tag: 'VoiceSessionRuntime.activateProvider' });
+    }
+  }, [providerRuntimeDemand, currentUiContext, declarationSources.ready, declarationSources.accountLifetime]);
 
   React.useLayoutEffect(() => {
     const previousAccountScope = accountScopeAtLastLayoutCommitRef.current;

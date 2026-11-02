@@ -202,7 +202,8 @@ export async function createCodexVoiceRuntimeEnvironment() {
                 recipientContract: createBundledVoiceRecipientContract({ pluginId: entry.pluginId, declaration: entry.declaration }), descriptor: 'bundled' as const,
             }) }),
         });
-        entry.activate(scope.api as Parameters<typeof entry.activate>[0]);
+        const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+        (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
         await scope.commit();
         const registration = getExternalVoiceProviderRegistration(providerId);
         if (!registration?.adapter) throw new Error('realtime_codex bundled activation failed');

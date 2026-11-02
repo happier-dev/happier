@@ -1,3 +1,4 @@
+import { createWorkflowRunRecoveryReader } from '@/daemon/workflows/recovery';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -823,6 +824,42 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     }));
 
     expect(runtime.reconcileConnectedServicesProjection).toBe(reconcileConnectedServicesProjection);
+  });
+
+  it('keeps disabled Workflow recovery cold and uses the existing lifecycle boundary after enabling', async () => {
+    let enabled = false;
+    let constructions = 0;
+    let assignmentReads = 0;
+    const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+      api: { machineSyncClient: vi.fn(() => ({})) } as never,
+      isWorkflowFeatureEnabled: () => enabled,
+      createWorkflowRecoveryForMachine: ({ machineId }) => {
+        constructions++;
+        return createWorkflowRunRecoveryReader({ accountId: 'account', machineId,
+          // The persisted Run transport is the boundary; recovery logic remains real.
+          storage: { execute: async operation => {
+            if (operation.operation !== 'recovery.list') throw new Error('Unexpected storage operation');
+            assignmentReads++;
+            return { candidates: [] };
+          } },
+          resolveAccountEncryption: async () => ({ kind: 'available',
+            witness: { mode: 'plain', version: 0, contentKeyFingerprint: null } }),
+          reconcileInvocation: async () => { throw new Error('Empty assignments cannot reconcile'); },
+        });
+      },
+    }));
+    await runtime.createConnectedApiMachine({ id: 'machine_1', encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    await runtime.recoverWorkflowRuns?.('startup');
+    expect({ constructions, assignmentReads }).toEqual({ constructions: 0, assignmentReads: 0 });
+    enabled = true;
+    await runtime.recoverWorkflowRuns?.('control');
+    expect({ constructions, assignmentReads }).toEqual({ constructions: 1, assignmentReads: 1 });
+    await runtime.recoverWorkflowRuns?.('reconnect');
+    expect({ constructions, assignmentReads }).toEqual({ constructions: 1, assignmentReads: 2 });
+    enabled = false;
+    await runtime.recoverWorkflowRuns?.('resume');
+    expect({ constructions, assignmentReads }).toEqual({ constructions: 1, assignmentReads: 2 });
   });
 
   it('constructs one workflow recovery reader for the connected machine and forwards lifecycle triggers', async () => {

@@ -79,7 +79,7 @@ import { VoiceSessionRuntime } from '@/voice/session/VoiceSessionRuntime';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+import { createBuiltinVoiceAdapterAssembly } from '@/dev/testkit/harness/builtinVoiceAdapters';
 import {
   readCanonicalVoiceTranscriptSnapshot,
 } from '@/voice/transcript/voiceConversationTranscript';
@@ -2523,8 +2523,8 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     const releaseAWrite = createDeferredVoid();
     const transcriptWrites: string[] = [];
     let nextTranscriptSequence = 800;
-    let replacementAssembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
-    let replacementAdapter: ReturnType<typeof createBuiltinVoiceAdapterAssembly>['adapters'][number] | null = null;
+    let replacementAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
+    let replacementAdapter: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>['adapters'][number] | null = null;
     let replacementBrowser: ReturnType<typeof installVoiceWebRtcBrowserBoundary> | null = null;
     let typedTurn: Promise<void> | null = null;
 
@@ -2620,7 +2620,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       vi.stubGlobal('document', Object.freeze({}));
       vi.spyOn(realtimeMicSession, 'createRealtimeMicSession')
         .mockImplementation(replacementBrowser.createMicSession);
-      replacementAssembly = createBuiltinVoiceAdapterAssembly();
+      replacementAssembly = (await createBuiltinVoiceAdapterAssembly());
       const replacementHost = getCurrentBundledConversationRuntimeHost();
       if (!replacementHost) throw new Error('replacement Voice generation did not become current');
       replacementAdapter = getExternalVoiceProviderRegistration(
@@ -2786,8 +2786,8 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       seq: 901,
       createdAt: 1_700_000_000_000,
     } as const;
-    let replacementAssembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
-    let replacementAdapter: ReturnType<typeof createBuiltinVoiceAdapterAssembly>['adapters'][number] | null = null;
+    let replacementAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
+    let replacementAdapter: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>['adapters'][number] | null = null;
     let replacementBrowser: ReturnType<typeof installVoiceWebRtcBrowserBoundary> | null = null;
     let typedTurn: Promise<void> | null = null;
     let oldStopping: Promise<void> | null = null;
@@ -2894,7 +2894,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       vi.stubGlobal('document', Object.freeze({}));
       vi.spyOn(realtimeMicSession, 'createRealtimeMicSession')
         .mockImplementation(replacementBrowser.createMicSession);
-      replacementAssembly = createBuiltinVoiceAdapterAssembly();
+      replacementAssembly = (await createBuiltinVoiceAdapterAssembly());
       const replacementHost = getCurrentBundledConversationRuntimeHost();
       if (!replacementHost) throw new Error('replacement Voice generation did not become current');
       replacementAdapter = getExternalVoiceProviderRegistration(
@@ -3025,8 +3025,8 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       localId: string;
     }>> = [];
     let nextTranscriptSequence = 700;
-    let replacementAssembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly> | null = null;
-    let replacementAdapter: ReturnType<typeof createBuiltinVoiceAdapterAssembly>['adapters'][number] | null = null;
+    let replacementAssembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>> | null = null;
+    let replacementAdapter: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>['adapters'][number] | null = null;
     let replacementBrowser: ReturnType<typeof installVoiceWebRtcBrowserBoundary> | null = null;
     let oldDisposalSettled = false;
 
@@ -3126,7 +3126,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       // make this replacement survive merely by sharing capture ownership.
       vi.spyOn(realtimeMicSession, 'createRealtimeMicSession')
         .mockImplementation(replacementBrowser.createMicSession);
-      replacementAssembly = createBuiltinVoiceAdapterAssembly();
+      replacementAssembly = (await createBuiltinVoiceAdapterAssembly());
       const replacementHost = getCurrentBundledConversationRuntimeHost();
       if (!replacementHost) throw new Error('replacement Voice generation did not become current');
       replacementAdapter = getExternalVoiceProviderRegistration(

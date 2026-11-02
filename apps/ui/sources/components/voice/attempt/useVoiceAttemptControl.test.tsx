@@ -96,7 +96,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 let webLocks: ReturnType<typeof installWebLockManagerMock>;
 let lifecycle: ReturnType<typeof import('@/voice/session/voiceSessionLifecycleController')['createVoiceSessionLifecycleController']> | undefined;
 let projectionAdapters: readonly VoiceAdapterController[] = [];
-let providerAssembly: ReturnType<typeof import('@/voice/adapters/registerBuiltinVoiceAdapters')['createBuiltinVoiceAdapterAssembly']> | undefined;
+let providerAssembly: Awaited<ReturnType<typeof import('@/dev/testkit/harness/builtinVoiceAdapters')['createBuiltinVoiceAdapterAssembly']>> | undefined;
 let sessionHttp: ReturnType<typeof import('@/dev/testkit/harness/sessionMetadataHttpBoundary')['createSessionMetadataHttpBoundary']>;
 
 async function installLifecycle(adapter: VoiceAdapterController) {
@@ -118,7 +118,7 @@ async function installLifecycle(adapter: VoiceAdapterController) {
 async function installElevenLabsLifecycle(target: SessionAddress | null = null) {
     const [{ createBuiltinVoiceAdapterAssembly }, { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES },
         { voiceConversationRuntimeMachine }, { voiceSessionBindingStore }, { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG }, { TokenStorage }] = await Promise.all([
-        import('@/voice/adapters/registerBuiltinVoiceAdapters'), import('@/voice/registry/generatedBundledVoiceRuntimeEntries'),
+        import('@/dev/testkit/harness/builtinVoiceAdapters'), import('@/voice/registry/generatedBundledVoiceRuntimeEntries'),
         import('@/voice/runtime/machine/VoiceConversationRuntimeMachine'), import('@/voice/binding/voiceConversationBindingStore'),
         import('@/voice/persistence/voiceTranscriptHistorySession'), import('@/auth/storage/tokenStorage'),
     ]);
@@ -152,7 +152,7 @@ async function installElevenLabsLifecycle(target: SessionAddress | null = null) 
     getStorage().setState(state => ({ sessions: { ...state.sessions, [conversation.id]: conversation,
         ...(targetSession ? { [targetSession.id]: targetSession } : {}) } }));
     voiceConversationRuntimeMachine.reset();
-    providerAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] });
+    providerAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [entry] }));
     voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: target?.sessionId ?? VOICE_AGENT_GLOBAL_SESSION_ID,
         conversationSessionId: conversation.id, conversationSessionAddress: { serverId: recoveryRuntime.serverId, sessionId: conversation.id },
         targetSessionAddress: target, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
@@ -202,8 +202,8 @@ async function restoreAttemptAccount() {
         settings: settingsParse({ experiments: true, featureToggles: { voice: true, 'execution.runs': true, 'voice.agent': true } }),
         machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] } });
     initialStorageState = getStorage().getState();
-    const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
-    providerAssembly = createBuiltinVoiceAdapterAssembly();
+    const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+    providerAssembly = (await createBuiltinVoiceAdapterAssembly());
     projectionAdapters = providerAssembly.adapters;
     installConnectedAccountDescriptorProjection({ scopeKey: scope.serverId, status: 'ready', descriptors: [], conflicts: [], errorReason: null });
 }
@@ -535,14 +535,14 @@ describe('external provider registration reaches the surface', () => {
         const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } =
             await import('@/voice/registry/externalVoiceProviderRegistrations');
         const { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } = await import('@/voice/registry/generatedBundledVoiceRuntimeEntries');
-        const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+        const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
         const declared = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(entry => entry.pluginId === 'happier.voice.elevenlabs');
         if (!declared?.declaration.settings) throw new Error('External discovery fixture requires its public provider leaf and settings');
         await providerAssembly?.dispose();
         // The public provider leaf activates against a different plugin identity.
         // Discovery exercises the actual registration/capability projection;
         // it does not claim that this external service starts a hosted call.
-        providerAssembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [{ ...declared, pluginId: 'acme.voice.demo', providerId: EXTERNAL_PROVIDER_ID }] });
+        providerAssembly = (await createBuiltinVoiceAdapterAssembly({ bundledEntries: [{ ...declared, pluginId: 'acme.voice.demo', providerId: EXTERNAL_PROVIDER_ID }] }));
         const adapter = providerAssembly.adapters.find(candidate => candidate.id === EXTERNAL_PROVIDER_ID);
         if (!adapter) throw new Error('External provider leaf did not activate');
         removeExternalVoiceProviderRegistration(externalToken);

@@ -104,6 +104,35 @@ export type VoiceProviderRegistryEntry = VoiceUiRuntimeContribution & Readonly<{
   providerSettings?: ExternalVoiceProviderSettingsDescriptor;
 }>;
 
+/** Declaration-only discovery is independent of executable provider activation. */
+export function projectExternalConversationVoiceDescriptor(input: Readonly<{
+  pluginId: string;
+  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
+  recipientContract: RecipientContractV1 | null;
+  providerSettings?: ExternalVoiceProviderSettingsDescriptor;
+}>): VoiceProviderRegistryEntry {
+  const { declaration } = input;
+  const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+    pluginId: input.pluginId, localId: declaration.id,
+  }));
+  const providerSettings = input.providerSettings ?? createExternalVoiceProviderSettingsDescriptor(declaration.settings);
+  const accountCredentialSlot = projectVoiceProviderAccountCredentialSlot(declaration, input.recipientContract);
+  return Object.freeze({
+    pluginId: input.pluginId, providerId, settingsSectionId: providerId,
+    kind: 'voice.conversation-provider.v1' as const,
+    ...projectVoiceProviderDeclarationRegistryBase({ declaration, providerSettings,
+      selectionOptions: Object.freeze([Object.freeze({
+        id: 'default', modeId: 'default', order: 10_000,
+        titleKey: typeof declaration.title === 'string' ? declaration.title : declaration.title.fallback,
+        subtitleKey: '', configPatch: providerSettings.defaultConfig,
+      })]),
+    }),
+    declaration,
+    ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
+    source: Object.freeze({ kind: 'external' as const, pluginId: input.pluginId, localId: declaration.id }),
+  });
+}
+
 export type VoiceProviderRegistry = Readonly<{
   get: (providerId: string) => VoiceProviderRegistryEntry | null;
   list: () => readonly VoiceProviderRegistryEntry[];

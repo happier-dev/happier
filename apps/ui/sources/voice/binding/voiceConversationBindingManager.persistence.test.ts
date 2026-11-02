@@ -29,7 +29,7 @@ const { voiceSessionBindingManager } = await import('./voiceConversationBindingR
 const { ensureDefaultLocalVoiceQaBinding } = await import('@/voice/qa/ensureDefaultLocalVoiceQaBinding');
 const { voiceSessionBindingStore } = await import('./voiceConversationBindingStore');
 const { readVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
-const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
+const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
 const { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } = await import('@/voice/session/voiceAdapterRegistry');
 const { writeVoiceConversationScopeMetadata } = await import('@/voice/persistence/voiceConversationScopeMetadata');
 const { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } = await import('@/voice/persistence/voiceConversationSession');
@@ -39,7 +39,7 @@ const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 let metadata: ReturnType<typeof createSessionMetadataHttpBoundary>;
-let assembly: ReturnType<typeof createBuiltinVoiceAdapterAssembly>;
+let assembly: Awaited<ReturnType<typeof createBuiltinVoiceAdapterAssembly>>;
 let rejectNextBindingFor: string | null;
 const address = (sessionId: string) => ({ serverId: connection.home.id, sessionId });
 const input = () => ({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__', requestedTargetSessionId: 's1',
@@ -134,7 +134,7 @@ beforeEach(async () => {
     storage.setState({ settings, settingsScope: scope, profileScope: scope, sessions, sessionMessages: {} });
     voiceSessionBindingStore.setState({ bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {} });
     resetVoiceAdapterRegistryForTests();
-    assembly = createBuiltinVoiceAdapterAssembly();
+    assembly = (await createBuiltinVoiceAdapterAssembly());
     registerVoiceAdapters(assembly.adapters);
 });
 

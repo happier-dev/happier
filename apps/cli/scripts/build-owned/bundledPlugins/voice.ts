@@ -119,7 +119,7 @@ export function renderBundledVoiceRuntimeEntriesTs(
   for (const source of applicableSources) {
     const prefix = toBundledVoiceImportPrefix(source.pluginPackageId);
     lines.push(
-      `import { ${source.conversationClient.exportName} as ${prefix}_BUNDLED_VOICE_ACTIVATE } from '${source.packageName}/happier-plugin-ui/${source.conversationClient.artifactId}';`,
+      `const ${prefix}_BUNDLED_VOICE_ACTIVATE = async () => (await import('${source.packageName}/happier-plugin-ui/${source.conversationClient.artifactId}')).${source.conversationClient.exportName};`,
     );
   }
   if (applicableSources.length > 0) lines.push(`import { ${applicableSources.map(source => `${toBundledVoiceImportPrefix(source.pluginPackageId)}_BUNDLED_VOICE_MANIFEST`).join(', ')} } from './generatedBundledVoiceEntries';`);

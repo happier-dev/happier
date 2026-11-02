@@ -304,10 +304,10 @@ async function installCodexConnectedAccountDescriptor(external?: Readonly<{
     const { createBundledConversationRuntimes } = await import('@/voice/registry/bundledConversationRuntimes');
     const { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } = await import('@/voice/registry/generatedBundledVoiceRuntimeEntries');
     const lease = external ? null : createBundledConversationRuntimeHostLease();
-    const runtimes = createBundledConversationRuntimes({
+    const runtimes = (await createBundledConversationRuntimes({
         bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
         host: external?.host ?? lease!.host,
-    });
+    }));
     onTestFinished(async () => {
         await Promise.all(runtimes.map(runtime => runtime.dispose()));
         lease?.revoke();

@@ -269,7 +269,7 @@ let projectedRecipientContract: RecipientContractV1 | null = null;
 let descriptorReplies: Array<ReturnType<typeof ConnectedAccountUiProjectionEntryV1Schema.parse>> = [];
 let reloadProjection: (() => void) | undefined;
 let runtimeLease: ReturnType<typeof createBundledConversationRuntimeHostLease> | undefined;
-let bundledRuntimes: ReturnType<typeof createBundledConversationRuntimes> = [];
+let bundledRuntimes: Awaited<ReturnType<typeof createBundledConversationRuntimes>> = [];
 function ProjectionReader() {
   reloadProjection = useAppShellPluginUiProjection().reloadConnectedAccountProjection;
   return null;
@@ -441,9 +441,9 @@ beforeEach(async () => {
   installCurrentDeclaration(declaration);
   await installCodexDescriptor();
   runtimeLease = createBundledConversationRuntimeHostLease();
-  bundledRuntimes = createBundledConversationRuntimes({
+  bundledRuntimes = (await createBundledConversationRuntimes({
     bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES, host: runtimeLease.host,
-  });
+  }));
   purposes = { v: 1, bindings: [] };
   revision = 9;
   writes = [];
@@ -800,7 +800,8 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     const scope = createExternalVoiceProviderActivationScope({ pluginId: contribution.pluginId,
       occurrenceId: declarationOccurrenceId, declarations: [connectedOnly], hostPlatform: 'web' });
     onTestFinished(async () => { await scope.unwind(); });
-    runtime.activate(scope.api);
+    const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
+    (await loadBundledVoiceRuntimeActivate(runtime))(scope.api);
     await scope.commit();
     const providerId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId: connectedOnly.id });
     const activated = createDefaultVoiceProviderRegistry().get(providerId);
