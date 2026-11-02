@@ -12,6 +12,12 @@ runtime preparation and Metro consume it without loading development tooling.
 Do not hand-edit `package.json#exports`. Builds, typechecks and `check:exports`
 reject stale output without writing.
 
+During source authoring, leave
+`pnpm --filter @happier-dev/protocol generate:exports --watch` running to publish
+added, moved and removed source leaves automatically. This development process
+uses the existing source watcher and publication lock; stop it with Ctrl-C.
+Configuration/alias edits use the one-shot command or restart the watcher.
+
 Compiled implementation leaves are available through their source-relative
 subpaths. Declaration inputs, tests, testkits and fixture directories stay private.
 Exact entries preserve Metro's web/native selection and the source, declaration

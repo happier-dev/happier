@@ -61,9 +61,32 @@ export async function generateProtocolExports({ packageRoot = defaultPackageRoot
   });
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (!process.argv.includes('--write') && !process.argv.includes('--check')) {
-    throw new Error('Use --write or --check.');
+// Authoring command only: runtime and capture readers consume package.json.
+export async function watchProtocolExports({ packageRoot = defaultPackageRoot, onError = console.error } = {}) {
+  const { watchDebounced } = await import('../../../apps/stack/scripts/utils/proc/watch.mjs');
+  let pending = Promise.resolve();
+  const watcher = watchDebounced({ paths: [join(packageRoot, 'src')],
+    onChange: () => {
+      pending = pending.then(() => generateProtocolExports({ packageRoot })).catch(onError);
+    },
+  });
+  try {
+    await generateProtocolExports({ packageRoot });
+  } catch (error) {
+    watcher.close();
+    throw error;
   }
-  await generateProtocolExports({ check: process.argv.includes('--check') });
+  return { async close() { watcher.close(); await pending; } };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--watch')) {
+    const watcher = await watchProtocolExports();
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void watcher.close(); });
+  } else {
+    if (!process.argv.includes('--write') && !process.argv.includes('--check')) {
+      throw new Error('Use --write, --check or --watch.');
+    }
+    await generateProtocolExports({ check: process.argv.includes('--check') });
+  }
 }

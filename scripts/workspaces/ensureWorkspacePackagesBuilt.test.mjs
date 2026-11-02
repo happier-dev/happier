@@ -1,3 +1,4 @@
+import { readWorkspacePackages, resolveWorkspaceSource } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -4642,4 +4643,44 @@ test('Stack workspace build boundary propagates timeoutMs to the package-manager
       },
     ),
   );
+});
+
+test('Protocol development generation publishes a new leaf before workspace capture', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-protocol-new-leaf-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writePnpmWorkspaceFixture(root, { workspaces: ['packages/*'] });
+  for (const app of ['cli', 'ui', 'server']) {
+    mkdirSync(join(root, 'apps', app), { recursive: true });
+    writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const dir = join(root, 'packages/protocol');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, 'scripts'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
+    exports: {}, scripts: { build: 'fixture-compiler' } }));
+  writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+  writeFileSync(join(dir, 'export-aliases.json'), '{".":"./src/index.ts"}');
+  writeFileSync(join(dir, 'src/index.ts'), 'export const value = 1;');
+  const generator = new URL('../../packages/protocol/scripts/generate-exports.mjs', import.meta.url).href;
+  writeFileSync(join(dir, 'scripts/generate-exports.mjs'), 'throw new Error("Captured preparation must not load the export generator");');
+  await (await import(generator)).generateProtocolExports({ packageRoot: dir });
+  writeFileSync(join(dir, 'src/systemSessionMarker.ts'), 'export const value = 43;');
+  await (await import(generator)).generateProtocolExports({ packageRoot: dir });
+  const result = await ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/protocol'], { quiet: true,
+    workspaceBuildBoundary: { prepareEnv: async (_dir, env) => env,
+      // The compiler/process adapter is the boundary; capture and exports stay real.
+      runPackageBuild: async (buildDir, { env }) => {
+        assert.notEqual(buildDir, dir);
+        const packages = await readWorkspacePackages(join(buildDir, '../..'));
+        assert.equal(resolveWorkspaceSource(packages, '@happier-dev/protocol/systemSessionMarker'),
+          join(buildDir, 'src/systemSessionMarker.ts'));
+        for (const name of ['index', 'systemSessionMarker']) {
+          await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, `${name}.js`), await readFile(join(buildDir, `src/${name}.ts`), 'utf8'));
+          await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, `${name}.d.ts`), 'export declare const value: number;');
+        }
+      } },
+  });
+  assert.deepEqual(result.built, ['@happier-dev/protocol']);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).exports['./systemSessionMarker']['default'], './dist/systemSessionMarker.js');
+  assert.match(readFileSync(join(dir, 'dist/systemSessionMarker.js'), 'utf8'), /43/);
 });

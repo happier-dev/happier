@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { watch } from 'node:fs';
 import { test, expect } from 'vitest';
-import { generateProtocolExports } from './generate-exports.mjs';
+import { generateProtocolExports, watchProtocolExports } from './generate-exports.mjs';
 import { readWorkspacePackages, resolveWorkspaceSource } from '../../cli-common/sourceRuntimeEntries.mjs';
 import { captureBuildInputFiles } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
@@ -77,10 +78,12 @@ test('published exports match the current compiled public source inventory', asy
   await generateProtocolExports({ check: true });
 });
 
-test('a generated new leaf resolves after capture without loading development tooling', async () => {
+test('the development watcher publishes a new leaf before tooling-free workspace capture', async () => {
   const root = await mkdtemp(join(tmpdir(), 'protocol-captured-exports-'));
   const packageRoot = join(root, 'source/packages/protocol');
   const captureDir = join(root, 'capture');
+  let developmentWatcher;
+  let manifestWatcher;
   try {
     await mkdir(join(packageRoot, 'src'), { recursive: true });
     await mkdir(join(packageRoot, 'scripts'));
@@ -93,10 +96,15 @@ test('a generated new leaf resolves after capture without loading development to
     // Source preparation must consume committed exports without importing tooling.
     await writeFile(join(packageRoot, 'scripts/generate-exports.mjs'),
       'throw new Error("Runtime preparation imported the export generator");');
-    await generateProtocolExports({ packageRoot });
+    developmentWatcher = await watchProtocolExports({ packageRoot });
+    const published = new Promise((resolve, reject) => {
+      manifestWatcher = watch(packageRoot, (_event, filename) => {
+        if (filename === 'package.json') { manifestWatcher.close(); resolve(); }
+      });
+      manifestWatcher.on('error', reject);
+    });
     await writeFile(join(packageRoot, 'src/systemSessionMarker.ts'), 'export const value = 43;');
-    await expect(generateProtocolExports({ packageRoot, check: true })).rejects.toThrow('Protocol exports are stale');
-    await generateProtocolExports({ packageRoot });
+    await published;
     await captureBuildInputFiles({ sourceDir: join(root, 'source'), captureDir,
       readPaths: () => readWorkspaceBuildInputs(packageRoot).map(path => `packages/protocol/${path}`),
     });
@@ -107,7 +115,14 @@ test('a generated new leaf resolves after capture without loading development to
     expect(manifest.exports['./systemSessionMarker']['happier-source']).toBe('./src/systemSessionMarker.ts');
     expect(await readFile(join(captureDir, 'packages/protocol/package.json'), 'utf8'))
       .toBe(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+    const imported = await promisify(execFile)(process.execPath, [
+      '--experimental-strip-types', '--conditions=happier-source', '--input-type=module', '-e',
+      'import { value } from "@happier-dev/protocol/systemSessionMarker"; console.log(value);',
+    ], { cwd: join(captureDir, 'packages/protocol'), env: { ...process.env, NODE_OPTIONS: '' } });
+    expect(imported.stdout.trim()).toBe('43');
   } finally {
+    manifestWatcher?.close();
+    await developmentWatcher?.close();
     await rm(root, { recursive: true, force: true });
   }
 });

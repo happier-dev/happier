@@ -1509,6 +1509,10 @@ moving a public module and commit the resulting map. Runtime/source preparation,
 captured inputs and Metro consume that map without running its generator, which
 requires the development TypeScript tooling. The canonical workspace input
 inventory includes the alias configuration; builds/typechecks reject stale maps.
+For automatic publication while authoring source modules, run Protocol's
+`generate:exports --watch` development command. It updates the authored manifest
+through the same generator and existing watcher/lock owners, before subsequent
+capture and Metro consumption. It is never launched from a captured runtime.
 Exact entries retain the source, types and JavaScript resolution used by Metro,
 source tools and published/bundled hosts.
 
