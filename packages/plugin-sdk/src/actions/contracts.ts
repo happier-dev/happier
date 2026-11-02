@@ -14,6 +14,7 @@ import type { PluginActionContributionV2 } from './actionTypeMap.generated.js';
 import type { ActionsService } from './service.js';
 import type { PluginAccountStorageScope } from '../storage.js';
 import type { TargetedContributionsService } from '../services/targetedContributions.js';
+import type { ScopedSettingsService } from '../services/core.js';
 
 /**
  * A contributed Action's qualified runtime identity plus declaration-only
@@ -77,6 +78,10 @@ export type PluginAccountActionContext = Readonly<{
         machineConnectorSecrets?: MachineConnectorSecretsService;
 
         storage: Readonly<{ account: PluginAccountStorageScope }>;
+        /** Declaration-bound Account reads; mutation remains with the Settings Actions. */
+        settings: Readonly<{
+            forScope: (scope: Readonly<{ kind: 'account' }>) => Pick<ScopedSettingsService, 'snapshot' | 'get' | 'describe' | 'watch'>;
+        }>;
         actions: Pick<ActionsService, 'execute' | 'executeAdmittedTargetedOperation'>;
         targetedContributions: TargetedContributionsService;
     }>;

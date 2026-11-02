@@ -13,6 +13,7 @@ import { readPluginAccountAvailability } from '@/sync/domains/plugins/availabili
 import { createPluginUiAccountStorageScope } from '@/sync/api/plugins/data/pluginUiDataClient';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { createUiAccountActionSettingsService } from '@/sync/domains/plugins/settings/accountActionSettings';
 import { createPluginSurfaceTargetedDeclarationSource } from './pluginSurfaceTargetedDeclarations';
 
 /** Physical UI services over the existing Account Data, Action and admission owners. */
@@ -85,6 +86,8 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
     };
 
     const services: PluginAccountActionContext['services'] = {
+        settings: createUiAccountActionSettingsService({ pluginId: input.pluginId, accountLifetime: input.accountLifetime,
+            signal: invocation.signal, isCurrent }),
         storage: { account: createPluginUiAccountStorageScope({
             pluginId: input.pluginId, accountLifetime: input.accountLifetime, readAvailability: () => availability,
             signal: invocation.signal, isCurrent,

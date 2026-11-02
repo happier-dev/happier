@@ -44,6 +44,7 @@ import {
     readPluginActionResultParser,
 } from '../host/registration/index.js';
 import { createPluginRegistrationScope } from '../registration/scope.js';
+import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
 import type { PluginRuntimeRegistration } from '../registration/valueByFamily.js';
 import type { PluginServiceId, PluginServices } from '../services/index.js';
 import type {
@@ -1281,6 +1282,7 @@ export async function createPluginTestkit(
                             get executeAdmittedTargetedOperation() { return invocationServices.actions.executeAdmittedTargetedOperation.bind(invocationServices.actions); },
                         }),
                         targetedContributions: invocationServices.targetedContributions,
+                        settings: createPluginAccountActionSettingsService(invocationServices.settings),
                     }) }));
                 }
                 const context = Object.freeze({

@@ -55,6 +55,7 @@ import type {
 import type { ActionHandler, PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE } from '../context/storage';
+import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
 import {
     readPluginActionInputParser,
     readPluginActionResultParser,
@@ -135,6 +136,7 @@ function invokeCapturedActionHandler(
             actions: Object.freeze({ execute: context.services.actions.execute,
                 executeAdmittedTargetedOperation: context.services.actions.executeAdmittedTargetedOperation }),
             targetedContributions: context.services.targetedContributions,
+            settings: createPluginAccountActionSettingsService(context.services.settings),
         }),
     }) satisfies PluginAccountActionContext;
     return Reflect.apply(handler, undefined, [input, invocationContext]);
