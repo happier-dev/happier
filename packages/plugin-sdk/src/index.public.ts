@@ -37,6 +37,7 @@ export type { PluginDragSourceRuntime, PluginDropTargetRuntime, EntityDragItemV1
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from './manifest.js';
 export type { PluginProjectNativeAdapterContributionV1 } from './manifest.js';
 export type { PluginInputTypeReferenceV1 } from './manifest.js';
+export type { PluginLocalizedStringV2 } from './manifest.js';
 export type { PluginAtmospherePictureContributionV1 } from './manifest.js';
 export type { PluginRegistrySourceContributionV1 } from './manifest.js';
 export type { PluginLanguageServerContributionV1 } from './manifest.js';

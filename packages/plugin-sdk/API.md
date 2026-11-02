@@ -114,6 +114,7 @@
 | `.` | `PluginInvocationOriginSurface` | type | daemon |
 | `.` | `PluginJsonValueV2` | type | any |
 | `.` | `PluginLanguageServerContributionV1` | type | any |
+| `.` | `PluginLocalizedStringV2` | type | any |
 | `.` | `PluginMachineMaterializationRefV1` | type | daemon |
 | `.` | `PluginOperationAvailability` | type | any |
 | `.` | `PluginPath` | type | daemon |
@@ -1732,7 +1733,6 @@
 | `./manifest` | `PluginIdSchema` | value | any |
 | `./manifest` | `PluginInputTypeContributionV1` | type | any |
 | `./manifest` | `PluginJsonSchemaValidator` | type | any |
-| `./manifest` | `PluginLocalizedStringV2` | type | any |
 | `./manifest` | `PluginManifest` | type | any |
 | `./manifest` | `PluginManifestDiagnostic` | type | any |
 | `./manifest` | `PluginManifestParseResult` | type | any |

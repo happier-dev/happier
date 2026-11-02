@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,

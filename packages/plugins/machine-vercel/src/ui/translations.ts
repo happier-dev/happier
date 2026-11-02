@@ -1,4 +1,4 @@
-import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 
 const en = {
   "kind": "sandbox",

@@ -79,6 +79,7 @@ export type { PluginInputTypeReferenceV1 } from './manifest.js';
 export type { PluginInvocationContributionIdentity } from './identity.js';
 export type { PluginJsonValueV2 } from './identity.js';
 export type { PluginLanguageServerContributionV1 } from './manifest.js';
+export type { PluginLocalizedStringV2 } from './manifest.js';
 export type { PluginOperationAvailability } from './availability.js';
 export type { PluginProjectNativeAdapterContributionV1 } from './manifest.js';
 export type { PluginProjectNativeAdapterDeclarationV1 } from './projectNativeAdapters.js';

@@ -137,5 +137,5 @@ export const MODAL_UI_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = CONF
   ...bundle, messages: { ...bundle.messages, ...Object.fromEntries(Object.entries(MACHINE_PRESENTATION_LABELS[bundle.locale as keyof typeof MACHINE_PRESENTATION_LABELS])
     .map(([id, value]) => ['machineModal.presentation.' + id, value])) },
 }));
-import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk';
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
