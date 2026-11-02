@@ -344,9 +344,38 @@ function readTimelineSubject(raw: JsonRecord, kind: GithubTimelineKindV1): unkno
     }
     case 'reviewed':
       return raw['state'];
+    case 'referenced':
+      return raw['commit_id'];
+    case 'crossReferenced': {
+      const source = raw['source'];
+      const issue = isRecord(source) ? source['issue'] : null;
+      if (!isRecord(issue)) return null;
+      const number = readNativeId(issue['number']);
+      const title = readString(issue['title']);
+      return number === null ? title : title === null ? `#${number}` : `#${number} · ${title}`;
+    }
     default:
       return null;
   }
+}
+
+/** References name their destination on the provider's nested resource, not html_url. */
+function readTimelineWebUrl(raw: JsonRecord, kind: GithubTimelineKindV1): unknown {
+  if (kind === 'crossReferenced') {
+    const source = raw['source'];
+    const issue = isRecord(source) ? source['issue'] : null;
+    return isRecord(issue) ? issue['html_url'] : null;
+  }
+  if (kind === 'referenced') {
+    const commitUrl = readGithubAbsoluteWebUrl(raw['commit_url']);
+    if (commitUrl === null) return null;
+    const url = new URL(commitUrl);
+    const path = /^\/repos\/([^/]+)\/([^/]+)\/commits\/([0-9a-f]+)$/iu.exec(url.pathname);
+    return url.origin === 'https://api.github.com' && path !== null
+      ? `https://github.com/${path[1]}/${path[2]}/commit/${path[3]}`
+      : null;
+  }
+  return raw['html_url'];
 }
 
 function readTimelineIdentity(raw: JsonRecord, kind: GithubTimelineKindV1): string | null {
@@ -359,7 +388,19 @@ function readTimelineIdentity(raw: JsonRecord, kind: GithubTimelineKindV1): stri
   const id = readNativeId(raw['id']);
   if (id !== null) return `github-timeline-event:${id}`;
   const nodeId = readString(raw['node_id']);
-  return nodeId === null ? null : `github-timeline-node:${nodeId.trim()}`;
+  if (nodeId !== null) return `github-timeline-node:${nodeId.trim()}`;
+  // GitHub's cross-reference event has no event id. The source issue and the
+  // creation instant identify it; updated_at and the source title can change.
+  if (kind === 'crossReferenced') {
+    const source = raw['source'];
+    const issue = isRecord(source) && source['type'] === 'issue' ? source['issue'] : null;
+    const issueId = isRecord(issue) ? readNativeId(issue['id']) : null;
+    const createdAt = readTimestampMs(raw['created_at']);
+    if (issueId !== null && createdAt !== null) {
+      return `github-timeline-cross-reference:${issueId}:${createdAt}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -416,7 +457,7 @@ export function projectGithubTimelineRows(
     const actor = normalizedOrNull(readTimelineActor(entry, kind));
     const summary = boundedOrNull(readTimelineSubject(entry, kind), bounds.textUtf8Bytes);
     const atMs = readTimelineTimestamp(entry);
-    const webUrl = boundedWebUrl(entry['html_url'], bounds);
+    const webUrl = boundedWebUrl(readTimelineWebUrl(entry, kind), bounds);
     const truncated = boundedId.truncated
       || boundedKind.truncated
       || (actor?.truncated ?? false)

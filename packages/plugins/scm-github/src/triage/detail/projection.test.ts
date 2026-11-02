@@ -31,6 +31,21 @@ function filler(count: number): string {
 }
 
 describe('GitHub detail timeline projection', () => {
+  it('keeps the destination of commit references and issue cross-references through the published result', () => {
+    const commit = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
+    const projected = projectGithubTimelineRows([
+      { id: 1, event: 'referenced', commit_id: commit,
+        commit_url: `https://api.github.com/repos/octo-org/example-app/commits/${commit}` },
+      { id: 2, event: 'cross-referenced', source: { issue: { number: 42,
+        title: 'Keep the reference target', html_url: 'https://github.com/octo-org/other/pull/42' } } },
+    ], BOUNDS);
+    const result = GithubTimelineResultV1Schema.parse({ kind: 'timeline', ...projected });
+    expect(result.rows).toMatchObject([
+      { kind: 'referenced', summary: commit, webUrl: `https://github.com/octo-org/example-app/commit/${commit}` },
+      { kind: 'crossReferenced', summary: '#42 · Keep the reference target', webUrl: 'https://github.com/octo-org/other/pull/42' },
+    ]);
+  });
+
   it('keeps forcePushed and baseChanged as their own arms', () => {
     const projected = projectGithubTimelineRows([
       githubTimelineEvent({ id: 1, event: 'head_ref_force_pushed', createdAt: '2026-08-01T00:00:00Z' }),
@@ -43,6 +58,57 @@ describe('GitHub detail timeline projection', () => {
     expect(projected.rows.map((row) => row.kind)).toEqual(['forcePushed', 'baseChanged']);
     expect(projected.rows.map((row) => row.rawKind))
       .toEqual(['head_ref_force_pushed', 'base_ref_changed']);
+  });
+
+  it('reads an id-less cross-reference using its source issue and creation instant', () => {
+    // Captured from happier-dev/triage-qa-sandbox issue 56 on 2026-11-01.
+    // GitHub's cross-reference shape has neither a top-level id nor node_id.
+    const crossReference = {
+      event: 'cross-referenced',
+      created_at: '2026-10-31T16:40:53Z',
+      updated_at: '2026-10-31T16:40:53Z',
+      actor: { login: 'happier-bot' },
+      source: { type: 'issue', issue: {
+        id: 6016016173,
+        node_id: 'PR_kwDOVOydRs8AAAABKeVRww',
+        number: 54,
+        title: 'forge-qa-failing',
+        html_url: 'https://github.com/happier-dev/triage-qa-sandbox/pull/54',
+      } },
+    };
+    const projected = projectGithubTimelineRows([crossReference], BOUNDS);
+    const result = GithubTimelineResultV1Schema.parse({ kind: 'timeline', ...projected });
+    if (result.kind !== 'timeline') throw new Error('the cross-reference must settle as timeline');
+    expect(result).toMatchObject({
+      omittedRowCount: 0,
+      projectionTruncated: false,
+      rows: [{
+        kind: 'crossReferenced',
+        rawKind: 'cross-referenced',
+        actor: 'happier-bot',
+        atMs: Date.parse(crossReference.created_at),
+        summary: '#54 · forge-qa-failing',
+        webUrl: crossReference.source.issue.html_url,
+      }],
+    });
+    expect(result.rows).toHaveLength(1);
+    const originalId = result.rows[0]?.id;
+    const updated = projectGithubTimelineRows([
+      { ...crossReference, updated_at: '2026-11-01T00:00:00Z',
+        source: { ...crossReference.source, issue: { ...crossReference.source.issue, title: 'Updated title' } } },
+      { ...crossReference, created_at: '2026-11-01T01:00:00Z' },
+    ], BOUNDS);
+    expect(updated.rows).toHaveLength(2);
+    expect(updated.rows[0]?.id).toBe(originalId);
+    expect(updated.rows[1]?.id).not.toBe(originalId);
+
+    const malformed = projectGithubTimelineRows([
+      { ...crossReference, source: { type: 'issue', issue: { number: 54 } } },
+      { ...crossReference, created_at: 'invalid' },
+      { ...crossReference, event: 'not-a-cross-reference' },
+    ], BOUNDS);
+    expect(malformed.rows).toEqual([]);
+    expect(malformed.omittedRowCount).toBe(3);
   });
 
   it('keeps an unrecognized event as an unsupported row carrying its own raw kind', () => {
