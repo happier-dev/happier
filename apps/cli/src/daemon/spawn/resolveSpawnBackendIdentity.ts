@@ -18,7 +18,7 @@ import {
   type ExistingSessionAttachContextFailure,
 } from '../sessionEncryption/resolveExistingSessionAttachContext';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import { resolveCurrentExternalSessionAgentRoutingId } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
+import { resolveCurrentAgentRouting } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { projectResolvedAgentBackendTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 
 export function mapExistingSessionAttachFailureToSpawnError(
@@ -105,6 +105,22 @@ type ResolveSpawnBackendIdentityFailure = Readonly<{
   error: SpawnSessionResult;
 }>;
 
+async function resolveSpawnAgentRouting(identity: AgentExecutionTargetV1['identity']): Promise<
+  Readonly<{ ok: true; routingId: string }> | ResolveSpawnBackendIdentityFailure
+> {
+  const resolution = await resolveCurrentAgentRouting(identity);
+  if (resolution.kind === 'available') return { ok: true, routingId: resolution.routingId };
+  if (resolution.kind === 'unavailable') {
+    const message = resolution.code === 'plugin_disabled'
+      ? 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.'
+      : 'Account plugin execution is unavailable.';
+    return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage: message, errorDetail: { kind: 'launch_error', code: resolution.code, message } } };
+  }
+  return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    errorMessage: 'Selected Agent is not installed or unavailable' } };
+}
+
 export async function resolveSpawnBackendIdentity(params: Readonly<{
   existingSessionId: string;
   resume: string;
@@ -127,19 +143,11 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
       errorMessage: 'Selected Agent target is incomplete or invalid' } };
   }
   let effectiveAgentTarget = parsedAgentTarget?.success ? parsedAgentTarget.data : undefined;
-  const resolvedAgentRoutingId = effectiveAgentTarget
-    ? await resolveCurrentExternalSessionAgentRoutingId(effectiveAgentTarget.identity)
+  const routing = effectiveAgentTarget
+    ? await resolveSpawnAgentRouting(effectiveAgentTarget.identity)
     : null;
-  if (effectiveAgentTarget && !resolvedAgentRoutingId) {
-    return {
-      ok: false,
-      error: {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-        errorMessage: 'Selected Agent is not installed or unavailable',
-      },
-    };
-  }
+  if (routing?.ok === false) return routing;
+  const resolvedAgentRoutingId = routing?.routingId ?? null;
   if (
     resolvedAgentRoutingId
     && compatibilityBackendTarget
@@ -195,10 +203,9 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
           effectiveAgentTarget = AgentExecutionTargetV1Schema.parse({ kind: 'agent',
             identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
             definitionId: effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId });
-          const routingId = await resolveCurrentExternalSessionAgentRoutingId(effectiveAgentTarget.identity);
-          if (!routingId) return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'Selected Agent is not installed or unavailable' } };
-          effectiveBackendTargetV2 = projectResolvedAgentBackendTarget(effectiveAgentTarget, routingId);
+          const attachedRouting = await resolveSpawnAgentRouting(effectiveAgentTarget.identity);
+          if (attachedRouting.ok === false) return attachedRouting;
+          effectiveBackendTargetV2 = projectResolvedAgentBackendTarget(effectiveAgentTarget, attachedRouting.routingId);
         }
       }
     }

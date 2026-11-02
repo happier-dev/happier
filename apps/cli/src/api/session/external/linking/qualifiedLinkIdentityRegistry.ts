@@ -7,7 +7,7 @@ import {
   indexAgentRoutingIdsByContributionIdentity,
   readAgentRoutingIdForContributionIdentity,
 } from '@/plugins/projection/registry/agentRoutingIdentity';
-import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentContribution, UnavailableAgentPlugin } from '@/plugins/projection/registry/types';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 import type { CurrentExternalSessionAgentIdentity } from './qualifiedLinkIdentity';
@@ -55,14 +55,31 @@ export async function resolveCurrentExternalSessionAgentIdentity(
 export async function resolveCurrentExternalSessionAgentRoutingId(
   identity: PluginContributionIdentityV1,
 ): Promise<ExternalSessionsAgentId | null> {
+  const resolution = await resolveCurrentAgentRouting(identity);
+  return resolution.kind === 'available' ? resolution.routingId : null;
+}
+
+/** Keeps the effective admission refusal beside the identity lookup that consumes it. */
+export async function resolveCurrentAgentRouting(
+  identity: PluginContributionIdentityV1,
+): Promise<Readonly<
+  | { kind: 'available'; routingId: ExternalSessionsAgentId }
+  | { kind: 'unavailable'; code: UnavailableAgentPlugin['code'] }
+  | { kind: 'missing' }
+>> {
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
   try {
-    return readAgentRoutingIdForContributionIdentity(
+    const enablement = lease.registry.contributes.pluginEnablementById?.[identity.pluginId];
+    if (enablement?.enabled === false) {
+      return { kind: 'unavailable', code: enablement.unavailableCode ?? 'plugin_disabled' };
+    }
+    const routingId = readAgentRoutingIdForContributionIdentity(
       indexAgentRoutingIdsByContributionIdentity([
         ...lease.registry.contributes.agentDefinitionsById.values(),
       ]),
       identity,
     );
+    return routingId ? { kind: 'available', routingId } : { kind: 'missing' };
   } finally {
     await lease.release();
   }
