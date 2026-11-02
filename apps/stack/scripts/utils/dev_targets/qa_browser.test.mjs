@@ -610,6 +610,66 @@ test('QA browser launches under a long remote scratch path without exceeding the
   }
 });
 
+test('QA browser IPC names fit macOS and Linux for incident and arbitrarily long lane names', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-qa-browser-ipc-', parentDir: '/tmp' });
+  const chromePort = await fakeChromeCommandLine(t);
+  for (const sessionName of ['runnable-now-1102-recovered', 'lane-'.repeat(300)]) {
+    const signals = new EventEmitter();
+    const opened = new Set();
+    const closed = new Set();
+    await runQaBrowserWorker({ sessionName, input: new PassThrough(),
+      writeReady: () => signals.emit('SIGINT') }, {
+      signalSource: signals,
+      // agent-browser is the external process boundary. Apply both native
+      // sun_path capacities (including the terminating NUL), then bind for real.
+      capture: async (_command, args, options) => {
+        const session = args[args.indexOf('--session') + 1];
+        assert.equal(options.env.AGENT_BROWSER_SESSION, session);
+        const socketPath = join(root, `${session}.sock`);
+        for (const capacity of [104, 108]) {
+          assert.ok(Buffer.byteLength(socketPath) < capacity, `IPC path must fit sun_path[${capacity}]`);
+        }
+        if (args.includes('open')) {
+          const socket = createSocketServer();
+          await new Promise((resolve, reject) => {
+            socket.once('error', reject);
+            socket.listen(socketPath, resolve);
+          });
+          await new Promise(resolve => socket.close(resolve));
+          opened.add(session);
+          await writeFile(join(args[args.indexOf('--profile') + 1], 'DevToolsActivePort'), `${chromePort}\n/devtools/browser/fixture-browser\n`);
+        } else closed.add(session);
+        return { ok: true, exitCode: 0, out: '', err: '' };
+      },
+    });
+    assert.equal(opened.size, 2, 'discovery and serving browsers retain separate IPC identities');
+    assert.deepEqual(closed, opened, 'cleanup must reuse exactly the launched IPC identities');
+  }
+});
+
+test('QA browser preserves its launch error when cleanup also fails', async () => {
+  const signals = new EventEmitter();
+  let profile;
+  try {
+    await assert.rejects(runQaBrowserWorker({ sessionName: 'launch-failure', input: new PassThrough() }, {
+      signalSource: signals,
+      capture: async (_command, args) => {
+        if (args.includes('open')) {
+          profile = args[args.indexOf('--profile') + 1];
+          return { ok: false, exitCode: 1, err: 'original launch failure' };
+        }
+        return { ok: false, exitCode: 1, err: 'secondary cleanup failure' };
+      },
+    }), error => {
+      assert.match(error.message, /QA browser launch failed: original launch failure/);
+      assert.match(error.cause?.message ?? '', /secondary cleanup failure/);
+      return true;
+    });
+  } finally {
+    if (profile) await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('closing a browser during CDP readiness interrupts the wait and retires its worker', async () => {
   const signalSource = new EventEmitter();
   let resolveExited;

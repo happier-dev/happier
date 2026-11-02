@@ -225,6 +225,8 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets browser start qa1 --stack=e
 
 The browser selector compares current unreserved memory among those configured hosts for each browser lifetime. It writes no Machine pin and fails closed if no pool host is usable. When the browser setting is absent or empty, it retains the existing daemon-pool/default selection. Keep the foreground browser handle and interrupt it after QA to retire its browser, profile, and forwards. In 0.3 development, acquisition also requires a CDP WebSocket command response through the returned forward. A silent endpoint is retired after the default 30-second CDP attach window and replaced once before a handle is returned. Failed retirement stops acquisition; it never allocates a replacement beside an unconfirmed old browser. Loss of a managed browser's control channel also closes its browser and removes its owned temporary profile.
 
+Browser IPC identities are bounded independently of the displayed lane name, so long lane names fit the macOS and Linux Unix socket limits. Launch and cleanup use the same internal identity. If both fail, the launch error remains primary and retains the cleanup error as its cause.
+
 ## Edit a stack (interactive)
 
 To change server flavor, port, or repo worktree for an existing stack:

@@ -151,7 +151,10 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
   requireSessionName(sessionName);
   const localOrigin = workerLoopbackOrigin(workerLoopbackUrl ?? env.HAPPIER_STACK_QA_BROWSER_WORKER_LOOPBACK_URL);
   const profile = await mkdtemp(join(tmpdir(), 'hstack-qa-browser-'));
-  const session = `hstack-${sessionName}-${randomUUID()}`;
+  // Keep the IPC identity bounded independently of the human-readable lane
+  // name. agent-browser uses it in sun_path (103 usable bytes on macOS).
+  // The per-worker nonce keeps concurrent acquisitions of one lane separate.
+  const session = `hstack-${createHash('sha256').update(`${sessionName}-${randomUUID()}`).digest('hex').slice(0, 24)}`;
   const discoverySession = `hstack-discovery-${randomUUID()}`;
   const browserEnv = { ...env, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_RESTORE_SAVE: 'never',
     // Chromium's singleton socket is rooted in TMPDIR, independently of its
@@ -180,6 +183,7 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
   });
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) signalSource.on(signal, close);
   let openedSession = null;
+  let failure;
   try {
     const audioPath = audio ? join(profile, 'fake-audio.wav') : null;
     if (audio) {
@@ -235,6 +239,9 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
     const { port, debuggerPath } = await readQaBrowserEndpoint(profile);
     writeReady({ port, debuggerPath, profile, session, pid: process.pid, proxyPort });
     await closed;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     clearInterval(lifetime);
     control.close();
@@ -242,6 +249,11 @@ export async function runQaBrowserWorker({ sessionName, proxy = false, trustSpki
     input.pause();
     try {
       await cleanupQaBrowserProfile({ session: openedSession, profile, env: browserEnv }, { capture });
+    } catch (error) {
+      if (!failure) throw error;
+      // Preserve the originating launch/readiness error and retain the cleanup
+      // diagnostic without replacing what the caller needs to act on.
+      if (failure instanceof Error) failure.cause ??= error;
     } finally {
       for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) signalSource.off(signal, close);
     }
