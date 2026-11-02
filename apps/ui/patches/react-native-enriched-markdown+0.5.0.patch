@@ -71,6 +71,51 @@ index 16137fa..0eb4004 100644
          jfieldID permissiveAutolinksField = env->GetFieldID(flagsClass, "permissiveAutolinks", "Z");
          if (permissiveAutolinksField) {
            md4cFlags.permissiveAutolinks = env->GetBooleanField(flags, permissiveAutolinksField) == JNI_TRUE;
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
+index bf9ffc0..3c50679 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
+@@ -16,6 +16,40 @@ abstract class AccessibleMarkdownTextView
+     defStyleAttr: Int = 0,
+   ) : AppCompatTextView(context, attrs, defStyleAttr) {
+     val accessibilityHelper = MarkdownAccessibilityHelper(this)
++    private var isGainingTouchFocus = false
++    private var lastTouchY: Int? = null
++
++    override fun onTouchEvent(event: MotionEvent): Boolean {
++      lastTouchY = event.y.toInt()
++      return super.onTouchEvent(event)
++    }
++
++    // Selectable text takes focus on tap, and ReactScrollView.requestChildFocus then scrolls the
++    // focused child's drawing rect on screen. That moves the transcript under the finger, so a
++    // touch focus reports only the touched line, which is on screen by definition. It can't report
++    // the visible part instead: React Native views disable clipChildren, so getLocalVisibleRect
++    // returns the whole view. Keyboard focus still reveals the view.
++    override fun requestFocus(
++      direction: Int,
++      previouslyFocusedRect: Rect?,
++    ): Boolean {
++      if (!isInTouchMode) return super.requestFocus(direction, previouslyFocusedRect)
++      isGainingTouchFocus = true
++      try {
++        return super.requestFocus(direction, previouslyFocusedRect)
++      } finally {
++        isGainingTouchFocus = false
++      }
++    }
++
++    override fun getDrawingRect(outRect: Rect) {
++      val touchY = lastTouchY
++      if (isGainingTouchFocus && touchY != null) {
++        outRect.set(scrollX, scrollY + touchY, scrollX + width, scrollY + touchY)
++        return
++      }
++      super.getDrawingRect(outRect)
++    }
+ 
+     override fun dispatchHoverEvent(event: MotionEvent): Boolean =
+       accessibilityHelper.dispatchHoverEvent(event) || super.dispatchHoverEvent(event)
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
 index 0abbba9..e101f37 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
