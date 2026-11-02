@@ -39,6 +39,7 @@ import { coercePort } from '../server/port.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { daemonControlPost, pingDaemon } from './daemonControlClient.mjs';
+import { createStackRuntimeCleanupIncompleteError } from './stop_failure.mjs';
 export { createStackRuntimeCleanupIncompleteError } from './stop_failure.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
@@ -436,10 +437,7 @@ export async function stopStackServiceWithEnv(input = {}, stopServiceImpl, depen
     await stopServiceImpl();
     const actions = await stopStackWithEnvSerialized({ ...input, stopAttribution: attribution }, dependencies);
     if (actions.finalization?.finalized !== true) {
-      const error = new Error(`[stack] service cleanup is incomplete (${String(actions.finalization?.reason ?? 'unknown')})`);
-      error.code = 'ESTACKRUNTIMECLEANUPINCOMPLETE';
-      error.actions = actions;
-      throw error;
+      throw createStackRuntimeCleanupIncompleteError(actions, { stackName: input.stackName });
     }
     return actions;
   });
@@ -468,24 +466,21 @@ export async function completeInterruptedStackStopBeforeStart(input = {}, depend
         requestedBy: String(stopRequest.requestedBy ?? 'startup cleanup continuation'),
         reason: String(stopRequest.reason ?? 'complete interrupted stop before startup'),
       },
-      ...(normalizedOwnerPid && ownerStartedAt
-        ? { expectedOwnerPid: normalizedOwnerPid, expectedOwnerStartedAt: ownerStartedAt }
-        : {}),
+      ...(input.expectedOwnerPid != null || input.expectedOwnerStartedAt != null
+        ? { expectedOwnerPid: input.expectedOwnerPid, expectedOwnerStartedAt: input.expectedOwnerStartedAt }
+        : normalizedOwnerPid && ownerStartedAt
+          ? { expectedOwnerPid: normalizedOwnerPid, expectedOwnerStartedAt: ownerStartedAt }
+          : {}),
     }, dependencies);
     if (actions.finalization?.finalized !== true) {
-      const error = new Error(
-        `[stack] ${String(input.stackName ?? 'stack')} stop cleanup is incomplete (${String(actions.finalization?.reason ?? actions.stopAuthorization?.reason ?? 'unknown')})`,
-      );
-      error.code = 'ESTACKRUNTIMECLEANUPINCOMPLETE';
-      error.actions = actions;
-      throw error;
+      throw createStackRuntimeCleanupIncompleteError(actions, { stackName: input.stackName });
     }
     return { completed: true, waited, ...actions };
   });
 }
 
 async function stopStackWithEnvSerialized(input = {}, dependencies = {}) {
-  if (input.expectedOwnerPid == null) {
+  if (input.expectedOwnerPid == null && input.expectedOwnerStartedAt == null) {
     return await stopStackWithEnvInternal(input, dependencies);
   }
   const resolvedStopAttribution = {
