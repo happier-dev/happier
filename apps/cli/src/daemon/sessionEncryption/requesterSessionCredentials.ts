@@ -1,11 +1,10 @@
+import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredentialBinding, requesterSessionCredentialPath } from './requesterSessionCustody';
+export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure, requesterCurrentnessCheckpoint, type RequesterCurrentnessObservation } from './requesterCurrentness';
 
 import { join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
-import { z } from 'zod/mini';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
@@ -262,9 +261,6 @@ export async function assertRequesterSessionAccountContextCurrent(input: Readonl
   await releaseUnretainedRequesterSessionRuntimeContext(current, [input.readTrackedContext()]);
   throw new Error('requester_session_not_current');
 }
-
-export const REQUESTER_SESSION_CREDENTIAL_FILE_ENV = 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE';
-export const REQUESTER_SESSION_ID_ENV = 'HAPPIER_SESSION_REQUESTER_SESSION_ID';
 
 /** Created by the receiving host after admission; never accepted from decrypted caller input. */
 export type AdmittedRequesterSessionBootstrap = Readonly<{
@@ -719,28 +715,6 @@ export async function isAdmittedRequesterSessionBootstrapCurrent(context: Pick<R
   catch { return false; }
 }
 
-const CustodySchema = z.strictObject({
-  v: z.literal(1),
-  sessionId: z.string().check(z.minLength(1)),
-  attribution: RequesterWorkAttributionV1Schema,
-  credentials: SessionRequesterBootstrapCredentialsV1Schema,
-  homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
-});
-const CustodyStoredReadSchema = createStoredReadSchema(CustodySchema);
-
-export type RequesterSessionCredentialBinding = Readonly<{
-  happyHomeDir: string;
-  sessionId: string;
-  attribution: RequesterWorkAttributionV1;
-}>;
-
-/** Local private state, not a Session lifecycle ledger or an authority witness. */
-export function requesterSessionCredentialPath(binding: RequesterSessionCredentialBinding): string {
-  return join(binding.happyHomeDir, 'requester-session-credentials',
-    `home-${encodeURIComponent(binding.attribution.serverId)}`,
-    `session-${encodeURIComponent(binding.sessionId)}.json`);
-}
-
 async function readBoundCustody(path: string, expected: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>) {
   const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
   if (value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
@@ -912,20 +886,6 @@ export async function resolveRequesterSessionCredentials(input: RequesterSession
     const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
     return stored && await verifyRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials }) ? stored.credentials : null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
-}
-
-/** Only a private path travels to the child; failure never selects a global credential. */
-export async function readRequesterSessionCredentialsForChild(path: string): Promise<StoredCredentials | null> {
-  try {
-    if (!path || !process.env[REQUESTER_SESSION_ID_ENV]) return null;
-    const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
-    if (value.sessionId !== process.env[REQUESTER_SESSION_ID_ENV]
-      || value.attribution.serverId !== configuration.activeServerId) return null;
-    const credentials = decodeStoredCredentials(value.credentials);
-    return credentials ? bindRequesterSessionCredentialScope(credentials, { serverId: value.attribution.serverId,
-      serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-      requesterSession: { sessionId: value.sessionId, attribution: value.attribution } }) : null;
-  } catch { return null; }
 }
 
 export async function bindRequesterSessionMachineControl(input: Readonly<{
