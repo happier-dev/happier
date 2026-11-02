@@ -1599,6 +1599,48 @@ describe('daemon managed Machine Action factory', () => {
         }
     });
 
+    it('refuses a bootstrap retry approval naming another Account\'s controller at Home replay without native IO', async () => {
+        const actionId = 'machines.managed.bootstrap.retry' as const;
+        const input = { homeId: 'srv_home', managedId: 'foreign-guest', expectedIntentRevision: 1 };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+            decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', decidingAccountId: 'account' },
+            createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId, actionArgs: input,
+            summary: 'Retry guest connection', approval: { flow: 'deferred', result: 'required' },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', accountId: 'account',
+                machineId: 'foreign-controller', target: { kind: 'machine', machineId: 'foreign-controller' }, actionId,
+                requestId: 'foreign-retry' } });
+        // Location only: the named daemon still needs Home custody for this exact retry.
+        expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'foreign-controller' });
+        const roles: string[] = [];
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: role => { roles.push(role); } });
+        const homePaths: string[] = [];
+        // Home is the external boundary: the retained managed record belongs to
+        // another Account's controller, so its custody read refuses this replay.
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            homePaths.push(path);
+            return { status: 403, data: { code: 'permission_denied' } };
+        });
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
+            generateOperationId: () => 'foreign-retry-operation' });
+        const managed = createDaemonManagedMachineActionAdapter({ credentials, machineId: 'controller', serverBaseUrl: serverUrl,
+            serverId: configuration.activeServerId, installationIdentity: { installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey },
+            managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+                resolveCurrentMachineId: () => 'controller' }),
+            acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
+            observeActionExecution: args => operations.observeExecution(args) });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), managedMachineAction: managed });
+        const result = await executor.execute(actionId, request.actionArgs, { surface: 'cli', authority: 'present_user',
+            actionCaller: { kind: 'host' }, runtimeAccountId: 'account', serverId: configuration.activeServerId,
+            actionRequestId: request.executionOriginV1.requestId, presentUserConfirmation: { actionId } });
+        const settled = result.ok ? await operations.handlers.getV2({ operationId: 'foreign-retry-operation', waitForTerminal: true }) : null;
+        expect(result.ok === false || settled?.kind === 'found' && settled.operation.state === 'failed').toBe(true);
+        expect(roles).toEqual([]);
+        expect(homePaths.some(path => path.endsWith('/report'))).toBe(false);
+    });
+
     it('owns an acquisition operation when an approved detached Ask reaches the native adapter without a live parent', async () => {
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },

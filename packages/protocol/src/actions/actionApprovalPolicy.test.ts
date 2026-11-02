@@ -41,6 +41,18 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it.each(['agent', 'mcp'] as const)('keeps a Session-origin %s approval decision on Ask by default; only a saved waiver allows it', surface => {
+    const actionId = 'approval.request.decide';
+    const context = { surface, authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 } } as const;
+    expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context)).toBe(true);
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, context)).toBe(false);
+    const required = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+      approvalWaivedSurfaces: { [actionId]: [surface] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, required, context)).toBe(true);
+  });
+
   it('keeps owner-confirmed Voice operations direct only for the present UI user while explicit Ask and Agent danger remain', () => {
     const input = { anchor: 'voicePrivacy.forgetVoiceAgentMemory' };
     const ui = { surface: 'ui' as const, authority: 'present_user' as const };
