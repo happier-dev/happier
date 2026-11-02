@@ -38,6 +38,8 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginHostBundledUiDeclaration } from './bundledPluginUiArtifactInventory';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
+import { replaceAccountUiDeclarationSlice } from './accountUiDeclarationSlice';
 export type { PluginHostBundledUiDeclaration } from './bundledPluginUiArtifactInventory';
 
 export type PluginAccountExecutionAdmission = PluginAccountExecutionSelectionV1 | Readonly<{
@@ -517,7 +519,7 @@ export type PluginAccountAvailabilityReader = Readonly<{
      * A lifecycle signal only. Consumers re-read through this owner; they
      * never receive a raw snapshot or a second currentness owner.
      */
-    subscribe: (listener: () => void) => () => void;
+    subscribe: (listener: () => void, pluginId?: string) => () => void;
 }>;
 
 /** Cursor-free declaration inputs. Observation time is not a declaration revision. */
@@ -545,7 +547,7 @@ export type PluginAccountAvailabilityReaderStore = Readonly<{
     getSnapshot: () => PluginAccountAvailabilityStoredProjection | null;
     /** Stable opaque observation slices, prepared before publication notification. */
     getObservationSnapshot: (pluginId?: string) => object | null;
-    subscribe: (listener: () => void) => () => void;
+    subscribe: (listener: () => void, pluginId?: string) => () => void;
     /**
      * Binds a caller to one Account/realm without disclosing that scope to a
      * renderer. If this store moves to another Account, the retained reader is
@@ -615,14 +617,14 @@ function cloneMaterialization(
     return freezeAvailabilitySnapshotValue({
         ...materialization,
         ...(materialization.declaredManifest ? {
-            declaredManifest: retainUnchangedAvailabilityValue(previous?.declaredManifest,
+            declaredManifest: retainIfEqual(previous?.declaredManifest,
                 freezeDeepDeclaration(PluginPortableReleaseManifestV1Schema.parse(materialization.declaredManifest))),
         } : {}),
         ...(materialization.declaredUiEntries ? {
-            declaredUiEntries: retainUnchangedAvailabilityValue(previous?.declaredUiEntries,
+            declaredUiEntries: retainIfEqual(previous?.declaredUiEntries,
                 freezeDeepDeclaration(PluginDeclaredUiEntriesV1Schema.parse(materialization.declaredUiEntries))),
         } : {}),
-        uiArtifacts: retainUnchangedAvailabilityValue(previous?.uiArtifacts, freezeAvailabilitySnapshotValue(materialization.uiArtifacts.map((artifact) => (
+        uiArtifacts: retainIfEqual(previous?.uiArtifacts, freezeAvailabilitySnapshotValue(materialization.uiArtifacts.map((artifact) => (
             freezeAvailabilitySnapshotValue({ ...artifact })
         )))),
     });
@@ -710,15 +712,10 @@ function snapshotPluginAccountAvailabilitySnapshot(
     });
 }
 
-/** These owned Protocol facts are JSON values; equality retains data, never current admission. */
-function retainUnchangedAvailabilityValue<T>(previous: T | undefined, next: T): T {
-    return previous !== undefined && sameStrictJsonValue(previous, next) ? previous : next;
-}
-
 /** Local edits to the ordered snapshot retain the unchanged rows beside them. */
 function retainUnchangedAvailabilityRows<T>(previous: readonly T[] | undefined, next: readonly T[]): readonly T[] {
     if (!previous) return next;
-    const rows = next.map((row, index) => retainUnchangedAvailabilityValue(previous[index], row));
+    const rows = next.map((row, index) => retainIfEqual(previous[index], row));
     return previous.length === rows.length && rows.every((row, index) => row === previous[index])
         ? previous : Object.freeze(rows);
 }
@@ -805,18 +802,39 @@ function readInstalledPluginsAdmission(
     const admitted = readMaterializationAdmission(state, scope);
     if (admitted.kind === 'unavailable') return admitted;
     const snapshot = readProjectionForScope(state, scope)!;
-    const previousInstallations = new Map(previous?.kind === 'available' ? previous.plugins.flatMap(plugin =>
-        plugin.installations.map(installation => [materializationLookupKey(installation.materialization), installation] as const)) : []);
-    const previousPlugins = new Map(previous?.kind === 'available' ? previous.plugins.map(plugin => [plugin.pluginId, plugin] as const) : []);
+    return retainIfEqual(previous, Object.freeze({
+        kind: 'available',
+        availabilityCursor: snapshot.availabilityCursor,
+        completeness: snapshot.inventoryComplete === false ? 'incomplete' : 'complete',
+        plugins: readInstalledPluginRows(state!, scope, admitted.materializations,
+            previous?.kind === 'available' ? previous.plugins : []),
+    }));
+}
+
+type InstalledPluginRows = Extract<PluginAccountInstalledPluginsAdmission, { kind: 'available' }>['plugins'];
+
+/** The same declaration projection serves census ingestion and a single bundle's fulfillment. */
+function readInstalledPluginRows(state: AvailabilityProjectionState, scope: ServerAccountScope,
+    materializations: readonly PluginMachineMaterializationV1[], previous: InstalledPluginRows): InstalledPluginRows {
+    const snapshot = state.snapshot;
+    const previousInstallations = new Map(previous.flatMap(plugin => plugin.installations.map(installation =>
+        [materializationLookupKey(installation.materialization), installation] as const)));
+    const previousPlugins = new Map(previous.map(plugin => [plugin.pluginId, plugin] as const));
     const byPluginId = new Map<string, PluginAccountInstalledPluginInstallation[]>();
-    for (const materialization of admitted.materializations) {
+    for (const materialization of materializations) {
         const releases = [...(snapshot.releases ?? []), ...snapshot.intentReads.flatMap((entry) => {
             const release = entry.pluginId === materialization.pluginId ? entry.response.release : null;
             return release ? [release] : [];
         })].filter(release => isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release));
         const uniqueReleases = new Map(releases.map(release => [release.archiveDigestSha256, release]));
         const release = uniqueReleases.size === 1 ? [...uniqueReleases.values()][0]! : null;
-        const declaration = release?.normalizedManifest ?? materialization.declaredManifest ?? null;
+        // Machine census rows omit live manifests. The app's admitted bundled
+        // declaration supplies presentation for the same installed coordinate.
+        const bundles = state!.bundledUiByPluginId.get(materialization.pluginId) ?? [];
+        const bundle = materialization.sourceClass === 'bundledFirstParty' && bundles.length === 1
+            && bundles[0]!.pluginVersion === materialization.version ? bundles[0] : undefined;
+        const declaration = release?.normalizedManifest ?? materialization.declaredManifest
+            ?? bundle?.normalizedManifest ?? bundle?.presentationManifest ?? null;
         const installations = byPluginId.get(materialization.pluginId) ?? [];
         const incumbent = previousInstallations.get(materializationLookupKey(materialization));
         let uiModel = incumbent && samePluginUiMaterializationFacts(incumbent.materialization, materialization) && incumbent.declaration === declaration
@@ -845,7 +863,8 @@ function readInstalledPluginsAdmission(
             }, registrySources, skills);
             uiModel = preparePluginUiProjectionOrigins(uiModel);
         }
-        installations.push(retainUnchangedAvailabilityValue(incumbent, Object.freeze({
+        // Portable declarations can arrive from the immutable release reader.
+        installations.push(retainIfEqual(incumbent, Object.freeze({
             materialization,
             declaration,
             declarationState: declaration ? 'known' : 'preparing',
@@ -856,15 +875,10 @@ function readInstalledPluginsAdmission(
         })));
         byPluginId.set(materialization.pluginId, installations);
     }
-    return retainUnchangedAvailabilityValue(previous, Object.freeze({
-        kind: 'available',
-        availabilityCursor: snapshot.availabilityCursor,
-        completeness: snapshot.inventoryComplete === false ? 'incomplete' : 'complete',
-        plugins: Object.freeze([...byPluginId].sort(([a], [b]) => a.localeCompare(b)).map(([pluginId, installations]) => retainUnchangedAvailabilityValue(previousPlugins.get(pluginId), Object.freeze({
+    return Object.freeze([...byPluginId].sort(([a], [b]) => a.localeCompare(b)).map(([pluginId, installations]) => retainIfEqual(previousPlugins.get(pluginId), Object.freeze({
             pluginId,
             installations: Object.freeze(installations),
-        })))),
-    }));
+        }))));
 }
 
 type CurrentReleaseAdmission =
@@ -1623,7 +1637,13 @@ type AvailabilityDerivedProjection = Readonly<{
 
 function retainUiMaterializations(previous: readonly PluginMachineMaterializationV1[] | undefined,
     next: readonly PluginMachineMaterializationV1[]): readonly PluginMachineMaterializationV1[] {
-    const rows = next.map((row, index) => samePluginUiMaterializationFacts(previous?.[index], row) ? previous![index]! : row);
+    // Inventory arrival order is not a UI fact. Match by the complete source
+    // identity so insertion, removal and reordered reports keep peer rows.
+    const preceding = new Map(previous?.map(row => [materializationLookupKey(row), row] as const));
+    const rows = next.map(row => {
+        const before = preceding.get(materializationLookupKey(row));
+        return before && samePluginUiMaterializationFacts(before, row) ? before : row;
+    }).sort((left, right) => materializationLookupKey(left).localeCompare(materializationLookupKey(right)));
     return previous?.length === rows.length && rows.every((row, index) => row === previous[index])
         ? previous : Object.freeze(rows);
 }
@@ -1632,17 +1652,20 @@ function retainUiMaterializations(previous: readonly PluginMachineMaterializatio
 function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['installedPlugins'],
     next: PluginAccountUiProjectionInputs['installedPlugins']): PluginAccountUiProjectionInputs['installedPlugins'] {
     if (!next) return next;
-    const plugins = next.map((plugin, index) => {
-        const prior = previous?.[index]?.pluginId === plugin.pluginId ? previous[index] : undefined;
-        const installations = plugin.installations.map((installation, rowIndex) => {
-            const before = prior?.installations[rowIndex];
-            const execution = retainUnchangedAvailabilityValue(before?.execution, installation.execution);
+    const preceding = new Map(previous?.map(plugin => [plugin.pluginId, plugin] as const));
+    const plugins = next.map(plugin => {
+        const prior = preceding.get(plugin.pluginId);
+        const previousInstallations = new Map(prior?.installations.map(installation =>
+            [materializationLookupKey(installation.materialization), installation] as const));
+        const installations = plugin.installations.map(installation => {
+            const before = previousInstallations.get(materializationLookupKey(installation.materialization));
+            const execution = retainIfEqual(before?.execution, installation.execution);
             if (before && samePluginUiMaterializationFacts(before.materialization, installation.materialization)
                 && before.declaration === installation.declaration && before.release === installation.release
                 && before.declarationState === installation.declarationState && before.uiDeclarationState === installation.uiDeclarationState
                 && before.uiModel === installation.uiModel && before.execution === execution) return before;
             return installation;
-        });
+        }).sort((left, right) => materializationLookupKey(left.materialization).localeCompare(materializationLookupKey(right.materialization)));
         return prior?.installations.length === installations.length
             && installations.every((installation, rowIndex) => installation === prior.installations[rowIndex])
             ? prior : Object.freeze({ ...plugin, installations: Object.freeze(installations) });
@@ -1651,21 +1674,21 @@ function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['ins
         ? previous : Object.freeze(plugins);
 }
 
-/** Share unchanged family rows once, when this descriptive model is published. */
+/** Share unchanged family rows once, when this descriptive model is published. Rows are identity-bound (projection proofs), so each is kept or replaced whole, never rebuilt. */
 function retainAccountUiProjectionRows(previous: PluginUiProjectionModel | null | undefined, next: PluginUiProjectionModel | null): PluginUiProjectionModel | null {
     if (!previous || !next) return next;
     const families = Object.fromEntries(Object.entries(next).map(([key, value]) => {
         const before: unknown = previous[key as keyof PluginUiProjectionModel];
         if (!value || typeof value !== 'object' || Array.isArray(value)
             || !before || typeof before !== 'object' || Array.isArray(before)) {
-            return [key, retainUnchangedAvailabilityValue(before, value)];
+            return [key, retainIfEqual(before, value)];
         }
         const previousRows = before as Readonly<Record<string, unknown>>;
         const rows = Object.freeze(Object.fromEntries(Object.entries(value).map(([id, row]) =>
-            [id, retainUnchangedAvailabilityValue(previousRows[id], row)])));
-        return [key, retainUnchangedAvailabilityValue(before, rows)];
+            [id, retainIfEqual(previousRows[id], row)])));
+        return [key, retainIfEqual(before, rows)];
     }));
-    return retainUnchangedAvailabilityValue(previous, Object.freeze({ ...next, ...families }));
+    return retainIfEqual(previous, Object.freeze({ ...next, ...families }));
 }
 
 type AvailabilityObservation = Readonly<{
@@ -1674,10 +1697,13 @@ type AvailabilityObservation = Readonly<{
         inventoryComplete: boolean;
         intentCensusIncomplete: boolean;
         retired: boolean;
-        intentReads: readonly PluginAccountAvailabilityIntentReadProjection[];
-        materializations: readonly PluginMachineMaterializationV1[];
+        accountDeclarations: readonly (Pick<Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>,
+            'manifest' | 'custodyId' | 'sourceCustody'> & Readonly<{ bundledExecutionReady: boolean }>)[];
+        intentReads: readonly Readonly<{ pluginId: string; response: Omit<PluginAccountAvailabilityIntentReadProjection['response'], 'availabilityCursor'> }>[];
+        materializations: readonly Omit<PluginMachineMaterializationV1, 'observedAt'>[];
         releases: readonly PluginReleaseFactsV1[];
-        snapshots: readonly PluginMachineMaterializationSnapshotV1[];
+        snapshots: readonly Readonly<{ serverIdentityId: string; machineId: string;
+            materializations: readonly Omit<PluginMachineMaterializationV1, 'observedAt'>[] }>[];
     }>;
     token: object;
 }>;
@@ -1688,26 +1714,102 @@ type AvailabilityObservations = Readonly<{
     byPluginId: ReadonlyMap<string, AvailabilityObservation>;
 }>;
 
-function deriveAvailabilityObservations(state: AvailabilityProjectionState, previous?: AvailabilityObservations,
+function accountDeclarationObservation(state: AvailabilityProjectionState,
+    selected: AvailabilityAccountUiProjection['selections'][number]): AvailabilityObservation['value']['accountDeclarations'][number] {
+    return Object.freeze({ manifest: selected.manifest, custodyId: selected.custodyId,
+        sourceCustody: selected.sourceCustody,
+        bundledExecutionReady: state.bundledUiByPluginId.get(selected.manifest.id)?.some(bundle => bundle.accountExecution !== null) ?? false });
+}
+
+/** Bundle acquisition changes Account declarations, never the already admitted Machine census. */
+function deriveDeclarationAvailabilityObservations(state: AvailabilityProjectionState, pluginId: string,
+    previousSelections: AvailabilityAccountUiProjection['selections'], selections: AvailabilityAccountUiProjection['selections'],
+    previous: AvailabilityObservations): AvailabilityObservations {
+    const before = previousSelections.find(selected => selected.manifest.id === pluginId);
+    const selected = selections.find(selected => selected.manifest.id === pluginId);
+    const targets = (selection: typeof selected) => selection
+        ? [pluginId, ...selection.manifest.contributes.targetedPluginContributions.map(contribution => contribution.target.pluginId)] : [];
+    const nextTargets = new Set(targets(selected));
+    const affected = new Set([...targets(before), ...nextTargets]);
+    const declaration = selected ? accountDeclarationObservation(state, selected) : undefined;
+    const byPluginId = new Map(previous.byPluginId);
+    let changed = false;
+    for (const target of affected) {
+        const prior = previous.byPluginId.get(target) ?? previous.empty;
+        const accountDeclarations = Object.freeze([
+            ...prior.value.accountDeclarations.filter(row => row.manifest.id !== pluginId),
+            ...(declaration && nextTargets.has(target) ? [declaration] : []),
+        ].sort((left, right) => left.manifest.id.localeCompare(right.manifest.id)));
+        if (sameStrictJsonValue(prior.value.accountDeclarations, accountDeclarations)) continue;
+        changed = true;
+        if (accountDeclarations.length === 0 && !prior.value.retired && prior.value.intentReads.length === 0
+            && prior.value.materializations.length === 0 && prior.value.releases.length === 0) {
+            byPluginId.delete(target);
+        } else {
+            byPluginId.set(target, Object.freeze({ value: Object.freeze({ ...prior.value, accountDeclarations }), token: Object.freeze({}) }));
+        }
+    }
+    return changed ? Object.freeze({ ...previous, all: Object.freeze({}), byPluginId }) : previous;
+}
+
+function deriveAvailabilityObservations(state: AvailabilityProjectionState,
+    accountSelections: AvailabilityAccountUiProjection['selections'], previous?: AvailabilityObservations,
     previousCursor?: number): AvailabilityObservations {
     const { snapshot } = state;
     const intents = state.intentReadsByPluginId;
     const materializations = indexAvailabilityRows(snapshot.materializations, row => row.pluginId);
+    const targetedMaterializations = new Map<string, PluginMachineMaterializationV1[]>();
+    const accountDeclarations = new Map<string, AvailabilityObservation['value']['accountDeclarations'][number][]>();
+    for (const selected of accountSelections) {
+        const declaration = accountDeclarationObservation(state, selected);
+        const targets = new Set([selected.manifest.id,
+            ...selected.manifest.contributes.targetedPluginContributions.map(contribution => contribution.target.pluginId)]);
+        for (const target of targets) {
+            const rows = accountDeclarations.get(target);
+            if (rows) rows.push(declaration); else accountDeclarations.set(target, [declaration]);
+        }
+    }
+    for (const row of snapshot.materializations) {
+        const targets = new Set(row.declaredManifest?.contributes.targetedPluginContributions.map(contribution => contribution.target.pluginId));
+        for (const target of targets) {
+            if (target === row.pluginId) continue;
+            const rows = targetedMaterializations.get(target);
+            if (rows) rows.push(row); else targetedMaterializations.set(target, [row]);
+        }
+    }
     const releases = indexAvailabilityRows(snapshot.releases ?? [], row => row.ref.pluginId);
     const retired = new Set(state.retiredPluginIds);
     const observe = (value: AvailabilityObservation['value'], prior?: AvailabilityObservation): AvailabilityObservation =>
         prior && sameStrictJsonValue(prior.value, value) ? prior : Object.freeze({ value, token: Object.freeze({}) });
+    // A plugin's observation names only the facts that plugin's consumers present:
+    // its own rows and contributors targeting it (observation time is a clock,
+    // not a fact). Unrelated peer plugins' rows and clocks never wake it.
+    const unclocked = (rows: readonly PluginMachineMaterializationV1[] | undefined) =>
+        Object.freeze((rows ?? []).map(({ observedAt: _observedAt, ...facts }) => facts));
+    // Every intent read is stamped with the Account-wide cursor it was read at. That stamp advances
+    // for all plugins whenever anything in the Account changes, so it is a clock, not a plugin fact.
+    const unstamped = (rows: readonly PluginAccountAvailabilityIntentReadProjection[] | undefined) =>
+        Object.freeze((rows ?? []).map(({ response: { availabilityCursor: _cursor, ...response }, ...row }) =>
+            Object.freeze({ ...row, response: Object.freeze(response) })));
+    const censusFor = (pluginId: string | undefined) => Object.freeze(snapshot.snapshots.map(machine => Object.freeze({
+        serverIdentityId: machine.serverIdentityId, machineId: machine.machineId,
+        materializations: unclocked(pluginId === undefined ? undefined
+            : machine.materializations.filter(row => row.pluginId === pluginId)),
+    })));
     const empty = observe(Object.freeze({ scope: state.scope, inventoryComplete: snapshot.inventoryComplete !== false,
         intentCensusIncomplete: state.intentCensusIncomplete === true,
-        retired: false, intentReads: Object.freeze([]), materializations: Object.freeze([]),
-        releases: Object.freeze([]), snapshots: snapshot.snapshots }), previous?.empty);
+        retired: false, accountDeclarations: Object.freeze([]), intentReads: Object.freeze([]), materializations: Object.freeze([]),
+        releases: Object.freeze([]), snapshots: censusFor(undefined) }), previous?.empty);
     const byPluginId = new Map<string, AvailabilityObservation>();
-    for (const pluginId of new Set([...intents.keys(), ...materializations.keys(), ...releases.keys(), ...retired])) {
+    for (const pluginId of new Set([...intents.keys(), ...materializations.keys(), ...targetedMaterializations.keys(),
+        ...accountDeclarations.keys(), ...releases.keys(), ...retired])) {
         byPluginId.set(pluginId, observe(Object.freeze({ ...empty.value,
             retired: retired.has(pluginId),
-            intentReads: Object.freeze(intents.get(pluginId) ?? []),
-            materializations: Object.freeze(materializations.get(pluginId) ?? []),
+            accountDeclarations: Object.freeze(accountDeclarations.get(pluginId) ?? []),
+            intentReads: unstamped(intents.get(pluginId)),
+            materializations: unclocked([...(materializations.get(pluginId) ?? []), ...(targetedMaterializations.get(pluginId) ?? [])]),
             releases: Object.freeze(releases.get(pluginId) ?? []),
+            snapshots: censusFor(pluginId),
         }), previous?.byPluginId.get(pluginId) ?? previous?.empty));
     }
     const unchanged = previousCursor === snapshot.availabilityCursor
@@ -1719,10 +1821,15 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState, prev
 function deriveAccountUiProjection(input: Readonly<{
     scope: ServerAccountScope;
     hostBundledUi: readonly PreparedBundledUiDeclaration[];
-}>, state: AvailabilityProjectionState, previous?: AvailabilityAccountUiProjection): AvailabilityAccountUiProjection {
-    const bundles = (input.hostBundledUi ?? []).filter(bundle =>
-        readCurrentHostBundle(state, input.scope, input.hostBundledUi ?? [], bundle.pluginId));
-    const selections = readAccountExecutionSelections(state, input.scope, input.hostBundledUi ?? [], true);
+}>, state: AvailabilityProjectionState, previous?: AvailabilityAccountUiProjection, pluginId?: string): AvailabilityAccountUiProjection {
+    // Declaration fulfillment already names the changed input. Keep census admission
+    // and sorting at snapshot publication; derive only this plugin's contribution rows.
+    const candidates = pluginId === undefined ? input.hostBundledUi : state.bundledUiByPluginId.get(pluginId) ?? [];
+    const bundles = candidates.filter(bundle => readCurrentHostBundle(state, input.scope, candidates, bundle.pluginId));
+    const selection = pluginId === undefined ? undefined : readAccountExecutionSelection(state, input.scope, pluginId, true);
+    const selections = selection ? selection.kind === 'available' ? [selection] : []
+        : readAccountExecutionSelections(state, input.scope, input.hostBundledUi, true);
+
     if (previous?.bundles?.length === bundles.length
         && bundles.every((bundle, index) => bundle === previous?.bundles![index])
         && sameStrictJsonValue(previous?.selections, selections)) {
@@ -1731,7 +1838,7 @@ function deriveAccountUiProjection(input: Readonly<{
     const entries = Object.assign({}, ...bundles.map(bundle => bundle.entriesById),
         ...selections.map(selected => {
             const declarations = projectPluginPortableUiDeclarationsV1(
-                selected.manifest, accountActionArtifactGraphs(selected, input.hostBundledUi ?? []),
+                selected.manifest, accountActionArtifactGraphs(selected, candidates),
             );
             return selected.release && selected.manifest.contributes.actions?.some(action => action.execution.target === 'account')
                 ? declarations
@@ -1744,7 +1851,7 @@ function deriveAccountUiProjection(input: Readonly<{
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
         const hostAccountOrigin = accountUiOrigins.get(manifest.id)!;
-        const graphs = accountActionArtifactGraphs(selected, input.hostBundledUi ?? []);
+        const graphs = accountActionArtifactGraphs(selected, candidates);
         for (const action of manifest.contributes.actions ?? []) {
             if (action.execution.target !== 'account') continue;
             const execution = action.execution;
@@ -1756,7 +1863,7 @@ function deriveAccountUiProjection(input: Readonly<{
             const requestedAccess = action.hostAccess ?? [];
             const optionalAccess = manifest.hostAccess.optional.filter(request => requestedAccess.includes(request.id));
             const requiredAccess = manifest.hostAccess.required.filter(request => requestedAccess.includes(request.id));
-            const accountKvAdmission = readCurrentAccountKvCapabilityAdmission(state, input.scope, { pluginId: manifest.id }, input.hostBundledUi);
+            const accountKvAdmission = readCurrentAccountKvCapabilityAdmission(state, input.scope, { pluginId: manifest.id }, candidates);
             const key = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: action.id });
             actions[key] = Object.freeze({ id: action.id, pluginId: manifest.id,
                 pluginVersion: manifest.version, occurrenceId: custodyId, title: action.title,
@@ -1831,13 +1938,20 @@ function deriveAccountUiProjection(input: Readonly<{
     }) : null;
     const retained = retainAccountUiProjectionRows(previous?.model, model);
     const prepared = retained ? preparePluginUiProjectionOrigins(retained) : null;
+    if (pluginId !== undefined && previous) {
+        return {
+            bundles: [...previous.bundles.filter(bundle => bundle.pluginId !== pluginId), ...bundles],
+            selections: [...previous.selections.filter(selected => selected.manifest.id !== pluginId), ...selections],
+            model: replaceAccountUiDeclarationSlice(previous.model, prepared, pluginId),
+        };
+    }
     return { bundles, selections, model: prepared };
 }
 
 function createBoundReader(input: Readonly<{
     scope: ServerAccountScope;
     readState: () => AvailabilityProjectionState | null;
-    subscribe: (listener: () => void) => () => void;
+    subscribe: (listener: () => void, pluginId?: string) => () => void;
     hostBundledUi?: readonly PreparedBundledUiDeclaration[];
     readDerivedProjection: () => AvailabilityDerivedProjection | null;
     readObservationSnapshot: (pluginId?: string) => object | null;
@@ -1986,7 +2100,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
         return pluginId === undefined ? observations.all
             : (observations.byPluginId.get(pluginId) ?? observations.empty).token;
     };
-    const publish = (next: PluginAccountAvailabilityStoredProjection, declarationsChanged = false) => {
+    const publish = (next: PluginAccountAvailabilityStoredProjection) => {
         if (loadHostBundledUi) {
             const acquired = prepareBundledUiDeclarations(loadHostBundledUi());
             const indexed = indexAvailabilityRows(acquired, bundle => bundle.pluginId);
@@ -1995,7 +2109,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             loadHostBundledUi = undefined;
         }
         const sameScope = state !== null && areServerAccountScopesEqual(state.scope, next.scope);
-        if (!declarationsChanged && sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
+        if (sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
             && state!.intentCensusIncomplete === next.intentCensusIncomplete
             && state!.snapshot.inventoryComplete === next.snapshot.inventoryComplete
             && state!.snapshot.intentReads === next.snapshot.intentReads
@@ -2012,7 +2126,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
                 ? state!.materializationsByIdentity : indexMaterializations(next.snapshot),
         });
         const nextProjection = {
-            materializations: retainUnchangedAvailabilityValue(sameScope ? derived?.materializations : undefined,
+            materializations: retainIfEqual(sameScope ? derived?.materializations : undefined,
                 readMaterializationAdmission(nextState, nextState.scope)),
             installed: readInstalledPluginsAdmission(nextState, nextState.scope, sameScope ? derived?.installed : undefined),
             accountUi: deriveAccountUiProjection({ scope: nextState.scope, hostBundledUi }, nextState,
@@ -2030,15 +2144,62 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             && sameStrictJsonValue(state!.retiredPluginIds ?? [], nextState.retiredPluginIds ?? [])
             ? previousInputs : Object.freeze({ materializations, installedPlugins, accountUiProjection });
         const nextDerived = Object.freeze({ ...nextProjection, uiInputs });
-        const nextObservations = deriveAvailabilityObservations(nextState, sameScope ? observations : undefined,
+        const nextObservations = deriveAvailabilityObservations(nextState, nextProjection.accountUi.selections, sameScope ? observations : undefined,
             state?.snapshot.availabilityCursor);
         state = nextState;
         derived = nextDerived;
         observations = nextObservations;
         return true;
     };
+    const publishDeclaration = (pluginId: string) => {
+        if (!state || !derived || !observations) return false;
+        const nextState = Object.freeze({ ...state, bundledUiByPluginId });
+        let installed = derived.installed;
+        let installedPlugins = derived.uiInputs.installedPlugins;
+        if (installed.kind === 'available') {
+            const prior = installed.plugins.find(plugin => plugin.pluginId === pluginId);
+            if (prior) {
+                const updated = readInstalledPluginRows(nextState, nextState.scope,
+                    prior.installations.map(installation => installation.materialization), [prior])[0]!;
+                if (updated !== prior) {
+                    installed = Object.freeze({ ...installed,
+                        plugins: Object.freeze(installed.plugins.map(plugin => plugin === prior ? updated : plugin)) });
+                    // UI rows can predate a clock-only census update. Match only this
+                    // group's canonical identities, preserving its existing UI order.
+                    const installations = new Map(updated.installations.map(installation =>
+                        [materializationLookupKey(installation.materialization), installation] as const));
+                    installedPlugins = installedPlugins && Object.freeze(installedPlugins.map(plugin => plugin.pluginId === pluginId
+                        ? Object.freeze({ ...plugin, installations: Object.freeze(plugin.installations.map(installation =>
+                            installations.get(materializationLookupKey(installation.materialization))!)) }) : plugin));
+                }
+            }
+        }
+        const accountUi = deriveAccountUiProjection({ scope: nextState.scope, hostBundledUi }, nextState, derived.accountUi, pluginId);
+        const uiInputs = installedPlugins === derived.uiInputs.installedPlugins && accountUi.model === derived.uiInputs.accountUiProjection
+            ? derived.uiInputs : Object.freeze({ ...derived.uiInputs, installedPlugins, accountUiProjection: accountUi.model });
+        const nextObservations = deriveDeclarationAvailabilityObservations(nextState, pluginId,
+            derived.accountUi.selections, accountUi.selections, observations);
+        const changed = uiInputs !== derived.uiInputs || nextObservations !== observations;
+        state = nextState;
+        derived = Object.freeze({ ...derived, installed, accountUi, uiInputs });
+        observations = nextObservations;
+        return changed;
+    };
     const listeners = new Set<() => void>();
+    const pluginListeners = new Set<{
+        listener: () => void;
+        readSnapshot: () => object | null;
+        snapshot: object | null;
+    }>();
     const notify = () => {
+        // Publication owns the lifecycle signal. Cursor-only Account updates do
+        // not invalidate a plugin whose observed authority is unchanged.
+        for (const subscription of pluginListeners) {
+            const snapshot = subscription.readSnapshot();
+            if (snapshot === subscription.snapshot) continue;
+            subscription.snapshot = snapshot;
+            subscription.listener();
+        }
         for (const listener of listeners) listener();
     };
     const subscribe = (listener: () => void) => {
@@ -2060,8 +2221,8 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             }
             const prepared = prepareBundledUiDeclarations([declaration])[0]!;
             hostBundledUi = Object.freeze(hostBundledUi.map(current => current === bundle ? prepared : current));
-            bundledUiByPluginId = indexAvailabilityRows(hostBundledUi, current => current.pluginId);
-            if (state && publish(state, true)) notify();
+            bundledUiByPluginId = new Map(bundledUiByPluginId).set(pluginId, Object.freeze([prepared]));
+            if (publishDeclaration(pluginId)) notify();
         }).finally(() => { declarationLoads.delete(pluginId); });
         declarationLoads.set(pluginId, operation);
         return operation;
@@ -2098,7 +2259,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             const intentReads = retainUnchangedAvailabilityRows(canMerge ? previous.snapshot.intentReads : undefined,
                 Object.freeze([...retainedIntentReads, ...incoming.intentReads]
                 .map(entry => Object.freeze({ ...entry, response: Object.freeze({ ...entry.response,
-                    release: retainUnchangedAvailabilityValue(previousIntentReads.get(entry.pluginId)?.response.release, entry.response.release),
+                    release: retainIfEqual(previousIntentReads.get(entry.pluginId)?.response.release, entry.response.release),
                 }) }))
                 .sort((left, right) => left.pluginId.localeCompare(right.pluginId))));
             const retainedPluginIds = new Set(intentReads.map((entry) => entry.pluginId));
@@ -2166,7 +2327,14 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             const reader = createBoundReader({
                 scope: scoped,
                 readState: () => state,
-                subscribe,
+                subscribe: (listener, pluginId) => {
+                    if (pluginId === undefined) return subscribe(listener);
+                    const readSnapshot = () => state && areServerAccountScopesEqual(state.scope, scoped)
+                        ? getObservationSnapshot(pluginId) : null;
+                    const subscription = { listener, readSnapshot, snapshot: readSnapshot() };
+                    pluginListeners.add(subscription);
+                    return () => { pluginListeners.delete(subscription); };
+                },
                 get hostBundledUi() { return hostBundledUi; },
                 ensureBundledDeclaration,
                 ensureTargetDeclarations,

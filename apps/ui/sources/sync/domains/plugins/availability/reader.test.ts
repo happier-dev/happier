@@ -349,6 +349,186 @@ describe('Plugin Account Availability reader', () => {
         expect(loaded).toEqual(['happier.machine.vercel']);
     });
 
+    it.each([true, false])('fulfills one bundled declaration without revisiting unrelated Machine census rows (presentation schemas: %s)', async (presentationIncludesSchemas) => {
+        const pluginIds = Array.from({ length: 100 }, (_, index) => `com.acme.census-${String(index).padStart(3, '0')}`);
+        const demandedPluginId = pluginIds[0]!;
+        const targetPluginId = pluginIds[1]!;
+        const loaded: string[] = [];
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account-actions', tier: 'reactNative',
+            entry: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest,
+            files: [{ relativePath: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+        const bundles = pluginIds.map(pluginId => {
+            const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId,
+                version: '1.0.0', displayName: pluginId, runtime: { apiVersion: 1 }, contributes: {
+                    actions: [{ id: 'read', title: 'Read', surfaces: ['ui'], scopes: ['global'], placementBindings: [], dangerLevel: 'safe',
+                        execution: { target: 'account', account: { artifactId: graph.artifactId, exportName: 'activate' } },
+                        inputSchema: { type: 'object', additionalProperties: false } }],
+                    ...(pluginId === demandedPluginId ? { targetedPluginContributions: [{ id: 'source',
+                        target: { pluginId: targetPluginId, pointId: 'sources' }, protocol: { id: 'sources', version: 1 },
+                        operations: { read: 'read' } }] } : {}),
+                    ui: { renderers: [{ id: 'body', kind: 'reactNative', artifact: 'body' }],
+                        views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'body', title: pluginId }] },
+                } });
+            const declaration = { pluginId, pluginVersion: manifest.version, packageName: `@acme/census-${pluginId.slice(-3)}`,
+                displayName: pluginId, normalizedManifest: manifest, artifactGraphs: [graph],
+                entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+            // Equal semantics isolate target readiness; the stripped variant also requires installed-schema publication.
+            const presentationManifest = presentationIncludesSchemas ? manifest : { ...manifest, contributes: { ...manifest.contributes,
+                actions: manifest.contributes.actions.map(({ inputSchema: _schema, ...action }) => action) } };
+            return { ...declaration, normalizedManifest: undefined, presentationManifest,
+                loadDeclaration: async () => { loaded.push(pluginId); return declaration; } };
+        });
+        const machineIds = Array.from({ length: 199 }, (_, index) => `machine-${index}`);
+        const machineIdSet = new Set(machineIds);
+        const materializations = Array.from({ length: 4_747 }, (_, index) => PluginMachineMaterializationV1Schema.parse({
+            serverIdentityId: 'srv_fixture', machineId: machineIds[index % machineIds.length], materializationId: `install-${index}`,
+            pluginId: pluginIds[index % pluginIds.length], version: '1.0.0', sourceClass: 'bundledFirstParty',
+            portableRelease: false, enabled: true, trustState: 'trusted', observedAt: 1_700_000_000_000, uiArtifacts: [],
+        }));
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], materializations,
+            snapshots: machineIds.map(machineId => ({ serverIdentityId: 'srv_fixture', machineId,
+                materializations: materializations.filter(row => row.machineId === machineId) })) }) });
+        const reader = store.bind(scope);
+        if (!presentationIncludesSchemas) {
+            // Clock-only replacement retains UI rows while the current admission owns newer census objects.
+            const initialUi = reader.readUiProjectionInputs();
+            const clocked = materializations.map(row => ({ ...row, observedAt: row.observedAt + 1 }));
+            store.replace({ scope, snapshot: snapshot({ intentReads: [], materializations: clocked,
+                snapshots: machineIds.map(machineId => ({ serverIdentityId: 'srv_fixture', machineId,
+                    materializations: clocked.filter(row => row.machineId === machineId) })) }) });
+            expect(reader.readUiProjectionInputs()).toBe(initialUi);
+        }
+        const before = reader.readUiProjectionInputs()!;
+        const observations = new Map(pluginIds.map(pluginId => [pluginId, reader.getObservationSnapshot(pluginId)]));
+        const notifications = new Map(pluginIds.map(pluginId => [pluginId, 0]));
+        for (const pluginId of pluginIds) {
+            onTestFinished(reader.subscribe(() => notifications.set(pluginId, notifications.get(pluginId)! + 1), pluginId));
+        }
+        expect(reader.readCurrentAccountExecution(demandedPluginId).kind).toBe('unavailable');
+        if (!presentationIncludesSchemas) {
+            expect(before.installedPlugins?.find(plugin => plugin.pluginId === demandedPluginId)?.installations[0]
+                ?.declaration?.contributes.actions[0]?.inputSchema).toBeUndefined();
+        }
+        const affectedInstallations = materializations.filter(row => row.pluginId === demandedPluginId).length;
+        const keyBuilds = new Map(pluginIds.map(pluginId => [pluginId, 0]));
+        const originalStringify = JSON.stringify;
+        // Observe native key serialization while preserving the real admission, projection, and comparison logic.
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value) && value.length === 4 && value.every(item => typeof item === 'string')
+                && keyBuilds.has(value[0]) && value[1] === 'srv_fixture' && machineIdSet.has(value[2])) {
+                keyBuilds.set(value[0], keyBuilds.get(value[0])! + 1);
+            }
+            return originalStringify(...args);
+        });
+        onTestFinished(() => serialization.mockRestore());
+        const startedAt = performance.now();
+        const result = await reader.ensureCurrentAccountExecution(demandedPluginId);
+        const elapsedMs = performance.now() - startedAt;
+        const totalKeys = [...keyBuilds.values()].reduce((sum, count) => sum + count, 0);
+        const unrelatedKeys = totalKeys - keyBuilds.get(demandedPluginId)!;
+        const firstNotifications = [...notifications.values()].reduce((sum, count) => sum + count, 0);
+        const repeatedResults = await Promise.all(Array.from({ length: 24 }, () => reader.ensureCurrentAccountExecution(demandedPluginId)));
+        const repeatedKeys = [...keyBuilds.values()].reduce((sum, count) => sum + count, 0) - totalKeys;
+        const repeatedNotifications = [...notifications.values()].reduce((sum, count) => sum + count, 0) - firstNotifications;
+        serialization.mockRestore();
+        const unrelatedNotifications = [...notifications].filter(([pluginId]) => pluginId !== demandedPluginId && pluginId !== targetPluginId)
+            .reduce((sum, [, count]) => sum + count, 0);
+        console.info('UNION-CHURN declaration census cost', { presentationIncludesSchemas, clockOnlyReplacement: !presentationIncludesSchemas,
+            machines: machineIds.length, plugins: pluginIds.length,
+            materializations: materializations.length, affectedInstallations, totalKeys, unrelatedKeys, elapsedMs,
+            sourceNotifications: notifications.get(demandedPluginId), targetNotifications: notifications.get(targetPluginId), unrelatedNotifications,
+            repeatedDemands: repeatedResults.length, repeatedKeys, repeatedNotifications });
+        expect(result.kind).toBe('available');
+        expect(repeatedResults.every(result => result.kind === 'available')).toBe(true);
+        expect(repeatedKeys).toBe(0);
+        expect(repeatedNotifications).toBe(0);
+        expect(loaded).toEqual([demandedPluginId]);
+        const after = reader.readUiProjectionInputs()!;
+        expect(after.materializations).toBe(before.materializations);
+        const fulfilled = after.installedPlugins?.find(plugin => plugin.pluginId === demandedPluginId);
+        expect(fulfilled?.installations).toHaveLength(affectedInstallations);
+        for (const installation of fulfilled?.installations ?? []) {
+            expect(installation).toBeDefined();
+            expect(installation.declaration?.contributes.actions[0]?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+        }
+        for (const plugin of before.installedPlugins ?? []) {
+            if (plugin.pluginId !== demandedPluginId) {
+                expect(after.installedPlugins?.find(row => row.pluginId === plugin.pluginId)).toBe(plugin);
+            }
+        }
+        for (const pluginId of pluginIds) {
+            if (pluginId === demandedPluginId || pluginId === targetPluginId) {
+                expect(reader.getObservationSnapshot(pluginId)).not.toBe(observations.get(pluginId));
+                expect(notifications.get(pluginId)).toBe(1);
+            } else {
+                expect(reader.getObservationSnapshot(pluginId)).toBe(observations.get(pluginId));
+                expect(notifications.get(pluginId)).toBe(0);
+            }
+        }
+        expect.soft(unrelatedKeys).toBe(0);
+        // Match previous/current admission and UI order by canonical installation identity, only for affected rows.
+        expect.soft(totalKeys).toBeLessThanOrEqual(4 * affectedInstallations);
+    });
+
+    it.each([1, 4])('derives only K Account declaration slices for K=%s demands across 100 plugins', async (demandCount) => {
+        const pluginIds = Array.from({ length: 100 }, (_, index) => `com.acme.demand-${index}`);
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account-actions', tier: 'reactNative',
+            entry: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, files: [{ relativePath: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+        const bundles = pluginIds.map(pluginId => {
+            const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId, version: '1.0.0',
+                displayName: pluginId, runtime: { apiVersion: 1 }, contributes: {
+                    actions: [{ id: 'read', title: 'Read', surfaces: ['ui'], scopes: ['global'], placementBindings: [], dangerLevel: 'safe',
+                        execution: { target: 'account', account: { artifactId: graph.artifactId, exportName: 'activate' } },
+                        inputSchema: { type: 'object', additionalProperties: false } }],
+                } });
+            const declaration = { pluginId, pluginVersion: manifest.version, packageName: `@acme/demand-${pluginId.split('-').at(-1)}`,
+                displayName: pluginId, normalizedManifest: manifest, artifactGraphs: [graph], entriesById: {} };
+            return { ...declaration, normalizedManifest: undefined,
+                presentationManifest: { ...manifest, contributes: { ...manifest.contributes,
+                    actions: manifest.contributes.actions.map(({ inputSchema: _schema, ...action }) => action) } },
+                loadDeclaration: async () => declaration };
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], snapshots: [], materializations: [] }) });
+        const reader = store.bind(scope);
+        const before = reader.readAccountUiProjection()!;
+        let projectedEntries = 0;
+        let censusSorts = 0;
+        const normalize = uiProjection.normalizePluginInstalledUiDeclarations;
+        // Instrument cost while running the real normalization and native sort unchanged.
+        const derivations = vi.spyOn(uiProjection, 'normalizePluginInstalledUiDeclarations').mockImplementation(entries => {
+            projectedEntries += Object.keys(entries).length;
+            return normalize(entries);
+        });
+        const nativeSort = Array.prototype.sort;
+        const sorts = vi.spyOn(Array.prototype, 'sort').mockImplementation(function (this: unknown[], compare) {
+            if (this.length === pluginIds.length && this.every(value => typeof value === 'string' && pluginIds.includes(value))) censusSorts++;
+            return nativeSort.call(this, compare);
+        });
+        onTestFinished(() => { derivations.mockRestore(); sorts.mockRestore(); });
+        const publications = new Map(pluginIds.map(pluginId => [pluginId, 0]));
+        for (const pluginId of pluginIds) onTestFinished(reader.subscribe(() => publications.set(pluginId, publications.get(pluginId)! + 1), pluginId));
+        for (const pluginId of pluginIds.slice(0, demandCount)) {
+            expect((await reader.ensureCurrentAccountExecution(pluginId)).kind).toBe('available');
+            const key = `${pluginId}/read`;
+            expect(reader.readAccountUiProjection()!.actionsById[key]?.accountActionDeclaration?.inputSchema).toMatchObject({ type: 'object' });
+        }
+        derivations.mockRestore(); sorts.mockRestore();
+        console.info('AVAIL-CENSUS demand cost', { plugins: pluginIds.length, demandCount, projectedEntries, censusSorts,
+            publications: [...publications.values()].reduce((sum, value) => sum + value, 0) });
+        expect.soft(projectedEntries).toBe(demandCount);
+        expect.soft(censusSorts).toBe(0);
+        const after = reader.readAccountUiProjection()!;
+        for (const [index, pluginId] of pluginIds.entries()) {
+            expect(publications.get(pluginId)).toBe(index < demandCount ? 1 : 0);
+            if (index >= demandCount) expect(after.actionsById[`${pluginId}/read`]).toBe(before.actionsById[`${pluginId}/read`]);
+        }
+    });
+
     it('acquires app-owned bundled declarations only on first publication and updates pre-bound readers', () => {
         const manifest = PluginPortableReleaseManifestV1Schema.parse(intentRead().release!.normalizedManifest);
         const bundle = {
