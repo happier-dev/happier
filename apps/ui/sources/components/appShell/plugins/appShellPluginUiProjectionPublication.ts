@@ -209,20 +209,32 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const materializations = availabilityInputs?.materializations ?? NO_MATERIALIZATIONS;
         const plugins = availabilityInputs?.installedPlugins;
         if (plugins !== installedInput) {
-            const machines = new Map<string, InstalledMachineDeclarations>();
+            const builds = new Map<string, {
+                models: PluginUiProjectionModel[];
+                completeUiPluginIds: Set<string>;
+                materializationsByPluginId: Record<string, PluginMachineMaterializationV1>;
+                serverIdentityId: string;
+                hasUnprovenDeclarations: boolean;
+            }>();
             for (const plugin of plugins ?? []) for (const installation of plugin.installations) {
                 const report = installation.materialization;
-                const preceding = machines.get(report.machineId);
-                machines.set(report.machineId, Object.freeze({
-                    models: Object.freeze([...(preceding?.models ?? []), installation.uiModel]),
-                    completeUiPluginIds: new Set([...preceding?.completeUiPluginIds ?? [],
-                        ...(installation.uiDeclarationState === 'known' ? [plugin.pluginId] : [])]),
-                    materializationsByPluginId: Object.freeze({ ...preceding?.materializationsByPluginId, [plugin.pluginId]: report }),
-                    serverIdentityId: report.serverIdentityId,
-                    hasUnprovenDeclarations: preceding?.hasUnprovenDeclarations === true || installation.uiDeclarationState === 'preparing',
-                }));
+                let build = builds.get(report.machineId);
+                if (!build) {
+                    build = { models: [], completeUiPluginIds: new Set(), materializationsByPluginId: {},
+                        serverIdentityId: report.serverIdentityId, hasUnprovenDeclarations: false };
+                    builds.set(report.machineId, build);
+                }
+                build.models.push(installation.uiModel);
+                if (installation.uiDeclarationState === 'known') build.completeUiPluginIds.add(plugin.pluginId);
+                build.materializationsByPluginId[plugin.pluginId] = report;
+                build.serverIdentityId = report.serverIdentityId;
+                build.hasUnprovenDeclarations ||= installation.uiDeclarationState === 'preparing';
             }
-            for (const [machineId, next] of machines) {
+            const machines = new Map<string, InstalledMachineDeclarations>();
+            for (const [machineId, build] of builds) {
+                const next = Object.freeze({ ...build, models: Object.freeze(build.models),
+                    materializationsByPluginId: Object.freeze(build.materializationsByPluginId) });
+                machines.set(machineId, next);
                 const old = installedByMachineId.get(machineId);
                 if (old && old.serverIdentityId === next.serverIdentityId && old.hasUnprovenDeclarations === next.hasUnprovenDeclarations
                     && old.models.length === next.models.length && old.models.every((model, index) => model === next.models[index])

@@ -139,11 +139,12 @@ const compiledSchemas = {
 export function compileProtocolJsonSchema(
   jsonSchema: object,
   dialect: 'draft-07' | 'draft-2020-12',
+  prepareSchema?: (schema: object) => object,
 ): PluginJsonSchemaValidator {
   const validators = compiledSchemas[dialect];
   const existing = validators.get(jsonSchema);
   if (existing) return existing;
-  const validate = createAjv(dialect).compile(jsonSchema);
+  const validate = createAjv(dialect).compile(prepareSchema ? prepareSchema(jsonSchema) : jsonSchema);
   validators.set(jsonSchema, validate);
   return validate;
 }

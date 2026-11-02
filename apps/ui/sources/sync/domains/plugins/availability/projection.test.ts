@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -27,6 +27,39 @@ const snapshot: PluginAccountAvailabilitySnapshot = {
 };
 
 describe('Plugin Account Availability React publication', () => {
+    it('queues only the changed keyed hook while disable, retirement and Account clear still propagate', async () => {
+        const rows: PluginMachineMaterializationV1[] = Array.from({ length: 100 }, (_, index) => ({
+            serverIdentityId: 'srv_fixture', machineId: 'machine-a', materializationId: `keyed-${index}`,
+            pluginId: `example.keyed-${index}`, version: '1.0.0', sourceClass: 'localPath', portableRelease: false,
+            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+        }));
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { ...snapshot, materializations: rows } });
+        const hook = await renderHook(() => rows.map(row => useActivePluginAccountAvailabilityReader(row.pluginId)));
+        const initial = hook.getCurrent();
+        const queued = vi.spyOn(globalThis, 'queueMicrotask');
+        try {
+            await act(async () => {
+                replacePluginAccountAvailabilityProjection({ scope, snapshot: { ...snapshot,
+                    materializations: rows.map((row, index) => index === 0 ? { ...row, enabled: false } : row),
+                } });
+            });
+            // Testkit schedules two microtasks; the projection must schedule only the affected hook.
+            expect(queued).toHaveBeenCalledTimes(3);
+            expect(hook.getCurrent()[0]).not.toBe(initial[0]);
+            expect(hook.getCurrent().slice(1)).toEqual(initial.slice(1));
+            const disabled = hook.getCurrent();
+            await act(async () => { retirePluginAccountAvailabilityProjection([rows[0]!.pluginId]); });
+            expect(hook.getCurrent()[0]).not.toBe(disabled[0]);
+            expect(hook.getCurrent().slice(1)).toEqual(initial.slice(1));
+            const retired = hook.getCurrent();
+            await act(async () => { clearPluginAccountAvailabilityProjection(); });
+            hook.getCurrent().forEach((reader, index) => {
+                expect(reader).not.toBe(retired[index]);
+                expect(reader?.readMaterializations().kind).toBe('unavailable');
+            });
+        } finally { queued.mockRestore(); await hook.unmount(); }
+    });
+
     it('keeps semantic consumers quiet through twenty cursor/time publications without hiding raw currentness', async () => {
         expect(useActivePluginAccountUiProjectionInputs).toEqual(expect.any(Function));
         const materialization: PluginMachineMaterializationV1 = {

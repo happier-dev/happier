@@ -30,13 +30,23 @@ function assertDocumentLocalActionSchema(schema: unknown): void {
 
 /** Compiles the published native Action dialect without broadening Plugin admission. */
 export function compileActionInputJsonSchema(schema: object): PluginJsonSchemaValidator {
+  // Choose the dialect without invoking an accessor; strict JSON admission still
+  // runs on the first compilation. The compiler keys the caller's immutable
+  // identity before preparing the cloned schema, as it does for Plugin schemas.
+  if (Object.getOwnPropertyDescriptor(schema, '$schema')?.value === ACTION_JSON_SCHEMA_DIALECT) {
+    return compileProtocolJsonSchema(schema, 'draft-2020-12', prepareActionInputJsonSchema);
+  }
+  prepareActionInputJsonSchema(schema);
+  return compilePluginJsonSchema(schema);
+}
+
+function prepareActionInputJsonSchema(schema: object): object {
   const normalized = cloneStrictPluginJsonValue(schema, 'schema');
   if (normalized === null || Array.isArray(normalized) || typeof normalized !== 'object') {
     throw new Error('Invalid Action JSON Schema: expected a schema object');
   }
-  if (!('$schema' in normalized) || normalized.$schema !== ACTION_JSON_SCHEMA_DIALECT) return compilePluginJsonSchema(schema);
-  assertDocumentLocalActionSchema(normalized);
-  return compileProtocolJsonSchema(normalized, 'draft-2020-12');
+  if ('$schema' in normalized && normalized.$schema === ACTION_JSON_SCHEMA_DIALECT) assertDocumentLocalActionSchema(normalized);
+  return normalized;
 }
 
 /**

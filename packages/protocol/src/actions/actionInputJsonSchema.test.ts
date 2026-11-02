@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Ajv2020 from 'ajv/dist/2020.js';
 import Ajv from 'ajv';
 import { z } from 'zod/mini';
@@ -20,6 +20,31 @@ import {
 } from './actionInputJsonSchema.js';
 
 describe('actionInputJsonSchema', () => {
+  it('compiles one native validator per caller schema identity across repeated validations', () => {
+    const schema = { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object',
+      properties: { costOperand: { type: 'number', minimum: 1 } }, required: ['costOperand'], additionalProperties: false };
+    const compile = vi.spyOn(Ajv2020.prototype, 'compile');
+    try {
+      const validators = Array.from({ length: 20 }, () => compileActionInputJsonSchema(schema));
+      for (const validate of validators) {
+        expect(validate({ costOperand: 1 })).toBe(true);
+        expect(validate({ costOperand: 0 })).toBe(false);
+      }
+      const targetCompiles = () => compile.mock.calls.filter(([value]) =>
+        typeof value === 'object' && value !== null && 'properties' in value
+          && Object.hasOwn(value.properties ?? {}, 'costOperand')).length;
+      expect(targetCompiles()).toBe(1);
+      expect(validators.every(validate => validate === validators[0])).toBe(true);
+      const distinct = compileActionInputJsonSchema({ ...schema,
+        properties: { costOperand: { type: 'number', minimum: 2 } } });
+      expect(targetCompiles()).toBe(2);
+      expect(distinct).not.toBe(validators[0]);
+      expect(distinct({ costOperand: 1 })).toBe(false);
+      expect(distinct({ costOperand: 2 })).toBe(true);
+      expect(validators[0]!({ costOperand: 1 })).toBe(true);
+    } finally { compile.mockRestore(); }
+  });
+
   it('normalizes readonly annotations in embedded native schema fragments', () => {
     const native = z.strictObject({ entries: z.readonly(z.array(z.string().check(z.minLength(1)))) });
     const { $schema: _dialect, ...fragment } = z.toJSONSchema(native, { target: 'draft-7', io: 'input' });

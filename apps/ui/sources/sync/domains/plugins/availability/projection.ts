@@ -149,7 +149,14 @@ export function usePluginAccountAvailabilityReader(requestedScope: ServerAccount
     const activeScope = useActiveServerAccountScope();
     const scope = requestedScope === undefined ? activeScope : requestedScope;
     const readSnapshot = React.useCallback(() => readerStore.getObservationSnapshot(pluginId), [pluginId]);
-    const subscribe = options?.enabled === false ? noAvailabilitySubscription : subscribeToReactProjection;
+    const enabled = options?.enabled !== false;
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (!enabled) return noAvailabilitySubscription();
+        if (scope && pluginId !== undefined) {
+            return readPluginAccountAvailability(scope).subscribe(() => queueMicrotask(listener), pluginId);
+        }
+        return subscribeToReactProjection(listener);
+    }, [enabled, pluginId, scope]);
     const snapshot = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
     const serverId = scope?.serverId ?? null;
     const accountId = scope?.accountId ?? null;

@@ -1,3 +1,6 @@
+import { renderHook } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginMachineMaterializationV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -30,6 +33,70 @@ function currentness(projection: PluginUiProjectionModel): PluginUiProjectionCur
 }
 
 describe('AppShell projection source publication', () => {
+    it('finalizes each Machine declaration vector once with linear element work and retains unrelated identities', async () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [] });
+        const scope = { serverId: 'server-linear', accountId: 'account-linear' };
+        const rows = Array.from({ length: 100 }, (_, index) => {
+            const pluginId = `acme.linear-${index}`;
+            return PluginMachineMaterializationV1Schema.parse({
+                serverIdentityId: 'srv_test', machineId: index < 99 ? 'machine-a' : 'machine-b', materializationId: pluginId,
+                pluginId, version: '1.0.0', sourceClass: 'localPath', portableRelease: false,
+                uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+                declaredManifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+                    runtime: { apiVersion: 1 }, contributes: { registrySources: [{ id: 'skills', title: 'Skills',
+                        format: 'git', kinds: ['skill'], url: `https://example.com/${index}` }] } }, declaredUiEntries: {},
+            });
+        });
+        const sources = { accountLifetime: null, hostBundledUiEnabled: false, activeServerId: scope.serverId,
+            serverProfilesGeneration: 0, activeInventoryLoaded: true,
+            onlineMachineIds: ['machine-a', 'machine-b'], selectableMachineIds: ['machine-a', 'machine-b'] };
+        const prepare = (materializations: typeof rows) => {
+            store.replace({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations, snapshots: [] } });
+            return store.bind(scope).readUiProjectionInputs();
+        };
+        const inputs = prepare(rows);
+        const markers = new Set(inputs?.installedPlugins?.flatMap(plugin => plugin.installations.map(row => row.uiModel)));
+        let vectors = 0, elements = 0;
+        const freeze = Object.freeze;
+        const counter = vi.spyOn(Object, 'freeze').mockImplementation(value => {
+            if (Array.isArray(value) && value.length > 0 && value.every(item => markers.has(item))) {
+                vectors++; elements += value.length;
+            }
+            return freeze(value);
+        });
+        try {
+            owner.publishSources({ ...sources, availabilityInputs: inputs });
+            counter.mockRestore();
+            expect.soft(vectors).toBe(2);
+            expect.soft(elements).toBe(rows.length);
+            const key = `${rows[99]!.pluginId}/skills`;
+            let renders = 0;
+            const hook = await renderHook(() => {
+                renders++;
+                return React.useSyncExternalStore(listener => owner.subscribe(listener, 'committed'),
+                    () => owner.getSnapshot().pluginUiProjection?.registrySourcesById[key]);
+            });
+            try {
+                const initial = hook.getCurrent();
+                expect(initial).toBeDefined();
+                const settled = renders;
+                const edited = rows.map((row, index) => index === 0 ? { ...row, declaredManifest: {
+                    ...row.declaredManifest!, displayName: 'Edited',
+                } } : row);
+                await act(async () => { owner.publishSources({ ...sources, availabilityInputs: prepare(edited) }); });
+                expect(owner.getSnapshot().pluginUiProjection?.installedPackagesById[rows[0]!.pluginId]?.displayName).toBe('Edited');
+                expect(hook.getCurrent()).toBe(initial);
+                expect(renders).toBe(settled);
+                await act(async () => { owner.publishSources({ ...sources,
+                    availabilityInputs: prepare(edited.filter((_, index) => index !== 99)) }); });
+                expect(hook.getCurrent()).toBeUndefined();
+                await act(async () => { owner.publishSources({ ...sources, availabilityInputs: prepare(edited) }); });
+                expect(hook.getCurrent()).toBeDefined();
+            } finally { await hook.unmount(); }
+        } finally { counter.mockRestore(); owner.dispose(); store.clear(); }
+    });
+
     it('settles the restored Machine descriptor answer while unrelated UI establishment is still pending', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const sources = { accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false, activeServerId: null,
