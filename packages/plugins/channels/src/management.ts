@@ -1605,12 +1605,13 @@ async function createSessionProjectionFrontierForBinding(input: Readonly<{
   });
   assertNotAborted(input.context.signal);
   if (baseline.kind !== 'ready') {
-    const retryable = baseline.kind === 'retry' || baseline.kind === 'unavailable';
-    throw pluginError(
-      'channels_binding_session_projection_baseline_unavailable',
-      'The Session transcript tail could not be established before binding it to a Conversation Channel.',
-      retryable,
-    );
+    throw new PluginError({
+      code: baseline.kind === 'unavailable' && baseline.actionErrorCode !== undefined
+        ? baseline.actionErrorCode : 'channels_binding_session_projection_baseline_unavailable',
+      message: 'The Session transcript tail could not be established before binding it to a Conversation Channel.',
+      retryable: baseline.kind === 'retry' || (baseline.kind === 'unavailable' && baseline.retryable === true),
+      details: { reason: baseline.reason },
+    });
   }
   return createConversationSessionProjectionFrontierRow({
     bindingId: input.bindingId,

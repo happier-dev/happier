@@ -535,6 +535,17 @@ describe('Conversation Session projection no-history baseline', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves the host Action failure code for a failed baseline without disclosing its message', async () => {
+    const result = await readConversationSessionProjectionNoHistoryBaseline({
+      actions: { execute: async () => { throw new PluginError({
+        code: 'unsupported_action', message: 'PRIVATE_TRANSCRIPT_DIAGNOSTIC', retryable: false,
+      }); } } as unknown as ActionsService,
+      sessionId: 'session-new', signal: new AbortController().signal,
+    });
+    expect(result).toEqual({ kind: 'unavailable', reason: 'transcriptUnavailable', actionErrorCode: 'unsupported_action' });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_TRANSCRIPT_DIAGNOSTIC');
+  });
+
   it('accepts an empty initial terminal page as the no-history baseline', async () => {
     const execute = vi.fn(async () => ({
       ok: true,

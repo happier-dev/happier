@@ -169,7 +169,7 @@ export type ConversationSessionProjectionNoHistoryBaseline =
   }>
   | Readonly<{ kind: 'retry'; reason: 'publicationBarrier' }>
   | Readonly<{ kind: 'historyGap'; reason: 'cursorRejected' | 'projectionMismatch' }>
-  | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'transcriptUnavailable' }>;
+  | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'transcriptUnavailable'; actionErrorCode?: string; retryable?: boolean }>;
 
 function isTranscriptCursorRejected(error: unknown): boolean {
   return isPluginError(error) && error.code === 'invalid_cursor';
@@ -588,7 +588,7 @@ export async function readConversationSessionProjectionNoHistoryBaseline(input: 
       // A policy deferral means the transcript page was never read, so no
       // baseline can be established from it.
       if (isPluginActionApprovalRequestCreated(read)) {
-        return { kind: 'unavailable', reason: 'transcriptUnavailable' };
+        return { kind: 'unavailable', reason: 'transcriptUnavailable', actionErrorCode: 'approval_request_created' };
       }
       transcript = read;
     } catch (error) {
@@ -598,6 +598,11 @@ export async function readConversationSessionProjectionNoHistoryBaseline(input: 
       return {
         kind: 'unavailable',
         reason: input.signal.aborted ? 'cancelled' : 'transcriptUnavailable',
+        // Preserve the host's classified cause, never its potentially private
+        // message/details. Callers must distinguish a policy/transport refusal
+        // from a valid page held behind publication before choosing recovery.
+        ...(!input.signal.aborted && isPluginError(error) ? { actionErrorCode: error.code } : {}),
+        ...(!input.signal.aborted && (!isPluginError(error) || error.retryable === true) ? { retryable: true } : {}),
       };
     }
     if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
