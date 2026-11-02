@@ -396,13 +396,18 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(changed.sentKeys).toEqual([]);
   });
 
-  it('checks missing selections, advances question pages, verifies every review answer, then submits once', async () => {
+  it.each([false, true])('checks selections and submits the exact native review (quoted labels: %s)', async (quoted) => {
     const apple = multi.replace('1. [ ] Apple', '1. [✓] Apple');
     const pearFocus = focus(apple, '1. [✓] Apple', '2. [ ] Pear');
     const pear = pearFocus.replace('2. [ ] Pear', '2. [✓] Pear');
     const largeFocus = focus(size, '1. Small', '2. Large');
-    const port = createFakeControlPort({ captures: [multi, apple, pearFocus, pear, size, largeFocus, review, idle] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+    const labels = { Apple: 'Ask probe', Pear: 'Lab first, then decide', Large: 'Say "hello"' };
+    const replaceLabels = (text: string) => quoted ? text.replace(/Apple|Pear|Large/g, (label) => labels[label as keyof typeof labels]) : text;
+    const reviewed = quoted ? replaceLabels(review).replace('→ Ask probe, Lab first, then decide', '→ Ask probe, "Lab first, then decide"') : review;
+    const input = quoted ? multipleQuestions.map((question) => ({ ...question, options: question.options.map((option) => ({ ...option, label: replaceLabels(option.label) })) })) : multipleQuestions;
+    const answers = quoted ? Object.fromEntries(Object.entries(fruitAnswers).map(([key, values]) => [key, values.map(replaceLabels)])) : fruitAnswers;
+    const port = createFakeControlPort({ captures: [...[multi, apple, pearFocus, pear, size, largeFocus].map(replaceLabels), reviewed, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input, answers })).resolves.toEqual({ status: 'answered' });
     expect(port.sentKeys).toEqual(['Enter', 'ArrowDown', 'Enter', 'Tab', 'ArrowDown', 'Enter', 'Enter']);
   });
 

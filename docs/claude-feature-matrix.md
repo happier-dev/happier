@@ -293,6 +293,10 @@ recognizes complete visible entries as a suffix of the hook-owned questions;
 the answer driver submits only after visiting every question page and matching
 the visible answers. Complete reviews still require every answer. A confirmation
 with no complete question visible remains unrecognized.
+The native answer projection preserves Claude's checkbox option order and JSON
+quoting of values containing `, ` or `"`, for both review matching and submitted
+result acknowledgement. Single-select values remain literal. Hook-injected
+answers retain their separate scalar wire projection.
 
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |
 | --- | --- | --- | --- | --- |
