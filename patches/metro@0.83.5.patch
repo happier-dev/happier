@@ -459,3 +459,67 @@ diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.
      const result = await this._fileSystem.getOrComputeSha1(mixedPath);
      if (!result || !result.sha1) {
        throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.
+diff --git a/src/lib/formatBundlingError.js b/src/lib/formatBundlingError.js
+--- a/src/lib/formatBundlingError.js
++++ b/src/lib/formatBundlingError.js
+@@ -79,10 +79,15 @@
+       message: error.message,
+     };
+   } else {
+-    const stack = _errorStackParser.default.parse(error);
+-    const fileName = stack[0].fileName;
+-    const column = stack[0].columnNumber;
+-    const line = stack[0].lineNumber;
++    // Expo can replace the JavaScript stack with an import trace before a
++    // second HTTP/HMR consumer formats the same resolution error.
++    let stack = [];
++    try {
++      stack = _errorStackParser.default.parse(error);
++    } catch {}
++    const fileName = stack[0]?.fileName;
++    const column = stack[0]?.columnNumber;
++    const line = stack[0]?.lineNumber;
+     let codeFrame = "";
+     try {
+       codeFrame = (0, _codeFrame.codeFrameColumns)(
+@@ -101,7 +106,7 @@
+     return {
+       type: "InternalError",
+       errors: [],
+-      message: `Metro has encountered an error: ${error.message}: ${fileName} (${line}:${column})\n\n${codeFrame}`,
++      message: `Metro has encountered an error: ${error.message}${fileName ? `: ${fileName} (${line}:${column})\n\n${codeFrame}` : ""}`,
+     };
+   }
+ }
+diff --git a/src/lib/formatBundlingError.js.flow b/src/lib/formatBundlingError.js.flow
+--- a/src/lib/formatBundlingError.js.flow
++++ b/src/lib/formatBundlingError.js.flow
+@@ -96,10 +96,15 @@
+       message: error.message,
+     };
+   } else {
+-    const stack = ErrorStackParser.parse(error);
+-    const fileName = stack[0].fileName;
+-    const column = stack[0].columnNumber;
+-    const line = stack[0].lineNumber;
++    // Expo can replace the JavaScript stack with an import trace before a
++    // second HTTP/HMR consumer formats the same resolution error.
++    let stack = [];
++    try {
++      stack = ErrorStackParser.parse(error);
++    } catch {}
++    const fileName = stack[0]?.fileName;
++    const column = stack[0]?.columnNumber;
++    const line = stack[0]?.lineNumber;
+ 
+     let codeFrame = '';
+     try {
+@@ -116,7 +121,7 @@
+     return {
+       type: 'InternalError',
+       errors: [],
+-      message: `Metro has encountered an error: ${error.message}: ${fileName} (${line}:${column})\n\n${codeFrame}`,
++      message: `Metro has encountered an error: ${error.message}${fileName ? `: ${fileName} (${line}:${column})\n\n${codeFrame}` : ''}`,
+     };
+   }
+ }
