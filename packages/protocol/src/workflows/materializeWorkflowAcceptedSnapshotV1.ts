@@ -400,6 +400,8 @@ function hasUnresolvedValue(value: unknown): boolean {
   return false;
 }
 
+export { hasUnresolvedValue as hasUnresolvedWorkflowValueV1 };
+
 /** Host-only Run admission; concrete Action children still require ordinary admission at the frozen Run depth. */
 export function readWorkflowRunLeafStartRequestV1(leaf: MaterializedWorkflowLeafV1): Extract<AgentStartRequestV1, { kind: 'workflow_run_leaf' }> {
   if (leaf.kind === 'action' && Object.values(leaf.facts).some(value =>

@@ -25,7 +25,9 @@ import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1, applyWorkflowInvocationFactV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
-import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
+  hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowActionIdV1 } from '../actionIds.js';
@@ -535,7 +537,32 @@ export type WorkflowAccountRunActionDeps = Readonly<{
 }>;
 
 /** One Account run owner; hosts supply concrete storage, authority and machine effects. */
-export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner {
+/** Preserve the materializer's fixed operands and the authored references it cannot resolve yet. */
+function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1): WorkflowApprovedOperationV1['steps'] {
+  const sources = new Map<string, WorkflowDefinitionV1>([['$root', snapshot.definition], ...Object.entries(snapshot.frozenChildren)]);
+  const blocksBySource = new Map([...sources].map(([sourceKey, definition]) =>
+    [sourceKey, new Map(walkWorkflowBlocks(definition.blocks).map(block => [block.id, block]))]));
+  return snapshot.materializedLeaves.flatMap(leaf => {
+    if (leaf.kind !== 'action' || !leaf.actionId || leaf.actionInput === undefined) return [];
+    const concrete = { actionId: leaf.actionId, input: leaf.actionInput };
+    const authored = blocksBySource.get(leaf.sourceKey)?.get(leaf.blockId);
+    if (authored?.kind !== 'action' || authored.actionId !== leaf.actionId) return [concrete];
+    const operands: [string, WorkflowAuthoredResultReference][] = [];
+    for (const [field, reference] of Object.entries(authored.input)) {
+      if (reference.kind === 'result') operands.push([field, reference]);
+    }
+    if (operands.length === 0) return [concrete];
+    const references = Object.fromEntries(operands);
+    const input = Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field)));
+    // Other deferred kinds do not acquire producer-result meaning by proximity.
+    if (hasUnresolvedWorkflowValueV1(input)) return [concrete];
+    return [{ actionId: leaf.actionId, input, binding: { kind: 'producer_result' as const, references } }];
+  });
+}
+
+export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
+  startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
+}> {
   const isSameHome = (context: RunArgs['context'], serverId: string) =>
     areServerProfileIdentifiersEquivalent(context.serverId, serverId, identifier =>
       context.serverIdentityId && (identifier === context.serverId || identifier === context.serverIdentityId)
@@ -707,7 +734,15 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return undefined;
   };
 
-  const start = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1) => {
+  const start = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
+    combined?: WorkflowCombinedRunStartV1) => {
+    const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
+    if (combined) {
+      const reviewedHost = combined.parent.actionId === 'deployments.publish'
+        ? combined.parent.input.hostMachineId : combined.parent.input.machineId;
+      if (reviewedHost !== admittedTarget?.machineId) throw workflowError('target_unavailable');
+      assertRunResourceRestriction(args.context, { machineId: admittedTarget.machineId, project: admittedTarget }, deps.normalizeAbsolutePath);
+    }
     const input = args.input;
     const replayRequest = input.source.kind === 'inline' ? input.source.replay : undefined;
     if (replayRequest?.runId === input.runId) throw workflowError('invalid_input');
@@ -806,7 +841,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           && existing.accepted.source.definitionId === inputSource.definitionId
           && sameStrictJsonValue(existing.accepted.source.revision, inputSource.revision);
       const expectedMetadata = input.source.kind === 'inline' ? input.metadata : undefined;
-      const expectedTarget = workflowProjectTarget(args.context);
+      const expectedTarget = admittedTarget;
       const normalizedExpectedTarget = expectedTarget
         ? normalizeProjectTargetForComparison(expectedTarget, deps.normalizeAbsolutePath)
         : null;
@@ -828,6 +863,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           && value.sessionId === existing.accepted.origin?.originSessionId) expectedInputs[field.name] = value;
       }
       if (!sameSource
+        || (combined !== undefined && !sameStrictJsonValue(existing.accepted.approvedOperation?.parent, combined.parent))
         || ((inputSource.kind === 'saved' || inputSource.kind === 'inline') && inputSource.visibleTeamId !== undefined
           && inputSource.visibleTeamId !== existing.snapshot.keyCensus.visibleTeamId)
         || !sameStrictJsonValue(existing.accepted.roleOverrides ?? [], replaySource?.accepted.roleOverrides ?? input.roleOverrides ?? [])
@@ -848,6 +884,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (requestedDiscussion && !sameStrictJsonValue(existing.accepted.origin.discussion, await resolveDiscussion())) {
         throw workflowError('currentness_conflict');
       }
+      if (combined) {
+        const witnessed = await prepareWorkflowApprovedOperationSnapshot({ snapshot: existing.accepted,
+          parent: { actionId: combined.parent.actionId,
+            input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(combined.parent.input) },
+          steps: existing.accepted.approvedOperation?.steps ?? [], context: args.context });
+        if (!sameStrictJsonValue(witnessed.approvedOperation, existing.accepted.approvedOperation)) throw workflowError('run_access_denied');
+      }
       await assertAcceptedAuthorizationCurrent(existing.accepted.authorization, args.context.signal, deps.isAcceptedAuthorizationCurrent);
       return WorkflowActionOutputSchemasV1['workflow.run.start'].parse({ run: { ...existing.snapshot.run,
         origin: projectAcceptedOrigin(existing.accepted.origin, existing.snapshot.run.origin) }, admission: 'existing' });
@@ -864,7 +907,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     let definition: WorkflowDefinitionV1;
     let metadata = replaySource ? replaySource.accepted.metadata ?? undefined : input.metadata;
     let source: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'];
-    const projectTarget = workflowProjectTarget(args.context);
+    const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
@@ -1062,7 +1105,24 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         args.context.recordActionStartDiagnostic?.({ phase: 'workflow_materialization', refusalReason: materialized.error.reason });
       throw workflowError(materialized.error.code, materialized.error);
     }
-    const accepted = materialized.snapshot;
+    let accepted = materialized.snapshot;
+    // Only the exact witnessed parent review covers its materialized children.
+    // Ordinary starts and unsupported deferred/live-only inputs keep per-child approval.
+    if (combined || args.context.presentUserApproval) {
+      const steps = readWorkflowApprovedOperationSteps(accepted);
+      if (combined && steps.length === 0) throw workflowError('approval_required');
+      if (steps.length > 0) {
+        try {
+          accepted = await prepareWorkflowApprovedOperationSnapshot({ snapshot: accepted,
+            parent: combined ? { actionId: combined.parent.actionId,
+              input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(combined.parent.input) }
+              : { actionId: args.actionId, input: WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse(args.input) },
+            steps, context: args.context });
+        } catch (error) {
+          if (combined || !(error instanceof Error && 'code' in error && error.code === 'approval_required')) throw error;
+        }
+      }
+    }
     if (!('origin' in accepted)) throw workflowError('invalid_input');
     if (!assertNonEscalatingPermissionMode({ requestedMode: accepted.authorization.admittedPermissionCeiling,
       callerMode: controller.effectivePermissionMode }).ok) throw workflowError('run_access_denied');
@@ -2700,7 +2760,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     throw workflowError('continuation_unavailable');
   };
-  return { execute: async (args, ingressContext) => {
+  return { startCombined: async (request, ingressContext) => {
+    deps.assertCurrent?.();
+    try {
+      return await start({ actionId: 'workflow.run.start', input: request.start, context: request.context }, ingressContext, request);
+    } finally {
+      deps.assertCurrent?.();
+    }
+  }, execute: async (args, ingressContext) => {
     deps.assertCurrent?.();
     try {
       return await execute(args, ingressContext);
