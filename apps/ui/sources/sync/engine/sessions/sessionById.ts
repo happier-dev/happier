@@ -295,7 +295,8 @@ async function fetchSessionTurnsProjection(params: Readonly<{
   }
 
   if (status < 200 || status >= 300) {
-    if (isAuthenticationResponseStatus(status)) throw createNotAuthenticatedError(status);
+    // A denied Session part is not a rejected Account credential.
+    if (status === 401) throw createNotAuthenticatedError(status);
     if (params.required && status >= 500) throw new RetryableServerResponseError(status, 'Session turns unavailable');
     return null;
   }
@@ -509,9 +510,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (!isCurrent()) return staleResult();
 
   if (!responseOk) {
-    // An explicit frame envelope denotes a restricted Session credential, not
-    // an Account login. A denied Session must not trigger Account auth recovery.
-    if (params.sessionKey !== undefined && responseStatus === 403) {
+    // Detail refusals concern this Session, including parts of a successful
+    // Account read-batch. They do not invalidate the Account connection.
+    if (responseStatus === 403) {
       return { ok: false, session: null, errorCode: 'forbidden', httpStatus: 403 };
     }
     if (isAuthenticationResponseStatus(responseStatus)) {

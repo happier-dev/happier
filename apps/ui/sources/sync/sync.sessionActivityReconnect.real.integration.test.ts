@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -26,7 +27,11 @@ afterEach(async () => {
     server = undefined;
 });
 
-it.each([false, true])('converges a consumed Session to canonical idle after a real transport gap (older read held: %s)', async held => {
+it.each([
+    { held: false, exactRefusal: false },
+    { held: true, exactRefusal: false },
+    { held: false, exactRefusal: true },
+])('converges a consumed Session after a real transport gap (older read held: $held, exact refusal: $exactRefusal)', async ({ held, exactRefusal }) => {
     const http = createServer();
     server = new Server(http, { path: '/v1/updates' });
     let declarations = 0;
@@ -46,14 +51,17 @@ it.each([false, true])('converges a consumed Session to canonical idle after a r
     const now = Date.now();
     let session = SessionCurrentProjectionRecordV1Schema.parse({
         ...createPlainSessionCurrentProjectionRecordFixture({ id: 'reconnect-session', active: true, activeAt: now }),
-        thinking: true, thinkingAt: now, runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+        thinking: !exactRefusal, thinkingAt: now, runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
         runtimeActivityObservedAt: now, runtimeActivityRevision: 1 });
     let exactReads = 0;
+    let fullListReads = 0;
+    let refuseSession = false;
     let holdNextRead = false;
     const home = await restoreServerAccountForTest({ serverUrl, accountId: 'reconnect-account', request: async (input, init) => {
         const url = new URL(String(input));
         if (url.pathname === `/v2/sessions/${session.id}`) {
             exactReads += 1;
+            if (refuseSession) return Response.json({ error: 'forbidden' }, { status: 403 });
             const response = Response.json({ session });
             if (holdNextRead) {
                 holdNextRead = false;
@@ -62,10 +70,12 @@ it.each([false, true])('converges a consumed Session to canonical idle after a r
             return response;
         }
         if (url.pathname === '/v2/sessions' || url.pathname === '/v2/sessions/active') {
+            if (url.pathname === '/v2/sessions') fullListReads += 1;
             return Response.json({ sessions: [session], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
         }
         if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
         if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (url.pathname === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'reconnect-account' }));
         if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
         return createEmptyAccountBootstrapHttpResponse(url.pathname, init);
@@ -83,6 +93,27 @@ it.each([false, true])('converges a consumed Session to canonical idle after a r
     releaseAuthority = async () => { await authority.release(); };
     await sync.ensureSessionVisibleForMessageRoute(session.id, { serverId: home.serverId,
         forceRefresh: true, hydrateMessages: false, includeTurnsProjection: false, authority });
+    if (exactRefusal) {
+        await sync.refreshSessions();
+        const readsBeforeRefusal = fullListReads;
+        let accountRecoveryTransitions = 0;
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (state.syncError !== previous.syncError && state.syncError?.kind === 'auth') accountRecoveryTransitions += 1;
+        });
+        refuseSession = true;
+        try {
+            const refusal = await sync.ensureSessionVisibleForMessageRoute(session.id, { serverId: home.serverId,
+                forceRefresh: true, hydrateMessages: false, includeTurnsProjection: false, authority });
+            // Observe Account recovery demand and physical full-list reads while
+            // internal classification, endpoint and Sync owners stay real.
+            expect({ accountRecoveryTransitions, fullListReads: fullListReads - readsBeforeRefusal })
+                .toEqual({ accountRecoveryTransitions: 0, fullListReads: 0 });
+            expect(refusal).toMatchObject({ kind: 'missing', cause: 'forbidden' });
+        } finally {
+            refuseSession = false;
+            unsubscribe();
+        }
+    }
     let pendingRead: Promise<unknown> | undefined;
     if (held) {
         holdNextRead = true;
@@ -101,8 +132,10 @@ it.each([false, true])('converges a consumed Session to canonical idle after a r
     socket.conn.close();
     await vi.waitFor(() => expect(apiSocket.getSocketId()).not.toBe(before), { timeout: 10_000 });
     await vi.waitFor(() => expect(storage.getState().socketStatus).toBe('connected'), { timeout: 10_000 });
-    await vi.waitFor(() => expect(storage.getState().sessions[session.id]?.runtimeActivityState).toBe('idle'), { timeout: 10_000 });
-    expect(storage.getState().sessions[session.id]?.thinking).toBe(false);
+    await vi.waitFor(() => {
+        expect(storage.getState().sessions[session.id]?.runtimeActivityState).toBe('idle');
+        expect(storage.getState().sessions[session.id]?.thinking).toBe(false);
+    }, { timeout: 10_000 });
     expect(declarations).toBeGreaterThanOrEqual(2);
     releaseHeldRead?.(); releaseHeldRead = undefined;
     await pendingRead;

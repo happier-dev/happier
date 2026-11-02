@@ -1511,7 +1511,34 @@ describe('fetchAndApplySessionById', () => {
     ]);
   });
 
-  it.each([401, 403] as const)('throws terminal auth for session-by-id status %s', async (status) => {
+  it('keeps an exact Session refusal scoped to that Session', async () => {
+    const request = vi.fn(async () => Response.json({ error: 'forbidden' }, { status: 403 }));
+    const applySessions = vi.fn();
+    await expect(fetchAndApplySessionById({
+      sessionId: 's_forbidden', credentials: { token: 't', secret: 's' },
+      encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION,
+      sessionDataKeys: new Map(), request, applySessions, log: { log: () => {} },
+    })).resolves.toMatchObject({ ok: false, session: null, errorCode: 'forbidden', httpStatus: 403 });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(request.mock.calls).toHaveLength(1);
+  });
+
+  it('keeps a forbidden optional turns projection scoped to that Session', async () => {
+    const session = createSessionFixture({ id: 'turns-forbidden', encryptionMode: 'plain' });
+    const request = vi.fn(async (path: string) => path.endsWith('/turns')
+      ? Response.json({ error: 'forbidden' }, { status: 403 })
+      : Response.json(createPlainSessionByIdResponseFixture(session)));
+    await expect(fetchAndApplySessionById({
+      sessionId: session.id, credentials: { token: 't' }, accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+      encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(),
+      request, applySessions: () => {}, log: { log() {} },
+    })).resolves.toMatchObject({ ok: true, session: { id: session.id } });
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      `/v2/sessions/${session.id}`, `/v1/sessions/${session.id}/turns`,
+    ]);
+  });
+
+  it.each([401] as const)('throws terminal auth for session-by-id status %s', async (status) => {
     const applySessions = vi.fn();
     const request = vi.fn(async () => new Response(JSON.stringify({ error: 'auth failed' }), { status }));
 
