@@ -1,0 +1,25 @@
+-- Domain cleanup retains relational custody; route content remains private.
+CREATE TABLE `DeploymentDomain` (
+    `id` VARCHAR(191) NOT NULL,
+    `environmentId` VARCHAR(191) NOT NULL,
+    `targetLinkId` VARCHAR(191) NOT NULL,
+    `revision` INTEGER NOT NULL DEFAULT 1,
+    `state` VARCHAR(191) NOT NULL,
+    `capturedPlacements` JSON NULL,
+    `contentArtifactId` VARCHAR(191) NOT NULL,
+    `contentHeaderVersion` INTEGER NOT NULL,
+    `contentBodyVersion` INTEGER NOT NULL,
+    `createdByAccountId` VARCHAR(191) NOT NULL,
+    `observedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+    `deletedAt` DATETIME(3) NULL,
+    CONSTRAINT `DeploymentDomain_values_check` CHECK (`revision` >= 1 AND `contentHeaderVersion` >= 1 AND `contentBodyVersion` >= 1 AND `state` IN ('pending', 'applying', 'active', 'warning', 'failed', 'removing')),
+    INDEX `DeploymentDomain_environmentId_deletedAt_id_idx`(`environmentId`, `deletedAt`, `id`),
+    INDEX `DeploymentDomain_environmentId_state_id_idx`(`environmentId`, `state`, `id`),
+    PRIMARY KEY (`id`),
+    CONSTRAINT `DeploymentDomain_environmentId_fkey` FOREIGN KEY (`environmentId`) REFERENCES `DeploymentEnvironment` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT `DeploymentDomain_targetLinkId_fkey` FOREIGN KEY (`targetLinkId`) REFERENCES `DeploymentTargetLink` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT `DeploymentDomain_contentArtifactId_fkey` FOREIGN KEY (`contentArtifactId`) REFERENCES `Artifact` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT `DeploymentDomain_createdByAccountId_fkey` FOREIGN KEY (`createdByAccountId`) REFERENCES `Account` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

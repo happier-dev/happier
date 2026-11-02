@@ -1,0 +1,22 @@
+CREATE TABLE `MachineSecretGrant` (
+    `subjectKey` VARCHAR(191) NOT NULL,
+    `kind` VARCHAR(191) NOT NULL,
+    `machineId` VARCHAR(191) NOT NULL,
+    `installationId` VARCHAR(191) NOT NULL,
+    `environmentId` VARCHAR(191) NULL,
+    `resourceId` VARCHAR(191) NULL,
+    `resourceRevision` INTEGER NULL,
+    `phase` VARCHAR(191) NULL,
+    `name` VARCHAR(191) NULL,
+    `providerPluginId` VARCHAR(191) NULL,
+    `providerLocalId` VARCHAR(191) NULL,
+    `connectorId` VARCHAR(191) NULL,
+    `contentEnvelope` LONGTEXT NOT NULL,
+    PRIMARY KEY (`subjectKey`),
+    INDEX `MSG_environment_installation_idx` (`environmentId`, `machineId`, `installationId`),
+    INDEX `MSG_installation_idx` (`machineId`, `installationId`),
+    INDEX `MSG_resource_idx` (`resourceId`),
+    CONSTRAINT `MachineSecretGrant_machineId_fkey` FOREIGN KEY (`machineId`) REFERENCES `Machine`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `MachineSecretGrant_environmentId_fkey` FOREIGN KEY (`environmentId`) REFERENCES `DeploymentEnvironment`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `MachineSecretGrant_resourceId_fkey` FOREIGN KEY (`resourceId`) REFERENCES `SavedSecretResource`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

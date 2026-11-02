@@ -23,6 +23,11 @@ datasource db {
 //
 
 model Account {
+    requestedDeployments Deployment[]
+    createdDeploymentTargetLinks DeploymentTargetLink[]
+    createdDeploymentEnvironments DeploymentEnvironment[]
+    deploymentDeployerSelectionsCreated DeploymentEnvironmentDeployer[]
+    deploymentDomains DeploymentDomain[]
     managedMachines ManagedMachine[]
     managedMachinePresets ManagedMachinePreset[]
     projectSources ProjectSource[]
@@ -785,6 +790,7 @@ model SessionTeamCredentialBinding {
 }
 
 model SavedSecretResource {
+    machineSecretGrants MachineSecretGrant[]
     id              String   @id @default(cuid())
     ownerAccountId  String
     displayName     String
@@ -2528,6 +2534,12 @@ enum MachineKind {
 }
 
 model Machine {
+    deploymentTargetLinks DeploymentTargetLink[]
+    deploymentTargetMemberships DeploymentTargetLinkMachine[]
+    edgeDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentEdge")
+    builtDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentBuilder")
+    controlledDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentController")
+    environmentSecretGrants MachineSecretGrant[]
     accountExecutionRunFollowSources AccountSessionFollow[] @relation("AccountFollowExecutionRunMachineSource")
     sessionExecutionRunFollowSources SessionFollowEdge[] @relation("ExecutionRunMachineFollowSource")
     accountGrants MachineAccountGrant[]
@@ -2882,6 +2894,9 @@ enum AutomationEventSourceCatalogStatusState {
 }
 
 model Automation {
+    deploymentEnvironment DeploymentEnvironment? @relation(fields: [deploymentEnvironmentId], references: [id], onDelete: Restrict)
+    deploymentPreviewRole String?
+    deploymentEnvironmentId String?
     id               String                 @id @default(cuid())
     accountId        String
     workflowDefinitionId String? @db.LongText
@@ -2910,6 +2925,7 @@ model Automation {
     @@index([accountId, deletedAt, managedTargetIndexed, managedTargetHomeId, managedTargetManagedId], map: "Automation_account_managed_target_idx")
     @@index([accountId, deletedAt, managedTargetIndexed, updatedAt, id], map: "Automation_account_managed_unknown_idx")
     @@index([accountId, deletedAt, updatedAt, id], map: "Automation_account_deleted_updated_id_idx")
+    @@index([deploymentEnvironmentId, deletedAt, id])
 }
 
 model AutomationTrigger {
@@ -3457,6 +3473,9 @@ model ConnectedServiceAuthGroupMember {
 
 /// Disclosed, credential-free Source metadata; independent of private Project rows and Artifact grants.
 model ProjectSource {
+    previewEnvironments DeploymentEnvironment[] @relation("DeploymentPreviewRepository")
+    deploymentEnvironments DeploymentEnvironment[]
+    deploymentDefaults ProjectDeploymentDefaults?
     id String @id @default(cuid())
     createdByAccountId String
     createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Cascade)
@@ -3474,6 +3493,11 @@ model ProjectSource {
 }
 
 model Artifact {
+    deployments Deployment[]
+    deploymentTargetLinks DeploymentTargetLink[]
+    deploymentEnvironments DeploymentEnvironment[]
+    projectDeploymentDefaults ProjectDeploymentDefaults[]
+    deploymentDomains DeploymentDomain[]
     publicShare PublicSessionShare?
     revisions ArtifactRevision[]
     blobs ArtifactBlob[]
@@ -4528,4 +4552,230 @@ model EphemeralRunnerActivation {
     updatedAt                  DateTime @updatedAt
 
     @@index([creatorAccountId, draftId])
+}
+
+model ProjectDeploymentDefaults {
+    projectSourceId String @id
+    projectSource ProjectSource @relation(fields: [projectSourceId], references: [id], onDelete: Cascade)
+    revision Int @default(1)
+    contentArtifactId String?
+    contentArtifact Artifact? @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    contentHeaderVersion Int?
+    contentBodyVersion Int?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([contentArtifactId])
+}
+
+model DeploymentEnvironment {
+    domains DeploymentDomain[]
+    deployers DeploymentEnvironmentDeployer[]
+    machineSecretGrants MachineSecretGrant[]
+    id String @id @default(cuid())
+    projectSourceId String
+    projectSource ProjectSource @relation(fields: [projectSourceId], references: [id], onDelete: Restrict)
+    createdByAccountId String
+    createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Restrict)
+    revision Int @default(1)
+    protection String
+    purpose String
+    previewTemplateEnvironmentId String?
+    previewTemplateEnvironment DeploymentEnvironment? @relation("DeploymentPreviewTemplate", fields: [previewTemplateEnvironmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    previewChildren DeploymentEnvironment[] @relation("DeploymentPreviewTemplate")
+    previewRepositoryId String?
+    previewRepository ProjectSource? @relation("DeploymentPreviewRepository", fields: [previewRepositoryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    previewPullRequestId String?
+    previewTargetLinkId String?
+    previewTargetLink DeploymentTargetLink? @relation("DeploymentPreviewTemplateTarget", fields: [previewTargetLinkId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+    deployerMode String
+    controllerMachineId String
+    controllerMachine Machine @relation("DeploymentController", fields: [controllerMachineId], references: [id], onDelete: Restrict)
+    buildMachineId String?
+    buildMachine Machine? @relation("DeploymentBuilder", fields: [buildMachineId], references: [id], onDelete: Restrict)
+    edgeMachineId String?
+    edgeMachine Machine? @relation("DeploymentEdge", fields: [edgeMachineId], references: [id], onDelete: Restrict)
+    runtimeTargetLinkId String? @unique
+    runtimeTargetLink DeploymentTargetLink? @relation("SelectedDeploymentRuntime", fields: [runtimeTargetLinkId], references: [id], onDelete: Restrict)
+    pendingDeployContent Json?
+    referencedSavedSecretRevisions Json?
+    contentArtifactId String
+    contentArtifact Artifact @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    contentHeaderVersion Int
+    contentBodyVersion Int
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    deletedAt DateTime?
+    targetLinks DeploymentTargetLink[] @relation("DeploymentEnvironmentLinks")
+    deployments Deployment[]
+    automations Automation[]
+
+    @@index([projectSourceId, deletedAt, id])
+    @@index([controllerMachineId, deletedAt, id])
+    @@index([buildMachineId, deletedAt, id])
+    @@index([edgeMachineId, deletedAt, id])
+}
+
+model DeploymentEnvironmentDeployer {
+    environmentId String
+    environment DeploymentEnvironment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+    principalKind String
+    principalId String
+    createdByAccountId String
+    createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Restrict)
+    createdAt DateTime @default(now())
+
+    @@id([environmentId, principalKind, principalId])
+}
+
+model DeploymentTargetLink {
+    domains DeploymentDomain[]
+    id String @id @default(cuid())
+    environmentId String
+    environment DeploymentEnvironment @relation("DeploymentEnvironmentLinks", fields: [environmentId], references: [id], onDelete: Restrict)
+    selectedByEnvironment DeploymentEnvironment? @relation("SelectedDeploymentRuntime")
+    previewEnvironments DeploymentEnvironment[] @relation("DeploymentPreviewTemplateTarget")
+    revision Int @default(1)
+    role String
+    sourceKind String
+    hostTargetId String?
+    pluginId String?
+    contributionLocalId String?
+    targetKind String
+    state String
+    machineId String?
+    machine Machine? @relation(fields: [machineId], references: [id], onDelete: Restrict)
+    installationId String?
+    activeDeploymentId String?
+    activeDeployment Deployment? @relation("UniformDeployment", fields: [activeDeploymentId], references: [id], onDelete: Restrict)
+    predecessorTargetLinkId String?
+    predecessorTargetLink DeploymentTargetLink? @relation("DeploymentTargetLinkPredecessor", fields: [predecessorTargetLinkId], references: [id], onDelete: Restrict)
+    successorTargetLinks DeploymentTargetLink[] @relation("DeploymentTargetLinkPredecessor")
+    detachedAt DateTime?
+    contentArtifactId String
+    contentArtifact Artifact @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    contentHeaderVersion Int
+    contentBodyVersion Int
+    createdByAccountId String
+    createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Restrict)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    deletedAt DateTime?
+    machines DeploymentTargetLinkMachine[]
+    deployments Deployment[] @relation("DeploymentReceiptTarget")
+
+    @@index([environmentId, role, deletedAt, id])
+    @@index([machineId, deletedAt, id])
+    @@index([pluginId, contributionLocalId])
+}
+
+model DeploymentDomain {
+    id String @id @default(cuid())
+    environmentId String
+    environment DeploymentEnvironment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+    targetLinkId String
+    targetLink DeploymentTargetLink @relation(fields: [targetLinkId], references: [id], onDelete: Restrict)
+    revision Int @default(1)
+    state String
+    /// Exact admitted native custody; null legacy rows cannot prove absence.
+    capturedPlacements Json?
+    contentArtifactId String
+    contentArtifact Artifact @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    contentHeaderVersion Int
+    contentBodyVersion Int
+    createdByAccountId String
+    createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Restrict)
+    observedAt DateTime?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    deletedAt DateTime?
+
+    @@index([environmentId, deletedAt, id])
+    @@index([environmentId, state, id])
+}
+
+model DeploymentTargetLinkMachine {
+    targetLinkId String
+    targetLink DeploymentTargetLink @relation(fields: [targetLinkId], references: [id], onDelete: Restrict)
+    machineId String
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Restrict)
+    position Int
+    installationId String
+    state String
+
+    @@id([targetLinkId, machineId])
+    @@unique([targetLinkId, position])
+    @@index([machineId, targetLinkId])
+}
+
+model Deployment {
+    id String @id @default(cuid())
+    environmentId String
+    environment DeploymentEnvironment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+    targetLinkId String
+    targetLink DeploymentTargetLink @relation("DeploymentReceiptTarget", fields: [targetLinkId], references: [id], onDelete: Restrict)
+    uniformForLinks DeploymentTargetLink[] @relation("UniformDeployment")
+    revision Int @default(1)
+    operation String
+    state String
+    requestKey String
+    requestedByAccountId String
+    requestedByAccount Account @relation(fields: [requestedByAccountId], references: [id], onDelete: Restrict)
+    actionOperationId String
+    acceptedRequestEnvelopeDigest String?
+    acceptedControllerMachineId String?
+    acceptedControllerInstallationId String?
+    acceptedBuildMachineId String?
+    acceptedBuildInstallationId String?
+    teardownProof Json?
+    predecessorDeploymentId String?
+    predecessorDeployment Deployment? @relation("DeploymentPredecessor", fields: [predecessorDeploymentId], references: [id], onDelete: Restrict)
+    successors Deployment[] @relation("DeploymentPredecessor")
+    rollbackOfDeploymentId String?
+    rollbackOfDeployment Deployment? @relation("DeploymentRollback", fields: [rollbackOfDeploymentId], references: [id], onDelete: Restrict)
+    rollbacks Deployment[] @relation("DeploymentRollback")
+    promotedFromDeploymentId String?
+    promotedFromDeployment Deployment? @relation("DeploymentPromotion", fields: [promotedFromDeploymentId], references: [id], onDelete: Restrict)
+    promotions Deployment[] @relation("DeploymentPromotion")
+    approvalId String?
+    cancelRequestedAt DateTime?
+    contentArtifactId String
+    contentArtifact Artifact @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    contentHeaderVersion Int
+    contentBodyVersion Int
+    requestedAt DateTime @default(now())
+    startedAt DateTime?
+    settledAt DateTime?
+
+    @@unique([environmentId, requestKey])
+    @@index([environmentId, requestedAt, id])
+    @@index([environmentId, state, id])
+    @@index([actionOperationId])
+    @@index([acceptedControllerMachineId, state, id])
+    @@index([acceptedBuildMachineId, state, id])
+}
+
+model MachineSecretGrant {
+    /// Exact canonical subject digest fits every provider's primary-key byte boundary.
+    subjectKey String @id
+    kind String
+    machineId String
+    installationId String
+    environmentId String?
+    resourceId String?
+    resourceRevision Int?
+    phase String?
+    name String?
+    providerPluginId String?
+    providerLocalId String?
+    connectorId String?
+    contentEnvelope String @db.LongText
+
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    environment DeploymentEnvironment? @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+    resource SavedSecretResource? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+    @@index([environmentId, machineId, installationId], map: "MSG_environment_installation_idx")
+    @@index([machineId, installationId], map: "MSG_installation_idx")
+    @@index([resourceId], map: "MSG_resource_idx")
 }
