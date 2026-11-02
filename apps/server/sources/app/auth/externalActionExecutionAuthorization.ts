@@ -625,6 +625,10 @@ async function hasCurrentExecutionMachineAdmission(
         && current.installationId === binding.installationId;
 }
 
+function isContributedActionRoot(actionId: string): boolean {
+    return actionId === 'action.invoke' || parseQualifiedPluginActionId(actionId) !== null;
+}
+
 function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: string): boolean {
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(rootActionId);
     const managedEffect = ManagedMachineActionIdV1Schema.safeParse(effectActionId);
@@ -785,12 +789,10 @@ async function verifyCommon(
     })) return refuseExternalActionExecutionRequest('resolved_target');
     if (!await hasCurrentOriginalSessionActionTargetInTx(db, binding, target)) return refuseExternalActionExecutionRequest('original_target');
     if (binding.actionId === 'session.pending.resetStart.set' && !binding.pendingResetStartAdmission) return refuseExternalActionExecutionRequest('pending_reset_admission');
-    const resolvesPatEffect = !('authentication' in binding)
-        && (binding.actionId === 'approval.request.create' || binding.actionId === 'action.invoke'
-            || parseQualifiedPluginActionId(binding.actionId) !== null);
+    const resolvesPatEffect = !('authentication' in binding) && binding.actionId === 'approval.request.create';
     if (!hasMatchingExecutionEffectFamily(binding.actionId, effectActionId.data)
         || binding.actionId !== effectActionId.data && (binding.handoffContinuation || binding.handoffPreflight
-            || !resolvesPatEffect && !isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId.data)
+            || !isContributedActionRoot(binding.actionId) && !resolvesPatEffect && !isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId.data)
                 && !isDocDiscussionEffect(binding.actionId, effectActionId.data)
                 && !isDocReadEffect(binding.actionId, effectActionId.data)
                 && !isSecondOpinionEffect(binding.actionId, effectActionId.data)
@@ -1631,6 +1633,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && verified.binding.target.kind === 'machine' && verified.binding.target.machineId === verified.binding.machineId
             || getActionSpec(root.data).executionPlacement === 'session' && verified.target.kind === 'session')
         && (verified.effectActionId === verified.binding.actionId
+            || isContributedActionRoot(verified.binding.actionId)
             || isSessionArchiveStopEffect(verified.binding.actionId, verified.effectActionId))
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`;
@@ -2303,6 +2306,7 @@ export async function verifyExternalActionMachineRpcExecution(
             ? request.method === request.event ? 'session.message.send' : null
             : resolveMachineRpcExternalActionEffectV1(method, binding);
         if (!transitionPurpose && (binding.actionId !== execution.effectActionId
+                && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
     }

@@ -3041,6 +3041,53 @@ describe("external Action execution authorization", () => {
         } finally { await channel.close(); await app.close(); }
     });
 
+    it('reads the selected Machine for a saved health Action under its admitted Account root', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, undefined, true);
+        try {
+            const authorization = await mint(app, fixture, 'action.invoke', { ...fixture.envelope,
+                input: { action: { pluginId: 'happier.machine.services', localId: 'health/http' },
+                    input: { selector: crypto.randomUUID() } } }, token);
+            const path = `/v1/machines/${fixture.machine.id}`;
+            const headers = machineHeaders({ authorizationToken: authorization.token, effectActionId: 'machines.services.detail',
+                method: 'GET', path, body: undefined, privateKey: fixture.keyPair.secretKey });
+            const response = await app.inject({ method: 'GET', url: path, headers });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ machine: { id: fixture.machine.id } });
+            const effectActionId = 'machines.services.detail';
+            const params = getActionSpec(effectActionId).inputSchema.parse({ serverId: authorization.binding.serverIdentityId,
+                machineId: fixture.machine.id, serviceId: 'web' });
+            const method = `${fixture.machine.id}:${getActionSpec(effectActionId).bindings!.rpcMethod}`;
+            const requestId = crypto.randomUUID();
+            const execution = { v: 1 as const, authorization, effectActionId, target: authorization.binding.target,
+                installationId: fixture.machine.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target: authorization.binding.target,
+                    installationId: fixture.machine.installationId!, method, requestId, params,
+                    privateKey: fixture.keyPair.secretKey }) };
+            expect(await verifyExternalActionMachineRpcExecution(execution, { method, requestId, params }))
+                .toMatchObject({ binding: authorization.binding, effectActionId });
+            expect(await verifyExternalActionMachineRpcExecution(execution, { method: `${fixture.machine.id}:machines.services.control`,
+                requestId, params })).toBeNull();
+            const other = await createFixture({ qualifiedPat: false });
+            const otherPath = `/v1/machines/${other.machine.id}`;
+            const foreign = await app.inject({ method: 'GET', url: otherPath,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: 'machines.services.detail',
+                    method: 'GET', path: otherPath, body: undefined, privateKey: fixture.keyPair.secretKey }) });
+            expect(foreign.statusCode).toBe(401);
+            const tampered = await app.inject({ method: 'GET', url: path, headers: {
+                ...headers, [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.services.list',
+            } });
+            expect(tampered.statusCode).toBe(401);
+            const ordinary = await mint(app, fixture, 'machines.services.list', { ...fixture.envelope,
+                requestId: crypto.randomUUID(), input: { serverId: authorization.binding.serverIdentityId, machineId: fixture.machine.id } }, token);
+            const unrelated = await app.inject({ method: 'GET', url: path,
+                headers: machineHeaders({ authorizationToken: ordinary.token, effectActionId, method: 'GET', path,
+                    body: undefined, privateKey: fixture.keyPair.secretKey }) });
+            expect(unrelated.statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
     it('admits declaration-owned SessionTarget preparation reads only under the original signed root', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
