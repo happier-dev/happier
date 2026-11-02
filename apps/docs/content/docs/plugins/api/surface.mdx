@@ -3,8 +3,8 @@ title: Public API surface
 description: Every symbol the Plugin SDK exports and the entrypoint it comes from — generated from the SDK's own api-surface projection.
 ---
 
-The SDK exports **3,294 symbols** across **56 entrypoints**:
-750 values and 2,544 types. This page is the index — it answers
+The SDK exports **3,369 symbols** across **57 entrypoints**:
+765 values and 2,604 types. This page is the index — it answers
 "does this exist, and where do I import it from", which is the question a type
 definition file cannot answer until you already know the answer.
 
@@ -14,7 +14,7 @@ counterpart to it.
 
 ## How to read it
 
-**Visibility** separates the 54 entrypoints a plugin author may import
+**Visibility** separates the 55 entrypoints a plugin author may import
 from the 2 the host reserves for itself.
 
 <Callout type="warn">
@@ -32,7 +32,8 @@ catch.
 
 | Import from | Visibility | Realm | Values | Types |
 | --- | --- | --- | --- | --- |
-| `@happier-dev/plugin-sdk` | author | any | 38 | 201 |
+| `@happier-dev/plugin-sdk` | author | any | 44 | 235 |
+| `@happier-dev/plugin-sdk/access-providers` | author | any | 5 | 10 |
 | `@happier-dev/plugin-sdk/actions` | author | any | 24 | 386 |
 | `@happier-dev/plugin-sdk/agents` | author | any | 7 | 29 |
 | `@happier-dev/plugin-sdk/agents/runtime` | author | daemon | 49 | 418 |
@@ -46,17 +47,17 @@ catch.
 | `@happier-dev/plugin-sdk/contributions` | author | any | 3 | 36 |
 | `@happier-dev/plugin-sdk/errors` | author | any | 2 | 0 |
 | `@happier-dev/plugin-sdk/events` | author | any | 11 | 22 |
-| `@happier-dev/plugin-sdk/exec` | author | any | 0 | 17 |
-| `@happier-dev/plugin-sdk/exec/protocol-clients` | author | any | 0 | 14 |
+| `@happier-dev/plugin-sdk/exec` | author | daemon | 1 | 19 |
+| `@happier-dev/plugin-sdk/exec/protocol-clients` | author | any | 0 | 16 |
 | `@happier-dev/plugin-sdk/first-party/claude` | author | any | 26 | 11 |
 | `@happier-dev/plugin-sdk/first-party/connected-accounts` | author | any | 9 | 7 |
 | `@happier-dev/plugin-sdk/fs` | author | daemon | 23 | 11 |
 | `@happier-dev/plugin-sdk/hooks` | author | daemon | 11 | 22 |
 | `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | host | daemon | 2 | 0 |
 | `@happier-dev/plugin-sdk/host/registration` | host | any | 24 | 20 |
-| `@happier-dev/plugin-sdk/http` | author | any | 3 | 13 |
+| `@happier-dev/plugin-sdk/http` | author | any | 3 | 14 |
 | `@happier-dev/plugin-sdk/interactions` | author | any | 1 | 28 |
-| `@happier-dev/plugin-sdk/machine-provisioners` | author | any | 14 | 19 |
+| `@happier-dev/plugin-sdk/machine-provisioners` | author | any | 16 | 27 |
 | `@happier-dev/plugin-sdk/machine-provisioners/lima` | author | daemon | 12 | 5 |
 | `@happier-dev/plugin-sdk/machine-provisioners/ssh` | author | daemon | 1 | 0 |
 | `@happier-dev/plugin-sdk/managed-services` | author | any | 3 | 35 |
@@ -64,7 +65,7 @@ catch.
 | `@happier-dev/plugin-sdk/manifest` | author | any | 8 | 56 |
 | `@happier-dev/plugin-sdk/mcp` | author | daemon | 1 | 47 |
 | `@happier-dev/plugin-sdk/notifications` | author | any | 0 | 11 |
-| `@happier-dev/plugin-sdk/protocol` | author | any | 30 | 19 |
+| `@happier-dev/plugin-sdk/protocol` | author | any | 31 | 19 |
 | `@happier-dev/plugin-sdk/providers` | author | any | 13 | 63 |
 | `@happier-dev/plugin-sdk/resources` | author | any | 7 | 16 |
 | `@happier-dev/plugin-sdk/reviews` | author | daemon | 36 | 36 |
@@ -72,7 +73,7 @@ catch.
 | `@happier-dev/plugin-sdk/scm/backend` | author | daemon | 13 | 37 |
 | `@happier-dev/plugin-sdk/scm/git` | author | daemon | 2 | 6 |
 | `@happier-dev/plugin-sdk/scm/hosting` | author | daemon | 5 | 40 |
-| `@happier-dev/plugin-sdk/secrets` | author | any | 1 | 3 |
+| `@happier-dev/plugin-sdk/secrets` | author | any | 1 | 5 |
 | `@happier-dev/plugin-sdk/sessions` | author | daemon | 37 | 69 |
 | `@happier-dev/plugin-sdk/sessions/external` | author | daemon | 28 | 93 |
 | `@happier-dev/plugin-sdk/sessions/file-stores` | author | daemon | 27 | 18 |
@@ -85,7 +86,7 @@ catch.
 | `@happier-dev/plugin-sdk/ui/build` | author | daemon | 5 | 3 |
 | `@happier-dev/plugin-sdk/ui/client` | author | browser | 7 | 3 |
 | `@happier-dev/plugin-sdk/voice` | author | any | 24 | 36 |
-| `@happier-dev/plugin-sdk/voice/client` | author | client | 12 | 39 |
+| `@happier-dev/plugin-sdk/voice/client` | author | client | 12 | 40 |
 | `@happier-dev/plugin-sdk/voice/speech` | author | any | 0 | 11 |
 | `@happier-dev/plugin-sdk/webhooks` | author | any | 7 | 7 |
 
@@ -93,13 +94,23 @@ catch.
 
 <Accordions>
 
-<Accordion title="@happier-dev/plugin-sdk — 239 exports">
+<Accordion title="@happier-dev/plugin-sdk — 279 exports">
 
 Anywhere. Source: `src/index.ts`.
 
-**Values** — `arePluginMachineExecutionOriginsEqual`, `arePluginMachineMaterializationRefsEqual`, `COMPOSER_MEDIA_CONTENT_CAPABILITY_V1`, `ComposerReferenceCandidateIdV1Schema`, `computeCanonicalDomainSeparatedDigest`, `createCanonicalJsonSigningInput`, `defineComposerAttachment`, `defineComposerControl`, `defineComposerReference`, `defineComposerRegion`, `definePlugin`, `defineUiSurfaceDefinition`, `getPluginMachineExecutionOriginRef`, `HEALTH_CHECK_KINDS_V1`, `HealthCheckDnsConfigV1ProtocolSchema`, `HealthCheckHeartbeatConfigV1ProtocolSchema`, `HealthCheckResultV1ProtocolSchema`, `HealthCheckSourceConfigV1ProtocolSchema`, `HealthCheckSubjectV1ProtocolSchema`, `HealthCheckTcpConfigV1ProtocolSchema`, `isPluginError`, `isRecord`, `MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1`, `parseJsonLine`, `parseTimestampMs`, `PluginError`, `PluginSearchItemV1Schema`, `PluginSearchQueryV1Schema`, `PluginSearchResultV1Schema`, `projectPluginFailureText`, `readString`, `readTrimmedString`, `redactBugReportSensitiveText`, `resolveUsageCalendarInstant`, `SavedHealthCheckSelectorV1ProtocolSchema`, `selectCurrentTargetedContribution`, `summarizeUsageRunLengthObservations`, `trimBugReportTextToMaxBytes`
+**Values** — `arePluginMachineExecutionOriginsEqual`, `arePluginMachineMaterializationRefsEqual`, `BackupDestinationOpenV1ProtocolSchema`, `COMPOSER_MEDIA_CONTENT_CAPABILITY_V1`, `ComposerReferenceCandidateIdV1Schema`, `computeCanonicalDomainSeparatedDigest`, `createCanonicalJsonSigningInput`, `defineComposerAttachment`, `defineComposerControl`, `defineComposerReference`, `defineComposerRegion`, `definePlugin`, `defineUiSurfaceDefinition`, `DeploymentTargetFailureTransitionV1ProtocolSchema`, `DeploymentTargetPreparationBaseV1ProtocolSchema`, `DeploymentTargetRoleInputProtocolSchemasV1`, `DeploymentTargetRoleResultV1ProtocolSchema`, `getPluginMachineExecutionOriginRef`, `hasDeploymentTargetPreparationCoordinatesV1`, `HEALTH_CHECK_KINDS_V1`, `HealthCheckDnsConfigV1ProtocolSchema`, `HealthCheckHeartbeatConfigV1ProtocolSchema`, `HealthCheckResultV1ProtocolSchema`, `HealthCheckSourceConfigV1ProtocolSchema`, `HealthCheckSubjectV1ProtocolSchema`, `HealthCheckTcpConfigV1ProtocolSchema`, `isPluginError`, `isRecord`, `MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1`, `parseJsonLine`, `parseTimestampMs`, `PluginError`, `PluginSearchItemV1Schema`, `PluginSearchQueryV1Schema`, `PluginSearchResultV1Schema`, `projectPluginFailureText`, `readString`, `readTrimmedString`, `redactBugReportSensitiveText`, `resolveUsageCalendarInstant`, `SavedHealthCheckSelectorV1ProtocolSchema`, `selectCurrentTargetedContribution`, `summarizeUsageRunLengthObservations`, `trimBugReportTextToMaxBytes`
 
-**Types** — `ActionConfirmationWhen`, `ActionOperationDeclarationV1`, `BuiltinUsagePublicPresentationV1`, `ComposerAttachmentAuthorDeclaration`, `ComposerAttachmentAuthorDisplay`, `ComposerAttachmentAuthorPreview`, `ComposerAttachmentMessageAcceptedV1`, `ComposerAttachmentPrepareOutcomeV1`, `ComposerAttachmentPrepareRequestV1`, `ComposerAttachmentPrepareResultV1`, `ComposerAttachmentResolveRequestV1`, `ComposerAttachmentResolveRequestV2`, `ComposerAttachmentResolveResultV1`, `ComposerAttachmentRuntime`, `ComposerAttachmentsRegistrationApi`, `ComposerContentCapabilitiesV1`, `ComposerContentHandleV1`, `ComposerContentInspectRequestV1`, `ComposerContentInspectResultV1`, `ComposerContentMediaKindV1`, `ComposerContentMimeTypeV1`, `ComposerContentPickMediaRequestV1`, `ComposerContentService`, `ComposerContentStageMediaRequestV1`, `ComposerControlAuthorInteraction`, `ComposerMediaContentCapabilityV1`, `ComposerReferenceCandidatePageV1`, `ComposerReferenceResolutionV1`, `ComposerReferenceRuntime`, `ComposerReferencesRegistrationApi`, `ComposerRendererChainAuthorInput`, `ComposerSessionMediaContentV1`, `ComposerStagedMediaContentV1`, `ComposerValueSchema`, `ContributionAdmittedEntry`, `ContributionOperationContracts`, `ContributionSurfaceHandles`, `DefinedContributionPointRef`, `DefinedContributionPoints`, `DefinedPlugin`, `DefinedPluginActionContracts`, `DefinedPluginContributes`, `DefinedPluginManifest`, `DefinePluginInput`, `Disposable`, `EntityDragItemV1`, `EntityDragKindV1`, `EntityDragScopeV1`, `EntityDropAdmissionV1`, `EntityDropEffectV1`, `EntityDropOutcomeV1`, `EntityDropPreviewV1`, `EntityDropReasonV1`, `HealthCheckKindContributionV1`, `HealthCheckKindV1`, `HealthCheckResultV1`, `HealthCheckSourceConfigV1`, `HealthChecksService`, `HealthCheckStatusV1`, `HealthCheckSubjectV1`, `JsonValue`, `LoggerService`, `MachinePresetItemV1`, `MachineProvisionerBootstrapCredentialLeaseV1`, `MachineProvisionersService`, `MachineRecipeSelectionV1`, `MachineRecipeStepV1`, `MachineRecipeV1`, `MachineSetupPresetContributionV1`, `MachineSetupScriptV1`, `MachineSetupV1`, `MessageActionAvailableSnapshotV1`, `PluginAccountActivationModule`, `PluginAccountApi`, `PluginAccountCollectionMigrationRuntimeProjection`, `PluginActionOperationContextV1`, `PluginActionOperationProgressUpdateV1`, `PluginApi`, `PluginAtmospherePictureContributionV1`, `PluginAutomationRunCause`, `PluginCancellationOptions`, `PluginCaptureCodecIdV1`, `PluginCaptureFrameV1`, `PluginCaptureReceiptV1`, `PluginCaptureSourceDeclaration`, `PluginCaptureSourceDefinition`, `PluginCaptureSourceRuntime`, `PluginCleanup`, `PluginClientActivationModule`, `PluginClientApi`, `PluginComposerAttachmentDefinition`, `PluginComposerControlDefinition`, `PluginComposerDefinition`, `PluginComposerReferenceDefinition`, `PluginComposerRegionDefinition`, `PluginConnectedAccountDefinition`, `PluginContributionLocalId`, `PluginContributionRef`, `PluginDaemonDatabaseDeclaration`, `PluginDaemonDatabaseDefinition`, `PluginDaemonDatabaseRuntimeProjection`, `PluginDiagnosticData`, `PluginDragSourceContributionV1`, `PluginDragSourceRuntime`, `PluginDropTargetContributionV1`, `PluginDropTargetRuntime`, `PluginEphemeralSharedScope`, `PluginEphemeralSharedValueLease`, `PluginErrorData`, `PluginExecutionScopeV1`, `PluginIdentity`, `PluginInputTypeReferenceV1`, `PluginInvocationCaller`, `PluginInvocationContext`, `PluginInvocationContributionIdentity`, `PluginInvocationOriginSurface`, `PluginJsonValueV2`, `PluginLanguageServerContributionV1`, `PluginMachineMaterializationRefV1`, `PluginOperationAvailability`, `PluginPath`, `PluginProjectNativeAdapterContributionV1`, `PluginProjectNativeAdapterDeclarationV1`, `PluginProjectNativeAdapterDefinitionV1`, `PluginProjectNativeAdapterRuntimeV1`, `PluginProjectNativeCommandRequestV1`, `PluginProjectNativeCommandResultV1`, `PluginProjectNativeCommandV1`, `PluginProjectNativeEnvironmentRequestV1`, `PluginProjectNativeEnvironmentResultV1`, `PluginProjectNativeFailureV1`, `PluginProjectNativeFileFactV1`, `PluginProjectNativeInspectionV1`, `PluginReference`, `PluginRegistrySourceContributionV1`, `PluginRemediationData`, `PluginRequestInterceptorDefinition`, `PluginScopedInvocationContextV1`, `PluginSearchItemV1`, `PluginSearchProviderContributionV1`, `PluginSearchQueryV1`, `PluginSearchResultV1`, `PluginServiceId`, `PluginServices`, `PluginSettingDescriptor`, `PluginSettingDescriptorBase`, `PluginSettingsChange`, `PluginSettingsMutationResult`, `PluginSettingsSnapshot`, `PluginSkillContributionV1`, `PluginSourceCustodyV1`, `PluginWorkflowContributionV1`, `PluginWorkItemCategoryV1`, `PluginWorkItemsContributionV1`, `PluginWorkItemsFindLinkedRequestV1`, `PluginWorkItemsResolveRequestV1`, `PluginWorkItemsResolveResultV1`, `PluginWorkItemsRuntime`, `PluginWorkItemsWatchRequestV1`, `PluginWorkItemTransitionInputV1`, `PluginWorkItemV1`, `ProjectDefinitionDetectionV1`, `ProjectEnvironmentSelectionV1`, `ProjectNativeAdapterRoleV1`, `ProjectNativeRefV1`, `ProtocolActionSchemaInput`, `ProtocolActionSchemaOutput`, `PublicProfileReadResultV1`, `PublicProfileSnapshotV1`, `PublicProfileViewV1`, `PublicUsageFactsV1`, `ReadonlyAuthorDeclaration`, `SavedHealthCheckSelectorV1`, `StoredAppPresetInputV1`, `TargetedContributionAdmittedEntry`, `TargetedContributionObservation`, `TargetedContributionPointRef`, `TargetedContributionSelectionResult`, `TargetedContributionSelectionUnavailableReason`, `TargetedContributionSnapshot`, `TargetedContributionsService`, `UiSurface`, `UiSurfaceAppPageDefinition`, `UiSurfaceAppPageDefinitionFor`, `UiSurfaceDeclarativeDefinition`, `UiSurfaceDeclarativeRendererDefinition`, `UiSurfaceDefinition`, `UiSurfaceDetailedDefinition`, `UiSurfaceDetailedDefinitionFor`, `UiSurfaceHostedHtmlRendererDefinition`, `UiSurfaceHostedWebDefinition`, `UiSurfaceHostedWebRendererDefinition`, `UiSurfacePlacement`, `UiSurfaceReactNativeDefinition`, `UiSurfaceReactNativeRendererDefinition`, `UiSurfaceRendererDefinition`, `UiSurfaceRendererOnlyDefinition`, `UiSurfaceSettingsPageDefinition`, `UsageRunLengthObservation`, `UsageRunLengthObservationSummary`, `UsageRunLengthSummary`
+**Types** — `ActionConfirmationWhen`, `ActionOperationDeclarationV1`, `BackupDestinationOpenV1`, `BuiltinUsagePublicPresentationV1`, `ComposerAttachmentAuthorDeclaration`, `ComposerAttachmentAuthorDisplay`, `ComposerAttachmentAuthorPreview`, `ComposerAttachmentMessageAcceptedV1`, `ComposerAttachmentPrepareOutcomeV1`, `ComposerAttachmentPrepareRequestV1`, `ComposerAttachmentPrepareResultV1`, `ComposerAttachmentResolveRequestV1`, `ComposerAttachmentResolveRequestV2`, `ComposerAttachmentResolveResultV1`, `ComposerAttachmentRuntime`, `ComposerAttachmentsRegistrationApi`, `ComposerContentCapabilitiesV1`, `ComposerContentHandleV1`, `ComposerContentInspectRequestV1`, `ComposerContentInspectResultV1`, `ComposerContentMediaKindV1`, `ComposerContentMimeTypeV1`, `ComposerContentPickMediaRequestV1`, `ComposerContentService`, `ComposerContentStageMediaRequestV1`, `ComposerControlAuthorInteraction`, `ComposerMediaContentCapabilityV1`, `ComposerReferenceCandidatePageV1`, `ComposerReferenceResolutionV1`, `ComposerReferenceRuntime`, `ComposerReferencesRegistrationApi`, `ComposerRendererChainAuthorInput`, `ComposerSessionMediaContentV1`, `ComposerStagedMediaContentV1`, `ComposerValueSchema`, `ContributionAdmittedEntry`, `ContributionOperationContracts`, `ContributionSurfaceHandles`, `DefinedContributionPointRef`, `DefinedContributionPoints`, `DefinedPlugin`, `DefinedPluginActionContracts`, `DefinedPluginContributes`, `DefinedPluginManifest`, `DefinePluginInput`, `DeploymentSourceMaterializationPortV1`, `DeploymentSourceMaterializationRequestV1`, `DeploymentSourceMaterializationV1`, `DeploymentTargetAuthorDefinitionV1`, `DeploymentTargetCancelInputV1`, `DeploymentTargetCommonV1`, `DeploymentTargetContributionV1`, `DeploymentTargetCredentialPrincipalV1`, `DeploymentTargetDeployInputV1`, `DeploymentTargetFailureTransitionV1`, `DeploymentTargetInspectInputV1`, `DeploymentTargetLifecycleInputV1`, `DeploymentTargetLinkRoleInputV1`, `DeploymentTargetObserveInputV1`, `DeploymentTargetPreparationBaseV1`, `DeploymentTargetPriorDeploymentRefV1`, `DeploymentTargetPromoteInputV1`, `DeploymentTargetProviderEnvironmentV1`, `DeploymentTargetProviderIdentityV1`, `DeploymentTargetRepositoryAccessV1`, `DeploymentTargetRoleCommonInputV1`, `DeploymentTargetRoleFailureV1`, `DeploymentTargetRoleInputV1`, `DeploymentTargetRoleResultV1`, `DeploymentTargetRollbackInputV1`, `DeploymentTargetRuntimeRoleV1`, `DeploymentTargetTeardownInputV1`, `DeploymentTargetUploadDeployInputV1`, `Disposable`, `EntityDragItemV1`, `EntityDragKindV1`, `EntityDragScopeV1`, `EntityDropAdmissionV1`, `EntityDropEffectV1`, `EntityDropOutcomeV1`, `EntityDropPreviewV1`, `EntityDropReasonV1`, `HealthCheckKindContributionV1`, `HealthCheckKindV1`, `HealthCheckResultV1`, `HealthCheckSourceConfigV1`, `HealthChecksService`, `HealthCheckStatusV1`, `HealthCheckSubjectV1`, `JsonValue`, `LoggerService`, `MachinePresetItemV1`, `MachineProvisionerBootstrapCredentialLeaseV1`, `MachineProvisionersService`, `MachineRecipeSelectionV1`, `MachineRecipeStepV1`, `MachineRecipeV1`, `MachineSetupPresetContributionV1`, `MachineSetupScriptV1`, `MachineSetupV1`, `MessageActionAvailableSnapshotV1`, `PluginAccountActivationModule`, `PluginAccountApi`, `PluginAccountCollectionMigrationRuntimeProjection`, `PluginActionOperationContextV1`, `PluginActionOperationProgressUpdateV1`, `PluginApi`, `PluginAtmospherePictureContributionV1`, `PluginAutomationRunCause`, `PluginCancellationOptions`, `PluginCaptureCodecIdV1`, `PluginCaptureFrameV1`, `PluginCaptureReceiptV1`, `PluginCaptureSourceDeclaration`, `PluginCaptureSourceDefinition`, `PluginCaptureSourceRuntime`, `PluginCleanup`, `PluginClientActivationModule`, `PluginClientApi`, `PluginComposerAttachmentDefinition`, `PluginComposerControlDefinition`, `PluginComposerDefinition`, `PluginComposerReferenceDefinition`, `PluginComposerRegionDefinition`, `PluginConnectedAccountDefinition`, `PluginContributionLocalId`, `PluginContributionRef`, `PluginDaemonDatabaseDeclaration`, `PluginDaemonDatabaseDefinition`, `PluginDaemonDatabaseRuntimeProjection`, `PluginDiagnosticData`, `PluginDragSourceContributionV1`, `PluginDragSourceRuntime`, `PluginDropTargetContributionV1`, `PluginDropTargetRuntime`, `PluginEphemeralSharedScope`, `PluginEphemeralSharedValueLease`, `PluginErrorData`, `PluginExecutionScopeV1`, `PluginIdentity`, `PluginInputTypeReferenceV1`, `PluginInvocationCaller`, `PluginInvocationContext`, `PluginInvocationContributionIdentity`, `PluginInvocationOriginSurface`, `PluginJsonValueV2`, `PluginLanguageServerContributionV1`, `PluginMachineMaterializationRefV1`, `PluginOperationAvailability`, `PluginPath`, `PluginProjectNativeAdapterContributionV1`, `PluginProjectNativeAdapterDeclarationV1`, `PluginProjectNativeAdapterDefinitionV1`, `PluginProjectNativeAdapterRuntimeV1`, `PluginProjectNativeCommandRequestV1`, `PluginProjectNativeCommandResultV1`, `PluginProjectNativeCommandV1`, `PluginProjectNativeEnvironmentRequestV1`, `PluginProjectNativeEnvironmentResultV1`, `PluginProjectNativeFailureV1`, `PluginProjectNativeFileFactV1`, `PluginProjectNativeInspectionV1`, `PluginProjectNativeToolchainRequestV1`, `PluginProjectNativeToolchainResultV1`, `PluginReference`, `PluginRegistrySourceContributionV1`, `PluginRemediationData`, `PluginRequestInterceptorDefinition`, `PluginScopedInvocationContextV1`, `PluginSearchItemV1`, `PluginSearchProviderContributionV1`, `PluginSearchQueryV1`, `PluginSearchResultV1`, `PluginSecretSourceAcquisitionV1`, `PluginSecretSourceRuntimeV1`, `PluginServiceId`, `PluginServices`, `PluginSettingDescriptor`, `PluginSettingDescriptorBase`, `PluginSettingsChange`, `PluginSettingsMutationResult`, `PluginSettingsSnapshot`, `PluginSkillContributionV1`, `PluginSourceCustodyV1`, `PluginWorkflowContributionV1`, `PluginWorkItemCategoryV1`, `PluginWorkItemsContributionV1`, `PluginWorkItemsFindLinkedRequestV1`, `PluginWorkItemsResolveRequestV1`, `PluginWorkItemsResolveResultV1`, `PluginWorkItemsRuntime`, `PluginWorkItemsWatchRequestV1`, `PluginWorkItemTransitionInputV1`, `PluginWorkItemV1`, `ProjectDefinitionDetectionV1`, `ProjectEnvironmentSelectionV1`, `ProjectNativeAdapterRoleV1`, `ProjectNativeRefV1`, `ProjectToolchainSelectionV1`, `ProtocolActionSchemaInput`, `ProtocolActionSchemaOutput`, `PublicProfileReadResultV1`, `PublicProfileSnapshotV1`, `PublicProfileViewV1`, `PublicUsageFactsV1`, `ReadonlyAuthorDeclaration`, `SavedHealthCheckSelectorV1`, `StoredAppPresetInputV1`, `TargetedContributionAdmittedEntry`, `TargetedContributionObservation`, `TargetedContributionPointRef`, `TargetedContributionSelectionResult`, `TargetedContributionSelectionUnavailableReason`, `TargetedContributionSnapshot`, `TargetedContributionsService`, `UiSurface`, `UiSurfaceAppPageDefinition`, `UiSurfaceAppPageDefinitionFor`, `UiSurfaceDeclarativeDefinition`, `UiSurfaceDeclarativeRendererDefinition`, `UiSurfaceDefinition`, `UiSurfaceDetailedDefinition`, `UiSurfaceDetailedDefinitionFor`, `UiSurfaceHostedHtmlRendererDefinition`, `UiSurfaceHostedWebDefinition`, `UiSurfaceHostedWebRendererDefinition`, `UiSurfacePlacement`, `UiSurfaceReactNativeDefinition`, `UiSurfaceReactNativeRendererDefinition`, `UiSurfaceRendererDefinition`, `UiSurfaceRendererOnlyDefinition`, `UiSurfaceSettingsPageDefinition`, `UsageRunLengthObservation`, `UsageRunLengthObservationSummary`, `UsageRunLengthSummary`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/access-providers — 15 exports">
+
+Anywhere. Source: `src/access-providers/index.ts`.
+
+**Values** — `accessProviderRefsEqualV1`, `AccessProviderRefV1Schema`, `AccessProviderRoleResultV1Schema`, `AccessProviderSelectionV1Schema`, `defineAccessProviderSchemas`
+
+**Types** — `AccessCredentialPurposeRefV1`, `AccessProviderAuthorDefinitionV1`, `AccessProviderContributionV1`, `AccessProviderRefV1`, `AccessProviderRoleInputV1`, `AccessProviderRoleResultV1`, `AccessProviderRoleV1`, `AccessProviderRouteV1`, `AccessProviderSelectionV1`, `MachinePrivateNetworkObservationV1`
 
 </Accordion>
 
@@ -229,19 +240,21 @@ Anywhere. Source: `src/events/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/exec — 17 exports">
+<Accordion title="@happier-dev/plugin-sdk/exec — 20 exports">
 
-Anywhere. Source: `src/exec/index.ts`.
+Daemon only. Source: `src/exec/index.ts`.
 
-**Types** — `AgentCliReadinessRequest`, `AgentCliReadinessResult`, `AgentCliReadinessService`, `AgentNativeLaunchQualifier`, `ExecService`, `ExecSpawnRequest`, `PluginExecSpawnRequest`, `PluginProcessHandle`, `PluginProcessObservedTermination`, `PluginProcessOutput`, `PluginProcessResult`, `PluginProcessTerminationRequest`, `ResolvedSystemTool`, `SystemToolContribution`, `SystemToolDiagnostic`, `SystemToolResolveRequest`, `SystemToolsService`
+**Values** — `resolveGhNativeToken`
+
+**Types** — `AgentCliReadinessRequest`, `AgentCliReadinessResult`, `AgentCliReadinessService`, `AgentNativeLaunchQualifier`, `DeploymentExecEnvAttachmentV1`, `DeploymentExecEnvPortV1`, `ExecService`, `ExecSpawnRequest`, `PluginExecSpawnRequest`, `PluginProcessHandle`, `PluginProcessObservedTermination`, `PluginProcessOutput`, `PluginProcessResult`, `PluginProcessTerminationRequest`, `ResolvedSystemTool`, `SystemToolContribution`, `SystemToolDiagnostic`, `SystemToolResolveRequest`, `SystemToolsService`
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/exec/protocol-clients — 14 exports">
+<Accordion title="@happier-dev/plugin-sdk/exec/protocol-clients — 16 exports">
 
 Anywhere. Source: `src/exec/protocol-clients/index.ts`.
 
-**Types** — `PluginFramedBytesClient`, `PluginJsonRpcClient`, `PluginJsonStreamClient`, `PluginLoopbackWebSocketClientSpec`, `PluginLoopbackWebSocketEndpoint`, `PluginLoopbackWebSocketHandshake`, `PluginLoopbackWebSocketHeader`, `PluginLoopbackWebSocketJsonClient`, `PluginProtocolClientByKind`, `PluginProtocolClientHandle`, `PluginProtocolClientKind`, `PluginProtocolClientSpec`, `PluginProtocolClientSpecByKind`, `ProtocolClientsService`
+**Types** — `PluginFramedBytesClient`, `PluginJsonRpcClient`, `PluginJsonRpcConnection`, `PluginJsonRpcConnectionSpec`, `PluginJsonStreamClient`, `PluginLoopbackWebSocketClientSpec`, `PluginLoopbackWebSocketEndpoint`, `PluginLoopbackWebSocketHandshake`, `PluginLoopbackWebSocketHeader`, `PluginLoopbackWebSocketJsonClient`, `PluginProtocolClientByKind`, `PluginProtocolClientHandle`, `PluginProtocolClientKind`, `PluginProtocolClientSpec`, `PluginProtocolClientSpecByKind`, `ProtocolClientsService`
 
 </Accordion>
 
@@ -303,13 +316,13 @@ Host-only. Anywhere. Source: `src/host/registration/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/http — 16 exports">
+<Accordion title="@happier-dev/plugin-sdk/http — 17 exports">
 
 Anywhere. Source: `src/http/index.ts`.
 
 **Values** — `isPermanentRequestError`, `isPermanentRequestStatus`, `readHttpStatus`
 
-**Types** — `HttpMethod`, `HttpService`, `PluginFetchCredentialBinding`, `PluginInterceptedRequest`, `PluginInterceptorRegistrationApi`, `PluginInterceptorResult`, `PluginRequestInterceptor`, `PluginWebSocketClose`, `PluginWebSocketConnection`, `PluginWebSocketHeader`, `PluginWebSocketMessage`, `PluginWebSocketOpenInput`, `RequestInterceptorContribution`
+**Types** — `HttpMethod`, `HttpResponse`, `HttpService`, `PluginFetchCredentialBinding`, `PluginInterceptedRequest`, `PluginInterceptorRegistrationApi`, `PluginInterceptorResult`, `PluginRequestInterceptor`, `PluginWebSocketClose`, `PluginWebSocketConnection`, `PluginWebSocketHeader`, `PluginWebSocketMessage`, `PluginWebSocketOpenInput`, `RequestInterceptorContribution`
 
 </Accordion>
 
@@ -323,13 +336,13 @@ Anywhere. Source: `src/interactions/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/machine-provisioners — 33 exports">
+<Accordion title="@happier-dev/plugin-sdk/machine-provisioners — 43 exports">
 
 Anywhere. Source: `src/machine-provisioners/index.ts`.
 
-**Values** — `defineMachineProvisionerReconciliationSchemas`, `defineMachineProvisionerSchemas`, `MachineProvisionerAcquireResultV1Schema`, `MachineProvisionerBootstrapCarrierV1Schema`, `MachineProvisionerCheckInputV1Schema`, `MachineProvisionerCheckResultV1Schema`, `MachineProvisionerDestroyResultV1Schema`, `MachineProvisionerNativeExecResultV1Schema`, `MachineProvisionerObservationV1Schema`, `MachineProvisionerOptionsResultV1Schema`, `MachineProvisionerPowerResultV1Schema`, `MachineProvisionerPutFileResultV1Schema`, `MachineProvisionerRebuildResultV1Schema`, `prepareMachineProvisionerStoredSchemas`
+**Values** — `defineMachineProvisionerReconciliationSchemas`, `defineMachineProvisionerSchemas`, `MACHINE_PROVISIONER_DIMENSIONS_V1`, `MachineProvisionerAcquireResultV1Schema`, `MachineProvisionerBootstrapCarrierV1Schema`, `MachineProvisionerCheckInputV1Schema`, `MachineProvisionerCheckResultV1Schema`, `MachineProvisionerDestroyResultV1Schema`, `MachineProvisionerNativeExecResultV1Schema`, `MachineProvisionerObservationV1Schema`, `MachineProvisionerOptionsResultV1Schema`, `MachineProvisionerPowerResultV1Schema`, `MachineProvisionerPutFileResultV1Schema`, `MachineProvisionerRebuildResultV1Schema`, `prepareMachineProvisionerStoredSchemas`, `projectMachineProvisionerSelectionV1`
 
-**Types** — `DevcontainerEffectReviewV1`, `DevcontainerNativeObservationV1`, `MachineProvisionerAcquireResultV1`, `MachineProvisionerAuthorDefinitionV1`, `MachineProvisionerBootstrapCarrierV1`, `MachineProvisionerCheckResultV1`, `MachineProvisionerContributionV1`, `MachineProvisionerDestroyResultV1`, `MachineProvisionerNativeExecResultV1`, `MachineProvisionerNativeIntentV1`, `MachineProvisionerNativeOptionFactsV1`, `MachineProvisionerObservationV1`, `MachineProvisionerOptionsResultV1`, `MachineProvisionerPowerResultV1`, `MachineProvisionerPriceV1`, `MachineProvisionerRebuildResultV1`, `MachineProvisionerRefusalCodeV1`, `MachineProvisionerResourceV1`, `MachineProvisionerStoredReaderV1`
+**Types** — `DevcontainerEffectReviewV1`, `DevcontainerNativeObservationV1`, `MachineProvisionerAcquireResultV1`, `MachineProvisionerAuthorDefinitionV1`, `MachineProvisionerBootstrapCarrierV1`, `MachineProvisionerCheckResultV1`, `MachineProvisionerConditionalPriceV1`, `MachineProvisionerContributionV1`, `MachineProvisionerDestroyResultV1`, `MachineProvisionerDimensionOptionV1`, `MachineProvisionerDimensionV1`, `MachineProvisionerNativeCauseV1`, `MachineProvisionerNativeExecResultV1`, `MachineProvisionerNativeIntentV1`, `MachineProvisionerNativeOptionFactsV1`, `MachineProvisionerObservationV1`, `MachineProvisionerOptionConstraintV1`, `MachineProvisionerOptionSelectorV1`, `MachineProvisionerOptionsResultV1`, `MachineProvisionerPowerResultV1`, `MachineProvisionerPriceV1`, `MachineProvisionerRebuildResultV1`, `MachineProvisionerRefusalCodeV1`, `MachineProvisionerResourceV1`, `MachineProvisionerSelectionProjectionV1`, `MachineProvisionerSelectionV1`, `MachineProvisionerStoredReaderV1`
 
 </Accordion>
 
@@ -399,11 +412,11 @@ Anywhere. Source: `src/notifications/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/protocol — 49 exports">
+<Accordion title="@happier-dev/plugin-sdk/protocol — 50 exports">
 
 Anywhere. Source: `src/protocol/index.ts`.
 
-**Values** — `createProtocolStoredReadSchema`, `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1`, `decodeBase64`, `defineProtocolArray`, `defineProtocolJsonValue`, `defineProtocolLiteral`, `defineProtocolNumber`, `defineProtocolObject`, `defineProtocolString`, `defineProtocolUnion`, `defineProtocolUniqueArray`, `defineProtocolUtf8String`, `defineTriageCompositeIdentifierStringV1`, `defineTriageSingleLineStringV1`, `encodeBase64`, `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1`, `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1`, `pluginJsonValuesEqual`, `ProtocolCollectionOpaqueCursorV1Schema`, `ProtocolComposerReferenceResolutionV1Schema`, `ProtocolComposerRefV1Schema`, `ProtocolCurrentUiContextSnapshotV1Schema`, `ProtocolLaunchProfileIdV2Schema`, `ProtocolValidationError`, `TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1`, `TRIAGE_SINGLE_LINE_STRING_PATTERN_V1`, `TriageCollisionScopeV1ProtocolSchema`, `TriageEntryRefV1JsonSchema`, `TriageEntryRefV1Schema`, `TriageIdentifierV1ProtocolSchema`
+**Values** — `createProtocolStoredReadSchema`, `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1`, `decodeBase64`, `defineProtocolArray`, `defineProtocolJsonValue`, `defineProtocolLiteral`, `defineProtocolNumber`, `defineProtocolObject`, `defineProtocolString`, `defineProtocolUnion`, `defineProtocolUniqueArray`, `defineProtocolUtf8String`, `defineTriageCompositeIdentifierStringV1`, `defineTriageSingleLineStringV1`, `encodeBase64`, `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1`, `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1`, `pluginJsonValuesEqual`, `ProtocolCollectionOpaqueCursorV1Schema`, `ProtocolComposerReferenceResolutionV1Schema`, `ProtocolComposerRefV1Schema`, `ProtocolCurrentUiContextSnapshotV1Schema`, `ProtocolLaunchProfileIdV2Schema`, `ProtocolValidationError`, `ScmHostingRepositoryIdentityV1ProtocolSchema`, `TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1`, `TRIAGE_SINGLE_LINE_STRING_PATTERN_V1`, `TriageCollisionScopeV1ProtocolSchema`, `TriageEntryRefV1JsonSchema`, `TriageEntryRefV1Schema`, `TriageIdentifierV1ProtocolSchema`
 
 **Types** — `PluginJsonSchema`, `ProtocolArrayOptions`, `ProtocolCollectionOpaqueCursorV1`, `ProtocolComposableSchema`, `ProtocolComposerRefV1`, `ProtocolJsonValue`, `ProtocolJsonValueOptions`, `ProtocolNumberOptions`, `ProtocolObjectEvolutionPolicy`, `ProtocolObjectOptions`, `ProtocolSchemaInput`, `ProtocolSchemaOutput`, `ProtocolSchemaSafeParseResult`, `ProtocolStoredReadSchema`, `ProtocolStringOptions`, `ProtocolUniqueJsonArrayOptions`, `ProtocolUtf8StringOptions`, `ProtocolValidationIssue`, `TriageEntryRefV1`
 
@@ -479,13 +492,13 @@ Daemon only. Source: `src/scm/hosting/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/secrets — 4 exports">
+<Accordion title="@happier-dev/plugin-sdk/secrets — 6 exports">
 
 Anywhere. Source: `src/secrets/index.ts`.
 
 **Values** — `SecretStringV1Schema`
 
-**Types** — `SecretMutationResult`, `SecretsService`, `SecretStatus`
+**Types** — `SecretMutationResult`, `SecretsService`, `SecretStatus`, `SharedSecretAudience`, `SharedSecretSaveResult`
 
 </Accordion>
 
@@ -609,13 +622,13 @@ Anywhere. Source: `src/voice/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/voice/client — 51 exports">
+<Accordion title="@happier-dev/plugin-sdk/voice/client — 52 exports">
 
 Client only. Source: `src/voice/client/index.ts`.
 
 **Values** — `buildVoiceClientToolAgentPrompt`, `createVoiceTranscriptLadderMapper`, `describeActionForVoiceTool`, `describeActionInputFieldForVoice`, `HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE`, `HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE`, `isVoiceSdkSafeActionSpec`, `listVoiceSdkSafeToolActionSpecs`, `VoiceRealtimeJsonValueSchema`, `VoiceRealtimeToolCallV1Schema`, `VoiceRealtimeToolResultV1Schema`, `VoiceTranscriptCanonicalEventV1Schema`
 
-**Types** — `PluginVoiceAgentSessionRealtimeService`, `RealtimeVoiceProviderProtocol`, `RealtimeVoiceProviderRuntime`, `RealtimeVoiceProviderSettingsOperations`, `VoiceAudioContextHandle`, `VoiceClientAuthArtifact`, `VoiceClientToolAgentPromptOptions`, `VoiceClientToolDefinition`, `VoiceConnectionMediaHost`, `VoiceConversationCapabilities`, `VoiceConversationProviderRole`, `VoiceConversationToolCapabilities`, `VoiceConversationToolEffectCalls`, `VoiceGuidanceAvailability`, `VoiceHostedConversationService`, `VoiceMediaStreamHandle`, `VoiceMicrophoneMode`, `VoiceMicSession`, `VoiceOutputFocusApplication`, `VoiceOutputFocusState`, `VoiceOutputInterruptionResolution`, `VoiceProviderConversationService`, `VoiceProviderExecutionAuthority`, `VoiceRealtimeAttemptPolicy`, `VoiceRealtimeCanonicalEvent`, `VoiceRealtimeConnection`, `VoiceRealtimeConnectionCloseReason`, `VoiceRealtimeJsonValue`, `VoiceRealtimePreflight`, `VoiceRealtimePreparation`, `VoiceRealtimeToolCall`, `VoiceRealtimeToolResult`, `VoiceRuntimePlatform`, `VoiceSdkHandleConnectionDriver`, `VoiceTranscriptCanonicalEvent`, `VoiceTranscriptLadderMapper`, `VoiceTranscriptLadderMode`, `VoiceTranscriptLadderObservation`, `VoiceTurnControlAction`
+**Types** — `PluginVoiceAgentSessionRealtimeService`, `RealtimeVoiceProviderProtocol`, `RealtimeVoiceProviderRuntime`, `RealtimeVoiceProviderSettingsOperations`, `VoiceAudioContextHandle`, `VoiceClientAuthArtifact`, `VoiceClientToolAgentPromptOptions`, `VoiceClientToolDefinition`, `VoiceConnectionMediaHost`, `VoiceConversationCapabilities`, `VoiceConversationProviderRole`, `VoiceConversationToolCapabilities`, `VoiceConversationToolEffectCalls`, `VoiceGuidanceAvailability`, `VoiceHostedConversationService`, `VoiceHostTextPlayback`, `VoiceMediaStreamHandle`, `VoiceMicrophoneMode`, `VoiceMicSession`, `VoiceOutputFocusApplication`, `VoiceOutputFocusState`, `VoiceOutputInterruptionResolution`, `VoiceProviderConversationService`, `VoiceProviderExecutionAuthority`, `VoiceRealtimeAttemptPolicy`, `VoiceRealtimeCanonicalEvent`, `VoiceRealtimeConnection`, `VoiceRealtimeConnectionCloseReason`, `VoiceRealtimeJsonValue`, `VoiceRealtimePreflight`, `VoiceRealtimePreparation`, `VoiceRealtimeToolCall`, `VoiceRealtimeToolResult`, `VoiceRuntimePlatform`, `VoiceSdkHandleConnectionDriver`, `VoiceTranscriptCanonicalEvent`, `VoiceTranscriptLadderMapper`, `VoiceTranscriptLadderMode`, `VoiceTranscriptLadderObservation`, `VoiceTurnControlAction`
 
 </Accordion>
 
