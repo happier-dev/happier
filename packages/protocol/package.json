@@ -8880,6 +8880,11 @@
       "types": "./dist/deployments/deploymentDomainV1.d.ts",
       "default": "./dist/deployments/deploymentDomainV1.js"
     },
+    "./plugins/contributions/secretSources": {
+      "happier-source": "./src/plugins/contributions/secretSources.ts",
+      "types": "./dist/plugins/contributions/secretSources.d.ts",
+      "default": "./dist/plugins/contributions/secretSources.js"
+    },
     "./machines/reachability/machineReachabilityPostureV1": {
       "happier-source": "./src/machines/reachability/machineReachabilityPostureV1.ts",
       "types": "./dist/machines/reachability/machineReachabilityPostureV1.d.ts",
