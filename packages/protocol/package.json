@@ -7,6 +7,31 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./deployments/storedAppInputV1": {
+      "happier-source": "./src/deployments/storedAppInputV1.ts",
+      "types": "./dist/deployments/storedAppInputV1.d.ts",
+      "default": "./dist/deployments/storedAppInputV1.js"
+    },
+    "./deployments/deploymentDomainV1": {
+      "happier-source": "./src/deployments/deploymentDomainV1.ts",
+      "types": "./dist/deployments/deploymentDomainV1.d.ts",
+      "default": "./dist/deployments/deploymentDomainV1.js"
+    },
+    "./deployments/deploymentActionIdsV1": {
+      "happier-source": "./src/deployments/deploymentActionIdsV1.ts",
+      "types": "./dist/deployments/deploymentActionIdsV1.d.ts",
+      "default": "./dist/deployments/deploymentActionIdsV1.js"
+    },
+    "./deployments/deploymentActionsV1": {
+      "happier-source": "./src/deployments/deploymentActionsV1.ts",
+      "types": "./dist/deployments/deploymentActionsV1.d.ts",
+      "default": "./dist/deployments/deploymentActionsV1.js"
+    },
+    "./projects/projectDeploymentDefaultsV1": {
+      "happier-source": "./src/projects/projectDeploymentDefaultsV1.ts",
+      "types": "./dist/projects/projectDeploymentDefaultsV1.d.ts",
+      "default": "./dist/projects/projectDeploymentDefaultsV1.js"
+    },
     "./plugins/contributions/accessProviders": {
       "happier-source": "./src/plugins/contributions/accessProviders.ts",
       "types": "./dist/plugins/contributions/accessProviders.d.ts",
