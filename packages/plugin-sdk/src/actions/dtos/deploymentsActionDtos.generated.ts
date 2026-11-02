@@ -9150,7 +9150,7 @@ export type DeploymentsActionResultById = {
         deployment?: undefined | {
             deploymentId: string;
             deploymentRevision: number;
-            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             ok: true;
             environmentId: string;
             revision: number;
@@ -9190,7 +9190,7 @@ export type DeploymentsActionResultById = {
         deployment?: undefined | {
             deploymentId: string;
             deploymentRevision: number;
-            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             ok: true;
             environmentId: string;
             revision: number;
@@ -10594,7 +10594,7 @@ export type DeploymentsActionResultById = {
     readonly "deployments.deploy": {
         deploymentId: string;
         deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
         ok: true;
         environmentId: string;
         revision: number;
@@ -10633,7 +10633,7 @@ export type DeploymentsActionResultById = {
     readonly "deployments.rollback": {
         deploymentId: string;
         deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
         ok: true;
         environmentId: string;
         revision: number;
@@ -10719,7 +10719,7 @@ export type DeploymentsActionResultById = {
     readonly "deployments.cancel": {
         deploymentId: string;
         deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
         ok: true;
         environmentId: string;
         revision: number;
@@ -10758,7 +10758,7 @@ export type DeploymentsActionResultById = {
     readonly "deployments.promote": {
         deploymentId: string;
         deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
         ok: true;
         environmentId: string;
         revision: number;
@@ -10797,7 +10797,7 @@ export type DeploymentsActionResultById = {
     readonly "deployments.teardown": {
         deploymentId: string;
         deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
         ok: true;
         environmentId: string;
         revision: number;
@@ -11025,7 +11025,7 @@ export type DeploymentsActionResultById = {
             targetLinkId: string;
             revision: number;
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
-            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
             requestedByAccountId: string;
             actionOperationId: string;
@@ -11200,7 +11200,7 @@ export type DeploymentsActionResultById = {
             targetLinkId: string;
             revision: number;
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
-            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
             requestedByAccountId: string;
             actionOperationId: string;
@@ -11261,7 +11261,7 @@ export type DeploymentsActionResultById = {
             targetLinkId: string;
             revision: number;
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
-            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+            state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
             requestedByAccountId: string;
             actionOperationId: string;

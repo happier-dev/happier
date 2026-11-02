@@ -561,7 +561,7 @@ export type LocalServicesActionsActionResultById = {
                     deployment?: undefined | {
                         deploymentId: string;
                         deploymentRevision: number;
-                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
                         ok: true;
                         environmentId: string;
                         revision: number;

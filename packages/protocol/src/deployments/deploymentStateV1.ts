@@ -4,7 +4,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentTimestampV1Schema as time
 
 /** Shared receipt and target-result leaves; importing them never reaches Action registration. */
 export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
-    'queued', 'waitingApproval', 'running', 'running_unverified', 'succeeded', 'failed', 'cancelled', 'outcome_unknown',
+    'queued', 'running', 'running_unverified', 'succeeded', 'failed', 'cancelled', 'outcome_unknown',
 ]));
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 
