@@ -1,19 +1,16 @@
 import { basename, dirname } from 'node:path';
 
+import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+
 import { resolveFirstPartyComponentPublicReleaseVariant } from './componentCatalog.js';
 import { readDefaultManagedReleaseChannelSync } from './defaultReleaseChannelState.js';
 
-type ManagedCliChannel = 'stable' | 'preview' | 'publicdev';
-
 export type ManagedCliShimInstall = Readonly<{
-  channel: ManagedCliChannel;
-  installRootName: string;
+  channel: PublicReleaseRingId;
   happierHomeDir: string;
 }>;
 
-const MANAGED_CLI_CHANNELS = ['stable', 'preview', 'publicdev'] as const;
-
-function resolveCliVariant(channel: ManagedCliChannel) {
+function resolveCliVariant(channel: PublicReleaseRingId) {
   return resolveFirstPartyComponentPublicReleaseVariant({ componentId: 'happier-cli', channel });
 }
 
@@ -29,8 +26,8 @@ function normalizeExecutableBase(pathLike: string): string {
 // binary (see `resolveDesiredShimTargets`), so its channel is that home's default, not stable.
 const DEFAULT_CLI_SHIM_NAME = normalizeExecutableBase(resolveCliVariant('stable').installShims[0] ?? 'happier');
 
-const CHANNEL_SHIM_NAMES = new Map<string, ManagedCliChannel>(
-  MANAGED_CLI_CHANNELS.flatMap((channel) => {
+const CHANNEL_SHIM_NAMES = new Map<string, PublicReleaseRingId>(
+  PUBLIC_RELEASE_RING_IDS.flatMap((channel) => {
     const legacyShimAliases =
       channel === 'preview'
         ? ['happier-preview']
@@ -49,7 +46,7 @@ const CHANNEL_SHIM_NAMES = new Map<string, ManagedCliChannel>(
  * a managed CLI shim.
  */
 export function resolveManagedCliShimInstall(execPath: string): ManagedCliShimInstall | null {
-  const trimmed = String(execPath ?? '').trim();
+  const trimmed = normalizePathLike(execPath);
   if (!trimmed) return null;
 
   const binaryDir = dirname(trimmed);
@@ -62,15 +59,10 @@ export function resolveManagedCliShimInstall(execPath: string): ManagedCliShimIn
         processEnv: { ...process.env, HAPPIER_HOME_DIR: happierHomeDir },
       })
     : CHANNEL_SHIM_NAMES.get(shimName);
-  if (!isManagedCliChannel(channel)) return null;
+  if (!channel) return null;
 
   return {
     channel,
-    installRootName: resolveCliVariant(channel).installRootName,
     happierHomeDir,
   };
-}
-
-function isManagedCliChannel(channel: string | undefined): channel is ManagedCliChannel {
-  return (MANAGED_CLI_CHANNELS as readonly string[]).includes(channel ?? '');
 }

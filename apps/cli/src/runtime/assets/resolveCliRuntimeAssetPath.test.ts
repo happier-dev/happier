@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 import { resolveCliRuntimeAssetPathFromModuleUrl } from './resolveCliRuntimeAssetPath';
+import { resolvePackagedRuntimeEntrypoint } from '@/runtime/resolvePackagedRuntimeEntrypoint';
 
 describe('resolveCliRuntimeAssetPath', () => {
   const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
@@ -14,9 +15,43 @@ describe('resolveCliRuntimeAssetPath', () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock('@/projectPath');
+    vi.unstubAllEnvs();
     if (originalExecPathDescriptor) {
       Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
     }
+  });
+
+  it('reads sidecars and child entrypoints from the launched shim home and version', async () => {
+    await withTempDir('happier-runtime-shim-home-', async (root) => {
+      const shimHome = join(root, 'install');
+      const stateHome = join(root, 'state');
+      const versionRoot = join(shimHome, 'cli-preview', 'versions', '0.2.17-preview.1');
+      const foreignRoot = join(stateHome, 'cli-preview', 'current');
+      for (const runtimeRoot of [versionRoot, foreignRoot]) {
+        mkdirSync(join(runtimeRoot, 'scripts'), { recursive: true });
+        mkdirSync(join(runtimeRoot, 'package-dist'), { recursive: true });
+        writeFileSync(join(runtimeRoot, 'package-dist', 'index.mjs'), '');
+        writeFileSync(join(runtimeRoot, 'package-dist', 'shim-test-child.mjs'), '');
+        writeFileSync(join(runtimeRoot, 'scripts', 'session_hook_forwarder.cjs'), 'hook fixture');
+      }
+      writeFileSync(join(shimHome, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'preview' }));
+      writeFileSync(join(shimHome, 'cli-preview', 'current.version'), '0.2.17-preview.1\n');
+      vi.stubEnv('HAPPIER_HOME_DIR', stateHome);
+      const shim = join(shimHome, 'bin', 'happier.exe');
+      Object.defineProperty(process, 'execPath', { ...originalExecPathDescriptor, value: shim });
+      const originalArgv = process.argv;
+      process.argv = [shim];
+      try {
+        const asset = resolveCliRuntimeAssetPathFromModuleUrl(import.meta.url, 'scripts', 'session_hook_forwarder.cjs');
+        expect(asset).toBe(join(versionRoot, 'scripts', 'session_hook_forwarder.cjs'));
+        expect(readFileSync(asset, 'utf8')).toBe('hook fixture');
+        expect(resolvePackagedRuntimeEntrypoint('shim-test-child.mjs')).toBe(
+          join(versionRoot, 'package-dist', 'shim-test-child.mjs'),
+        );
+      } finally {
+        process.argv = originalArgv;
+      }
+    });
   });
 
   it('uses the executable directory when running as a self-contained binary', async () => {

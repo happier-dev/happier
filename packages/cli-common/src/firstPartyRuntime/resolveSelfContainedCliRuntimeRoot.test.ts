@@ -53,4 +53,24 @@ describe('resolveSelfContainedCliRuntimeRootPath', () => {
       join(happierHomeDir, 'cli-dev', 'current'),
     );
   });
+
+  it('resolves sidecars without traversing current when an installed version marker exists', () => {
+    const happierHomeDir = createHappierHome('preview');
+    const installRoot = join(happierHomeDir, 'cli-preview');
+    mkdirSync(installRoot, { recursive: true });
+    writeFileSync(join(installRoot, 'current.version'), '0.2.17-preview.1\n');
+
+    expect(resolveSelfContainedCliRuntimeRootPath(join(happierHomeDir, 'bin', 'happier.exe'))).toBe(
+      join(installRoot, 'versions', '0.2.17-preview.1'),
+    );
+  });
+
+  it('normalizes Windows separators before recognizing a managed shim', () => {
+    const happierHomeDir = createHappierHome('preview');
+    const shim = join(happierHomeDir, 'bin', 'happier.exe').replaceAll('/', '\\');
+
+    expect(resolveSelfContainedCliRuntimeRootPath(shim)).toBe(
+      join(happierHomeDir, 'cli-preview', 'current'),
+    );
+  });
 });

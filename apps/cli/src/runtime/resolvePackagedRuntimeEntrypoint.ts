@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
-  resolveManagedCliShimInstall,
+  resolveInstalledCliRuntimeRootPath,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
@@ -35,7 +36,7 @@ function resolveRuntimeRootFromBinaryPath(pathLike: string): string | null {
 }
 
 function resolveManagedInstalledCliProjectRootForChannel(
-  channel: 'stable' | 'preview' | 'publicdev',
+  channel: PublicReleaseRingId,
 ): string | null {
   try {
     const paths = resolveInstalledFirstPartyComponentPaths({
@@ -58,29 +59,14 @@ function resolveManagedInstalledCliProjectRootForChannel(
   return null;
 }
 
-function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | null {
-  const normalized = normalizePathLike(pathLike);
-  if (!normalized || isEmbeddedBunBundlePath(normalized) || isJavaScriptRuntimeExecutable(normalized)) {
-    return null;
-  }
-
-  const shimInstall = resolveManagedCliShimInstall(normalized);
-  if (!shimInstall) {
-    return null;
-  }
-
-  return resolveManagedInstalledCliProjectRootForChannel(shimInstall.channel)
-    ?? join(shimInstall.happierHomeDir, shimInstall.installRootName, 'current');
-}
-
 function resolveManagedInstalledCliProjectRoot(): string | null {
-  const channels: Array<'stable' | 'preview' | 'publicdev'> = [];
+  const channels: PublicReleaseRingId[] = [];
   try {
     channels.push(readDefaultManagedReleaseChannelSync());
   } catch {
     // fall through to canonical channel sweep
   }
-  for (const channel of ['stable', 'preview', 'publicdev'] as const) {
+  for (const channel of PUBLIC_RELEASE_RING_IDS) {
     if (!channels.includes(channel)) {
       channels.push(channel);
     }
@@ -103,8 +89,8 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
     // The bin wrapper imports its runtime without changing argv. Under Node/Bun the
     // loaded module therefore identifies this checkout/npm install (or runner snapshot).
     isJavaScriptRuntimeExecutable(process.execPath) ? moduleRoot : null,
-    resolveRuntimeRootFromInstalledShimPath(process.execPath),
-    resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
+    resolveInstalledCliRuntimeRootPath(process.execPath),
+    resolveInstalledCliRuntimeRootPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),

@@ -31,10 +31,9 @@ export type { InstalledFirstPartyComponentPaths } from './resolveInstalledCompon
 export { resolveJunctionFreeCurrentPath } from './resolveJunctionFreeCurrentPath.js';
 export {
   isSelfContainedCliBinary,
+  resolveInstalledCliRuntimeRootPath,
   resolveSelfContainedCliRuntimeRootPath,
 } from './resolveSelfContainedCliRuntimeRoot.js';
-export { resolveManagedCliShimInstall } from './managedCliShimInstall.js';
-export type { ManagedCliShimInstall } from './managedCliShimInstall.js';
 export {
   readInstalledVersionMarkers,
   readInstalledVersionMarkersSync,
