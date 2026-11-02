@@ -531,13 +531,11 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
         ...readSessionInputAdmissionDiagnostic(binding), refusalBranch,
       }); return false;
     };
-    const before = readInstallationIdentityIfExistsSync();
     if (input.signal?.aborted) return refused('cancelled');
-    if (before?.installationId !== installation.installationId || before.privateKey !== installation.privateKey) return refused('installation');
-    if (requesterSessionBootstrap && !await requesterSessionBootstrap.isCurrent()) return refused('session_currentness');
-    const after = readInstallationIdentityIfExistsSync();
+    if (requesterSessionBootstrap) {
+      if (!await requesterSessionBootstrap.isCurrent()) return refused('session_currentness');
+    }
     if (input.signal?.aborted) return refused('cancelled');
-    if (after?.installationId !== installation.installationId || after.privateKey !== installation.privateKey) return refused('installation');
     return true;
   };
   return await prepareRequesterAccountActionContext({ ...input, installationId: installation.installationId,

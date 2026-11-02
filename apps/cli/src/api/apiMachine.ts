@@ -842,12 +842,14 @@ export class ApiMachineClient {
     /** Private Session/Project reads never borrow an installed custodian's Account. */
     async resolveOwnSessionRuntime(ingress: RpcHandlerContext): Promise<MachineTerminalOwnSessionReadRuntime | null> {
         if (ingress.callerInputAuthorization) {
-            if (!this.machineRuntimeInstallationId) return null;
-            return await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,
-                machineId: this.machine.id, installationId: this.machineRuntimeInstallationId,
-                isInstalledCurrent: () => !this.projectionSchedulingClosed
-                    && configuration.activeServerId === this.machineRuntimeServerId
-                    && readInstallationIdentityIfExistsSync()?.installationId === this.machineRuntimeInstallationId });
+            try {
+                if (!this.machineRuntimeInstallationId
+                    || readInstallationIdentityIfExistsSync()?.installationId !== this.machineRuntimeInstallationId) return null;
+                return await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,
+                    machineId: this.machine.id, installationId: this.machineRuntimeInstallationId,
+                    isInstalledCurrent: () => !this.projectionSchedulingClosed
+                        && configuration.activeServerId === this.machineRuntimeServerId });
+            } catch { return null; }
         }
         if (ingress.machineAdmission?.actorAccountId !== ingress.machineAdmission?.custodianAccountId) return null;
         return this.resolveInstalledMachineAccountRuntime(ingress);
@@ -872,10 +874,10 @@ export class ApiMachineClient {
     private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCurrent(): Promise<boolean>; isCustodyCurrent(): Promise<boolean> }>) | null> {
         if (!this.machineRuntimeInstallationId) return null;
         const ownerCurrent = () => !this.projectionSchedulingClosed
-            && configuration.activeServerId === this.machineRuntimeServerId
-            && readInstallationIdentityIfExistsSync()?.installationId === this.machineRuntimeInstallationId;
+            && configuration.activeServerId === this.machineRuntimeServerId;
         try {
-            if (signal.aborted || !ownerCurrent()) return null;
+            if (signal.aborted || !ownerCurrent()
+                || readInstallationIdentityIfExistsSync()?.installationId !== this.machineRuntimeInstallationId) return null;
             const accountId = await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl,
                 () => this.getAccountId(signal));
             if (!accountId || !ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;

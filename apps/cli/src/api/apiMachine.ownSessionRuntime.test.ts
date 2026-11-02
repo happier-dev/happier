@@ -102,6 +102,7 @@ describe('ApiMachine own Session Account read custody', () => {
     }
   });
   it('consumes Bob admitted original Account ports for his Session on Alice installation without reading Alice credentials', async () => {
+    const installationReads = vi.spyOn(await import('@/daemon/identity/store'), 'readInstallationIdentityIfExistsSync');
     const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     osStore.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
       publicKey: Buffer.from(pair.publicKey).toString('base64url'), privateKey: Buffer.from(pair.secretKey).toString('base64url') };
@@ -132,15 +133,24 @@ describe('ApiMachine own Session Account read custody', () => {
       const ingress: RpcHandlerContext = { signal: new AbortController().signal, callerInputAuthorization: authorization,
         machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: machine.id,
           installationId: osStore.identity.installationId, role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => live };
+      installationReads.mockClear();
       const runtime = await client.resolveOwnSessionRuntime(ingress);
       expect(runtime).toMatchObject({ accountId: 'bob', machineId: machine.id, serverId: configuration.activeServerId });
       expect(runtime).not.toHaveProperty('credentials');
       expect(osStore.reads).toEqual([]);
+      expect(installationReads.mock.calls.length, 'requester read custody reads installation only at admission').toBe(1);
+      osStore.identity = { ...osStore.identity!, installationId: 'replacement-installation' };
+      await expect(runtime?.isCurrent?.()).resolves.toBe(true);
+      expect(installationReads.mock.calls.length, 'retained requester reads consume admitted installation').toBe(1);
+      await expect(client.resolveOwnSessionRuntime(ingress)).resolves.toBeNull();
+      osStore.identity = { ...osStore.identity, installationId: root.binding.installationId };
       await expect(client.resolveOwnSessionRuntime({ ...ingress, machineAdmission: { ...ingress.machineAdmission!, actorAccountId: 'cara' } })).resolves.toBeNull();
       live = false;
       await expect(runtime?.isCurrent?.()).resolves.toBe(false);
       await expect(client.resolveOwnSessionRuntime(ingress)).resolves.toBeNull();
       expect(osStore.credentials.token).toBe('alice-token');
+      installationReads.mockImplementationOnce(() => { throw new Error('Installation file unavailable'); });
+      await expect(client.resolveOwnSessionRuntime(ingress)).resolves.toBeNull();
     } finally { get.mockRestore(); post.mockRestore(); osStore.identity = null; osStore.credentials = null; }
   });
   it('supplies installed Account provenance for local observation without granting missing-admission effects or foreign Session reads', async () => {
@@ -239,7 +249,8 @@ describe('ApiMachine own Session Account read custody', () => {
       await expect(runtime?.isCustodyCurrent()).resolves.toBe(false);
     } finally { profile.mockRestore(); osStore.identity = null; osStore.credentials = null; }
   });
-  it('provides only its verified owner material and retires it after credential or installation replacement', async () => {
+  it('admits verified owner material once and keeps local retirement plus fresh next-operation admission', async () => {
+    const installationReads = vi.spyOn(await import('@/daemon/identity/store'), 'readInstallationIdentityIfExistsSync');
     const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     osStore.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
       publicKey: Buffer.from(pair.publicKey).toString('base64url'), privateKey: Buffer.from(pair.secretKey).toString('base64url') };
@@ -251,24 +262,22 @@ describe('ApiMachine own Session Account read custody', () => {
     const machine: Machine = { id: 'alice-machine', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy',
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
     const client = new ApiMachineClient('alice-token', machine);
-    let replaceCredentialDuringAdmission = false;
     const ingress: RpcHandlerContext = { signal: new AbortController().signal,
       machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: machine.id,
         installationId: osStore.identity.installationId, role: 'manage', encryptionMode: 'plain' },
-      verifyMachineAdmissionCurrent: async () => {
-        if (replaceCredentialDuringAdmission) osStore.credentials = {
-          token: 'replacement-token', encryption: null, credentialProvenance: 'stored_session',
-        };
-        return true;
-      } };
+      verifyMachineAdmissionCurrent: async () => true };
     try {
       await expect(client.resolveOwnSessionRuntime({ ...ingress,
         machineAdmission: { ...ingress.machineAdmission!, actorAccountId: 'bob' } })).resolves.toBeNull();
       expect(osStore.reads).toEqual([]);
       expect(profile).not.toHaveBeenCalled();
+      // The connection captured its installation before this request.
+      installationReads.mockClear();
       const runtime = await client.resolveOwnSessionRuntime(ingress);
       expect(runtime).toMatchObject({ accountId: 'alice', serverId: configuration.activeServerId,
         machineId: machine.id, credentials: osStore.credentials });
+      expect(installationReads.mock.calls.length,
+        'one installed identity read admits the operation').toBe(1);
       expect(profile).toHaveBeenCalledWith(expect.stringContaining('/v1/account/profile'),
         expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer alice-token' }) }));
       osStore.reads.length = 0;
@@ -277,13 +286,15 @@ describe('ApiMachine own Session Account read custody', () => {
       } })).resolves.toBeNull();
       expect(osStore.reads).toEqual([]);
       await expect(runtime?.isCurrent?.()).resolves.toBe(true);
-      replaceCredentialDuringAdmission = true;
-      await expect(runtime?.isCurrent?.()).resolves.toBe(false);
-      replaceCredentialDuringAdmission = false;
+      osStore.credentials = { token: 'replacement-token', encryption: null, credentialProvenance: 'stored_session' };
+      await expect(runtime?.isCurrent?.()).resolves.toBe(true);
       await expect(client.resolveOwnSessionRuntime(ingress)).resolves.toBeNull();
+      const readsAfterAdmissions = installationReads.mock.calls.length;
       osStore.credentials = { token: 'alice-token', encryption: null, credentialProvenance: 'stored_session' };
       osStore.identity = { ...osStore.identity!, installationId: '22222222-2222-4222-8222-222222222222' };
-      await expect(runtime?.isCurrent?.()).resolves.toBe(false);
+      await expect(runtime?.isCurrent?.()).resolves.toBe(true);
+      expect(installationReads.mock.calls.length,
+        'retained operation currentness consumes admission without rereading identity').toBe(readsAfterAdmissions);
       await expect(client.resolveOwnSessionRuntime({ ...ingress, machineAdmission: {
         ...ingress.machineAdmission!, installationId: osStore.identity.installationId,
       } })).resolves.toBeNull();
