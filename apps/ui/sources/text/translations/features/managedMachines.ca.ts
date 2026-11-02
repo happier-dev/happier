@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "Només es factura mentre s’executa.",
             imageDescription: "Amb què arrenca. Happier s’hi instal·la a sobre.",
             locationDescription: "Com més a prop, més ràpid respon en escriure.",
+            network: "Xarxa",
+            networkDescription: "Quines adreces públiques rep. El preu segueix la teva elecció.",
             localLocationDescription: ({ computer }: { computer: string }) => `On s’executa a ${computer}.`,
             localSizeDescription: ({ computer }: { computer: string }) => `La seva part de ${computer} mentre s’executa. Aturar-la l’allibera.`,
             headroom: ({ computer }: { computer: string }) => `Queda per a ${computer}`,

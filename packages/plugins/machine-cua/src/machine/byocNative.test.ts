@@ -1,3 +1,12 @@
+import { ByocLaunchV1Schema } from './remoteSchemas.js';
+import type { MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function select(options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1 = {}) {
+    return projectMachineProvisionerSelectionV1({ options, launchSchema: ByocLaunchV1Schema.jsonSchema,
+        selection: { ...Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : [])), ...selection } });
+}
 import { describe, expect, it } from 'vitest';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
@@ -38,31 +47,30 @@ function harness(...values: unknown[]) {
 describe('Cua BYOC native operations', () => {
     it('publishes the configured Modal lifetime without assigning a finite lifetime to no-TTL AWS or GCP', async () => {
         const modal = harness({ providers: [{ ...provider, name: 'modal', ttl_hours: 2 }], resources: [] });
-        expect(await modal.byoc.options('modal', 1234)).toMatchObject({ choices: [{
+        expect(select(await modal.byoc.options('modal', 1234))).toMatchObject({ kind: 'ready',
             launch: { cloud: 'modal', nativeLifetime: { kind: 'finite', durationSeconds: 7200 } },
             retention: { supportedIntents: ['delete'], finiteOnly: true },
             nativeFacts: { duration: { id: '7200', afterMs: 7_200_000 } },
-        }] });
+        });
         for (const cloud of ['aws', 'gcp'] as const) {
             const durable = harness({ providers: [{ ...provider, name: cloud, ttl_hours: 0 }], resources: [] });
-            const result = await durable.byoc.options(cloud, 1234);
-            expect(result.choices[0]?.launch).toMatchObject({ nativeLifetime: { kind: 'no-native-ttl' } });
-            expect(result.choices[0]).toMatchObject({ retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false } });
-            expect(result.choices[0]?.nativeFacts?.duration).toBeUndefined();
+            const result = select(await durable.byoc.options(cloud, 1234));
+            expect(result).toMatchObject({ kind: 'ready', launch: { nativeLifetime: { kind: 'no-native-ttl' } },
+                retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false } });
+            expect(result.nativeFacts.duration).toBeUndefined();
         }
     });
     it('projects source-timed configured choices without inventing cloud setup or a price', async () => {
         const h = harness(status);
-        expect(await h.byoc.options('aws', 1234)).toEqual({ choices: [{
-            id: 'linux:t3.medium', title: { key: 'machineCua.byoc.nativeChoice', fallback: 'linux · t3.medium' },
-            launch, available: true, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
+        expect(select(await h.byoc.options('aws', 1234))).toEqual({ kind: 'ready',
+            launch, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
                 image: { id: 'linux', title: 'linux' }, location: { id: 'us-west-2', title: 'us-west-2' } },
             prices: [{ amount: '0.0416', currency: 'USD', unit: 'hour',
                 source: 'cua-native-cloud-status', observedAt: 1234 }],
-        }] });
+        });
         expect(h.argv).toEqual([['--json', '--embedded', 'cloud', 'status', 'aws']]);
         const unsupported = harness({ ...status, providers: [{ ...provider, name: 'modal', ttl_hours: 0 }] });
-        expect(await unsupported.byoc.options('modal', 1234)).toEqual({ choices: [] });
+        expect(await unsupported.byoc.options('modal', 1234)).toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
         const denied = harness(new Error('private authorization details'));
         await expect(denied.byoc.options('aws', 1234)).rejects.toMatchObject({ code: 'native_options_unavailable' });
     });
@@ -152,4 +160,26 @@ describe('Cua BYOC native operations', () => {
         const exact = harness(status, { ...info, image: custom.nativeImageId });
         expect(await exact.byoc.recover(custom, 'aws:owned')).toEqual({ kind: 'bound', resource });
     });
+  it('emits native size facts once and keeps qualified image pairs and their prices independent', async () => {
+        const h = harness({ providers: [{ ...provider, kinds: [
+            provider.kinds[0],
+            { image: 'desktop', supported: true, machine_type: 't3.medium', usd_per_hour: 0.06 },
+            { image: 'linux', supported: true, machine_type: 't3.large', usd_per_hour: 0.08 },
+        ] }], resources: [] });
+        const options = await h.byoc.options('aws', 1234);
+        expect(options).toHaveProperty('dimensions');
+        expect(options.dimensions.size.map((entry) => entry.id)).toEqual(['t3.medium', 't3.large']);
+        expect(options.dimensions.image.map((entry) => entry.id)).toEqual(['linux', 'desktop']);
+        expect(options.dimensions.size[0]?.prices).toMatchObject([
+            { amount: '0.0416', when: [{ dimension: 'image', optionIds: ['linux'] }] },
+            { amount: '0.06', when: [{ dimension: 'image', optionIds: ['desktop'] }] },
+        ]);
+        expect(options.constraints).toContainEqual({ when: { dimension: 'size', optionIds: ['t3.large'] },
+            requires: { dimension: 'image', optionIds: ['linux'] } });
+        expect(select(options, { size: 't3.large', image: 'desktop' })).toMatchObject({ kind: 'unavailable' });
+        expect(select(options, { size: 't3.medium', image: 'desktop' })).toMatchObject({ kind: 'ready',
+            prices: [{ amount: '0.06' }], launch: { nativeImageId: 'desktop', nativeSizeId: 't3.medium' } });
+        expect(options).not.toHaveProperty('choices');
+    });
+
 });

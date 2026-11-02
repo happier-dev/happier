@@ -170,3 +170,10 @@ export function countryFlag(countryCode: string | undefined): string {
     ...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65),
   );
 }
+
+export type ManagedNetworkOption = Readonly<{
+  id: string;
+  name: string;
+  unavailableReason?: string;
+  selectable?: boolean;
+}>;

@@ -1,3 +1,4 @@
+import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -11,7 +12,7 @@ import { CUA_PLUGIN } from '../../../../../../../packages/plugins/machine-cua/sr
 import { DEVCONTAINER_PLUGIN } from '../../../../../../../packages/plugins/devcontainer/src/manifest';
 import { resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/presentation';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorRetentionCapabilities } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
@@ -22,35 +23,139 @@ const descriptor = MachineProvisionerContributionV1Schema.parse({
 });
 const provisioner = { contribution: { pluginId: 'custom.compute', localId: 'vm' }, occurrenceId: 'occurrence', descriptor };
 const controller = { machineId: 'host', installationId: 'installation' };
-const options = { choices: [
-    { id: 'small', title: 'Small', launch: { cpu: 2 }, prices: [{ amount: '0.005', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }] },
-    { id: 'large', title: 'Large', launch: { cpu: 4 } },
-] };
+
+const emptyDimensions = () => ({ size: [], image: [], location: [], network: [], duration: [] });
+const options = {
+    base: { launch: {} },
+    dimensions: { ...emptyDimensions(), size: [
+        { id: 'small', title: 'Small', assignments: [{ path: 'cpu', value: 2 }], nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 2 } },
+            prices: [{ amount: '0.005', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }] },
+        { id: 'large', title: 'Large', assignments: [{ path: 'cpu', value: 4 }], nativeFacts: { size: { id: 'large', title: 'Large', cpuCores: 4 } } },
+    ] },
+};
+const fresh = (name = 'Guest') => createManagedConfiguratorDraft({ provisioner, controller, name });
+const small = () => selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), options), 'size', 'small');
 
 describe('managed configurator draft owner', () => {
-    it('projects immutable nested native choices into an independent mutable wire snapshot', () => {
-        const launch = { sizes: [2, 4] };
-        Object.freeze(launch.sizes);
-        Object.freeze(launch);
-        const native = { ...provisioner, descriptor: { ...descriptor, launchSchema: {
-            type: 'object', properties: { sizes: { type: 'array', items: { type: 'integer' } } },
-            required: ['sizes'], additionalProperties: false,
-        } satisfies PluginJsonSchemaV2 } };
-        const draft = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(
-            createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Guest' }),
-            { choices: [{ id: 'native', title: 'Native', launch }] },
-        ), 'native');
-
-        const choices = managedConfiguratorFacts(draft)?.launch.choices;
-        expect(choices).toEqual(launch);
-        if (!choices || typeof choices !== 'object' || Array.isArray(choices) || !Array.isArray(choices.sizes)) {
-            throw new Error('Expected native sizes in the wire snapshot');
-        }
-        choices.sizes.push(8);
-        expect(choices.sizes).toEqual([2, 4, 8]);
-        expect(draft.selected?.launch).toEqual({ sizes: [2, 4] });
+    it('reads candidate entries only once per sizing row instead of rescanning sibling launches', () => {
+        const count = 256;
+        const entries = Array.from({ length: count }, (_, index) => ({ id: `native-${index}`, title: `Native ${index}`,
+            assignments: [{ path: 'cpu', value: index + 1 }] }));
+        let elementReads = 0;
+        // Instrument real array access, not the projector: rendering N rows must
+        // consume N catalog entries, not perform N full-catalog id searches.
+        const observed = new Proxy(entries, { get(target, key, receiver) {
+            if (typeof key === 'string' && /^\d+$/.test(key)) elementReads++;
+            return Reflect.get(target, key, receiver);
+        } });
+        const draft = { ...fresh(), options: { base: { launch: {} }, dimensions: { ...emptyDimensions(), size: observed } }, dimensionSelection: {} };
+        const rows = managedConfiguratorDimensionChoices(draft, 'size');
+        expect(rows).toHaveLength(count);
+        expect(rows[0]?.choice.nativeFacts?.size?.id).toBe('native-0');
+        expect(rows.at(-1)?.choice.nativeFacts?.size?.id).toBe(`native-${count - 1}`);
+        expect(elementReads).toBe(count);
     });
-
+    it('retains a legacy complete-choice identity when native sizes coincide and the reviewed row disappears', () => {
+        const read = (choices: unknown[]) => {
+            const result = readManagedMachineActionOutputV1('machines.provisioners.options', { choices });
+            if (!result.success) throw new Error('Legacy catalog not admitted');
+            return result.data;
+        };
+        const choices = [{ id: 'linux-west', title: 'Linux west', launch: { cpu: 2 },
+            nativeFacts: { size: { id: 'native-size', title: 'Native size', cpuCores: 2 }, image: { id: 'linux', title: 'Linux' } } },
+        { id: 'windows-east', title: 'Windows east', launch: { cpu: 4 },
+            nativeFacts: { size: { id: 'native-size', title: 'Native size', cpuCores: 4 }, image: { id: 'windows', title: 'Windows' } } }];
+        const selected = selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), read(choices)), 'size', 'windows-east');
+        expect(managedConfiguratorDimensionSelection(selected)).toEqual({ size: 'windows-east' });
+        expect(selected.selected?.nativeFacts?.size?.id).toBe('native-size');
+        expect(managedConfiguratorAcquireInput(selected, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
+        const changed = refreshManagedConfiguratorOptions(selected, read([choices[0]!]));
+        expect(managedConfiguratorAcquireInput(changed, 'home')).toBeNull();
+        expect(changed.selected?.launch).toEqual({ cpu: 4 });
+        expect(managedConfiguratorDimensionChoices(changed, 'size').map(row => [row.choice.id, row.choice.title, row.available]))
+            .toEqual([['linux-west', 'Linux west', true], ['windows-east', 'Windows east', false]]);
+    });
+    it('selects the sole size a free-form host echoes from the form it was asked with, and only that one', () => {
+        // Cua-style: the form's CPU field is the size; the read answers with one size assigning what the form sent.
+        const echo = { base: { launch: {} }, dimensions: { ...emptyDimensions(), size: [{ id: '2cpu', title: '2 CPU',
+            assignments: [{ path: 'cpu', value: 2 }], nativeFacts: { size: { id: '2cpu', title: '2 CPU', cpuCores: 2 } } }] } };
+        expect(managedConfiguratorDimensionSelection(refreshManagedConfiguratorOptions(fresh(), echo, { cpu: 2 }))).toEqual({ size: '2cpu' });
+        expect(managedConfiguratorAcquireInput(refreshManagedConfiguratorOptions(fresh(), echo, { cpu: 2 }), 'home')?.selection)
+            .toMatchObject({ launch: { choices: { cpu: 2 } } });
+        // A form that asked for something else, or no form at all, doesn't make that size the person's choice.
+        expect(managedConfiguratorDimensionSelection(refreshManagedConfiguratorOptions(fresh(), echo, { cpu: 4 }))).toEqual({});
+        expect(managedConfiguratorDimensionSelection(refreshManagedConfiguratorOptions(fresh(), echo))).toEqual({});
+    });
+    it('admits a fully qualified form base with matching singleton facts without redundant picks', () => {
+        const draft = refreshManagedConfiguratorOptions(fresh(), { base: { launch: { cpu: 2 } }, dimensions: {
+            ...emptyDimensions(), size: [{ id: 'native', title: 'Native sizing', assignments: [],
+                nativeFacts: { size: { id: 'native', title: 'Native sizing', cpuCores: 2 } } }],
+            image: [{ id: 'linux', title: 'Linux', assignments: [] }],
+        } });
+        expect(managedConfiguratorDimensionSelection(draft)).toEqual({ size: 'native', image: 'linux' });
+        expect(managedConfiguratorAcquireInput(draft, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 2 } } });
+        const failedEdit = refreshManagedConfiguratorOptions(setManagedConfiguratorOptionsSelectors(draft, { cpu: 4 }), {
+            dimensions: emptyDimensions(), code: 'provider_unavailable',
+        });
+        expect(failedEdit.selected?.launch).toEqual({ cpu: 2 });
+        expect(managedConfiguratorAcquireInput(failedEdit, 'home')).toBeNull();
+        const changed = refreshManagedConfiguratorOptions(failedEdit, {
+            base: { launch: { cpu: 4 } }, dimensions: { ...emptyDimensions(),
+                size: [{ id: 'updated', title: 'Updated native sizing', assignments: [], nativeFacts: { size: { id: 'updated', title: 'Updated native sizing', cpuCores: 4 } } }],
+                image: [{ id: 'linux', title: 'Linux', assignments: [] }],
+            },
+        });
+        expect(managedConfiguratorAcquireInput(changed, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
+        const drifted = refreshManagedConfiguratorOptions(changed, { base: { launch: { cpu: 8 } }, dimensions: {
+            ...emptyDimensions(), size: [{ id: 'updated', title: 'Updated native sizing', assignments: [] }],
+            image: [{ id: 'linux', title: 'Linux', assignments: [] }],
+        } });
+        expect(drifted.selected?.launch).toEqual({ cpu: 4 });
+        expect(managedConfiguratorAcquireInput(drifted, 'home')).toBeNull();
+        const incomplete = refreshManagedConfiguratorOptions(fresh(), options);
+        expect(managedConfiguratorAcquireInput(incomplete, 'home')).toBeNull();
+    });
+    it('projects independent dimensions once, including partial prices, constraints and the visible network default', () => {
+        const price = { amount: '0.005', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 };
+        const catalog = {
+            base: { launch: {} },
+            dimensions: {
+                size: [{ id: 'small', title: 'Small', assignments: [{ path: 'cpu', value: 2 }], nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 2 } }, prices: [price] },
+                    { id: 'large', title: 'Large', assignments: [{ path: 'cpu', value: 4 }], nativeFacts: { size: { id: 'large', title: 'Large', cpuCores: 4 } } }],
+                image: [], location: [{ id: 'west', title: 'West', assignments: [], nativeFacts: { location: { id: 'west', title: 'West' } } },
+                    { id: 'east', title: 'East', assignments: [], nativeFacts: { location: { id: 'east', title: 'East' } } }],
+                network: [{ id: 'ipv4', title: 'IPv4', assignments: [], nativeFacts: { network: { id: 'ipv4', title: 'IPv4' } },
+                    prices: [{ ...price, amount: '0.001', when: [{ dimension: 'location' as const, optionIds: ['west'] }] }] }], duration: [],
+            },
+            constraints: [{ when: { dimension: 'size' as const, optionIds: ['large'] }, requires: { dimension: 'location' as const, optionIds: ['east'] } }],
+        };
+        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest' }), catalog);
+        expect(managedConfiguratorDimensionSelection(loaded)).toEqual({ network: 'ipv4' });
+        expect(managedConfiguratorDimensionChoices(loaded, 'size')).toHaveLength(2);
+        expect(managedConfiguratorDimensionChoices(loaded, 'size')[0]?.choice.prices).toEqual([price]);
+        const picked = selectManagedConfiguratorDimension(selectManagedConfiguratorDimension(loaded, 'size', 'small'), 'location', 'west');
+        expect(managedConfiguratorAcquireInput(picked, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 2 } } });
+        expect(managedConfiguratorFacts(picked)?.prices?.map(value => value.amount)).toEqual(['0.005', '0.001']);
+        expect(managedConfiguratorDimensionChoices(picked, 'size')[1]).toMatchObject({ available: false, selectable: true });
+        const incompatible = selectManagedConfiguratorDimension(picked, 'size', 'large');
+        expect(managedConfiguratorAcquireInput(incompatible, 'home')).toBeNull();
+        const east = selectManagedConfiguratorDimension(incompatible, 'location', 'east');
+        expect(managedConfiguratorAcquireInput(east, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
+        expect(managedConfiguratorFacts(east)?.prices).toBeUndefined();
+    });
+    it('consumes a pending form edit when dimension picks complete its native review', () => {
+        const dimensions = { ...emptyDimensions(), size: [{ id: 'small', title: 'Small', assignments: [] }],
+            image: [{ id: 'linux', title: 'Linux', assignments: [] }, { id: 'debian', title: 'Debian', assignments: [] }] };
+        const pending = refreshManagedConfiguratorOptions(setManagedConfiguratorOptionsSelectors(small(), { cpu: 4 }), {
+            base: { launch: { cpu: 4 } }, dimensions,
+        });
+        expect(managedConfiguratorAcquireInput(pending, 'home')).toBeNull();
+        const reviewed = selectManagedConfiguratorDimension(pending, 'image', 'linux');
+        expect(managedConfiguratorAcquireInput(reviewed, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
+        const drifted = refreshManagedConfiguratorOptions(reviewed, { base: { launch: { cpu: 8 } }, dimensions });
+        expect(drifted.selected?.launch).toEqual({ cpu: 4 });
+        expect(managedConfiguratorAcquireInput(drifted, 'home')).toBeNull();
+    });
     it('admits a Devcontainer review query entered through its declared shared Action fields', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
         const action = PluginActionContributionV2Schema.parse(DEVCONTAINER_PLUGIN.manifest.contributes.actions?.find(action => action.id === descriptor.actions.options));
@@ -65,7 +170,7 @@ describe('managed configurator draft owner', () => {
         }), selectors);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(values);
     });
-    it('starts a Cua sandbox recipe from the provider\u2019s declared size defaults, so its options read is complete without typing', () => {
+    it('starts a Cua sandbox launch from the provider\u2019s declared size defaults, so its options read is complete without typing', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(CUA_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
@@ -99,118 +204,6 @@ describe('managed configurator draft owner', () => {
         const rawCpu = resolveHappierActionFieldPresentation(cpu, 2);
         expect(rawCpu.kind === 'text' && [rawCpu.value, rawCpu.parseText('4')]).toEqual(['2', 4]);
     });
-    it('qualifies saved BYOC recipes using the current selected native variant, with descriptor fallback', () => {
-        const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'byoc'));
-        const byoc = { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor };
-        for (const cloud of ['modal', 'aws', 'gcp'] as const) {
-            const finite = cloud === 'modal';
-            const launch = PluginJsonValueV2Schema.parse({ cloud, region: 'west', nativeImageId: 'linux', nativeSizeId: 'native-size',
-                nativeLifetime: finite ? { kind: 'finite', durationSeconds: 7200 } : { kind: 'no-native-ttl' } });
-            const loaded = MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'native-choice', title: 'Native choice', launch,
-                retention: finite ? { supportedIntents: ['delete'], finiteOnly: true }
-                    : { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false },
-                nativeFacts: { size: { id: 'native-size', title: 'Native size' }, image: { id: 'linux', title: 'Linux' },
-                    location: { id: 'west', title: 'West' },
-                    ...(finite ? { duration: { id: '7200', title: '2 hours', afterMs: 7_200_000 } } : {}) },
-            }] });
-            const saved = { ...createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'Saved BYOC',
-                preset: { id: 'saved-byoc', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } }),
-                selected: { id: 'preset:saved-byoc', title: 'Saved BYOC', launch } };
-            const refreshed = refreshManagedConfiguratorOptions(saved, loaded);
-            const facts = managedConfiguratorFacts(refreshed);
-            expect(facts?.retentionCapabilities).toEqual(loaded.choices[0]!.retention);
-            expect(facts?.retention.kind).toBe(finite ? 'unused' : 'until-delete');
-            expect(facts?.wakeOnAcceptedMessage).toBe(!finite);
-            expect(managedConfiguratorAcquireInput(refreshed, 'home')?.reviewedFacts?.retentionCapabilities).toEqual(facts?.retentionCapabilities);
-            if (finite) {
-                expect(facts?.nativeFacts?.duration?.afterMs).toBe(7_200_000);
-                expect(managedConfiguratorAcquireInput(refreshed, 'home')?.selection).toMatchObject({ retention: { effect: 'delete' }, wakeOnAcceptedMessage: false });
-                let fresh = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'New BYOC' }), loaded);
-                for (const [dimension, id] of [['size', 'native-size'], ['image', 'linux'], ['location', 'west']] as const)
-                    fresh = selectManagedConfiguratorDimension(fresh, dimension, id);
-                expect(managedConfiguratorAcquireInput(fresh, 'home')?.selection).toMatchObject({ launch: { choices: launch }, wakeOnAcceptedMessage: false });
-                // A real duration alternative still requires an explicit selection of its complete launch.
-                const ambiguous = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'New BYOC' }), {
-                    choices: [...loaded.choices, { ...loaded.choices[0]!, id: 'longer', launch: { cloud, region: 'west', nativeImageId: 'linux', nativeSizeId: 'native-size', nativeLifetime: { kind: 'finite', durationSeconds: 10800 } },
-                        nativeFacts: { ...loaded.choices[0]!.nativeFacts, duration: { id: '10800', title: '3 hours', afterMs: 10_800_000 } } }],
-                });
-                let staged = ambiguous;
-                for (const [dimension, id] of [['size', 'native-size'], ['image', 'linux'], ['location', 'west']] as const)
-                    staged = selectManagedConfiguratorDimension(staged, dimension, id);
-                expect(managedConfiguratorAcquireInput(staged, 'home')).toBeNull();
-            }
-            const withoutQualification = refreshManagedConfiguratorOptions(saved, { choices: [{ id: 'native-choice', title: 'Native choice', launch }] });
-            expect(managedConfiguratorFacts(withoutQualification)?.retentionCapabilities).toEqual(descriptor.retention);
-        }
-    });
-    it('selects a dimension of a valid scalar launch without inventing object selectors', () => {
-        const scalar = { ...provisioner, descriptor: { ...descriptor,
-            launchSchema: { type: 'string', enum: ['small', 'large'] } satisfies PluginJsonSchemaV2 } };
-        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: scalar, controller, name: 'Guest' }), {
-            choices: [{ id: 'scalar-small', title: 'Small', launch: 'small', nativeFacts: { size: { id: 'small', title: 'Small' } } }],
-        });
-        expect(managedConfiguratorDimensionChoices(loaded, 'size')[0]).toMatchObject({ available: true, selectable: true });
-        const selected = selectManagedConfiguratorDimension(loaded, 'size', 'small');
-        expect(managedConfiguratorAcquireInput(selected, 'home')?.selection).toMatchObject({ launch: { choices: 'small' } });
-        const queried = { ...loaded, optionsSelectors: { search: 'small' } };
-        expect(selectManagedConfiguratorDimension(queried, 'size', 'small').selected?.launch).toBe('small');
-    });
-    it('compares size quotes against the selected region and selectors, preserving unavailable combinations', () => {
-        const facts = { size: { id: 'small', title: 'Small' }, image: { id: 'linux', title: 'Linux' } };
-        const price = (amount: string) => [{ amount, currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }];
-        const choices = [
-            { id: 'west-small', title: 'West small', launch: { cpu: 2, ipv4: true, region: 'west' }, prices: price('1'), nativeFacts: { ...facts, location: { id: 'west', title: 'West' } } },
-            { id: 'east-small', title: 'East small', launch: { cpu: 2, ipv4: true, region: 'east' }, prices: price('2'), nativeFacts: { ...facts, location: { id: 'east', title: 'East' } } },
-            { id: 'east-ipv6', title: 'East IPv6', launch: { cpu: 2, ipv4: false, region: 'east' }, prices: price('3'), nativeFacts: { ...facts, location: { id: 'east', title: 'East' } } },
-            { id: 'west-large', title: 'West large', launch: { cpu: 4, ipv4: true, region: 'west' }, prices: price('4'), nativeFacts: { ...facts, size: { id: 'large', title: 'Large' }, location: { id: 'west', title: 'West' } } },
-        ];
-        const native = { ...provisioner, descriptor: { ...descriptor, launchSchema: { type: 'object', properties: {
-            cpu: { type: 'integer' }, ipv4: { type: 'boolean' }, region: { type: 'string' } }, required: ['cpu', 'ipv4', 'region'], additionalProperties: false } satisfies PluginJsonSchemaV2 } };
-        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Guest' }), { choices });
-        const selected = { ...selectManagedConfiguratorChoice(loaded, 'west-small'), optionsSelectors: { ipv4: true } };
-        const east = selectManagedConfiguratorDimension(selected, 'location', 'east');
-        expect(east.selected?.id).toBe('east-small');
-        expect(managedConfiguratorDimensionChoices(east, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small'))
-            .toMatchObject({ available: true, choice: { id: 'east-small', prices: price('2') } });
-        expect(managedConfiguratorFacts(east)?.prices).toEqual(price('2'));
-        expect(managedConfiguratorDimensionChoices(east, 'size').find(row => row.choice.nativeFacts?.size?.id === 'large'))
-            .toMatchObject({ available: false, choice: { prices: undefined } });
-        const ambiguous = { ...east, optionsSelectors: undefined };
-        expect(managedConfiguratorDimensionChoices(ambiguous, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small')?.choice.prices).toBeUndefined();
-        expect(managedConfiguratorDimensionChoices(loaded, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small')?.choice.prices).toBeUndefined();
-        expect(selectManagedConfiguratorDimension({ ...east, optionsSelectors: { ipv4: false } }, 'size', 'small').selected?.id).toBe('east-ipv6');
-    });
-    it('retains preset setup in the draft and receipt while keeping one-off acquisition free of setup authority', () => {
-        const environment = { setupScript: 'echo ready', secretRefs: { v: 1 as const, bindings: { API_TOKEN: { ref: 'setup-token' } } } };
-        const initial = createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest', environment,
-            preset: { id: 'with-environment', revision: 2 } });
-        const selected = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(initial, options), 'small');
-        const refreshed = refreshManagedConfiguratorOptions(selected, options);
-        expect(refreshed.environment).toEqual(environment);
-        expect(managedConfiguratorFacts(refreshed)?.environment).toEqual(environment);
-        const acquired = managedConfiguratorAcquireInput(refreshed, 'home');
-        expect(acquired?.selection).not.toHaveProperty('environment');
-        expect(acquired?.reviewedFacts?.environment).toBeUndefined();
-    });
-    it('drops coordinator selection from a reviewed direct Crabbox launch and restores its requirement for coordinator transport', () => {
-        const descriptor = MachineProvisionerContributionV1Schema.parse(CRABBOX_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
-        const contribution = { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id };
-        const credential = { purpose: { consumer: contribution, purpose: 'crabbox-coordinator' }, account: {
-            service: { pluginId: contribution.pluginId, localId: 'coordinator' }, accountId: 'reviewed-coordinator' } };
-        const crabbox = { contribution, occurrenceId: 'crabbox-occurrence', descriptor,
-            credentialPurposes: [{ purpose: credential.purpose, options: [{ value: credential.account, label: 'Coordinator' }] }] };
-        const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
-        const direct = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: crabbox,
-            controller, name: 'Local container', credentials: [credential] }), { choices: [{ id: 'local', title: 'Local container', launch }] }), 'local');
-        expect(managedConfiguratorCredentialSelections(direct, crabbox)).toEqual([]);
-        expect(managedConfiguratorAcquireInput(direct, 'home')?.selection).toMatchObject({ launch: { choices: launch } });
-        expect(managedConfiguratorFacts(direct)?.launch.credentials ?? []).toEqual([]);
-        const coordinator = { ...direct, selected: { id: 'remote', title: 'Coordinator', launch: { transport: 'coordinator' } } };
-        expect(managedConfiguratorCredentialSelections(coordinator, crabbox)).toEqual([credential]);
-        expect(managedConfiguratorCredentialSelections({ credentials: [credential] }, crabbox)).toEqual([credential]);
-        expect(managedConfiguratorCredentialSelections({ ...direct, optionsSelectors: { transport: 'direct' } }, crabbox)).toEqual([credential]);
-        expect(managedConfiguratorCredentialSelections({ ...direct, optionsSelectors: { transport: 'direct', backendId: 'aws' } }, crabbox)).toEqual([credential]);
-    });
     it('keeps actual Fly volume branch switches queryable without rewriting the retained launch', () => {
         const fly = { ...provisioner, contribution: { pluginId: 'happier.machine.fly', localId: 'fly' },
             descriptor: { ...descriptor, launchSchema: FlyLaunchV1Schema.jsonSchema } };
@@ -235,133 +228,156 @@ describe('managed configurator draft owner', () => {
             expect(FlyLaunchV1Schema.safeParse(query).success).toBe(false);
         }
     });
-    it('revalidates saved native sizing through only the declared same-path options schema', () => {
-        const optionsSchema = { type: 'object', properties: {
-            imageId: { type: 'string', minLength: 1 }, runtimeId: { type: 'string', enum: ['qemu'] },
-            size: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 }, memoryBytes: { type: 'integer', minimum: 1 },
-                diskBytes: { type: 'integer', minimum: 1 } }, required: ['cpu', 'memoryBytes', 'diskBytes'], additionalProperties: false },
-        }, additionalProperties: false } satisfies PluginJsonSchemaV2;
-        const launch = { on: 'local', runtimeId: 'qemu', imageId: 'linux', size: { cpu: 4, memoryBytes: 4294967296, diskBytes: 85899345920 } };
-        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', preset: { id: 'preset', revision: 3 } }),
-            selected: { id: 'preset:preset', title: 'Saved', launch } };
-        expect(managedConfiguratorOptionsSelectors(saved, optionsSchema)).toEqual({ runtimeId: 'qemu', imageId: 'linux', size: launch.size });
-        const refreshed = refreshManagedConfiguratorOptions(saved, { choices: [{ id: 'current-native', title: 'Saved native image', launch }] });
-        expect(managedConfiguratorOptionsSelectors(refreshed, optionsSchema)).toEqual({ runtimeId: 'qemu', imageId: 'linux', size: launch.size });
-        // A persisted recipe is projected, but current editable input is admitted strictly.
-        expect(managedConfiguratorOptionsSelectors({ ...saved, optionsSelectors: { ...launch, imageId: 'edited' } }, optionsSchema)).toBeNull();
-        expect(managedConfiguratorOptionsSelectors({ ...saved, optionsSelectors: { runtimeId: 'qemu', imageId: 'edited', size: { ...launch.size, cpu: 0 } } }, optionsSchema)).toBeNull();
+
+    it('projects frozen native values into an independent mutable wire snapshot', () => {
+        const launch = { sizes: [2, 4] };
+        Object.freeze(launch.sizes);
+        Object.freeze(launch);
+        const native = { ...provisioner, descriptor: { ...descriptor, launchSchema: {
+            type: 'object', properties: { sizes: { type: 'array', items: { type: 'integer' } } },
+            required: ['sizes'], additionalProperties: false,
+        } satisfies PluginJsonSchemaV2 } };
+        const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Guest' }),
+            { base: { launch }, dimensions: emptyDimensions() });
+        const choices = managedConfiguratorFacts(draft)?.launch.choices;
+        if (!choices || typeof choices !== 'object' || Array.isArray(choices) || !Array.isArray(choices.sizes)) throw new Error('Expected native sizes');
+        choices.sizes.push(8);
+        expect(choices.sizes).toEqual([2, 4, 8]);
+        expect(draft.selected?.launch).toEqual({ sizes: [2, 4] });
     });
-    it('invalidates a reviewed launch immediately after explicit selector edits and preserves sizing until native revalidation', () => {
-        const initial = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Build box' }), options), 'small');
-        const schema = { type: 'object', properties: { imageId: { type: 'string', minLength: 1 },
-            size: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, required: ['cpu'], additionalProperties: false } }, additionalProperties: false } satisfies PluginJsonSchemaV2;
-        const edited = setManagedConfiguratorOptionsSelectors(initial, { imageId: 'new-image', size: { cpu: 4 } });
-        expect(managedConfiguratorAcquireInput(edited, 'home')).toBeNull();
-        expect(managedConfiguratorOptionsSelectors(edited, schema)).toEqual({ imageId: 'new-image', size: { cpu: 4 } });
-        expect(edited.selected).toEqual(initial.selected);
-        const incompatible = refreshManagedConfiguratorOptions(edited, { choices: [{ id: 'small', title: 'Unavailable on the selected image', available: false, launch: { cpu: 2 } }] });
-        expect(managedConfiguratorOptionsSelectors(incompatible, schema)).toEqual({ imageId: 'new-image', size: { cpu: 4 } });
-        expect(managedConfiguratorAcquireInput(incompatible, 'home')).toBeNull();
+
+    it('uses a validated scalar base without inventing object selectors', () => {
+        const native = { ...provisioner, descriptor: { ...descriptor, launchSchema: { type: 'string', enum: ['small'] } satisfies PluginJsonSchemaV2 } };
+        const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Guest' }),
+            { base: { launch: 'small' }, dimensions: emptyDimensions() });
+        expect(managedConfiguratorAcquireInput(draft, 'home')?.selection).toMatchObject({ launch: { choices: 'small' } });
     });
-    it('preserves the saved selected Account credential through refreshed facts and executable recipe', () => {
-        const credential = ManagedCredentialSelectionV1Schema.parse({ purpose: { consumer: provisioner.contribution, purpose: 'provision' },
-            account: { service: { pluginId: 'custom.compute', localId: 'connection' }, accountId: 'selected-account' } });
-        const credentials = [credential, { ...credential, purpose: { ...credential.purpose, purpose: 'gateway' },
-            account: { ...credential.account, accountId: 'selected-gateway' } }];
-        const initial = createManagedConfiguratorDraft({ ...{ provisioner, controller, name: 'Saved', credentials,
-            preset: { id: 'preset', revision: 3 } } });
-        const saved = { ...initial, selected: { id: 'preset:preset', title: 'Saved', launch: { cpu: 2 } } };
-        const refreshed = refreshManagedConfiguratorOptions(saved, options);
-        expect(managedConfiguratorFacts(refreshed)?.launch.credentials).toEqual(credentials);
-        expect(managedConfiguratorAcquireInput(refreshed, 'home')?.selection).toMatchObject({ launch: { credentials } });
-        expect(managedConfiguratorFacts(selectManagedConfiguratorChoice(refreshed, 'large'))?.launch.credentials).toEqual(credentials);
-    });
-    it('selects a declared native duration as the exact returned complete launch and captures its labelled fact', () => {
-        const finite = { ...provisioner, descriptor: { ...descriptor, retention: { supportedIntents: ['delete' as const], finiteOnly: true } } };
-        const choices = [
-            { id: 'short', title: 'Short lease', launch: { cpu: 2 }, nativeFacts: { duration: { id: 'short', title: '1 hour', afterMs: 3_600_000 } } },
-            { id: 'long', title: 'Long lease', launch: { cpu: 4 }, nativeFacts: { duration: { id: 'long', title: '2 hours', afterMs: 7_200_000 } } },
-        ];
-        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: finite, controller, name: 'Lease' }), { choices });
-        const selected = selectManagedConfiguratorDimension(loaded, 'duration', 'long');
-        expect(managedConfiguratorFacts(selected)?.nativeFacts).toMatchObject({ duration: choices[1]!.nativeFacts.duration });
-        expect(managedConfiguratorAcquireInput(selected, 'home')).toMatchObject({ selection: { launch: { choices: { cpu: 4 } },
-            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false } });
-    });
-    it('recovers labelled facts for the exact saved recipe without replacing a removed recipe', () => {
-        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', preset: { id: 'preset', revision: 3 } }),
-            selected: { id: 'preset:preset', title: 'Saved', launch: { cpu: 2 } } };
-        const refreshed = refreshManagedConfiguratorOptions(saved, options);
-        expect(refreshed.selected).toEqual(options.choices[0]);
-        expect(managedConfiguratorFacts(refreshed)?.optionStatus).toBe('current');
-        expect(refreshManagedConfiguratorOptions(saved, { choices: [options.choices[1]!] }).selected).toEqual(saved.selected);
-    });
-    it('captures every labelled native charge without dropping attachments or converting units', () => {
-        const monthly = { amount: '3.75', currency: 'EUR', unit: 'month', source: 'native', observedAt: 20, label: 'Compute' };
-        const hourly = { ...options.choices[0]!.prices![0]!, label: 'Compute' };
-        const networkHourly = { amount: '0.0008', currency: 'EUR', unit: 'hour', source: 'native-network', observedAt: 30, label: 'Primary IPv4' };
-        const networkMonthly = { amount: '0.50', currency: 'EUR', unit: 'month', source: 'native-network', observedAt: 30, label: 'Primary IPv4' };
-        const storage = { amount: '0.04', currency: 'USD', unit: 'GiB-month', source: 'native-storage', observedAt: 40, label: 'Volume' };
-        const prices = [monthly, hourly, networkHourly, networkMonthly, storage];
-        const selected = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest' }),
-            { choices: [{ ...options.choices[0]!, prices }] }), 'small');
-        expect(managedConfiguratorFacts(selected)).toMatchObject({ prices });
-        expect(managedConfiguratorAcquireInput(selected, 'home')?.reviewedFacts?.prices).toEqual(prices);
-    });
-    it('selects complete returned native choices by labelled dimension while preserving other reviewed dimensions and receipt facts', () => {
-        const nativeFacts = { size: { id: 'small', title: 'Small', cpuCores: 2, memoryBytes: 4294967296 },
-            image: { id: 'linux', title: 'Linux' }, location: { id: 'west', title: 'West' }, monthlyCapStatus: 'unknown' as const };
-        const choices = [
-            { id: 'small-linux-west', title: 'Small Linux West', launch: { cpu: 2 }, nativeFacts },
-            { id: 'large-linux-west', title: 'Large Linux West', launch: { cpu: 4 }, nativeFacts: { ...nativeFacts, size: { id: 'large', title: 'Large', cpuCores: 4 } } },
-            { id: 'small-other-east', title: 'Small Other East', launch: { cpu: 8 }, nativeFacts: { ...nativeFacts, image: { id: 'other', title: 'Other' }, location: { id: 'east', title: 'East' } } },
-        ];
-        const selected = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest' }), { choices }), choices[0]!.id);
-        const unselected = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest' }), { choices });
-        const sizeOnly = selectManagedConfiguratorDimension(unselected, 'size', 'small');
-        expect(managedConfiguratorAcquireInput(sizeOnly, 'home')).toBeNull();
-        const imageChosen = selectManagedConfiguratorDimension(sizeOnly, 'image', 'linux');
-        const complete = selectManagedConfiguratorDimension(imageChosen, 'location', 'west');
-        expect(managedConfiguratorAcquireInput(complete, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 2 } } });
-        expect(managedConfiguratorFacts(selected)?.nativeFacts).toEqual(nativeFacts);
-        const large = selectManagedConfiguratorDimension(selected, 'size', 'large');
-        expect(managedConfiguratorAcquireInput(large, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
-        expect(managedConfiguratorFacts(large)?.nativeFacts?.image).toEqual(nativeFacts.image);
-        // Crossing dependent dimensions stages only explicit intent, never a synthetic launch or a changed region.
-        const otherImage = selectManagedConfiguratorDimension(large, 'image', 'other');
-        expect(managedConfiguratorDimensionChoices(large, 'image').find(row => row.choice.nativeFacts?.image?.id === 'other'))
-            .toMatchObject({ available: false, selectable: true });
-        expect(managedConfiguratorAcquireInput(otherImage, 'home')).toBeNull();
-        expect(managedConfiguratorDimensionSelection(otherImage)).toEqual({ size: 'large', image: 'other', location: 'west' });
-        const smallOther = selectManagedConfiguratorDimension(otherImage, 'size', 'small');
-        const eastOther = selectManagedConfiguratorDimension(smallOther, 'location', 'east');
-        expect(managedConfiguratorAcquireInput(eastOther, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 8 } } });
-    });
-    it('preserves an explicitly chosen removed option and its receipt without selecting a replacement', () => {
-        const initial = createManagedConfiguratorDraft({ provisioner, controller, name: 'Build box' });
-        const loaded = refreshManagedConfiguratorOptions(initial, options);
-        expect(loaded.selected).toBeNull();
-        const selected = selectManagedConfiguratorChoice(loaded, 'small');
-        const removed = refreshManagedConfiguratorOptions(selected, { choices: [options.choices[1]!] });
+
+    it('keeps a saved selection and its prices when a refresh removes it, until an explicit replacement is chosen', () => {
+        const selected = small();
+        const removed = refreshManagedConfiguratorOptions(selected, { ...options, dimensions: { ...options.dimensions, size: options.dimensions.size.slice(1) } });
         expect(removed.selected).toEqual(selected.selected);
         expect(managedConfiguratorFacts(removed)?.optionStatus).toBe('unavailable');
         expect(managedConfiguratorFacts(removed)?.prices?.[0]?.amount).toBe('0.005');
         expect(managedConfiguratorAcquireInput(removed, 'home')).toBeNull();
-        const reviewed = selectManagedConfiguratorChoice(removed, 'large');
-        expect(managedConfiguratorAcquireInput(reviewed, 'home')?.selection).toMatchObject({ kind: 'one-off', launch: { choices: { cpu: 4 } } });
+        expect(managedConfiguratorDimensionChoices(removed, 'size').find(row => row.choice.id === 'small')).toMatchObject({ available: false, selectable: false });
+        const reviewed = selectManagedConfiguratorDimension(removed, 'size', 'large');
+        expect(managedConfiguratorAcquireInput(reviewed, 'home')?.selection).toMatchObject({ launch: { choices: { cpu: 4 } } });
         expect(managedConfiguratorFacts(reviewed)?.prices).toBeUndefined();
-        const failedRefresh = { ...reviewed, optionStatus: 'unavailable' as const };
-        expect(managedConfiguratorFacts(failedRefresh)?.optionStatus).toBe('unavailable');
-        expect(managedConfiguratorAcquireInput(failedRefresh, 'home')).toBeNull();
     });
-    it('validates returned launch choices and submits only executable fields using the resolved category policy', () => {
-        const draft = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner, controller, name: 'Build box' }), options), 'small');
-        const facts = managedConfiguratorFacts(draft);
-        expect(facts).toMatchObject({ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, prices: [{ amount: '0.005' }] });
-        const input = managedConfiguratorAcquireInput(draft, 'home');
-        expect(input?.selection).toEqual({ kind: 'one-off', homeId: 'home', launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Build box', choices: { cpu: 2 } }, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-        expect(input?.selection).not.toHaveProperty('price');
-        const invalid = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(draft, { choices: [{ id: 'forged', title: 'Forged', launch: { cpu: 2, credential: 'secret' } }] }), 'forged');
+
+    it('recovers the independent selector ids of an exact saved launch without replacing an unavailable launch', () => {
+        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', preset: { id: 'saved', revision: 3 } }),
+            selected: { id: 'preset:saved', title: 'Saved', launch: { cpu: 2 } } };
+        const refreshed = refreshManagedConfiguratorOptions(saved, options);
+        expect(managedConfiguratorDimensionSelection(refreshed)).toEqual({ size: 'small' });
+        expect(managedConfiguratorFacts(refreshed)?.optionStatus).toBe('current');
+        expect(managedConfiguratorFacts(refreshed)?.nativeFacts?.size?.cpuCores).toBe(2);
+        const unavailable = refreshManagedConfiguratorOptions(saved, { ...options, dimensions: { ...options.dimensions, size: options.dimensions.size.slice(1) } });
+        expect(unavailable.selected).toEqual(saved.selected);
+        expect(managedConfiguratorAcquireInput(unavailable, 'home')).toBeNull();
+    });
+
+    it('revalidates saved sizing through only the declared same-path options schema', () => {
+        const schema = { type: 'object', properties: { imageId: { type: 'string' }, size: { type: 'object', properties: {
+            cpu: { type: 'integer', minimum: 1 } }, required: ['cpu'], additionalProperties: false } }, additionalProperties: false } satisfies PluginJsonSchemaV2;
+        const launch = { on: 'local', imageId: 'linux', size: { cpu: 4 } };
+        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', preset: { id: 'saved', revision: 3 } }),
+            selected: { id: 'preset:saved', title: 'Saved', launch } };
+        expect(managedConfiguratorOptionsSelectors(saved, schema)).toEqual({ imageId: 'linux', size: { cpu: 4 } });
+        expect(managedConfiguratorOptionsSelectors({ ...saved, optionsSelectors: launch }, schema)).toBeNull();
+        const edited = setManagedConfiguratorOptionsSelectors(small(), { imageId: 'new', size: { cpu: 8 } });
+        expect(managedConfiguratorAcquireInput(edited, 'home')).toBeNull();
+        expect(edited.selected?.launch).toEqual({ cpu: 2 });
+        expect(managedConfiguratorOptionsSelectors(edited, schema)).toEqual({ imageId: 'new', size: { cpu: 8 } });
+    });
+
+    it('qualifies selected BYOC retention and native duration without a host provider branch', () => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'byoc'));
+        for (const cloud of ['modal', 'aws', 'gcp'] as const) {
+            const finite = cloud === 'modal';
+            const launch = PluginJsonValueV2Schema.parse({ cloud, region: 'west', nativeImageId: 'linux', nativeSizeId: 'native-size',
+                nativeLifetime: finite ? { kind: 'finite', durationSeconds: 7200 } : { kind: 'no-native-ttl' } });
+            const retention = finite ? { supportedIntents: ['delete' as const], finiteOnly: true } : { supportedIntents: ['start' as const, 'stop' as const, 'delete' as const], finiteOnly: false };
+            const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
+                provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor }, controller, name: 'BYOC',
+                preset: { id: 'saved', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
+            }), { base: { launch, retention, ...(finite ? { nativeFacts: { duration: { id: '7200', title: '2 hours', afterMs: 7_200_000 } } } : {}) }, dimensions: emptyDimensions() });
+            const facts = managedConfiguratorFacts(draft);
+            expect(facts?.retentionCapabilities).toEqual(retention);
+            expect(facts?.retention.kind).toBe(finite ? 'unused' : 'until-delete');
+            expect(facts?.wakeOnAcceptedMessage).toBe(!finite);
+            expect(managedConfiguratorAcquireInput(draft, 'home')?.reviewedFacts?.retentionCapabilities).toEqual(retention);
+            if (finite) expect(facts?.nativeFacts?.duration?.afterMs).toBe(7_200_000);
+        }
+    });
+
+    it('selects native duration alternatives through the same projection and captures the exact expiry fact', () => {
+        const native = { ...provisioner, descriptor: { ...descriptor, retention: { supportedIntents: ['delete' as const], finiteOnly: true } } };
+        const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Lease' }), {
+            base: { launch: {} }, dimensions: { ...emptyDimensions(), duration: [
+                { id: 'short', title: '1 hour', assignments: [{ path: 'cpu', value: 2 }], nativeFacts: { duration: { id: 'short', title: '1 hour', afterMs: 3_600_000 } } },
+                { id: 'long', title: '2 hours', assignments: [{ path: 'cpu', value: 4 }], nativeFacts: { duration: { id: 'long', title: '2 hours', afterMs: 7_200_000 } } },
+            ] },
+        });
+        expect(managedConfiguratorAcquireInput(draft, 'home')).toBeNull();
+        const selected = selectManagedConfiguratorDimension(draft, 'duration', 'long');
+        expect(managedConfiguratorFacts(selected)?.nativeFacts?.duration?.afterMs).toBe(7_200_000);
+        expect(managedConfiguratorAcquireInput(selected, 'home')).toMatchObject({ selection: { launch: { choices: { cpu: 4 } },
+            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false } });
+    });
+    it('exposes selected native retention before duration selection so a finite launch can complete', () => {
+        const retention = { supportedIntents: ['delete' as const], finiteOnly: true };
+        const draft = refreshManagedConfiguratorOptions(fresh(), { base: { launch: { cpu: 2 }, retention }, dimensions: {
+            ...emptyDimensions(), duration: [{ id: 'short', title: '1 hour', assignments: [],
+                nativeFacts: { duration: { id: 'short', title: '1 hour', afterMs: 3_600_000 } } },
+                { id: 'long', title: '2 hours', assignments: [], nativeFacts: { duration: { id: 'long', title: '2 hours', afterMs: 7_200_000 } } }],
+        } });
+        expect(draft.selected).toBeNull();
+        expect(managedConfiguratorRetentionCapabilities(draft)).toEqual(retention);
+    });
+
+    it('captures every labelled native charge without dropping attachments or converting units', () => {
+        const prices = [{ amount: '3.75', currency: 'EUR', unit: 'month', source: 'native', observedAt: 20, label: 'Compute' },
+            { amount: '0.0008', currency: 'EUR', unit: 'hour', source: 'native-network', observedAt: 30, label: 'IPv4' },
+            { amount: '0.04', currency: 'USD', unit: 'GiB-month', source: 'native-storage', observedAt: 40, label: 'Volume' }];
+        const draft = refreshManagedConfiguratorOptions(fresh(), { base: { launch: { cpu: 2 }, prices }, dimensions: emptyDimensions() });
+        expect(managedConfiguratorFacts(draft)).toMatchObject({ prices });
+        expect(managedConfiguratorAcquireInput(draft, 'home')?.reviewedFacts?.prices).toEqual(prices);
+    });
+
+    it('preserves qualified Account credentials through a saved launch refresh and a different size', () => {
+        const credential = ManagedCredentialSelectionV1Schema.parse({ purpose: { consumer: provisioner.contribution, purpose: 'provision' },
+            account: { service: { pluginId: 'custom.compute', localId: 'connection' }, accountId: 'selected-account' } });
+        const saved = { ...createManagedConfiguratorDraft({ provisioner, controller, name: 'Saved', credentials: [credential], preset: { id: 'saved', revision: 1 } }),
+            selected: { id: 'preset:saved', title: 'Saved', launch: { cpu: 2 } } };
+        const refreshed = refreshManagedConfiguratorOptions(saved, options);
+        expect(managedConfiguratorFacts(refreshed)?.launch.credentials).toEqual([credential]);
+        const acquired = managedConfiguratorAcquireInput(selectManagedConfiguratorDimension(refreshed, 'size', 'large'), 'home');
+        expect(acquired?.selection).toMatchObject({ kind: 'one-off', homeId: 'home', launch: { choices: { cpu: 4 }, credentials: [credential] } });
+        expect(acquired?.reviewedFacts?.launch).toMatchObject({ choices: { cpu: 4 }, credentials: [credential] });
+    });
+
+    it('uses current descriptor credential requirements without disclosing a waived Crabbox credential', () => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(CRABBOX_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
+        const contribution = { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id };
+        const credential = { purpose: { consumer: contribution, purpose: 'crabbox-coordinator' }, account: {
+            service: { pluginId: contribution.pluginId, localId: 'coordinator' }, accountId: 'reviewed-coordinator' } };
+        const crabbox = { contribution, occurrenceId: 'crabbox', descriptor,
+            credentialPurposes: [{ purpose: credential.purpose, options: [{ value: credential.account, label: 'Coordinator' }] }] };
+        const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+        const direct = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: crabbox, controller, name: 'Local', credentials: [credential] }),
+            { base: { launch }, dimensions: emptyDimensions() });
+        expect(managedConfiguratorCredentialSelections(direct, crabbox)).toEqual([]);
+        expect(managedConfiguratorFacts(direct)?.launch.credentials ?? []).toEqual([]);
+        expect(managedConfiguratorAcquireInput(direct, 'home')?.selection).toMatchObject({ launch: { choices: launch } });
+        expect(managedConfiguratorCredentialSelections({ ...direct, optionsSelectors: { transport: 'direct', backendId: 'aws' } }, crabbox)).toEqual([credential]);
+    });
+
+    it('rejects invalid or missing executable bases and failed native checks', () => {
+        const invalid = refreshManagedConfiguratorOptions(fresh(), { base: { launch: { cpu: 2, credential: 'secret' } }, dimensions: emptyDimensions() });
         expect(managedConfiguratorAcquireInput(invalid, 'home')).toBeNull();
+        expect(managedConfiguratorAcquireInput(refreshManagedConfiguratorOptions(fresh(), { dimensions: emptyDimensions() }), 'home')).toBeNull();
+        expect(managedConfiguratorAcquireInput({ ...small(), check: { available: false } }, 'home')).toBeNull();
     });
 });

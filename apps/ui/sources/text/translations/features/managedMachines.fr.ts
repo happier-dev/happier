@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "Facturée seulement quand elle tourne.",
             imageDescription: "Ce avec quoi elle démarre. Happier s’installe par-dessus.",
             locationDescription: "Plus elle est proche, plus la saisie est rapide.",
+            network: "Réseau",
+            networkDescription: "Les adresses publiques qu’elle reçoit. Le prix suit votre choix.",
             localLocationDescription: ({ computer }: { computer: string }) => `Où elle tourne sur ${computer}.`,
             localSizeDescription: ({ computer }: { computer: string }) => `Sa part de ${computer} quand elle tourne. L’arrêter la libère.`,
             headroom: ({ computer }: { computer: string }) => `Reste pour ${computer}`,

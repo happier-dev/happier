@@ -42,10 +42,11 @@ describe('Docker Sandboxes managed provisioner roles', () => {
 
   it('discovers actual native templates read-only without allocation or fabricated images', async () => {
     const process = { run: vi.fn<ExecService['run']>(async () => result(0, 'docker.io/example/first:1\ndocker.io/example/second:2\n')) };
-    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123).options()).toEqual({ choices: [
-      { id: 'docker.io/example/first:1', title: 'docker.io/example/first:1', launch: { name: 'happier', templateId: 'docker.io/example/first:1' }, nativeFacts: { image: { id: 'docker.io/example/first:1', title: 'docker.io/example/first:1' } } },
-      { id: 'docker.io/example/second:2', title: 'docker.io/example/second:2', launch: { name: 'happier', templateId: 'docker.io/example/second:2' }, nativeFacts: { image: { id: 'docker.io/example/second:2', title: 'docker.io/example/second:2' } } },
-    ] });
+    const options = await nativeModule.createDockerSandboxesProvider(process, executable, 123).options();
+    expect(options.base.launch).toEqual({ name: 'happier' });
+    expect(options.dimensions.image).toEqual(['docker.io/example/first:1', 'docker.io/example/second:2'].map(id => ({
+      id, title: id, assignments: [{ path: 'templateId', value: id }], nativeFacts: { image: { id, title: id } },
+    })));
     expect(process.run).toHaveBeenCalledExactlyOnceWith({ executable, args: ['template', 'ls', '--quiet'] }, { signal: undefined });
   });
 

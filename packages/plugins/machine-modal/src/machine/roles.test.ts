@@ -1,3 +1,11 @@
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { ModalLaunchV1Schema } from './schemas.js';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function projectOptions(raw: unknown) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: ModalLaunchV1Schema.jsonSchema,
+    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
 import { describe, expect, it, vi } from 'vitest';
 import type { Image } from 'modal';
 import { readInputPath, writeInputPath } from '@happier-dev/plugin-sdk/actions';
@@ -54,8 +62,10 @@ describe('Modal public machine provisioner roles', () => {
     const validate = compilePluginJsonSchema(action!.inputSchema!);
     expect(validate(query)).toBe(true);
     const options = await roles.options(query);
-    expect(options.choices).toHaveLength(1);
-    expect(options.choices[0]).toMatchObject({ launch, nativeFacts: {
+    expect(options.dimensions.size).toHaveLength(1);
+    expect(options.dimensions.image).toHaveLength(1);
+    expect(options.dimensions.duration).toHaveLength(1);
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch, nativeFacts: {
       image: { id: launch.imageReference, title: launch.imageReference },
       size: { cpuCores: launch.resources.cpu, memoryBytes: launch.resources.memoryMb * 1024 * 1024 },
       duration: { afterMs: launch.timeoutMs },
@@ -66,14 +76,14 @@ describe('Modal public machine provisioner roles', () => {
     query = writeInputPath(query, 'resources.cpu', 0.25);
     query = writeInputPath(query, 'timeoutMs', 60000);
     expect(validate(query)).toBe(true);
-    expect((await roles.options(query)).choices[0]).toMatchObject({
+    expect(projectOptions(await roles.options(query))).toMatchObject({ kind: 'ready',
       launch: { ...launch, resources: { ...launch.resources, cpu: 0.25 }, timeoutMs: 60000 },
       nativeFacts: { size: { cpuCores: 0.25 }, duration: { afterMs: 60000 } },
     });
     expect(await roles.inspect({ resource })).not.toHaveProperty('nativeExpiry');
-    expect((await roles.options({})).choices).toEqual([]);
-    expect((await roles.options({ appReference: launch.appReference })).choices).toEqual([]);
-    expect(validate(writeInputPath(query, 'timeoutMs', 1001))).toBe(false);
+    expect(projectOptions(await roles.options({}))).toMatchObject({ kind: 'incomplete' });
+    expect(projectOptions(await roles.options({ appReference: launch.appReference }))).toMatchObject({ kind: 'incomplete' });
+    expect(validate(writeInputPath(query, 'timeoutMs', 1001))).toBe(true);
     expect(client.sandboxes.create).not.toHaveBeenCalled();
     expect(client.images.fromRegistry).not.toHaveBeenCalled();
   });

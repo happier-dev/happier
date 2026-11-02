@@ -8,6 +8,8 @@ import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } f
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
 import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from '../actions/inputSchemaTraversal.js';
 import { InputPathSchema, InputPredicateSchema, evaluateInputPredicate, readInputPath, readInputPredicatePaths } from '../../inputs/inputPredicates.js';
+import { writeInputPath } from '../../inputs/inputFieldRuntime.js';
+import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { PluginDeclaredExecutableRefSchema } from './agentAcpTransport.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { PluginJsonValueV2Schema } from './jsonSchema.js';
@@ -16,9 +18,9 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { DevcontainerEffectReviewV1Schema } from '../../machines/managed/devcontainerV1.js';
 import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPriceV1Schema,
-  ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema } from '../../machines/managed/providerFactsV1.js';
+  ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1 } from '../../machines/managed/providerFactsV1.js';
-import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema } from '../actions/protocolComposableSchema.js';
+import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 
 export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
@@ -220,15 +222,58 @@ const machineProvisionerCheckResult = lazyDefinition(() => mini.strictObject({
   prerequisites: mini.optional(mini.array(ManagedPrerequisiteV1Schema)),
   localResources: mini.optional(ManagedLocalResourceFactsV1Schema),
 }));
+export const MACHINE_PROVISIONER_DIMENSIONS_V1 = ['size', 'image', 'location', 'network', 'duration'] as const;
+export type MachineProvisionerDimensionV1 = typeof MACHINE_PROVISIONER_DIMENSIONS_V1[number];
+const optionSelector = lazyDefinition(() => mini.strictObject({
+  dimension: mini.enum(MACHINE_PROVISIONER_DIMENSIONS_V1), optionIds: mini.array(text()),
+}));
+const optionPrice = lazyDefinition(() => mini.strictObject({
+  ...ProviderPriceV1Schema.shape,
+  /** Every selector must match; absent applicability means this owner's price always applies. */
+  when: mini.optional(mini.array(optionSelector)),
+}));
+const optionFacts = () => ({
+  available: mini.optional(mini.boolean()), prices: mini.optional(mini.array(optionPrice)),
+  retention: mini.optional(RetentionCapabilitiesV1Schema), nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
+});
+const dimensionOption = lazyDefinition(() => mini.strictObject({
+  id: text(), title: PluginLocalizedStringV2Schema,
+  assignments: mini.array(mini.strictObject({ path: InputPathSchema, value: PluginJsonValueV2Schema })),
+  ...optionFacts(),
+}));
 const machineProvisionerOptionsResult = lazyDefinition(() => mini.strictObject({
-  choices: mini.array(mini.strictObject({ id: text(), title: PluginLocalizedStringV2Schema,
-    launch: mini.optional(PluginJsonValueV2Schema), available: mini.optional(mini.boolean()), prices: mini.optional(mini.array(ProviderPriceV1Schema)),
-    /** Selected native variant capabilities replace the descriptor fallback. */
-    retention: mini.optional(RetentionCapabilitiesV1Schema),
-    nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
+  code: mini.optional(mini.literal('provider_unavailable')),
+  nativeCause: mini.optional(MachineProvisionerNativeCauseV1Schema),
+  /** Missing base means an incomplete query, never a launch inferred from display facts. */
+  base: mini.optional(mini.strictObject({ launch: PluginJsonValueV2Schema, ...optionFacts(),
     effectReview: mini.optional(DevcontainerEffectReviewV1Schema),
   })),
-}));
+  dimensions: mini.strictObject({
+    size: mini.array(dimensionOption), image: mini.array(dimensionOption), location: mini.array(dimensionOption),
+    network: mini.array(dimensionOption), duration: mini.array(dimensionOption),
+  }),
+  /** Directed native adjacency only; no synthesized combination rows. */
+  constraints: mini.optional(mini.array(mini.strictObject({ when: optionSelector, requires: optionSelector }))),
+}).check(mini.superRefine((value, context) => {
+  const ids = new Map(MACHINE_PROVISIONER_DIMENSIONS_V1.map(dimension => [dimension, new Set(value.dimensions[dimension].map(option => option.id))]));
+  for (const dimension of MACHINE_PROVISIONER_DIMENSIONS_V1) {
+    if (ids.get(dimension)!.size !== value.dimensions[dimension].length) context.addIssue({ code: 'custom',
+      path: ['dimensions', dimension], message: 'Native option ids must be unique within their dimension.' });
+  }
+  const checkSelector = (selector: mini.infer<typeof optionSelector>, path: (string | number)[]) => {
+    if (selector.optionIds.some(id => !ids.get(selector.dimension)!.has(id))) context.addIssue({ code: 'custom', path,
+      message: 'Option applicability must reference returned native option ids.' });
+  };
+  value.constraints?.forEach((constraint, index) => {
+    checkSelector(constraint.when, ['constraints', index, 'when']);
+    checkSelector(constraint.requires, ['constraints', index, 'requires']);
+  });
+  const checkPrices = (prices: readonly mini.infer<typeof optionPrice>[] | undefined, path: (string | number)[]) =>
+    prices?.forEach((price, index) => price.when?.forEach((selector, selectorIndex) => checkSelector(selector, [...path, index, 'when', selectorIndex])));
+  checkPrices(value.base?.prices, ['base', 'prices']);
+  for (const dimension of MACHINE_PROVISIONER_DIMENSIONS_V1) value.dimensions[dimension].forEach((option, index) =>
+    checkPrices(option.prices, ['dimensions', dimension, index, 'prices']));
+})));
 export const MachineProvisionerCheckResultV1Schema = lazyZodSchema(() => z.lazy(() => machineProvisionerCheckResult));
 export const MachineProvisionerOptionsResultV1Schema = lazyZodSchema(() => z.lazy(() => machineProvisionerOptionsResult));
 export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.strictObject({ controller: mini.optional(ManagedControllerV1Schema), provisioners: z.array(z.strictObject({
@@ -253,6 +298,122 @@ export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.stric
 })));
 export type MachineProvisionerCheckResultV1 = mini.infer<typeof MachineProvisionerCheckResultV1Schema>;
 export type MachineProvisionerOptionsResultV1 = mini.infer<typeof MachineProvisionerOptionsResultV1Schema>;
+export type MachineProvisionerDimensionOptionV1 = MachineProvisionerOptionsResultV1['dimensions']['size'][number];
+export type MachineProvisionerConditionalPriceV1 = mini.infer<typeof optionPrice>;
+export type MachineProvisionerOptionConstraintV1 = NonNullable<MachineProvisionerOptionsResultV1['constraints']>[number];
+export type MachineProvisionerSelectionV1 = Readonly<Partial<Record<MachineProvisionerDimensionV1, string>>>;
+type SelectionFacts = Readonly<{
+  prices: readonly mini.infer<typeof ProviderPriceV1Schema>[];
+  nativeFacts: mini.infer<typeof ProviderNativeOptionFactsV1Schema>;
+  retention?: MachineProvisionerContributionV1['retention'];
+  effectReview?: mini.infer<typeof DevcontainerEffectReviewV1Schema>;
+}>;
+export type MachineProvisionerSelectionProjectionV1 = SelectionFacts & (
+  Readonly<{ kind: 'ready'; launch: ProtocolJsonValue }>
+  | Readonly<{ kind: 'incomplete' | 'unavailable' | 'invalid'; code: string }>
+);
+
+/** Recover only unambiguous native selections from an already authored launch. */
+export function readMachineProvisionerSelectionForLaunchV1(options: MachineProvisionerOptionsResultV1,
+  launch: unknown): MachineProvisionerSelectionV1 {
+  const selection: Partial<Record<MachineProvisionerDimensionV1, string>> = {};
+  for (const dimension of MACHINE_PROVISIONER_DIMENSIONS_V1) {
+    const matching = options.dimensions[dimension].filter(option => option.assignments.every(assignment =>
+      pluginJsonValuesEqual(readInputPath(launch, assignment.path), assignment.value)));
+    if (matching.length === 1) selection[dimension] = matching[0]!.id;
+  }
+  return selection;
+}
+
+/** One selection owner for UI, headless callers and external authors. Native acquire still revalidates current facts. */
+export function projectMachineProvisionerSelectionV1(input: Readonly<{
+  options: MachineProvisionerOptionsResultV1;
+  selection: MachineProvisionerSelectionV1;
+  launchSchema: PluginJsonSchemaV2;
+}>): MachineProvisionerSelectionProjectionV1 {
+  const { options, selection } = input;
+  const prices: mini.infer<typeof ProviderPriceV1Schema>[] = [];
+  const nativeFacts: mini.infer<typeof ProviderNativeOptionFactsV1Schema> = {};
+  let retention = options.base?.retention;
+  let selectedRetention: MachineProvisionerContributionV1['retention'] | undefined;
+  let invalid: string | undefined;
+  let unavailable = options.code !== undefined || options.base?.available === false;
+  let incomplete = options.base === undefined;
+  const selected: MachineProvisionerDimensionOptionV1[] = [];
+  const facts = () => ({ prices, nativeFacts, ...(retention ? { retention } : {}),
+    ...(options.base?.effectReview ? { effectReview: options.base.effectReview } : {}) });
+  for (const dimension of Object.keys(selection)) {
+    if (!MACHINE_PROVISIONER_DIMENSIONS_V1.some(candidate => candidate === dimension)) invalid = 'unknown_dimension';
+  }
+  for (const dimension of MACHINE_PROVISIONER_DIMENSIONS_V1) {
+    const id = selection[dimension];
+    const entries = options.dimensions[dimension];
+    if (id === undefined) { if (entries.length) incomplete = true; continue; }
+    const option = entries.find(entry => entry.id === id);
+    if (!option) { invalid = 'unknown_option'; continue; }
+    selected.push(option);
+    if (option.available === false) unavailable = true;
+    if (option.retention) {
+      if (selectedRetention && !pluginJsonValuesEqual(selectedRetention, option.retention)) invalid = 'conflicting_retention';
+      selectedRetention = option.retention;
+      retention = option.retention;
+    }
+  }
+  for (const owner of [options.base, ...selected]) {
+    for (const price of owner?.prices ?? []) {
+      if (price.when && !price.when.every(condition => selection[condition.dimension] !== undefined
+        && condition.optionIds.includes(selection[condition.dimension]!))) continue;
+      const { when: _when, ...fact } = price;
+      prices.push(fact);
+    }
+    for (const key of Object.keys(owner?.nativeFacts ?? {}) as (keyof typeof nativeFacts)[]) {
+      const incoming = owner!.nativeFacts![key];
+      const existing = nativeFacts[key];
+      if (incoming === undefined) continue;
+      if (key === 'monthlyCapStatus') {
+        if (existing !== undefined && existing !== incoming) invalid = 'conflicting_native_facts';
+        nativeFacts.monthlyCapStatus = incoming as typeof nativeFacts.monthlyCapStatus;
+      } else {
+        const fields = incoming as Record<string, unknown>;
+        const previous = existing as Record<string, unknown> | undefined;
+        if (previous && Object.entries(fields).some(([field, value]) => previous[field] !== undefined
+          && !pluginJsonValuesEqual(previous[field], value))) invalid = 'conflicting_native_facts';
+        Object.assign(nativeFacts, { [key]: { ...previous, ...fields } });
+      }
+    }
+  }
+  for (const dimension of MACHINE_PROVISIONER_DIMENSIONS_V1) {
+    const option = options.dimensions[dimension].find(entry => entry.id === selection[dimension]);
+    if (option && nativeFacts[dimension] === undefined && dimension !== 'duration') Object.assign(nativeFacts, { [dimension]: { id: option.id, title: option.title } });
+  }
+  for (const constraint of options.constraints ?? []) {
+    const when = selection[constraint.when.dimension];
+    if (when === undefined || !constraint.when.optionIds.includes(when)) continue;
+    const required = selection[constraint.requires.dimension];
+    if (required === undefined) incomplete = true;
+    else if (!constraint.requires.optionIds.includes(required)) unavailable = true;
+  }
+  let launch: ProtocolJsonValue | undefined = options.base?.launch;
+  const assignments = selected.flatMap(option => option.assignments);
+  for (let index = 0; index < assignments.length; index++) {
+    const assignment = assignments[index]!;
+    if (!resolveDeclaredInputLeaves(input.launchSchema, assignment.path, 'conditional-field')) invalid = 'undeclared_selector';
+    if (assignments.slice(0, index).some(previous => previous.path === assignment.path
+      || previous.path.startsWith(`${assignment.path}.`) || assignment.path.startsWith(`${previous.path}.`))) invalid = 'conflicting_selectors';
+    if (launch === undefined) continue;
+    if (launch === null || typeof launch !== 'object' || Array.isArray(launch)) { invalid = 'invalid_launch'; continue; }
+    launch = writeInputPath(launch as Readonly<Record<string, ProtocolJsonValue>>, assignment.path, assignment.value) as ProtocolJsonValue;
+  }
+  if (options.base?.effectReview && !pluginJsonValuesEqual(launch, options.base.launch)) invalid = 'effect_review_mismatch';
+  if (invalid) return { ...facts(), kind: 'invalid', code: invalid };
+  if (unavailable) return { ...facts(), kind: 'unavailable', code: options.code ?? 'option_unavailable' };
+  if (incomplete || launch === undefined) return { ...facts(), kind: 'incomplete', code: 'selection_incomplete' };
+  try {
+    const schema = normalizePluginJsonSchema(input.launchSchema);
+    if (!isClosedSchema(schema) || !compilePluginJsonSchema(schema)(launch)) return { ...facts(), kind: 'invalid', code: 'invalid_launch' };
+  } catch { return { ...facts(), kind: 'invalid', code: 'invalid_launch' }; }
+  return { ...facts(), kind: 'ready', launch };
+}
 export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisionersListResultV1Schema>;
 
 /** A declaration-neutral projection of the existing validator, not a second parser. */
@@ -530,3 +691,5 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
       mode: defineProtocolNumber({ integer: true, minimum: 0 }).optional() }, closed),
   });
 }
+
+export type { MachineProvisionerNativeCauseV1 } from '../../machines/managed/providerFactsV1.js';

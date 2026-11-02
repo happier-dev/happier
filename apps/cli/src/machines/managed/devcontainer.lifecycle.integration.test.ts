@@ -312,9 +312,9 @@ describe('public-author Devcontainer lifecycle composition', () => {
       const reviewed = MachineProvisionerOptionsResultV1Schema.parse(await driver.execute('machines.provisioners.options', {
         homeId, controller, contribution, selectors: { workspaceFolder: root, configPath },
       }, f.options));
-      expect(reviewed.choices[0]).toMatchObject({ available: true, effectReview: { kind: 'devcontainer' } });
+      expect(reviewed.base).toMatchObject({ available: true, effectReview: { kind: 'devcontainer' } });
       expect(nativeRequests.some(request => request.args?.[0] === 'up')).toBe(false);
-      const launch = { provider: contribution, schemaVersion: 1, name: 'First-party child', choices: reviewed.choices[0]!.launch };
+      const launch = { provider: contribution, schemaVersion: 1, name: 'First-party child', choices: reviewed.base!.launch };
       const failedEnrollment = driver.execute('machines.managed.acquire', { selection: { kind: 'one-off', homeId, launch,
         controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }, f.options);
       await expect(failedEnrollment).rejects.toBeInstanceOf(SystemTaskExecutionError);

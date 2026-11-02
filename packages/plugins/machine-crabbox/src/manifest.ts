@@ -122,24 +122,17 @@ export const CRABBOX_PLUGIN = definePlugin({
       inputHints: CRABBOX_OPTIONS_INPUT_HINTS,
       async run(input, context) {
         const query = CrabboxOptionsInputV1Schema.parse(input);
-        const titles = { aws: 'AWS', gcp: 'Google Cloud', hetzner: 'Hetzner', 'local-container': 'Local container', 'blacksmith-testbox': 'Blacksmith Testbox' };
         const selected = CrabboxLaunchV1Schema.safeParse(query);
         let coordinatorNamespace: string | undefined;
         let localAvailable = false;
         try { coordinatorNamespace = (await (await import('./machine/connection.js')).prepareCrabboxConnection(
           context.services.connectedAccounts, context.services.http, context.signal)).connection.namespace; } catch { /* Missing selected credentials are native unavailability. */ }
         try { await directProvider(context); localAvailable = true; } catch { /* No unqualified native executable fallback. */ }
-        if (query.backendId) {
-          const available = selected.success && (selected.data.transport === 'coordinator'
-            ? selected.data.namespace === coordinatorNamespace : selected.data.backendId === 'local-container' && localAvailable);
-          return { choices: [{ id: query.backendId, title: titles[query.backendId], available,
-            ...(available && selected.success ? { launch: selected.data } : {}) }] };
-        }
-        return { choices: [
-          ...(['aws', 'gcp', 'hetzner'] as const).map(id => ({ id, title: titles[id], available: coordinatorNamespace !== undefined })),
-          { id: 'local-container', title: titles['local-container'], available: localAvailable },
-          { id: 'blacksmith-testbox', title: titles['blacksmith-testbox'], available: false },
-        ] };
+        const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+        if (!selected.success) return { dimensions };
+        const available = selected.data.transport === 'coordinator'
+          ? selected.data.namespace === coordinatorNamespace : selected.data.backendId === 'local-container' && localAvailable;
+        return { dimensions, base: { launch: selected.data, available } };
       } },
     acquire: { ...defaults, ...effectConfirmation, title: 'Acquire Crabbox lease', dangerLevel: 'writesRemote',
       inputSchema: CRABBOX_ROLE_SCHEMAS.acquireInput, resultSchema: CRABBOX_ROLE_SCHEMAS.acquireResult,

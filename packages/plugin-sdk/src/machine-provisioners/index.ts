@@ -32,3 +32,6 @@ export type { MachineProvisionerStoredReaderV1 } from '../machineProvisioners.js
 export { defineMachineProvisionerReconciliationSchemas } from '../machineProvisioners.js';
 export { defineMachineProvisionerSchemas } from '../machineProvisioners.js';
 export { prepareMachineProvisionerStoredSchemas } from '../machineProvisioners.js';
+
+export type { MachineProvisionerNativeCauseV1, MachineProvisionerDimensionV1, MachineProvisionerDimensionOptionV1, MachineProvisionerSelectionV1, MachineProvisionerOptionSelectorV1, MachineProvisionerConditionalPriceV1, MachineProvisionerOptionConstraintV1, MachineProvisionerSelectionProjectionV1 } from '../machineProvisioners.js';
+export { MACHINE_PROVISIONER_DIMENSIONS_V1, projectMachineProvisionerSelectionV1 } from '../machineProvisioners.js';

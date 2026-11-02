@@ -1,3 +1,11 @@
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function projectOptions(raw: unknown, image?: string) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: LumeLaunchV1Schema.jsonSchema,
+    selection: { ...Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])),
+      ...(image ? { image } : {}) } });
+}
 import { describe, expect, it } from 'vitest';
 import { createLumeProvider } from './provider.js';
 import { createLumeNativeClient } from './nativeClient.js';
@@ -40,7 +48,7 @@ describe('Lume managed provisioner', () => {
       privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'linux-owner' } } };
     const { provider, requests } = setup([Response.json([{ name: 'home' }])]);
     const options = await provider.options(selected);
-    const image = options.choices.find(choice => choice.launch);
+    const image = projectOptions(options);
     expect(LumeLaunchV1Schema.parse(image?.launch)).toEqual(selected);
     expect(image?.nativeFacts).toMatchObject({ image: { id: selected.image.reference }, location: { id: 'home' },
       size: { cpuCores: launch.cpu, memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes } });
@@ -75,20 +83,19 @@ describe('Lume managed provisioner', () => {
   });
 
   it('projects qualified complete launches from reviewed native sizing and storage inputs without guessed presets', async () => {
-    const { provider, requests } = setup([Response.json({ token: 'anonymous-macos' }), Response.json({ token: 'anonymous-tahoe' }),
-      Response.json([{ name: 'home' }]), Response.json({ name: 'trycua/macos', tags: ['26', '15', '26-slim'] }),
+    const { provider, requests } = setup([Response.json([{ name: 'home' }]), Response.json({ name: 'trycua/macos', tags: ['26', '15', '26-slim'] }),
       Response.json({ name: 'trycua/macos-tahoe-cua', tags: ['latest', '26.5.2'] })]);
     const options = await provider.options({ storage: launch.storage, cpu: launch.cpu,
       memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes });
-    const choices = options.choices.filter(choice => choice.launch);
-    expect(choices).toHaveLength(3);
-    for (const choice of choices) {
-      const selected = LumeLaunchV1Schema.parse(choice.launch);
-      expect(selected).toEqual({ ...launch, image: { kind: 'catalog', id: choice.id } });
-      expect(choice.nativeFacts).toMatchObject({ image: { id: choice.id }, location: { id: 'home' },
+    expect(options.dimensions.image).toHaveLength(3);
+    expect(options.dimensions.size).toHaveLength(1);
+    expect(options.dimensions.location).toHaveLength(1);
+    for (const choice of options.dimensions.image) {
+      const projected = projectOptions(options, choice.id);
+      expect(projected.nativeFacts).toMatchObject({ image: { id: choice.id }, location: { id: 'home' },
         size: { cpuCores: launch.cpu, memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes } });
     }
-    expect(options.choices.find(choice => choice.id === 'storage:home')).not.toHaveProperty('launch');
+    expect(options.dimensions.location[0]).toMatchObject({ id: 'home', assignments: [{ path: 'storage', value: 'home' }] });
     expect(requests.some(({ url }) => url.pathname === '/lume/images')).toBe(false);
   });
 
@@ -154,4 +161,15 @@ describe('Lume managed provisioner', () => {
       privateCarrier: { ...privateCarrier, future: true } } })).toEqual(customLaunch);
     expect(stored.resourceStored.parse({ ...customResource, privateCarrier: { ...privateCarrier, future: true } })).toEqual(customResource);
   });
+  it('keeps catalog facts available while incomplete sizing cannot project an executable launch', async () => {
+    const { provider, requests } = setup([Response.json([{ name: 'home' }, { name: 'external' }]),
+      Response.json({ name: 'trycua/macos', tags: ['26', '26-slim'] }),
+      Response.json({ name: 'trycua/macos-tahoe-cua', tags: [] })]);
+    const options = await provider.options({ cpu: launch.cpu });
+    expect(options.dimensions.image.map(image => image.id)).toEqual(['ghcr.io/trycua/macos:26', 'ghcr.io/trycua/macos:26-slim']);
+    expect(options.dimensions.location.map(location => location.id)).toEqual(['home', 'external']);
+    expect(projectOptions(options)).toMatchObject({ kind: 'incomplete' });
+    expect(requests.every(request => (request.init?.method ?? 'GET') === 'GET')).toBe(true);
+  });
+
 });

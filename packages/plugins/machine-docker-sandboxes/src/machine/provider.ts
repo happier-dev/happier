@@ -39,8 +39,8 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
     async options() {
       const catalog = await native.templates(signal);
       if (catalog.status !== 'available') fail('docker_sandbox_options_unavailable');
-      return { choices: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId,
-        launch: { name: 'happier', templateId }, nativeFacts: { image: { id: templateId, title: templateId } } })) };
+      return { base: { launch: { name: 'happier' }, }, dimensions: { size: [], location: [], network: [], duration: [],
+        image: catalog.templateIds.map(templateId => ({ id: templateId, title: templateId, assignments: [{ path: 'templateId', value: templateId }], nativeFacts: { image: { id: templateId, title: templateId } } })) } };
     },
     async acquire(raw: DockerSandboxesLaunchV1, managedId?: string) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(raw);

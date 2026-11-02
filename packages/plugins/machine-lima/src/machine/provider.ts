@@ -135,18 +135,16 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
       // The existing product create recipe uses --mount-none. Preserve every
       // explicitly reviewed mount; omitted mounts keep that no-mount default.
       const parsed = LimaLaunchSchema.safeParse({ ...query, mounts: query.mounts ?? [] });
-      if (!parsed.success) return { choices: [] };
+      const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+      if (!parsed.success) return { dimensions };
       const launch = parsed.data;
       validateLimaStore(launch.store);
       const availability = await nativeVersionAvailable() ? await launchAvailability(launch) : { available: false };
-      return { choices: [{ id: launch.instance, title: launch.instance, available: availability.available,
-        ...(availability.available ? { launch } : {}),
-        nativeFacts: {
-          size: { id: `${launch.cpus}/${launch.memoryGiB}/${launch.diskGiB}`, title: launch.instance,
-            cpuCores: launch.cpus, memoryBytes: launch.memoryGiB * gib, diskBytes: launch.diskGiB * gib },
-          image: { id: launch.image, ...describeImage(launch.image) },
-        },
-      }] };
+      const size = { id: `${launch.cpus}/${launch.memoryGiB}/${launch.diskGiB}`, title: launch.instance,
+        cpuCores: launch.cpus, memoryBytes: launch.memoryGiB * gib, diskBytes: launch.diskGiB * gib };
+      return { base: { launch, available: availability.available,
+        nativeFacts: { image: { id: launch.image, ...describeImage(launch.image) } } },
+        dimensions: { ...dimensions, size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }] } };
     },
     async acquire(rawLaunch: LimaLaunch) {
       const launch = LimaLaunchSchema.parse(rawLaunch);

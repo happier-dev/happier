@@ -3535,38 +3535,555 @@ export type ManagedMachinesActionResultById = {
         } | undefined;
     };
     readonly "machines.provisioners.options": {
-        choices: {
-            id: string;
-            title: string | {
-                key: string;
-                fallback: string;
+        dimensions: {
+            size: {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                assignments: {
+                    path: string;
+                    value: PluginJsonValueV2;
+                }[];
+                available?: boolean | undefined;
+                prices?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    when?: undefined | {
+                        dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                        optionIds: string[];
+                    }[];
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                    };
+                }[];
+                retention?: undefined | {
+                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                    finiteOnly?: boolean | undefined;
+                    nativeExpiry?: undefined | {
+                        kind: 'deadline';
+                        at: number;
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                    };
+                };
+                nativeFacts?: undefined | {
+                    size?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
+                    image?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                        };
+                        preview?: undefined | {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                            };
+                        };
+                    };
+                    location?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        countryCode?: string | undefined;
+                    };
+                    network?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                    };
+                    duration?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        afterMs: number;
+                    };
+                    monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                };
+            }[];
+            image: {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                assignments: {
+                    path: string;
+                    value: PluginJsonValueV2;
+                }[];
+                available?: boolean | undefined;
+                prices?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    when?: undefined | {
+                        dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                        optionIds: string[];
+                    }[];
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                    };
+                }[];
+                retention?: undefined | {
+                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                    finiteOnly?: boolean | undefined;
+                    nativeExpiry?: undefined | {
+                        kind: 'deadline';
+                        at: number;
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                    };
+                };
+                nativeFacts?: undefined | {
+                    size?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
+                    image?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                        };
+                        preview?: undefined | {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                            };
+                        };
+                    };
+                    location?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        countryCode?: string | undefined;
+                    };
+                    network?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                    };
+                    duration?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        afterMs: number;
+                    };
+                    monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                };
+            }[];
+            location: {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                assignments: {
+                    path: string;
+                    value: PluginJsonValueV2;
+                }[];
+                available?: boolean | undefined;
+                prices?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    when?: undefined | {
+                        dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                        optionIds: string[];
+                    }[];
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                    };
+                }[];
+                retention?: undefined | {
+                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                    finiteOnly?: boolean | undefined;
+                    nativeExpiry?: undefined | {
+                        kind: 'deadline';
+                        at: number;
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                    };
+                };
+                nativeFacts?: undefined | {
+                    size?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
+                    image?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                        };
+                        preview?: undefined | {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                            };
+                        };
+                    };
+                    location?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        countryCode?: string | undefined;
+                    };
+                    network?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                    };
+                    duration?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        afterMs: number;
+                    };
+                    monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                };
+            }[];
+            network: {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                assignments: {
+                    path: string;
+                    value: PluginJsonValueV2;
+                }[];
+                available?: boolean | undefined;
+                prices?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    when?: undefined | {
+                        dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                        optionIds: string[];
+                    }[];
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                    };
+                }[];
+                retention?: undefined | {
+                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                    finiteOnly?: boolean | undefined;
+                    nativeExpiry?: undefined | {
+                        kind: 'deadline';
+                        at: number;
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                    };
+                };
+                nativeFacts?: undefined | {
+                    size?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
+                    image?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                        };
+                        preview?: undefined | {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                            };
+                        };
+                    };
+                    location?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        countryCode?: string | undefined;
+                    };
+                    network?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                    };
+                    duration?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        afterMs: number;
+                    };
+                    monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                };
+            }[];
+            duration: {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                assignments: {
+                    path: string;
+                    value: PluginJsonValueV2;
+                }[];
+                available?: boolean | undefined;
+                prices?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    when?: undefined | {
+                        dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                        optionIds: string[];
+                    }[];
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                    };
+                }[];
+                retention?: undefined | {
+                    supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                    guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                    finiteOnly?: boolean | undefined;
+                    nativeExpiry?: undefined | {
+                        kind: 'deadline';
+                        at: number;
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                    };
+                };
+                nativeFacts?: undefined | {
+                    size?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
+                    image?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                        };
+                        preview?: undefined | {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                            };
+                        };
+                    };
+                    location?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        countryCode?: string | undefined;
+                    };
+                    network?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                    };
+                    duration?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        afterMs: number;
+                    };
+                    monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                };
+            }[];
+        };
+        code?: 'provider_unavailable' | undefined;
+        nativeCause?: undefined | {
+            grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+        } | {
+            httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+            code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+            fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+        } | {
+            localCause: 'native_command_failed';
+            command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+            exitCode: null | number;
+            stderr?: string | undefined;
+            stderrTruncated?: true | undefined;
+        } | {
+            localCause: 'native_configure_refused' | 'native_delete_refused';
+            httpStatus: 400;
+        } | {
+            localCause: 'native_lease_ended' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+        } | {
+            localCause: 'native_route_not_found';
+            route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+            httpStatus: 404;
+        } | {
+            sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+        };
+        base?: undefined | {
+            launch: PluginJsonValueV2;
+            effectReview?: undefined | {
+                kind: 'devcontainer';
+                reviewedEffectDigest: string;
+                effects: {
+                    scope: 'child' | 'host';
+                    kind: 'build' | 'compose' | 'environment' | 'feature' | 'image' | 'initialize' | 'lifecycle' | 'mount' | 'network' | 'user';
+                    title: string;
+                    details: string[];
+                }[];
             };
-            launch?: PluginJsonValueV2 | undefined;
             available?: boolean | undefined;
-            prices?: {
+            prices?: undefined | {
                 amount: string;
                 currency: string;
                 unit: string;
                 source: string;
                 observedAt: number;
-                label?: string | {
+                when?: undefined | {
+                    dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                    optionIds: string[];
+                }[];
+                label?: string | undefined | {
                     key: string;
                     fallback: string;
-                } | undefined;
-            }[] | undefined;
-            retention?: {
-                supportedIntents: ('stop' | 'delete' | 'start' | 'suspend' | 'resume' | 'rebuild')[];
+                };
+            }[];
+            retention?: undefined | {
+                supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
                 finiteOnly?: boolean | undefined;
-                nativeExpiry?: {
-                    kind: 'unused';
-                    afterMs: number;
-                } | {
+                nativeExpiry?: undefined | {
                     kind: 'deadline';
                     at: number;
-                } | undefined;
-            } | undefined;
-            nativeFacts?: {
-                size?: {
+                } | {
+                    kind: 'unused';
+                    afterMs: number;
+                };
+            };
+            nativeFacts?: undefined | {
+                size?: undefined | {
                     id: string;
                     title: string | {
                         key: string;
@@ -3575,56 +4092,63 @@ export type ManagedMachinesActionResultById = {
                     cpuCores?: number | undefined;
                     memoryBytes?: number | undefined;
                     diskBytes?: number | undefined;
-                } | undefined;
-                image?: {
+                };
+                image?: undefined | {
                     id: string;
                     title: string | {
                         key: string;
                         fallback: string;
                     };
-                    description?: string | {
+                    description?: string | undefined | {
                         key: string;
                         fallback: string;
-                    } | undefined;
-                    preview?: {
+                    };
+                    preview?: undefined | {
                         resource: {
                             pluginId: string;
                             localId: string;
                         };
-                        accessibilityLabel?: string | {
+                        accessibilityLabel?: string | undefined | {
                             key: string;
                             fallback: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                location?: {
+                        };
+                    };
+                };
+                location?: undefined | {
                     id: string;
                     title: string | {
                         key: string;
                         fallback: string;
                     };
                     countryCode?: string | undefined;
-                } | undefined;
-                duration?: {
+                };
+                network?: undefined | {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                };
+                duration?: undefined | {
                     id: string;
                     title: string | {
                         key: string;
                         fallback: string;
                     };
                     afterMs: number;
-                } | undefined;
-                monthlyCapStatus?: 'unknown' | 'none' | undefined;
-            } | undefined;
-            effectReview?: {
-                kind: 'devcontainer';
-                reviewedEffectDigest: string;
-                effects: {
-                    scope: 'host' | 'child';
-                    kind: 'image' | 'environment' | 'user' | 'initialize' | 'build' | 'compose' | 'feature' | 'mount' | 'network' | 'lifecycle';
-                    title: string;
-                    details: string[];
-                }[];
-            } | undefined;
+                };
+                monthlyCapStatus?: 'none' | 'unknown' | undefined;
+            };
+        };
+        constraints?: undefined | {
+            when: {
+                dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                optionIds: string[];
+            };
+            requires: {
+                dimension: 'duration' | 'image' | 'location' | 'network' | 'size';
+                optionIds: string[];
+            };
         }[];
     };
     readonly "machines.managed.acquire": {

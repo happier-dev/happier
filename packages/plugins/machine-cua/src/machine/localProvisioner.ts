@@ -1,3 +1,4 @@
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerObservationV1, MachineProvisionerOptionsResultV1,
@@ -83,8 +84,10 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             const parsed = CuaLocalLaunchV1Schema.safeParse(input);
             if (!parsed.success) return { kind: 'rejected', code: 'invalid_request' };
             const launch = parsed.data;
-            const choices = await this.options({ runtimeId: launch.runtimeId, imageId: launch.imageId, size: launch.size });
-            if (!choices.choices.some((choice) => choice.available && choice.launch)) return { kind: 'rejected', code: 'invalid_request' };
+            const options = await this.options({ runtimeId: launch.runtimeId, imageId: launch.imageId, size: launch.size });
+            const selected = projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
+                selection: { size: options.dimensions.size[0]?.id, image: launch.imageId, location: launch.runtimeId } });
+            if (selected.kind !== 'ready') return { kind: 'rejected', code: 'invalid_request' };
             const recovery = localAcquireOperation(localId, launch, managedId);
             try {
                 const created = await leaf.create(launch, name, launch.size.diskBytes, signal);

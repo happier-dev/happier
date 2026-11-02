@@ -1,3 +1,11 @@
+import type { MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function selected(options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1 = {}) {
+    return projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
+        selection: { ...Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : [])), ...selection } });
+}
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
@@ -80,30 +88,26 @@ describe('Cua native read facts', () => {
             container: { ...doctor.container, reachable: false },
         }, [{ ...image, ref: 'ghcr.io/trycua/linux:24.04', local: 'container',
             sizes: { digest, platforms: [{ arch: 'arm64', disk: 21474836480 }] } }]);
-        const facts = await h.facts.read();
-        expect(facts.doctor).toMatchObject({ kind: 'known', value: { runtimes: [
-            { id: 'qemu', ready: false },
-            { id: 'runc', ready: false }, { id: 'gvisor', ready: true },
+        expect(await h.facts.check()).toEqual({ available: true });
+        expect(await h.facts.options(undefined, {}, localId)).toMatchObject({ dimensions: { location: [
+            { id: 'runc', available: false }, { id: 'gvisor', available: false },
         ] } });
-        expect(facts.capture).toEqual({ kind: 'unknown', reason: 'not_reported' });
-        expect(await h.facts.options(undefined, {}, localId)).toMatchObject({ choices: [
-            { id: 'runc:ghcr.io/trycua/linux:24.04', available: false },
-            { id: 'gvisor:ghcr.io/trycua/linux:24.04', available: false },
-        ] });
         const configured = await h.facts.options(undefined, { runtimeId: 'gvisor',
             size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } }, localId);
-        expect(configured.choices).toHaveLength(1);
-        expect(configured.choices[0]).toMatchObject({ available: false });
-        expect(configured.choices[0]).not.toHaveProperty('launch');
+        expect(configured.dimensions.location).toHaveLength(1);
+        expect(selected(configured)).toMatchObject({ kind: 'unavailable' });
+        expect(selected(configured)).not.toHaveProperty('launch');
     });
 
     it('exposes image/runtime choices without inventing complete launches, prices or available headroom', async () => {
         const h = harness();
         expect(await h.facts.check()).toEqual({ available: true });
-        expect(await h.facts.options()).toEqual({ choices: [{
-            id: `qemu:${image.ref}`, title: `${image.ref} (qemu)`, available: true,
-            nativeFacts: { image: { id: image.ref, title: image.ref }, location: { id: 'qemu', title: 'qemu' } },
-        }] });
+        const options = await h.facts.options();
+        expect(options.base).toBeUndefined();
+        expect(options.dimensions.image).toMatchObject([{ id: image.ref, available: true }]);
+        expect(options.dimensions.location).toMatchObject([{ id: 'qemu', available: true }]);
+        expect(selected(options)).toMatchObject({ kind: 'incomplete', prices: [], nativeFacts: {
+            image: { id: image.ref, title: image.ref }, location: { id: 'qemu', title: 'qemu' } } });
         expect(h.argv.every((args) => args.join(' ') === '--json --embedded runtime doctor'
             || args.join(' ') === '--json images ls')).toBe(true);
     });
@@ -118,26 +122,23 @@ describe('Cua native read facts', () => {
             { ...image, ref: 'ghcr.io/trycua/arm:1', arch: ['arm64'], sizes: null },
             { ...image, sizes: { ...image.sizes, digest: 'sha256:stale' } },
         ]);
-        const facts = await h.facts.read();
-        expect(facts.images).toMatchObject({ kind: 'known', value: [
-            { imageId: 'ghcr.io/trycua/arm:1', disk: { kind: 'unknown', reason: 'not_reported' } },
-            { imageId: image.ref, disk: { kind: 'unknown', reason: 'image_digest_mismatch' } },
-        ] });
-        expect(await h.facts.options()).toMatchObject({ choices: [
-            { id: 'qemu:ghcr.io/trycua/arm:1', available: false }, { id: `qemu:${image.ref}`, available: true },
-        ] });
+        const facts = await h.facts.options();
+        expect(facts).toMatchObject({ dimensions: { image: [
+            { id: 'ghcr.io/trycua/arm:1', available: false }, { id: image.ref, available: true },
+        ] } });
         expect(JSON.stringify(facts)).not.toContain('private');
     });
 
     it('takes the image\'s own disk when a query omits one, so a size needs only CPU and memory', async () => {
         const h = harness();
         const size = { cpu: 2, memoryBytes: 4 * 1024 ** 3 };
-        const [choice] = (await h.facts.options(undefined, { size })).choices;
-        expect(choice).toMatchObject({ available: true, nativeFacts: { size: { id: `2:${4 * 1024 ** 3}:image`, diskBytes: 21474836480 } },
+        const choice = selected(await h.facts.options(undefined, { size }));
+        expect(choice).toMatchObject({ kind: 'ready', nativeFacts: { size: { id: `2:${4 * 1024 ** 3}:image`,
+            cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 21474836480 } },
             launch: { on: 'local', runtimeId: 'qemu', imageId: image.ref, size: { ...size, diskBytes: 21474836480 } } });
         // An explicit disk that is not the image's still refuses a sandbox.
-        const [mismatch] = (await h.facts.options(undefined, { size: { ...size, diskBytes: 40 * 1024 ** 3 } })).choices;
-        expect(mismatch).toMatchObject({ available: false });
+        const mismatch = selected(await h.facts.options(undefined, { size: { ...size, diskBytes: 40 * 1024 ** 3 } }));
+        expect(mismatch).toMatchObject({ kind: 'unavailable' });
         expect(mismatch).not.toHaveProperty('launch');
     });
 
@@ -156,15 +157,34 @@ describe('Cua native read facts', () => {
 
     it('keeps malformed or failed native reads unknown and honors cancellation without exposing native errors', async () => {
         const malformed = harness({ ...doctor, host: { ...doctor.host, os: 'cloud' } }, {});
-        expect((await malformed.facts.read()).doctor).toEqual({ kind: 'unknown', reason: 'response' });
         expect(await malformed.facts.check()).toEqual({ available: false, code: 'native_facts_unknown' });
-        expect(await malformed.facts.options()).toEqual({ choices: [] });
+        expect(await malformed.facts.options()).toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
         const failed = harness();
         failed.run.mockRejectedValue(new Error('http://private?token=private'));
-        expect((await failed.facts.read()).doctor).toEqual({ kind: 'unknown', reason: 'transport' });
-        expect(await failed.facts.options()).toEqual({ choices: [] });
+        expect(await failed.facts.check()).toEqual({ available: false, code: 'native_facts_unknown' });
+        expect(await failed.facts.options()).toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
         const canceled = harness();
-        await expect(canceled.facts.read(AbortSignal.abort())).rejects.toThrow();
+        await expect(canceled.facts.options(AbortSignal.abort())).rejects.toThrow();
         expect(canceled.argv).toHaveLength(0);
     });
+  it('emits independent image and runtime facts while retaining native compatibility edges', async () => {
+        const container = { ...image, ref: 'ghcr.io/trycua/linux:24.04', local: 'container' };
+        const options = await harness(doctor, [image, container]).facts.options(undefined,
+            { size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
+        expect(options).toHaveProperty('dimensions');
+        expect(options.dimensions.image.map((entry) => entry.id)).toEqual([image.ref, container.ref]);
+        expect(options.dimensions.location.map((entry) => entry.id)).toEqual(['qemu', 'runc', 'gvisor']);
+        expect(options.dimensions.size).toHaveLength(1);
+        expect(options.constraints).toEqual([
+            { when: { dimension: 'location', optionIds: ['qemu'] }, requires: { dimension: 'image', optionIds: [image.ref] } },
+            { when: { dimension: 'location', optionIds: ['runc'] }, requires: { dimension: 'image', optionIds: [container.ref] } },
+            { when: { dimension: 'location', optionIds: ['gvisor'] }, requires: { dimension: 'image', optionIds: [container.ref] } },
+        ]);
+        expect(options.dimensions.location.find((entry) => entry.id === 'gvisor')).toMatchObject({ available: false });
+        expect(selected(options, { image: container.ref, location: 'qemu' })).toMatchObject({ kind: 'unavailable' });
+        expect(selected(options, { image: container.ref, location: 'runc' })).toMatchObject({ kind: 'ready',
+            launch: { runtimeId: 'runc', imageId: container.ref } });
+        expect(options).not.toHaveProperty('choices');
+    });
+
 });

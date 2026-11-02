@@ -1,3 +1,4 @@
+import { projectHetznerOptions } from './machine/options.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -10,7 +11,7 @@ import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/m
 import { createHetznerProvider } from './machine/provider.js';
 import { HetznerLaunchV1Schema, HetznerResourceV1Schema, HetznerNativeOperationV1Schema } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
-import { HETZNER_PRICE_LABELS, HETZNER_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { HETZNER_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 export const PLUGIN_ID = 'happier.machine.hetzner';
 export const PROVISIONER_ID = 'hetzner';
@@ -24,9 +25,7 @@ const billing = { location: 'cloud', stoppedBilling: 'billed' } as const;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
 const runtime = async (context: PluginInvocationContext) => createHetznerProvider({ token: 'host-bound', fetch: nativeFetch(context), signal: context.signal });
 function unavailable() { return { observedAt: 0, availability: 'unavailable' as const, reason: 'provider_unavailable' }; }
-function priceLabel(id: keyof typeof HETZNER_PRICE_LABELS.en) {
-  return { key: `machineHetzner.prices.${id}`, fallback: HETZNER_PRICE_LABELS.en[id] };
-}
+
 
 export const MACHINE_PROVISIONER = {
   title: 'Hetzner', icon: 'hard-drives', resourceKind: 'hetzner-server', schemaVersion: 1,
@@ -80,30 +79,7 @@ export const PLUGIN = definePlugin({
     },
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> { const facts = await (await runtime(context)).options();
-        return { choices: facts.sizes.flatMap(size => size.prices.flatMap(price => {
-          const location = facts.locations.find(value => value.name === price.location);
-          return facts.images.filter(image => image.status === 'available' && image.deprecated === null && image.architecture === size.architecture)
-            .flatMap(image => [{ ipv4: true, ipv6: false }, { ipv4: false, ipv6: true }, { ipv4: true, ipv6: true }].map(publicNetworking => ({
-              id: `${size.id}/${image.id}/${price.location}/${Number(publicNetworking.ipv4)}${Number(publicNetworking.ipv6)}`,
-              title: `${size.name} · ${size.cores} CPU · ${size.memory} GiB · ${size.disk} GB · ${image.name ?? image.id} · ${price.location}`,
-              launch: { serverTypeId: String(size.id), imageId: String(image.id), locationId: price.location, publicNetworking },
-              available: !size.deprecation?.unavailable_after || Date.parse(size.deprecation.unavailable_after) > facts.observedAt,
-              prices: [{ ...price.hourly, label: priceLabel('compute') }, { ...price.monthly, label: priceLabel('compute') },
-                ...(facts.primaryIpPrices ?? []).filter(ip => publicNetworking[ip.type])
-                  .flatMap(ip => ip.prices.filter(p => p.location === price.location)
-                    .flatMap(p => [p.hourly, p.monthly].map(nativePrice => ({ ...nativePrice,
-                      label: priceLabel(ip.type === 'ipv4' ? 'primaryIpv4' : 'primaryIpv6') }))))],
-              nativeFacts: {
-                size: { id: String(size.id), title: size.name, cpuCores: size.cores,
-                  memoryBytes: size.memory * 1024 ** 3, diskBytes: size.disk * 1000 ** 3 },
-                image: { id: String(image.id), title: image.name ?? String(image.id),
-                  ...(image.description ? { description: image.description } : {}) },
-                location: { id: price.location, title: location?.description ?? price.location,
-                  ...(location?.country ? { countryCode: location.country } : {}) },
-              },
-            })));
-        })) }; },
+      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> { return projectHetznerOptions(await (await runtime(context)).options()); },
     },
     acquire: { ...defaults, title: 'Acquire Hetzner resource', dangerLevel: 'destructive',
       confirmation: { title: 'Create this Hetzner Server?', body: 'This creates the reviewed paid resource. Powered-off Servers remain billable.' },

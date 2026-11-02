@@ -1,3 +1,6 @@
+import { DockerSandboxesLaunchV1Schema, DOCKER_SANDBOXES_ROLE_SCHEMAS } from './machine/schemas.js';
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
@@ -81,4 +84,25 @@ describe('brand mark', () => {
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
+  it('qualifies every native template offered by options through the registered acquire role', async () => {
+    const templates = ['docker.io/example/first:1', 'docker.io/example/second:2'];
+    const run = vi.fn<ExecService['run']>(async request => exited(new TextEncoder().encode(
+      request.args?.[0] === 'template' ? templates.join('\n') : request.args?.[0] === 'ls' ? inventory : '')));
+    const boundary = fixture(run);
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
+      expect(options.dimensions.image).toHaveLength(2);
+      for (const selected of options.dimensions.image) {
+        const projected = projectMachineProvisionerSelectionV1({ options, selection: { image: selected.id }, launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema });
+        expect(projected.kind).toBe('ready');
+        if (projected.kind !== 'ready') throw new Error('Native template did not project an executable launch');
+        const input = DOCKER_SANDBOXES_ROLE_SCHEMAS.acquireInput.parse({ launch: projected.launch, managedId: 'managed-row-1' });
+        expect(await kit.invokeAction('acquire', input, { surface: 'plugin' }))
+          .toMatchObject({ kind: 'bound', resource: { value: resource } });
+      }
+      expect(run.mock.calls.filter(([request]) => request.args?.[0] === 'create').map(([request]) => request.args?.[4])).toEqual(templates);
+    } finally { await kit.dispose(); }
+  });
+
 });

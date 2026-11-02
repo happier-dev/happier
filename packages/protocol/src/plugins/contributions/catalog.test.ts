@@ -111,7 +111,7 @@ describe('plugin contribution catalog', () => {
         }
       }
       if (action.id === 'options') {
-        const facts = resultSchema.properties?.choices?.items?.properties?.nativeFacts;
+        const facts = resultSchema.properties?.dimensions?.properties?.size?.items?.properties?.nativeFacts;
         if (!facts?.properties?.size?.properties) throw new Error('Expected canonical native option facts');
         delete facts.properties.network;
         delete facts.properties.size.properties.memoryBytes;
@@ -128,7 +128,7 @@ describe('plugin contribution catalog', () => {
     expect(manifest(changedNativeResult).success).toBe(false);
     for (const change of ['open', 'required', 'constraint'] as const) {
       const altered = structuredClone(narrowActions);
-      const facts = altered.find(action => action.id === 'options')?.resultSchema.properties?.choices?.items?.properties?.nativeFacts;
+      const facts = altered.find(action => action.id === 'options')?.resultSchema.properties?.dimensions?.properties?.size?.items?.properties?.nativeFacts;
       const size = facts?.properties?.size;
       if (!size?.properties?.id) throw new Error('Expected canonical native size facts');
       if (change === 'open') size.additionalProperties = true;

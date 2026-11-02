@@ -111,8 +111,8 @@ describe('Devcontainer public passive effect review', () => {
     expect(DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners[0]?.actions.options).toBe('options');
     const value = await boundary.handlers.get('options')!({ workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context);
     const options = MachineProvisionerOptionsResultV1Schema.parse(value);
-    expect(options.choices).toHaveLength(1);
-    expect(options.choices[0]).toMatchObject({ available: true, launch: {
+    expect(options.dimensions).toEqual({ size: [], image: [], location: [], network: [], duration: [] });
+    expect(options.base).toMatchObject({ available: true, launch: {
       workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath,
       reviewedEffectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
     }, effectReview: { kind: 'devcontainer', effects: expect.arrayContaining([
@@ -144,7 +144,7 @@ describe('Devcontainer public passive effect review', () => {
     boundary.nativeConfiguration.configuration.service = 'app';
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    await boundary.handlers.get('acquire')!({ launch: options.choices[0]?.launch, managedId: 'native-env-row' }, boundary.context);
+    await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'native-env-row' }, boundary.context);
     const nativeReadsAndLaunch = boundary.requests.filter(request => request.args?.[0] === 'read-configuration' || request.args?.[0] === 'up');
     expect(nativeReadsAndLaunch.some(request => request.args?.[0] === 'up')).toBe(true);
     for (const request of nativeReadsAndLaunch) {
@@ -163,7 +163,7 @@ describe('Devcontainer public passive effect review', () => {
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
     boundary.nativeConfiguration.configuration.initializeCommand = 'different-host-setup';
-    const acquired = await boundary.handlers.get('acquire')!({ launch: options.choices[0]?.launch, managedId: 'managed-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'managed-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -177,13 +177,13 @@ describe('Devcontainer public passive effect review', () => {
     vi.stubEnv('HAPPIER_REVIEW_HOOK', 'touch /tmp/happierreview');
     const query = { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath };
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(first.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'initialize', details: ['touch /tmp/happierreview'] }),
     ]));
     vi.stubEnv('HAPPIER_REVIEW_HOOK', 'touch /tmp/${managedMachineNamespace}');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).not.toEqual(first.choices[0]?.launch);
-    const acquired = await boundary.handlers.get('acquire')!({ launch: first.choices[0]?.launch, managedId: 'managed-review' }, boundary.context);
+    expect(second.base?.launch).not.toEqual(first.base?.launch);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, managedId: 'managed-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -199,14 +199,14 @@ describe('Devcontainer public passive effect review', () => {
     vi.stubEnv('HAPPIER_REVIEW_TOKEN', 'inherited-secret-value');
     const query = { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath };
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(first.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'initialize', details: [template] }),
       expect.objectContaining({ kind: 'lifecycle', details: [template] }),
     ]));
     expect(JSON.stringify(first)).not.toContain('inherited-secret-value');
     vi.stubEnv('HAPPIER_REVIEW_TOKEN', 'different-inherited-secret');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).not.toEqual(first.choices[0]?.launch);
+    expect(second.base?.launch).not.toEqual(first.base?.launch);
     expect(JSON.stringify(second)).not.toContain('different-inherited-secret');
   });
 
@@ -227,7 +227,7 @@ describe('Devcontainer public passive effect review', () => {
     vi.stubEnv('HAPPIER_REVIEW_IMAGE_TOKEN', 'inherited-image-secret');
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    expect(options.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(options.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'lifecycle', details: [template] }),
       expect.objectContaining({ kind: 'lifecycle', details: [imageTemplate] }),
     ]));
@@ -243,14 +243,14 @@ describe('Devcontainer public passive effect review', () => {
     boundary.nativeConfiguration.configuration.service = 'app';
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    expect(options.choices[0]).toMatchObject({ effectReview: { effects: expect.arrayContaining([
+    expect(options.base).toMatchObject({ effectReview: { effects: expect.arrayContaining([
       expect.objectContaining({ kind: 'compose', scope: 'child', title: 'app' }),
       expect.objectContaining({ kind: 'network', scope: 'child', details: expect.arrayContaining(['host']) }),
     ]) } });
     expect(boundary.requests.find(request => request.args?.[0] === 'compose')?.args).toEqual(
       ['compose', '--project-directory', join(boundary.workspaceFolder, '.devcontainer'), '-f', composePath, '--profile', '*', 'config', '--format', 'json']);
     boundary.compose.services.app.network_mode = 'none';
-    const acquired = await boundary.handlers.get('acquire')!({ launch: options.choices[0]?.launch, managedId: 'managed-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'managed-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -266,8 +266,8 @@ describe('Devcontainer public passive effect review', () => {
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     boundary.composeNamespace.inherited = 'another-uncontrolled-project';
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).toEqual(first.choices[0]?.launch);
-    expect(first.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'mount', details: expect.arrayContaining(['volume: data → /data']) }),
       expect.objectContaining({ kind: 'mount', details: expect.arrayContaining(['data: ${managedMachineNamespace}_data']) }),
       expect.objectContaining({ kind: 'network', details: expect.arrayContaining(['default: ${managedMachineNamespace}_default']) }),
@@ -286,14 +286,14 @@ describe('Devcontainer public passive effect review', () => {
     vi.stubEnv('HAPPIER_EXTERNAL_NETWORK', 'happierreview-cache');
     const query = { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath };
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(first.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'network', details: ['external: happierreview-cache (external)'] }),
       expect.objectContaining({ kind: 'mount', details: ['custom: happierreview-cache'] }),
     ]));
     vi.stubEnv('HAPPIER_EXTERNAL_NETWORK', '${managedMachineNamespace}-cache');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).not.toEqual(first.choices[0]?.launch);
-    const acquired = await boundary.handlers.get('acquire')!({ launch: first.choices[0]?.launch, managedId: 'external-network-review' }, boundary.context);
+    expect(second.base?.launch).not.toEqual(first.base?.launch);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, managedId: 'external-network-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -329,13 +329,13 @@ describe('Devcontainer public passive effect review', () => {
       features: [{ id: 'feature', postCreateCommand: 'feature-setup', cachePath: '/native/staging/second/feature' }],
     }] };
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).toEqual(first.choices[0]?.launch);
+    expect(second.base?.launch).toEqual(first.base?.launch);
     boundary.nativeConfiguration.featuresConfiguration = { featureSets: [{
       sourceInformation: { type: 'oci', userFeatureId: 'example/feature:1', manifestDigest: 'sha256:different-source' },
       features: [{ id: 'feature', postCreateCommand: 'feature-setup', cachePath: '/native/staging/second/feature' }],
     }] };
     const changed = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(changed.choices[0]?.launch).not.toEqual(second.choices[0]?.launch);
+    expect(changed.base?.launch).not.toEqual(second.base?.launch);
   });
 
   it('reads future source effects rather than changing the review when an incumbent appears', async () => {
@@ -344,7 +344,7 @@ describe('Devcontainer public passive effect review', () => {
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     boundary.incumbent.present = true;
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).toEqual(first.choices[0]?.launch);
+    expect(second.base?.launch).toEqual(first.base?.launch);
     expect(JSON.stringify(second)).not.toContain('incumbent-only-hook');
     expect(boundary.requests.filter(request => request.args?.[0] === 'read-configuration').every(request =>
       request.args?.includes('happier.managed-machine= '))).toBe(true);
@@ -361,13 +361,13 @@ describe('Devcontainer public passive effect review', () => {
     const first = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     expect(JSON.stringify(first)).not.toContain('private-build-value');
     expect(JSON.stringify(first)).not.toContain('private-source-value');
-    expect(first.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'build', details: ['PRIVATE_TOKEN'] }),
       expect.objectContaining({ kind: 'build', details: [dockerfile] }),
     ]));
     await writeFile(dockerfile, 'FROM example:latest\nRUN different-package\n');
     const changed = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(changed.choices[0]?.launch).not.toEqual(first.choices[0]?.launch);
+    expect(changed.base?.launch).not.toEqual(first.base?.launch);
   });
 
   it('allows a Dockerfile with known hooks but refuses unavailable base-image hook origins without disclosing their effective values', async () => {
@@ -381,13 +381,13 @@ describe('Devcontainer public passive effect review', () => {
     await writeFile(join(boundary.workspaceFolder, '.devcontainer', 'Dockerfile'), 'FROM example:latest\n');
     const query = { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath };
     const known = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(known.choices[0]?.available).toBe(true);
+    expect(known.base?.available).toBe(true);
     expect(JSON.stringify(known)).not.toContain('inherited-build-secret');
     // Native merged output now includes an image-origin command whose raw
     // template/base-image identity is absent from public read-configuration.
     boundary.nativeConfiguration.mergedConfiguration.postCreateCommands = ['echo unidentified-base-secret', 'echo inherited-build-secret'];
     await expect(boundary.handlers.get('options')!(query, boundary.context)).rejects.toMatchObject({ code: 'native_observation_unavailable' });
-    const acquired = await boundary.handlers.get('acquire')!({ launch: known.choices[0]?.launch, managedId: 'unavailable-origin-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: known.base?.launch, managedId: 'unavailable-origin-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'provider_unavailable' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -397,7 +397,7 @@ describe('Devcontainer public passive effect review', () => {
     boundary.imageCache.present = false;
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    expect(options.choices[0]?.available).toBe(true);
+    expect(options.base?.available).toBe(true);
     expect(boundary.requests.map(request => request.args?.[0])).toEqual(['read-configuration', 'image', 'pull', 'image']);
     expect(JSON.stringify(options)).toContain('cache');
   });
@@ -408,7 +408,7 @@ describe('Devcontainer public passive effect review', () => {
       User: 'image-user', Env: ['IMAGE_TOKEN=private-image-value'] };
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    expect(options.choices[0]?.effectReview?.effects).toEqual(expect.arrayContaining([
+    expect(options.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ scope: 'child', kind: 'lifecycle', details: ['image-entrypoint'] }),
       expect.objectContaining({ scope: 'child', kind: 'lifecycle', details: ['image-command'] }),
       expect.objectContaining({ scope: 'child', kind: 'user', details: ['image-user'] }),
@@ -431,7 +431,7 @@ describe('Devcontainer public passive effect review', () => {
     } }));
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    expect(options.choices[0]).toMatchObject({ effectReview: { effects: expect.arrayContaining([
+    expect(options.base).toMatchObject({ effectReview: { effects: expect.arrayContaining([
       expect.objectContaining({ kind: 'feature', details: expect.arrayContaining([pinnedFeature]) }),
       expect.objectContaining({ kind: 'lifecycle', scope: 'child', details: ['locked-feature-setup'] }),
     ]) } });
@@ -455,7 +455,7 @@ describe('Devcontainer public passive effect review', () => {
       features: [{ id: 'feature', postCreateCommand: 'different-unlocked-feature-setup' }],
     }] };
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.choices[0]?.launch).toEqual(first.choices[0]?.launch);
+    expect(second.base?.launch).toEqual(first.base?.launch);
     expect(JSON.stringify(second)).not.toContain('different-unlocked-feature-setup');
   });
 

@@ -23,7 +23,7 @@ import {
   countryFlag,
   managedImageLabel,
   type ManagedImageOption,
-  type ManagedLocationOption,
+  type ManagedLocationOption, type ManagedNetworkOption,
   type ManagedSizeOption,
 } from './managedMachineDisplay';
 
@@ -330,3 +330,47 @@ const styles = StyleSheet.create((theme) => ({
     ...happierPageTextMetrics('rowTitle'),
   },
 }));
+
+const NETWORK_TILE_MIN_WIDTH_PX = 150;
+
+export const ManagedNetworkGroup = React.memo(function ManagedNetworkGroup(
+  props: Readonly<{
+    title: string;
+    description?: string;
+    networks: readonly ManagedNetworkOption[];
+    value: string | null;
+    onChange: (id: string) => void;
+    testID: string;
+  }>,
+) {
+  const options = React.useMemo(
+    () =>
+      props.networks.map((network) => ({
+        id: network.id,
+        title: network.name,
+        subtitle: network.unavailableReason,
+        disabled: !(network.selectable ?? network.unavailableReason === undefined),
+      })),
+    [props.networks],
+  );
+  return (
+    <ItemGroup title={props.title} description={props.description}>
+      <SelectionTiles<string>
+        surface="sheet"
+        density="compact"
+        maximumColumns={3}
+        minimumTileWidth={NETWORK_TILE_MIN_WIDTH_PX}
+        subtitleLines={1}
+        accessibilityLabel={props.title}
+        testIdPrefix={props.testID}
+        options={options}
+        value={props.value}
+        onChange={(next) => {
+          if (next) props.onChange(next);
+        }}
+      />
+    </ItemGroup>
+  );
+});
+
+/** A short name such as "IPv4 and IPv6" fits three across; narrower than this, a variant takes the full row. */

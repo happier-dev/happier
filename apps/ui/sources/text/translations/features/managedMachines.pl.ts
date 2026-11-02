@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "Rozliczana tylko podczas działania.",
             imageDescription: "Od czego startuje. Happier instaluje się na nim.",
             locationDescription: "Im bliżej, tym szybsze pisanie.",
+            network: "Sieć",
+            networkDescription: "Jakie adresy publiczne dostaje. Cena zależy od Twojego wyboru.",
             localLocationDescription: ({ computer }: { computer: string }) => `Gdzie działa na ${computer}.`,
             localSizeDescription: ({ computer }: { computer: string }) => `Jej część zasobów ${computer} podczas działania. Zatrzymanie ją zwalnia.`,
             headroom: ({ computer }: { computer: string }) => `Zostaje dla ${computer}`,

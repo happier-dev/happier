@@ -1,3 +1,4 @@
+import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionInputV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -61,7 +62,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
                 options?.onApprovalPending?.(approval);
                 return { kind: 'approval_pending', approval };
             }
-            const output = ManagedMachineActionOutputSchemasV1[actionId].safeParse(outcome.result);
+            const output = readManagedMachineActionOutputV1(actionId, outcome.result);
             return output.success && matchesRequestedController(output.data) ? { kind: 'succeeded', value: output.data as ManagedMachineActionOutputV1<T> }
                 : { kind: 'failed', code: 'invalid_action_output' };
         }

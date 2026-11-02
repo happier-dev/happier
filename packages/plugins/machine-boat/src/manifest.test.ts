@@ -1,3 +1,4 @@
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -13,7 +14,7 @@ const DESTROY_RESULT_SCHEMA = defineMachineProvisionerReconciliationSchemas({
   nativeOperation: BoatNativeOperationV1Schema,
 }).destroyResult;
 
-async function activated() {
+async function activated(snapshotCount = 0) {
   const handlers = new Map<string, ActionHandler>();
   await exports.activate({ actions: { register(id: string, handler: ActionHandler) { handlers.set(id, handler); return { dispose() {} }; } },
     connectedAccounts: { register() {} } } as unknown as PluginApi);
@@ -23,10 +24,12 @@ async function activated() {
     http: { request: async (request: { url: string; method?: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array }) => {
       requests.push(request);
       const path = new URL(request.url).pathname;
-      const value = path.endsWith('/named-snapshots') ? { ok: true, type: 'snapshot.named.list', snapshots: [] }
+      const value = path.endsWith('/named-snapshots') ? { ok: true, type: 'snapshot.named.list', snapshots: Array.from({ length: snapshotCount }, (_, index) => ({
+        name: `ready-${index}`, status: 'ready', sourceSandboxId: 'bx_23456789', createdAt: '2026-10-12T00:00:00Z',
+      })) }
         : path.includes('/deletion-operations/') ? { ok: true, type: 'deletion.operation', operation: { id: 'bdop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', kind: 'sandbox', targetId: 'bx_23456789', reason: 'explicit', status: 'completed', attemptCount: 1, requestedAt: '2026-10-12T00:00:00Z', completedAt: '2026-10-12T00:01:00Z' } }
         : path.endsWith('/sandboxes/bx_23456789') && request.method === 'DELETE' ? { ok: true, type: 'sandbox.deleting', operation: { id: 'bdop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', kind: 'sandbox', targetId: 'bx_23456789', reason: 'explicit', status: 'pending', attemptCount: 0, requestedAt: '2026-10-12T00:00:00Z', completedAt: null } }
-        : path.endsWith('/sandboxes') && request.method === 'GET' ? { ok: true, type: 'sandbox.list', sandboxes: [] }
+        : path.endsWith('/sandboxes') && request.method === 'GET' ? { ok: true, type: 'sandbox.list', sandboxes: snapshotCount ? [{ id: 'bx_23456789', name: 'Source', state: 'ready' }] : [] }
         : path.endsWith('/limits') ? { ok: true, type: 'limits.info', sandboxPlanDollars: 100, canStart: true, activeSandboxes: 0, maxActiveSandboxes: 100, billingStatus: 'active' }
         : path.endsWith('/sshkey') ? { ok: true, type: 'ssh_key.configured', success: true, machineIp: '203.0.113.8', sshEndpoint: '203.0.113.8:22', sshUser: 'user', hostKey: 'ssh-ed25519 AAAAboat' }
         : path.endsWith('/sandboxes') && request.method === 'POST' ? { ok: true, type: 'sandbox.created', status: 'provisioning', ttlSeconds: null, sandbox: { id: 'bx_23456789', state: 'provisioning' } }
@@ -61,14 +64,15 @@ describe('Boat machine provisioner contract', () => {
 
   it('projects entitlement-gated choices through the shared options contract', async () => {
     const runtime = await activated();
-    const result = await runtime.handlers.get('options')!({}, runtime.context);
-    const choices = (result as { choices: Array<Record<string, unknown>> }).choices;
-    expect(choices.find(value => (value.launch as { size?: string }).size === 'small')).toMatchObject({
-      launch: { size: 'small', source: { kind: 'blank' } }, nativeFacts: { location: { id: 'eu', title: 'EU only' } },
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    expect(result.dimensions.size.find(value => value.id === 'small')).toMatchObject({
+      assignments: [{ path: 'size', value: 'small' }], nativeFacts: { size: { id: 'small' } },
     });
-    expect(choices.find(value => (value.launch as { size?: string }).size === 'xlarge')).toMatchObject({
-      launch: { size: 'xlarge', source: { kind: 'blank' } }, prices: [{ amount: '0.200', unit: 'hour' }],
+    expect(result.dimensions.size.find(value => value.id === 'xlarge')).toMatchObject({
+      assignments: [{ path: 'size', value: 'xlarge' }], prices: [{ amount: '0.200', unit: 'hour' }],
     });
+    expect(result.dimensions.image).toEqual([expect.objectContaining({ id: 'blank', assignments: [{ path: 'source', value: { kind: 'blank' } }] })]);
+    expect(result.dimensions.location).toEqual([expect.objectContaining({ nativeFacts: { location: { id: 'eu', title: 'EU only' } } })]);
     expect(PLUGIN_MANIFEST.contributes.machineProvisioners[0]?.description).toMatchObject({ fallback: expect.stringContaining('$20/month') });
   });
 
@@ -104,4 +108,13 @@ describe('Boat machine provisioner contract', () => {
     expect(await runtime.handlers.get('destroy')!({ nativeOperation }, runtime.context)).toEqual({ kind: 'confirmed' });
     expect(runtime.requests.filter(request => request.method === 'DELETE')).toHaveLength(1);
   });
+  it('emits each size and filesystem source once instead of multiplying native variants', async () => {
+    const runtime = await activated(60);
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    expect(result.dimensions.size).toHaveLength(4);
+    expect(result.dimensions.image).toHaveLength(62);
+    expect(result.dimensions.location).toHaveLength(1);
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
 });

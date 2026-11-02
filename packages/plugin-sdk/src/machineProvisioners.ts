@@ -40,11 +40,14 @@ export type MachineProvisionerNativeIntentV1 = 'start' | 'stop' | 'suspend' | 'r
 export type MachineProvisionerPriceV1 = Readonly<{ label?: PluginLocalizedStringV2; amount: string; currency: string; unit: string; source: string; observedAt: number }>;
 export type MachineProvisionerAuthorDefinitionV1 = Omit<MachineProvisionerContributionV1, 'id'>;
 
+export type MachineProvisionerNativeCauseV1 = canonical.MachineProvisionerNativeCauseV1;
+
 export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; status?: PluginLocalizedStringV2; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: Readonly<{ observedAt: number; availableCpuCores?: number; availableMemoryBytes?: number; availableDiskBytes?: number }> }>;
 export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
   size?: Readonly<{ id: string; title: PluginLocalizedStringV2; cpuCores?: number; memoryBytes?: number; diskBytes?: number }>;
   image?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
   location?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
+  network?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
   duration?: Readonly<{ id: string; title: PluginLocalizedStringV2; afterMs: number }>;
   monthlyCapStatus?: 'none' | 'unknown';
 }>;
@@ -57,8 +60,32 @@ export type DevcontainerEffectReviewV1 = Readonly<{
 }>;
 /** A named output keeps inferred author Action contracts portable during declaration emission. */
 export type MachineProvisionerOptionsResultV1 = Readonly<{
-  readonly choices: readonly Readonly<{ id: string; title: PluginLocalizedStringV2; launch?: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerPriceV1[]; retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>[];
+  code?: 'provider_unavailable'; nativeCause?: MachineProvisionerNativeCauseV1;
+  base?: Readonly<{ launch: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerConditionalPriceV1[];
+    retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>;
+  dimensions: Readonly<Record<MachineProvisionerDimensionV1, readonly MachineProvisionerDimensionOptionV1[]>>;
+  constraints?: readonly MachineProvisionerOptionConstraintV1[];
 }>;
+export type MachineProvisionerDimensionV1 = 'size' | 'image' | 'location' | 'network' | 'duration';
+export type MachineProvisionerSelectionV1 = Readonly<Partial<Record<MachineProvisionerDimensionV1, string>>>;
+export type MachineProvisionerOptionSelectorV1 = Readonly<{ dimension: MachineProvisionerDimensionV1; optionIds: readonly string[] }>;
+export type MachineProvisionerConditionalPriceV1 = MachineProvisionerPriceV1 & Readonly<{ when?: readonly MachineProvisionerOptionSelectorV1[] }>;
+export type MachineProvisionerOptionConstraintV1 = Readonly<{ when: MachineProvisionerOptionSelectorV1; requires: MachineProvisionerOptionSelectorV1 }>;
+export type MachineProvisionerDimensionOptionV1 = Readonly<{
+  id: string; title: PluginLocalizedStringV2;
+  assignments: readonly Readonly<{ path: string; value: ProtocolJsonValue }>[];
+  available?: boolean; prices?: readonly MachineProvisionerConditionalPriceV1[];
+  retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1;
+}>;
+export type MachineProvisionerSelectionProjectionV1 = Readonly<{
+  prices: readonly MachineProvisionerPriceV1[]; nativeFacts: MachineProvisionerNativeOptionFactsV1;
+  retention?: MachineProvisionerContributionV1['retention']; effectReview?: DevcontainerEffectReviewV1;
+}> & (Readonly<{ kind: 'ready'; launch: ProtocolJsonValue }>
+  | Readonly<{ kind: 'incomplete' | 'unavailable' | 'invalid'; code: string }>);
+export const MACHINE_PROVISIONER_DIMENSIONS_V1: readonly MachineProvisionerDimensionV1[] = /* @__PURE__ */ projectProtocolValue(canonical.MACHINE_PROVISIONER_DIMENSIONS_V1);
+export const projectMachineProvisionerSelectionV1: (input: Readonly<{
+  options: MachineProvisionerOptionsResultV1; selection: MachineProvisionerSelectionV1; launchSchema: PluginJsonSchema;
+}>) => MachineProvisionerSelectionProjectionV1 = /* @__PURE__ */ projectProtocolValue(canonical.projectMachineProvisionerSelectionV1);
 export type DevcontainerNativeObservationV1 = Readonly<{
   nativeResourceId: string; user: string; workspaceFolder: string;
   storage: Readonly<{ kind: 'bind'; hostPath: string; childPath: string }> | Readonly<{ kind: 'child'; childPath: string }>;

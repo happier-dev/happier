@@ -1,4 +1,5 @@
-import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, resolveManagedAcquireReviewV1,
+import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
+import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -79,7 +80,7 @@ async function executeManagedMachineNativeActionWithinLifetime(params: ManagedMa
         if (!execution.ok) return execution;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
         if (approval.success && approval.data.actionId === actionId) return { ok: true, result: approval.data };
-        const output = ManagedMachineActionOutputSchemasV1[actionId].safeParse(execution.result);
+        const output = readManagedMachineActionOutputV1(actionId, execution.result);
         return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
     };
     if (actionId === 'machines.environment.apply') {

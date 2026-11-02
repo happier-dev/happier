@@ -12,6 +12,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { SessionBoardActionIdV1Schema } from '@happier-dev/protocol/sessions/board/actionIds';
 import { isSessionBoardActionInputCorrespondingV1 } from '@happier-dev/protocol/sessions/board/actions';
 
+import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -412,14 +413,19 @@ export function createActionApprovalContinuation(
                 return 'consumed';
             }
 
-            const failure = readApprovalExecutionFailure(inspection.request);
+            const execution = inspection.request.execution;
+            const nativeOptions = input.actionId === 'machines.provisioners.options' && execution?.ok === true
+                ? readManagedMachineActionOutputV1(input.actionId, execution.result) : null;
+            const request = nativeOptions?.success && execution
+                ? { ...inspection.request, execution: { ...execution, result: nativeOptions.data } } : inspection.request;
+            const failure = readApprovalExecutionFailure(request);
             if (failure) {
                 input.onFailed?.(failure.errorCode, failure);
                 return 'consumed';
             }
 
             const outputSchema = getActionSpec(input.actionId).outputSchema;
-            const output = outputSchema?.safeParse(inspection.request.execution?.result);
+            const output = nativeOptions ?? outputSchema?.safeParse(execution?.result);
             if (!output?.success) {
                 input.onFailed?.('invalid_action_output');
                 return 'consumed';

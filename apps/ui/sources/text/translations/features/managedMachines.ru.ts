@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "Оплачивается, только пока работает.",
             imageDescription: "С чего она начинается. Happier устанавливается поверх.",
             locationDescription: "Чем ближе, тем быстрее отклик при вводе.",
+            network: "Сеть",
+            networkDescription: "Какие публичные адреса она получит. Цена зависит от вашего выбора.",
             localLocationDescription: ({ computer }: { computer: string }) => `Где она работает на ${computer}.`,
             localSizeDescription: ({ computer }: { computer: string }) => `Её доля ресурсов ${computer}, пока она работает. Остановка освобождает её.`,
             headroom: ({ computer }: { computer: string }) => `Остаётся для ${computer}`,

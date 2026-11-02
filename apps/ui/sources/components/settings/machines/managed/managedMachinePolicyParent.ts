@@ -16,7 +16,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { createManagedProvisionerClient } from './managedProvisionerClient';
 import { createMachinePresetCollectionClient } from './machinePresetCollectionClient';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
-import { managedConfiguratorRetentionCapabilities, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, managedConfiguratorFacts, managedConfiguratorProjection, managedConfiguratorRetentionCapabilities, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 
 export type ManagedMachinePolicyParent = Readonly<{
     policy: MachineRetentionPolicyV1;
@@ -77,16 +77,16 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
         const nativeOptions = await client.read('machines.provisioners.options', { ...nativeInput, selectors: PluginJsonValueV2Schema.parse(selectors.data) }, options);
         if (!current()) return { kind: 'failed', code: 'action_account_scope_changed' };
         if (nativeOptions.kind === 'failed') return nativeOptions;
-        selected = nativeOptions.value.choices.find(choice => choice.available !== false
-            && pluginJsonValuesEqual(choice.launch, machine.launch.choices)) ?? null;
-        // A changed Devcontainer config deliberately has a new effect digest. Match only its
-        // declared query selectors for Rebuild; Reset still requires the exact retained variant.
-        const reviews = nativeOptions.value.choices.filter(choice => {
-            if (choice.available === false || !choice.effectReview) return false;
-            const projected = querySchema.safeParse(choice.launch);
-            return projected.success && pluginJsonValuesEqual(projected.data, selectors.data);
-        });
-        if (reviews.length === 1) effectReview = reviews[0]?.effectReview;
+        const draft = refreshManagedConfiguratorOptions({ ...createManagedConfiguratorDraft({ provisioner, controller,
+            name: machine.launch.name }), selected: { id: 'retained', title: machine.launch.name, launch: machine.launch.choices } }, nativeOptions.value);
+        selected = managedConfiguratorFacts(draft)?.optionStatus === 'current' ? draft.selected : null;
+        // Rebuild reviews the current native effect at the retained query; Reset
+        // continues to require exactly the retained executable launch.
+        const projection = managedConfiguratorProjection(draft);
+        if (projection?.kind === 'ready' && projection.effectReview) {
+            const projected = querySchema.safeParse(projection.launch);
+            if (projected.success && pluginJsonValuesEqual(projected.data, selectors.data)) effectReview = projection.effectReview;
+        }
     }
     return { kind: 'ready', provisioner, selected, ...(effectReview ? { effectReview } : {}) };
 }

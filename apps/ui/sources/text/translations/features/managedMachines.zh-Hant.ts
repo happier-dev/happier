@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "僅在執行時收費。",
             imageDescription: "啟動時的系統。Happier 會安裝在其上。",
             locationDescription: "越近，輸入回應越快。",
+            network: "網路",
+            networkDescription: "選擇它取得的公開位址。價格會隨你的選擇而變。",
             localLocationDescription: ({ computer }: { computer: string }) => `在 ${computer} 上的執行位置。`,
             localSizeDescription: ({ computer }: { computer: string }) => `執行時佔用的 ${computer} 資源。停止後釋放。`,
             headroom: ({ computer }: { computer: string }) => `留給 ${computer}`,

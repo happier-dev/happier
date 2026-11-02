@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "Cobrada só enquanto roda.",
             imageDescription: "Com o que ela começa. O Happier se instala por cima.",
             locationDescription: "Quanto mais perto, mais rápida a digitação.",
+            network: "Rede",
+            networkDescription: "Quais endereços públicos ela recebe. O preço acompanha a sua escolha.",
             localLocationDescription: ({ computer }: { computer: string }) => `Onde roda em ${computer}.`,
             localSizeDescription: ({ computer }: { computer: string }) => `Sua parte de ${computer} enquanto roda. Parar libera.`,
             headroom: ({ computer }: { computer: string }) => `Sobra para ${computer}`,

@@ -1,3 +1,6 @@
+import { ByocLaunchV1Schema } from './remoteSchemas.js';
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -163,10 +166,11 @@ describe('activated Cua remote contributions', () => {
     it('acquires and privately bootstraps exact BYOC compute with both captured purposes and deletes only that created identity', async () => {
         const h = await harness();
         expect(await h.invoke('byoc-check', {})).toMatchObject({ available: true, status: { key: 'machineCua.presentation.ready' } });
-        const options = await h.invoke('byoc-options', { cloud: 'aws' });
-        expect(options).toMatchObject({ choices: [{ launch: byocLaunch, nativeFacts: {
+        const options = MachineProvisionerOptionsResultV1Schema.parse(await h.invoke('byoc-options', { cloud: 'aws' }));
+        expect(projectMachineProvisionerSelectionV1({ options, launchSchema: ByocLaunchV1Schema.jsonSchema,
+            selection: { size: 't3.medium', image: 'linux', location: 'us-west-2' } })).toMatchObject({ kind: 'ready', launch: byocLaunch, nativeFacts: {
             size: { id: 't3.medium' }, image: { id: 'linux' }, location: { id: 'us-west-2' },
-        } }] });
+        } });
         const acquired = await h.invoke('byoc-acquire', { launch: byocLaunch, managedId });
         const resource = { cloud: 'aws', nativeResourceId: 'i-owned', sandboxId: `aws:${name}`, ownedAttachmentIds: [] };
         expect(acquired).toMatchObject({ kind: 'bound', resource: { value: resource } });
@@ -218,4 +222,18 @@ describe('activated Cua remote contributions', () => {
             .toEqual([['--json', '--embedded', 'sandbox', 'rm', `aws:${name}`, '--force']]);
         expect(h.processRequests.some(request => request.args?.includes('sweep'))).toBe(false);
     });
+  it('qualifies the offered BYOC launch through its registered acquire role', async () => {
+        const h = await harness();
+        const options = MachineProvisionerOptionsResultV1Schema.parse(await h.invoke('byoc-options', { cloud: 'aws' }));
+        const selected = projectMachineProvisionerSelectionV1({ options, launchSchema: ByocLaunchV1Schema.jsonSchema,
+            selection: { size: 't3.medium', image: 'linux', location: 'us-west-2' } });
+        expect(selected).toMatchObject({ kind: 'ready', launch: byocLaunch,
+            retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false } });
+        if (selected.kind !== 'ready') throw new Error('Expected complete native selection');
+        expect(await h.invoke('byoc-acquire', { launch: selected.launch, managedId })).toMatchObject({ kind: 'bound', resource: { value: {
+            cloud: 'aws', nativeResourceId: 'i-owned', sandboxId: `aws:${name}`,
+        } } });
+        expect(h.processRequests.find(request => request.args?.includes('create'))?.args).toContain(`--name=${name}`);
+    });
+
 });

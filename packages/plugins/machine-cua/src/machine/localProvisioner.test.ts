@@ -1,3 +1,10 @@
+import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function select(options: MachineProvisionerOptionsResultV1) {
+    return projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
+        selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -95,13 +102,15 @@ describe('consumed Cua local provisioner roles', () => {
         expect(paths).toEqual(['size.cpu', 'size.memoryBytes', ...(prefix === 'space' ? ['size.diskBytes'] : [])]);
         expect(options?.inputHints?.fields.filter(field => field.required).map(field => [field.path, field.defaultValue]))
             .toEqual([['size.cpu', 2], ['size.memoryBytes', 4 * 1024 ** 3]]);
-        const choices = await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context);
-        expect(choices).toMatchObject({ choices: [{ available: true, launch }] });
+        const choices = MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context));
+        const selected = select(choices);
+        expect(selected).toMatchObject({ kind: 'ready', launch });
         const { diskBytes: _imageDisk, ...withoutDisk } = size;
-        expect(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size: withoutDisk }, h.context))
-            .toMatchObject({ choices: [{ available: true, launch }] });
-        const parsed = choices as { choices: { launch: unknown }[] };
-        expect(CuaLocalLaunchV1Schema.parse(parsed.choices[0].launch)).toEqual(launch);
+        expect(select(MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)(
+            { runtimeId: launch.runtimeId, imageId: launch.imageId, size: withoutDisk }, h.context))))
+            .toMatchObject({ kind: 'ready', launch });
+        if (selected.kind !== 'ready') throw new Error('Expected complete native selection');
+        expect(CuaLocalLaunchV1Schema.parse(selected.launch)).toEqual(launch);
         expect(h.requests.every(request => !(request.args ?? []).includes('create'))).toBe(true);
     });
     it('recovers original host correlation by lookup after the process lost its first operation report', async () => {
@@ -250,7 +259,7 @@ describe('consumed Cua local provisioner roles', () => {
     });
     it('returns complete options only from reviewed size selectors and reopens stored additions through the SDK owner', async () => {
         const h = harness();
-        expect(await h.provider.options({ size })).toMatchObject({ choices: [{ available: true, launch }] });
+        expect(select(await h.provider.options({ size }))).toMatchObject({ kind: 'ready', launch });
         expect(await h.provider.inspectStored({ ...resource, future: true })).toEqual({ observedAt: 10, availability: 'present', power: 'running',
             billing: { location: 'local', stoppedBilling: 'not-billed' } });
         await expect(h.provider.inspectStored({ ...resource, runtimeId: 'cloud' })).rejects.toThrow();
@@ -305,8 +314,8 @@ describe('consumed Cua local provisioner roles', () => {
         });
         const options = MachineProvisionerOptionsResultV1Schema.parse(
             await h.action(`${prefix}-options`)({ runtimeId: 'gvisor', imageId: launch.imageId, size }, h.context));
-        expect(options).toMatchObject({ choices: [{ available: false }] });
-        expect(options.choices[0]).not.toHaveProperty('launch');
+        expect(select(options)).toMatchObject({ kind: 'unavailable' });
+        expect(select(options)).not.toHaveProperty('launch');
         expect(await h.action(`${prefix}-acquire`)({ launch: { ...launch, runtimeId: 'gvisor' }, managedId }, h.context))
             .toEqual({ kind: 'rejected', code: 'invalid_request' });
         // Cost/safety contract: an unusable choice creates no resource, even via direct acquire.
@@ -392,4 +401,15 @@ describe('consumed Cua local provisioner roles', () => {
         expect(await h.action('sandbox-acquire')({ launch, managedId }, h.context)).toEqual({ kind: 'rejected', code: 'provider_unavailable' });
         expect(h.requests).toEqual([]);
     });
+  it.each(['sandbox', 'space'])('qualifies the offered local %s launch through the registered acquisition role', async prefix => {
+        const h = await activated();
+        const options = MachineProvisionerOptionsResultV1Schema.parse(await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context));
+        const selected = select(options);
+        expect(selected).toMatchObject({ kind: 'ready', launch });
+        if (selected.kind !== 'ready') throw new Error('Expected complete native selection');
+        const acquired = await h.action(`${prefix}-acquire`)({ launch: selected.launch, managedId }, h.context);
+        expect(acquired).toMatchObject({ kind: prefix === 'sandbox' ? 'bound' : 'pending' });
+        expect(h.requests.find(request => request.args?.includes('create'))?.args).toContain(`--name=happier-${managedId}`);
+    });
+
 });

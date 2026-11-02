@@ -45,10 +45,10 @@ describe('reviewed managed configuration facts', () => {
 
   it('preserves a declared native duration in the same labelled option and immutable fact seam', () => {
     const duration = { id: 'lease-two-hours', title: '2 hours', afterMs: 7_200_000 };
-    const options = MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'lease', title: 'Lease', launch: { cores: 2 }, nativeFacts: { duration } }] });
+    const options = MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: { cores: 2 }, nativeFacts: { duration } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
     const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: choices, launch, controller,
       optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'unknown' },
-      retentionCapabilities: { supportedIntents: ['delete'], finiteOnly: true }, nativeFacts: options.choices[0]!.nativeFacts });
+      retentionCapabilities: { supportedIntents: ['delete'], finiteOnly: true }, nativeFacts: options.base!.nativeFacts });
     expect(facts.nativeFacts).toMatchObject({ duration });
     expect(protocol.ManagedConfigurationFactsV1ReadSchema.parse({ ...facts, nativeFacts: { duration: { ...duration, future: true } } }).nativeFacts)
       .toEqual({ duration });
@@ -86,9 +86,8 @@ describe('reviewed managed configuration facts', () => {
 
   it('preserves a native no-cap fact separately from the provider monthly rate through options and reviewed receipts', () => {
     const price = { amount: '12', currency: 'USD', unit: 'month', source: 'native-api', observedAt: 10 };
-    const options = MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'native-size', title: 'Native size',
-      prices: [price], nativeFacts: { monthlyCapStatus: 'none' } }] });
-    const selected = options.choices[0]!;
+    const options = MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: {}, prices: [price], nativeFacts: { monthlyCapStatus: 'none' } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
+    const selected = options.base!;
     const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: choices, launch, controller,
       optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
       retentionCapabilities: { supportedIntents: ['delete'] }, prices: selected.prices, nativeFacts: selected.nativeFacts });
@@ -96,10 +95,9 @@ describe('reviewed managed configuration facts', () => {
     expect(protocol.ManagedConfigurationFactsV1ReadSchema.parse({ ...facts,
       nativeFacts: { monthlyCapStatus: 'unknown', future: true } }).nativeFacts)
       .toEqual({ monthlyCapStatus: 'unknown' });
-    expect(MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'unmeasured', title: 'Unmeasured', prices: [price] }] })
-      .choices[0]?.nativeFacts).toBeUndefined();
-    expect(MachineProvisionerOptionsResultV1Schema.safeParse({ choices: [{ id: 'invalid', title: 'Invalid',
-      nativeFacts: { monthlyCapStatus: 'inferred-from-rate' } }] }).success).toBe(false);
+    expect(MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: {}, prices: [price] }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } })
+      .base?.nativeFacts).toBeUndefined();
+    expect(MachineProvisionerOptionsResultV1Schema.safeParse({ base: { launch: {}, nativeFacts: { monthlyCapStatus: 'inferred-from-rate' } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } }).success).toBe(false);
   });
 
   it('snapshots the reviewed native dimensions without changing the executable launch', () => {

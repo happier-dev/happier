@@ -1,3 +1,5 @@
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -35,17 +37,30 @@ describe('public hetzner machine provisioner', () => {
   it('projects complete native dimensions and selected networking charges for reviewed variants', async () => {
     const pair = (gross: string) => ({ net: gross, gross });
     const runtime = await activated({
-      server_types: [{ id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
-        prices: [{ location: 'fsn1', price_hourly: pair('0.01'), price_monthly: pair('6') }] }],
-      images: [{ id: 10, name: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS', architecture: 'x86', type: 'system', status: 'available', deprecated: null }],
-      locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: 'DE' }],
+      server_types: [
+        { id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
+          locations: [{ id: 1, name: 'fsn1', available: true, deprecation: null }, { id: 2, name: 'hel1', available: true, deprecation: null }], prices: [
+          { location: 'fsn1', price_hourly: pair('0.01'), price_monthly: pair('6') },
+          { location: 'hel1', price_hourly: pair('0.02'), price_monthly: pair('12') },
+        ] },
+        { id: 2, name: 'cax11', cores: 2, memory: 4, disk: 40, architecture: 'arm',
+          locations: [{ id: 1, name: 'fsn1', available: true, deprecation: null }],
+          prices: [{ location: 'fsn1', price_hourly: pair('0.03'), price_monthly: pair('18') }] },
+      ],
+      images: [
+        { id: 10, name: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS', architecture: 'x86', type: 'system', status: 'available', deprecated: null },
+        { id: 11, name: 'ubuntu-arm', architecture: 'arm', type: 'system', status: 'available', deprecated: null },
+      ],
+      locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: 'DE' }, { id: 2, name: 'hel1', description: 'Helsinki', country: 'FI' }],
       pricing: { currency: 'EUR', primary_ips: [{ type: 'ipv4', prices: [
         { location: 'fsn1', price_hourly: pair('0.001'), price_monthly: pair('0.60') },
       ] }] }, meta: { pagination: { next_page: null } },
     });
-    const result = await runtime.handlers.get('options')!({}, runtime.context);
-    expect(result).toMatchObject({ choices: [
-      { launch: { publicNetworking: { ipv4: true, ipv6: false } },
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    const selected = result.dimensions.network.map(network => projectMachineProvisionerSelectionV1({ options: result,
+      selection: { size: '1', image: '10', location: 'fsn1', network: network.id }, launchSchema: exports.MACHINE_PROVISIONER.launchSchema }));
+    expect(selected).toMatchObject([
+      { kind: 'ready', launch: { publicNetworking: { ipv4: true, ipv6: false } },
         nativeFacts: { size: { id: '1', cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 40 * 1000 ** 3 },
           image: { id: '10', title: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS' }, location: { id: 'fsn1', title: 'Falkenstein', countryCode: 'DE' } },
         prices: [{ amount: '0.01', label: { key: 'machineHetzner.prices.compute' } }, { amount: '6', label: { key: 'machineHetzner.prices.compute' } },
@@ -53,7 +68,19 @@ describe('public hetzner machine provisioner', () => {
           { amount: '0.60', label: { key: 'machineHetzner.prices.primaryIpv4' } }] },
       { launch: { publicNetworking: { ipv4: false, ipv6: true } }, prices: [{ amount: '0.01' }, { amount: '6' }] },
       { launch: { publicNetworking: { ipv4: true, ipv6: true } }, prices: [{ amount: '0.01' }, { amount: '6' }, { amount: '0.001' }, { amount: '0.60' }] },
-    ] });
+    ]);
+    // Each public-networking variant is a labelled native choice, so the person can pick the cheaper one.
+    expect(result.dimensions.network.map(choice => choice.nativeFacts?.network)).toEqual([
+      { id: '10', title: { key: 'machineHetzner.network.ipv4', fallback: 'IPv4 only' } },
+      { id: '01', title: { key: 'machineHetzner.network.ipv6', fallback: 'IPv6 only' } },
+      { id: '11', title: { key: 'machineHetzner.network.dual', fallback: 'IPv4 and IPv6' } },
+    ]);
+    const project = (size: string, image: string, location: string) => projectMachineProvisionerSelectionV1({ options: result,
+      selection: { size, image, location, network: '01' }, launchSchema: exports.MACHINE_PROVISIONER.launchSchema });
+    expect(project('1', '11', 'fsn1').kind).toBe('unavailable');
+    expect(project('2', '11', 'hel1').kind).toBe('unavailable');
+    expect(project('2', '11', 'fsn1')).toMatchObject({ kind: 'ready', prices: [{ amount: '0.03' }, { amount: '18' }] });
+    expect(project('1', '10', 'hel1')).toMatchObject({ kind: 'ready', prices: [{ amount: '0.02' }, { amount: '12' }] });
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
     expect(JSON.stringify(result)).not.toContain('preview');
   });
@@ -129,4 +156,28 @@ describe('brand mark', () => {
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
+  it('emits each native size fact once at the observed catalog scale', async () => {
+    // Synthetic REST-v1 catalogs reproduce CLOUD2's 8,496-combination scale;
+    // no private catalog or live provider request is used.
+    const pair = (gross: string) => ({ net: gross, gross });
+    const locations = Array.from({ length: 3 }, (_, index) => ({ id: index + 1, name: `location-${index}`, description: `Location ${index}` }));
+    const serverTypes = Array.from({ length: 59 }, (_, index) => ({ id: index + 1, name: `type-${index}`, cores: 2, memory: 4, disk: 40,
+      architecture: 'x86', locations: locations.map(location => ({ id: location.id, name: location.name, available: true, deprecation: null })),
+      prices: locations.map(location => ({ location: location.name, price_hourly: pair('0.01'), price_monthly: pair('6') })) }));
+    const images = Array.from({ length: 16 }, (_, index) => ({ id: index + 1, name: `ubuntu-${index}`, architecture: 'x86',
+      type: 'system', status: 'available', deprecated: null }));
+    const runtime = await activated({ server_types: serverTypes, images, locations, pricing: { currency: 'EUR' },
+      meta: { pagination: { next_page: null } } });
+    const startedAt = performance.now();
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    const wire = JSON.stringify(result);
+    const elapsedMs = performance.now() - startedAt;
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    const dimensionCount = Object.values(result.dimensions).reduce((total, entries) => total + entries.length, 0);
+    console.info(`Hetzner native sizes=${serverTypes.length}; dimensions=${dimensionCount}; bytes=${new TextEncoder().encode(wire).byteLength}; elapsedMs=${elapsedMs.toFixed(1)}`);
+    expect(dimensionCount).toBe(81);
+    expect(wire.match(/"cpuCores":/g)?.length ?? 0)
+      .toBe(serverTypes.length);
+  });
+
 });

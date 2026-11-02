@@ -1,3 +1,4 @@
+import { projectDigitalOceanOptions } from './machine/options.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { machinePresentationLabel, machineCheckPresentation, DIGITALOCEAN_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -77,25 +78,7 @@ export const PLUGIN = definePlugin({
     },
     options: { ...defaults, title: 'Discover DigitalOcean options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context) { const facts = await (await runtime(context)).options();
-        if (facts.kind !== 'available') throw new Error('provider_unavailable');
-        return { choices: facts.sizes.flatMap(size => facts.regions.filter(region => size.regions.includes(region.slug))
-          .flatMap(region => facts.images.filter(image => image.bootstrapSupported && image.regions.includes(region.slug))
-            .flatMap(image => [false, true].map(ipv6 => ({
-              id: `${size.slug}/${region.slug}/${image.id}/${Number(ipv6)}`,
-              title: `${size.slug} · ${size.vcpus} CPU · ${size.memory} MB · ${size.disk} GB · ${image.name} · ${region.name}`,
-              launch: { regionSlug: region.slug, sizeSlug: size.slug, imageId: image.id, publicNetworking: { ipv6 } },
-              available: size.available && region.available && region.sizes.includes(size.slug) && image.status === 'available',
-              prices: size.prices,
-              nativeFacts: {
-                size: { id: size.slug, title: `${size.slug} · ${size.vcpus} CPU · ${size.memory} MB · ${size.disk} GB`, cpuCores: size.vcpus,
-                  memoryBytes: size.memory * 1024 ** 2, diskBytes: size.disk * 1000 ** 3 },
-                image: { id: String(image.id), title: image.name,
-                  ...(image.description ? { description: image.description } : {}) },
-                location: { id: region.slug, title: region.name },
-                monthlyCapStatus: size.monthlyCapStatus,
-              },
-            }))))) }; },
+      async run(_input, context) { return projectDigitalOceanOptions(await (await runtime(context)).options()); },
     },
     acquire: { ...defaults, title: 'Acquire DigitalOcean resource', dangerLevel: 'destructive',
       confirmation: { title: 'Create this DigitalOcean Droplet?', body: 'This creates the reviewed paid resource. Stopped Droplets remain billable.' },

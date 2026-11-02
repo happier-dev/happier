@@ -1,4 +1,4 @@
-import type { MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { MachineProvisionerDimensionV1, MachineProvisionerOptionsResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedControllerV1, ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedConfigurationFactsV1Schema, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -18,6 +18,9 @@ import type { InputHints } from '@happier-dev/protocol/inputs/inputFields';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
 
+import { MACHINE_PROVISIONER_DIMENSIONS_V1, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+
 export type ManagedConfiguratorDraft = Readonly<{
     provisioner: MachineProvisionersListResultV1['provisioners'][number];
     controller: ManagedControllerV1; name: string;
@@ -26,9 +29,11 @@ export type ManagedConfiguratorDraft = Readonly<{
     environment?: MachineEnvironmentV1;
     /** Explicit editable values may be temporarily invalid; only the declared options schema admits a probe. */
     optionsSelectors?: Readonly<Record<string, unknown>>;
-    choices: MachineProvisionerOptionsResultV1['choices'];
-    selected: MachineProvisionerOptionsResultV1['choices'][number] | null;
-    /** Unsaved, explicit dimension selections until a complete returned native variant matches. */
+    /** A deliberate form edit may advance its native review; ordinary refreshes cannot substitute a launch. */
+    optionsSelectorsEdited?: true;
+    options: MachineProvisionerOptionsResultV1 | null;
+    selected: ManagedConfiguratorSelection | null;
+    /** Unsaved, explicit dimension selections; executable projection belongs to Protocol. */
     dimensionSelection?: Partial<Record<ManagedConfiguratorDimension, string>>;
     choicesSchema: ReturnType<typeof createPluginJsonSchemaZodValueAdapter>;
     optionStatus: 'current' | 'loading' | 'unavailable';
@@ -37,72 +42,72 @@ export type ManagedConfiguratorDraft = Readonly<{
     override?: MachineRetentionOverrideV1;
     preset?: Readonly<{ id: string; revision: number; name?: string }> & MachineRetentionOverrideV1;
 }>;
-export type ManagedConfiguratorDimension = 'size' | 'image' | 'location' | 'duration';
-const dimensions: readonly ManagedConfiguratorDimension[] = ['size', 'image', 'location', 'duration'];
-type Choice = MachineProvisionerOptionsResultV1['choices'][number];
+export type ManagedConfiguratorDimension = MachineProvisionerDimensionV1;
+const dimensions = MACHINE_PROVISIONER_DIMENSIONS_V1;
+type Projection = ReturnType<typeof projectMachineProvisionerSelectionV1>;
+type ManagedConfiguratorSelection = Readonly<{
+    id: string; title: MachineProvisionerOptionsResultV1['dimensions']['size'][number]['title'];
+    launch: Extract<Projection, { kind: 'ready' }>['launch'];
+    prices?: Projection['prices']; nativeFacts?: Projection['nativeFacts'];
+    retention?: Projection['retention']; effectReview?: Projection['effectReview'];
+}>;
 /** One selected-variant capability input for configuration, policy and admission facts. */
-export function managedConfiguratorRetentionCapabilities(draft: Pick<ManagedConfiguratorDraft, 'provisioner' | 'selected'>) {
-    return draft.selected?.retention ?? draft.provisioner.descriptor.retention;
+export function managedConfiguratorRetentionCapabilities(draft: Pick<ManagedConfiguratorDraft, 'provisioner' | 'selected'>
+    & Partial<Pick<ManagedConfiguratorDraft, 'options' | 'dimensionSelection'>>) {
+    const current = draft.options ? projectMachineProvisionerSelectionV1({ options: draft.options,
+        selection: draft.dimensionSelection ?? {}, launchSchema: draft.provisioner.descriptor.launchSchema }) : null;
+    return current?.retention ?? draft.selected?.retention ?? draft.provisioner.descriptor.retention;
 }
 export function managedConfiguratorDimensionSelection(draft: ManagedConfiguratorDraft): Partial<Record<ManagedConfiguratorDimension, string>> {
-    return draft.dimensionSelection ?? Object.fromEntries(dimensions.flatMap(dimension => {
+    const selection = draft.dimensionSelection ?? Object.fromEntries(dimensions.flatMap(dimension => {
         const fact = draft.selected?.nativeFacts?.[dimension];
-        return fact ? [[dimension, fact.id]] : [];
+        return fact && draft.options?.dimensions[dimension].length ? [[dimension, fact.id]] : [];
     }));
+    // Networking comes with the machine rather than being a prerequisite pick: until the person chooses another,
+    // the provider's first declared variant stands, visibly selected, so size, image and place complete the choice.
+    const network = selection.network ?? draft.options?.dimensions.network[0]?.id;
+    return network ? { ...selection, network } : selection;
 }
-function compatibleDimensionChoice(choice: Choice, selection: Partial<Record<ManagedConfiguratorDimension, string>>) {
-    return dimensions.every(dimension => !selection[dimension] || choice.nativeFacts?.[dimension]?.id === selection[dimension]);
-}
-/** Options selectors constrain their corresponding launch fields; query-only fields have no launch value. */
-function compatibleLaunchSelectors(launch: unknown, selectors: Readonly<Record<string, unknown>>): boolean {
-    // Scalar launches have no named fields. Every options field is query-only for that native shape.
-    const fields = launch && typeof launch === 'object' && !Array.isArray(launch) ? launch : {};
-    return compatibleLaunchSelectorValues(fields, selectors);
-}
-function compatibleLaunchSelectorValues(launch: unknown, selectors: unknown): boolean {
-    if (!selectors || typeof selectors !== 'object' || Array.isArray(selectors)) return pluginJsonValuesEqual(launch, selectors);
-    if (!launch || typeof launch !== 'object' || Array.isArray(launch)) return false;
-    const values = launch as Record<string, unknown>;
-    return Object.entries(selectors).every(([key, value]) => !(key in values) || compatibleLaunchSelectorValues(values[key], value));
+export function managedConfiguratorProjection(draft: ManagedConfiguratorDraft, selection = managedConfiguratorDimensionSelection(draft)) {
+    return draft.options ? projectMachineProvisionerSelectionV1({ options: draft.options, selection,
+        launchSchema: draft.provisioner.descriptor.launchSchema }) : null;
 }
 export function managedConfiguratorDimensionChoices(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension) {
-    const candidates = [...draft.choices, ...(draft.selected ? [draft.selected] : [])];
-    const ids = [...new Set(candidates.flatMap(choice => choice.nativeFacts?.[dimension]?.id ? [choice.nativeFacts[dimension]!.id] : []))];
-    const remainingSelection = { ...managedConfiguratorDimensionSelection(draft), [dimension]: undefined };
-    return ids.map(id => {
-        const choice = candidates.find(candidate => candidate.nativeFacts?.[dimension]?.id === id)!;
-        const selectable = draft.choices.filter(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id
-            && compatibleLaunchSelectors(candidate.launch, draft.optionsSelectors ?? {}));
-        const applicable = selectable.filter(candidate => compatibleDimensionChoice(candidate, remainingSelection));
-        const representative = applicable[0] ?? choice;
-        // A conditional or unavailable comparison must never borrow an arbitrary region/network quote.
-        const prices = applicable.length === 1 ? representative.prices : undefined;
-        return { choice: prices === representative.prices ? representative : { ...representative, prices }, available: applicable.length > 0,
-            selectable: selectable.length > 0 };
+    const selection = managedConfiguratorDimensionSelection(draft);
+    const rows = (draft.options?.dimensions[dimension] ?? []).map(option => {
+        // This row supplies its candidate already. Other siblings cannot affect
+        // that candidate's projection; retain all cross-dimension constraints.
+        const projection = managedConfiguratorProjection({ ...draft, options: draft.options ? { ...draft.options,
+            dimensions: { ...draft.options.dimensions, [dimension]: [option] } } : null }, { ...selection, [dimension]: option.id });
+        return { choice: { id: option.id, title: option.title, nativeFacts: projection?.nativeFacts,
+            prices: projection?.prices.length ? projection.prices : undefined }, available: projection?.kind !== 'unavailable' && projection?.kind !== 'invalid',
+            ...(projection?.kind === 'invalid' && projection.code === 'invalid_launch' ? { invalidLaunch: true as const } : {}),
+            selectable: option.available !== false };
     });
+    const retained = draft.selected?.nativeFacts?.[dimension];
+    const retainedId = draft.dimensionSelection?.[dimension];
+    if (retained && retainedId !== undefined && !rows.some(row => row.choice.id === retainedId)) rows.push({ choice: { id: retainedId,
+        title: dimensions.filter(key => draft.dimensionSelection?.[key]).length === 1 ? draft.selected!.title : retained.title,
+        nativeFacts: draft.selected?.nativeFacts, prices: draft.selected?.prices }, available: false, selectable: false });
+    return rows;
 }
-/** Native launch values remain indivisible. A dimension change never synthesizes provider selectors. */
+function selectedProjection(draft: ManagedConfiguratorDraft, projection: Extract<Projection, { kind: 'ready' }>,
+    selection = managedConfiguratorDimensionSelection(draft)): ManagedConfiguratorSelection {
+    const options = dimensions.flatMap(dimension => draft.options?.dimensions[dimension].filter(option => option.id === selection[dimension]) ?? []);
+    return { id: 'selection', title: options.length === 1 ? options[0]!.title : draft.name,
+        launch: projection.launch, prices: projection.prices.length ? projection.prices : undefined,
+        nativeFacts: projection.nativeFacts, retention: projection.retention, effectReview: projection.effectReview };
+}
+/** All executable selector assignments and constraints are applied by the shared Protocol owner. */
 export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension, id: string): ManagedConfiguratorDraft {
-    const independentDimensions = managedConfiguratorRetentionCapabilities(draft).finiteOnly && draft.provisioner.descriptor.nativeDurationInput
-        ? dimensions.filter(key => key !== 'duration') : dimensions;
-    // A bound duration is edited through the declared options field, not selected a second time.
-    const selection = { ...Object.fromEntries(Object.entries(managedConfiguratorDimensionSelection(draft))
-        .filter(([key]) => independentDimensions.some(dimensionKey => dimensionKey === key))), [dimension]: id };
-    const matching = draft.choices.filter(candidate => candidate.available !== false && compatibleDimensionChoice(candidate, selection)
-        && compatibleLaunchSelectors(candidate.launch, draft.optionsSelectors ?? {}));
-    const choice = matching[0];
-    if (!draft.choices.some(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id)) return draft;
-    // A fixed finite lifetime is part of the complete native variant. Requiring
-    // its Ends control before that variant is selected would make it unreachable.
-    // Distinct native duration alternatives still require an explicit selection.
-    const fixedFiniteDuration = choice?.retention?.finiteOnly === true && choice.nativeFacts?.duration
-        && matching.every(candidate => candidate.nativeFacts?.duration?.id === choice.nativeFacts?.duration?.id);
-    const complete = independentDimensions.every(key => !draft.choices.some(candidate => candidate.nativeFacts?.[key])
-        || !!selection[key] || key === 'duration' && fixedFiniteDuration);
-    return { ...draft, dimensionSelection: complete && choice ? undefined : selection, selected: complete && choice ? choice : null };
+    if (!draft.options?.dimensions[dimension].some(option => option.id === id && option.available !== false)) return draft;
+    const selection = { ...managedConfiguratorDimensionSelection(draft), [dimension]: id };
+    const projection = managedConfiguratorProjection(draft, selection);
+    return { ...draft, dimensionSelection: selection, selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
+        optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited };
 }
 export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'environment' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
-    return { ...input, choices: [], selected: null, optionStatus: 'loading',
+    return { ...input, options: null, selected: null, optionStatus: 'loading',
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
 }
 /** Saved recipes use the existing persistence projection; current edits remain strictly admitted. */
@@ -117,7 +122,7 @@ export function managedConfiguratorOptionsSelectors(draft: ManagedConfiguratorDr
 }
 export function setManagedConfiguratorOptionsSelectors(draft: ManagedConfiguratorDraft,
     selectors: Readonly<Record<string, unknown>>): ManagedConfiguratorDraft {
-    return { ...draft, optionsSelectors: selectors, optionStatus: 'loading' };
+    return { ...draft, optionsSelectors: selectors, optionsSelectorsEdited: true, optionStatus: 'loading' };
 }
 /** Only the current occurrence's purpose options authorize a retained qualified ref. */
 export function managedConfiguratorCredentialSelections(draft: Pick<ManagedConfiguratorDraft, 'credentials'> & Partial<Pick<ManagedConfiguratorDraft, 'selected' | 'optionsSelectors'>>,
@@ -136,24 +141,43 @@ export function setManagedConfiguratorCredentials(draft: ManagedConfiguratorDraf
     if (pluginJsonValuesEqual(draft.credentials ?? [], credentials ?? [])) return draft;
     return { ...draft, credentials: credentials?.length ? credentials : undefined, optionStatus: 'loading', check: undefined };
 }
-export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraft, options: MachineProvisionerOptionsResultV1): ManagedConfiguratorDraft {
-    const current = options.choices.find(choice => choice.id === draft.selected?.id)
-        ?? (draft.selected?.id.startsWith('preset:')
-            ? options.choices.find(choice => pluginJsonValuesEqual(choice.launch, draft.selected?.launch)) : undefined);
-    const unchanged = current && draft.selected && pluginJsonValuesEqual(current.launch, draft.selected.launch);
-    return { ...draft, choices: options.choices, selected: unchanged ? current : draft.selected, optionStatus: 'current' };
+/**
+ * `selectors` are the form values the read was asked with. A free-form host (Cua) answers with one size that
+ * assigns exactly what the form sent: the form already made that choice, so the row is selected, never re-asked.
+ */
+export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraft, options: MachineProvisionerOptionsResultV1,
+    selectors?: unknown): ManagedConfiguratorDraft {
+    let selection = { ...managedConfiguratorDimensionSelection(draft) };
+    // A fully qualified form already supplied this sole native fact. Keep its
+    // visible row selected rather than asking the person to repeat that input.
+    const supplied = (assignment: Readonly<{ path: string; value: unknown }>) =>
+        pluginJsonValuesEqual(readInputPath(options.base?.launch, assignment.path), assignment.value)
+        || selectors !== undefined && pluginJsonValuesEqual(readInputPath(selectors, assignment.path), assignment.value);
+    for (const dimension of dimensions) {
+        const entries = options.dimensions[dimension];
+        const only = entries.length === 1 ? entries[0] : undefined;
+        const editedMissing = draft.optionsSelectorsEdited === true && !entries.some(entry => entry.id === selection[dimension]);
+        if ((selection[dimension] === undefined || editedMissing) && only && options.base && only.assignments.every(supplied)) {
+            selection[dimension] = only.id;
+        }
+    }
+    if (draft.selected) selection = { ...readMachineProvisionerSelectionForLaunchV1(options, draft.selected.launch), ...selection };
+    const next = { ...draft, options, dimensionSelection: selection, optionStatus: 'current' as const };
+    selection = managedConfiguratorDimensionSelection(next);
+    const projection = managedConfiguratorProjection(next, selection);
+    const sameLaunch = projection?.kind === 'ready' && draft.selected && pluginJsonValuesEqual(projection.launch, draft.selected.launch);
+    const selected = projection?.kind === 'ready' && (!draft.selected || sameLaunch || draft.optionsSelectorsEdited === true)
+        ? selectedProjection(next, projection) : draft.selected;
+    return { ...next, dimensionSelection: selection, selected,
+        optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited };
 }
-export function selectManagedConfiguratorChoice(draft: ManagedConfiguratorDraft, id: string): ManagedConfiguratorDraft {
-    const selected = draft.choices.find(choice => choice.id === id);
-    return selected ? { ...draft, selected, dimensionSelection: undefined } : draft;
-}
-export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft): ManagedConfigurationFactsV1 | null {
+export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projection?: ReturnType<typeof managedConfiguratorProjection>): ManagedConfigurationFactsV1 | null {
     const selected = draft.selected;
     if (!selected || selected.launch === undefined || !draft.name.trim()) return null;
     const parsed = draft.choicesSchema.safeParse(selected.launch);
     if (!parsed.success) return null;
-    const current = draft.choices.find(choice => choice.id === selected.id);
-    const available = current && current.available !== false && pluginJsonValuesEqual(current.launch, selected.launch);
+    const current = projection === undefined ? managedConfiguratorProjection(draft) : projection;
+    const available = current?.kind === 'ready' && pluginJsonValuesEqual(current.launch, selected.launch);
     const credentials = draft.credentials?.filter(credential => isMachineProvisionerCredentialPurposeRequiredV1(
         draft.provisioner.descriptor, credential.purpose.purpose, parsed.data));
     return ManagedConfigurationFactsV1Schema.parse(buildManagedConfigurationFactsV1({ choicesSchema: draft.choicesSchema,

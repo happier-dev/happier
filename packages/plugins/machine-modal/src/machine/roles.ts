@@ -38,18 +38,21 @@ export function createModalProvisionerRoles(client: ModalNativeClient, observedA
     },
     async options(input: unknown = {}) {
       const complete = ModalLaunchV1Schema.safeParse(ModalOptionsInputV1Schema.parse(input));
-      if (!complete.success) return { choices: [] };
+      const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
+      if (!complete.success) return { dimensions: emptyDimensions };
       const launch = complete.data;
       const selected = await native.check({ appReference: launch.appReference });
       if (!selected.ok) unavailable(selected.code);
       // The SDK cannot enumerate Apps or registry images. Shared schema-backed
       // inputs supply the explicit reviewed variant; no fabricated native catalog.
-      return { choices: [{ id: 'reviewed', title: launch.appReference, launch,
-        nativeFacts: { image: { id: launch.imageReference, title: launch.imageReference },
-          size: { id: `${launch.resources.cpu}:${launch.resources.memoryMb}`, title: `${launch.resources.cpu} CPU · ${launch.resources.memoryMb} MiB`,
-            cpuCores: launch.resources.cpu, memoryBytes: launch.resources.memoryMb * 1024 * 1024 },
-          duration: { id: String(launch.timeoutMs), title: `${launch.timeoutMs / 1000} s`, afterMs: launch.timeoutMs } },
-      }] };
+      const image = { id: launch.imageReference, title: launch.imageReference };
+      const size = { id: `${launch.resources.cpu}:${launch.resources.memoryMb}`, title: `${launch.resources.cpu} CPU · ${launch.resources.memoryMb} MiB`,
+        cpuCores: launch.resources.cpu, memoryBytes: launch.resources.memoryMb * 1024 * 1024 };
+      const duration = { id: String(launch.timeoutMs), title: `${launch.timeoutMs / 1000} s`, afterMs: launch.timeoutMs };
+      return { base: { launch, }, dimensions: { ...emptyDimensions,
+        image: [{ id: image.id, title: image.title, assignments: [], nativeFacts: { image } }],
+        size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
+        duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }], } };
     },
     async reconcile(input: unknown) {
       cancelled();

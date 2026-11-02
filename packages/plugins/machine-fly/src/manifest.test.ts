@@ -1,3 +1,9 @@
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function projectOptions(raw: unknown) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: exports.FlyLaunchV1Schema.jsonSchema,
+    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
 import * as z from 'zod/mini';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -252,10 +258,11 @@ describe('public fly machine provisioner', () => {
     } : request.url.includes('/apps?') ? { total_apps: 1, apps: [{ id: 'app-1', name: 'managed', machine_count: 0, volume_count: 1 }] }
       : [{ id: 'vol-1', state: 'created', region: 'ams', size_gb: 2, attached_machine_id: null }]);
     const result = await runtime.handlers.get('options')!(query, runtime.context);
-    expect(result).toMatchObject({ choices: [{ launch: selected, available: true,
-      nativeFacts: { size: { cpuCores: 1, memoryBytes: 1024 * 1024 * 1024 }, location: { id: 'ams', title: 'Amsterdam' } } }] });
-    const choices = MachineProvisionerOptionsResultV1Schema.parse(result).choices;
-    expect(choices.every(choice => exports.ROLE_SCHEMAS.acquireInput.safeParse({ managedId: 'managed-1', launch: choice.launch }).success)).toBe(true);
+    const projected = projectOptions(result);
+    expect(projected).toMatchObject({ kind: 'ready', launch: selected,
+      nativeFacts: { size: { cpuCores: 1, memoryBytes: 1024 * 1024 * 1024 }, location: { id: 'ams', title: 'Amsterdam' } } });
+    if (projected.kind !== 'ready') throw new Error('Reviewed Fly form did not produce a launch');
+    expect(exports.ROLE_SCHEMAS.acquireInput.safeParse({ managedId: 'managed-1', launch: projected.launch }).success).toBe(true);
     // The shared field owner deliberately retains hidden siblings. Switching
     // either way must re-query without mutating that draft or leaking inactive
     // volume/app fields into the reviewed executable launch.
@@ -272,9 +279,10 @@ describe('public fly machine provisioner', () => {
       expect(exports.FlyLaunchV1Schema.safeParse(query).success).toBe(false);
       const retained = structuredClone(query);
       const switched = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(query, runtime.context));
-      expect(switched.choices.map(choice => choice.launch)).toEqual([next]);
-      expect(switched.choices[0]?.available).toBe(true);
-      expect(switched.choices.every(choice => exports.FlyLaunchV1Schema.safeParse(choice.launch).success)).toBe(true);
+      const projected = projectOptions(switched);
+      expect(projected).toMatchObject({ kind: 'ready', launch: next });
+      if (projected.kind !== 'ready') throw new Error('Switched reviewed Fly form did not produce a launch');
+      expect(exports.FlyLaunchV1Schema.safeParse(projected.launch).success).toBe(true);
       expect(query).toEqual(retained);
     }
     expect(isValidPluginJsonSchemaValue(validateQuery, { ...query, unknownDraftField: true })).toBe(false);
@@ -286,7 +294,7 @@ describe('public fly machine provisioner', () => {
     ]) {
       expect(isValidPluginJsonSchemaValue(validateQuery, incomplete)).toBe(true);
       const discovery = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(incomplete, runtime.context));
-      expect(discovery.choices.every(choice => choice.launch === undefined)).toBe(true);
+      expect(projectOptions(discovery)).toMatchObject({ kind: 'incomplete' });
     }
     expect(runtime.requests.some(request => request.url.endsWith('/machines'))).toBe(false);
     expect(runtime.requests.every(request => request.method !== 'POST' || request.url.endsWith('/graphql'))).toBe(true);

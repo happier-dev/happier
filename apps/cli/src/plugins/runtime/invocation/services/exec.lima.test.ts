@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
@@ -124,16 +124,22 @@ describe('Lima declared native process environment', () => {
                 };
                 expect(launchSchema.parse(recipe)).toEqual(recipe);
                 const options = await invoke(recipe);
-                expect(options.choices).toMatchObject([{ available: true, launch: recipe }]);
-                expect(launchSchema.parse(options.choices[0]!.launch)).toEqual(recipe);
-                expect(await invoke({})).toEqual({ choices: [] });
+                expect(options.base).toMatchObject({ available: true, launch: recipe });
+                const selection = Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+                    entries[0] ? [[dimension, entries[0].id]] : []));
+                const selected = projectMachineProvisionerSelectionV1({ options, selection, launchSchema: provisioner.launchSchema });
+                expect(selected.kind).toBe('ready');
+                if (selected.kind !== 'ready') throw new Error('Native-qualified Lima recipe was not executable');
+                expect(launchSchema.parse(selected.launch)).toEqual(recipe);
+                const incomplete = await invoke({});
+                expect(projectMachineProvisionerSelectionV1({ options: incomplete, selection: {}, launchSchema: provisioner.launchSchema }).kind).toBe('incomplete');
                 const unsupported = await invoke({ ...recipe, vmType: 'vz' });
-                expect(unsupported.choices).toMatchObject([{ available: false }]);
-                expect(unsupported.choices[0]!.launch).toBeUndefined();
+                expect(unsupported.base).toMatchObject({ available: false });
+                expect(projectMachineProvisionerSelectionV1({ options: unsupported, selection, launchSchema: provisioner.launchSchema }).kind).toBe('unavailable');
                 await unlink(join(root, 'qemu-img'));
                 const unavailable = await invoke(recipe);
-                expect(unavailable.choices).toMatchObject([{ available: false }]);
-                expect(unavailable.choices[0]!.launch).toBeUndefined();
+                expect(unavailable.base).toMatchObject({ available: false });
+                expect(projectMachineProvisionerSelectionV1({ options: unavailable, selection, launchSchema: provisioner.launchSchema }).kind).toBe('unavailable');
                 expect(existsSync(effectsPath)).toBe(false);
             } finally {
                 await registry.dispose();

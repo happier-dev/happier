@@ -63,8 +63,10 @@ describe('public Lima native leaf', () => {
   it('names the reviewed image by its file and source, never by its whole location', async () => {
     const { executor } = processBoundary(() => ({ exitCode: 0, out: 'limactl version 2.1.0', err: '' }));
     const query = { ...launch, image: 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img?x=1' };
-    const { choices } = await createLimaProvider(executor, 123, async () => true).options(query);
-    expect(choices[0]?.nativeFacts?.image).toEqual({ id: query.image, title: 'ubuntu-24.04-server-cloudimg-amd64.img',
+    const { base, dimensions } = await createLimaProvider(executor, 123, async () => true).options(query);
+    expect(dimensions.image).toEqual([]);
+    expect(base?.launch).toMatchObject({ image: query.image });
+    expect(base?.nativeFacts?.image).toEqual({ id: query.image, title: 'ubuntu-24.04-server-cloudimg-amd64.img',
       description: 'cloud-images.ubuntu.com' });
   });
 

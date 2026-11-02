@@ -1,3 +1,9 @@
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+function projectOptions(raw: unknown) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: LumeLaunchV1Schema.jsonSchema,
+    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
 import { describe, expect, it } from 'vitest';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -106,18 +112,16 @@ describe('activated Lume provisioner Actions', () => {
     const { action, context } = await activated();
     const options = await action('options')(LumeOptionsInputV1Schema.parse(query), context);
     const expectedLaunch = LumeLaunchV1Schema.parse(query);
-    expect(options).toMatchObject({ choices: expect.arrayContaining([
-      expect.objectContaining({ available: true, launch: expectedLaunch }),
-    ]) });
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: expectedLaunch });
   });
 
   it('consumes the host managed ID and bootstrap public key through real declared role schemas', async () => {
     const { action, context, requests, commands } = await activated();
     const options = await action('options')({ storage: launch.storage, cpu: launch.cpu,
       memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes }, context);
-    expect(options).toMatchObject({ choices: [{ launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } } },
-      { launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos-tahoe-cua:26.5.2' } } },
-      { nativeFacts: { location: { id: 'home' } } }] });
+    expect(MachineProvisionerOptionsResultV1Schema.parse(options).dimensions.image.map(image => image.id))
+      .toEqual(['ghcr.io/trycua/macos:26', 'ghcr.io/trycua/macos-tahoe-cua:26.5.2']);
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } } });
     expect(LUME_PLUGIN.manifest.hostAccess?.required).toContainEqual(expect.objectContaining({ id: 'lume-image-registry', capability: 'network',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://ghcr.io' }], methods: ['GET'] } }));
     expect(await action('acquire')({ launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } }, managedId }, context))

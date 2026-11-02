@@ -101,30 +101,30 @@ export const PLUGIN = definePlugin({
         const organizationSlug = await organization(context);
         const facts = await runtime(context).options({ organizationSlug,
           ...(input.app?.ownership === 'existing' ? { appName: input.app.name } : input.appName ? { appName: input.appName } : {}) });
-        if (facts.kind !== 'available') throw new Error('provider_unavailable');
+        const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
+        if (facts.kind !== 'available') return { dimensions: emptyDimensions, code: 'provider_unavailable' as const, };
         const selected = resolveFlyLaunchQueryCandidate(input);
         if (selected.success) {
           const launch = selected.data;
-          return { choices: [{ id: 'reviewed-launch', title: launch.app.name, launch,
-            available: isLaunchAvailable(launch, facts, organizationSlug), nativeFacts: {
-              size: { id: `${launch.guest.cpuKind}/${launch.guest.cpus}/${launch.guest.memoryMb}`, title: `${launch.guest.cpus} CPU · ${launch.guest.memoryMb} MB`,
-                cpuCores: launch.guest.cpus, memoryBytes: launch.guest.memoryMb * 1024 * 1024,
-                ...(launch.volume.kind === 'create' ? { diskBytes: launch.volume.sizeGb * 1024 * 1024 * 1024 } : {}) },
-              image: { id: launch.imageReference ?? FLY_DEFAULT_IMAGE, title: launch.imageReference ?? 'Ubuntu 24.04' },
-              location: { id: launch.region, title: facts.regions.find(region => region.code === launch.region)?.name ?? launch.region },
-            } }] };
+          const size = { id: `${launch.guest.cpuKind}/${launch.guest.cpus}/${launch.guest.memoryMb}`, title: `${launch.guest.cpus} CPU · ${launch.guest.memoryMb} MB`,
+            cpuCores: launch.guest.cpus, memoryBytes: launch.guest.memoryMb * 1024 * 1024,
+            ...(launch.volume.kind === 'create' ? { diskBytes: launch.volume.sizeGb * 1024 * 1024 * 1024 } : {}) };
+          const image = { id: launch.imageReference ?? FLY_DEFAULT_IMAGE, title: launch.imageReference ?? 'Ubuntu 24.04' };
+          const location = { id: launch.region, title: facts.regions.find(region => region.code === launch.region)?.name ?? launch.region };
+          return { base: { launch, available: isLaunchAvailable(launch, facts, organizationSlug) }, dimensions: { ...emptyDimensions,
+            size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
+            image: [{ id: image.id, title: image.title, assignments: [], nativeFacts: { image } }],
+            location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }], } };
         }
-        return { choices: [
-          { id: `image/${FLY_DEFAULT_IMAGE}`, title: 'Ubuntu 24.04',
-            nativeFacts: { image: { id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04' } } },
-          ...facts.regions.map(region => ({ id: `region/${region.code}`, title: region.name, available: !region.deprecated,
-            nativeFacts: { location: { id: region.code, title: region.name } } })),
-          ...facts.sizes.map(size => ({ id: `size/${size.name}`, title: `${size.name} · ${size.cpuCores} CPU · ${size.memoryMb} MB`,
-            nativeFacts: { size: { id: size.name, title: size.name, cpuCores: size.cpuCores, memoryBytes: size.memoryMb * 1024 * 1024 } } })),
-          ...facts.apps.map(app => ({ id: `app/${app.id}`, title: app.name })),
-          ...facts.volumes.map(volume => ({ id: `volume/${volume.id}`, title: `${volume.id} · ${volume.size_gb ?? '?'} GB`,
-            available: volume.state === 'created' && volume.attached_machine_id === null })),
-        ] };
+        // App and volume remain explicit form inputs, qualified again by acquire.
+        // These catalog facts cannot complete an unreviewed form on their own.
+        return { dimensions: { ...emptyDimensions,
+          image: [{ id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04', assignments: [],
+            nativeFacts: { image: { id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04' } } }],
+          location: facts.regions.map(region => ({ id: region.code, title: region.name, available: !region.deprecated,
+            assignments: [], nativeFacts: { location: { id: region.code, title: region.name } } })),
+          size: facts.sizes.map(size => ({ id: size.name, title: `${size.name} · ${size.cpuCores} CPU · ${size.memoryMb} MB`,
+            assignments: [], nativeFacts: { size: { id: size.name, title: size.name, cpuCores: size.cpuCores, memoryBytes: size.memoryMb * 1024 * 1024 } } })), } };
       },
     },
     acquire: { ...defaults, title: 'Acquire Fly Machine', dangerLevel: 'destructive',

@@ -138,6 +138,81 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('admits independent option facts and refuses the retired Cartesian catalog', () => {
+    const options = {
+      base: { launch: {} },
+      dimensions: {
+        size: [{ id: 'small', title: 'Small', assignments: [{ path: 'size', value: 'small' }],
+          prices: [{ amount: '1', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 1,
+            when: [{ dimension: 'location', optionIds: ['hel1'] }] }] }],
+        image: [], location: [{ id: 'hel1', title: 'Helsinki', assignments: [{ path: 'location', value: 'hel1' }] }],
+        network: [], duration: [],
+      },
+      constraints: [{ when: { dimension: 'size', optionIds: ['small'] }, requires: { dimension: 'location', optionIds: ['hel1'] } }],
+    };
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse(options)).toEqual(options);
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.safeParse({ choices: [] }).success).toBe(false);
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.safeParse({ ...options,
+      dimensions: { ...options.dimensions, size: [{ ...options.dimensions.size[0], launch: {} }] } }).success).toBe(false);
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.safeParse({ ...options,
+      constraints: [{ when: { dimension: 'size', optionIds: ['unknown'] }, requires: { dimension: 'location', optionIds: ['hel1'] } }] }).success).toBe(false);
+    const manifest = nativeDurationManifest();
+    const optionAction = manifest.contributes.actions.find(action => action.id === 'options')!;
+    optionAction.resultSchema = { type: 'object', properties: { choices: { type: 'array', items: { type: 'object', properties: {}, additionalProperties: false } } }, required: ['choices'], additionalProperties: false };
+    expect(PluginManifestV2Schema.safeParse(manifest).success).toBe(false);
+  });
+  it('projects selected native facts and applicable prices into one closed validated launch', () => {
+    const launch = defineProtocolObject({
+      size: defineProtocolString(), image: defineProtocolString(), location: defineProtocolString(),
+      network: defineProtocolObject({ ipv6: defineProtocolLiteral(true) }, { policy: 'closed' }),
+    }, { policy: 'closed' });
+    const price = { amount: '1', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 1 };
+    const options = provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({
+      base: { launch: {}, nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 2 } } },
+      dimensions: {
+        size: [{ id: 'small', title: 'Small', assignments: [{ path: 'size', value: 'small' }], prices: [price] }],
+        image: [{ id: 'arm', title: 'ARM', assignments: [{ path: 'image', value: 'arm' }],
+          nativeFacts: { size: { id: 'small', title: 'Small', diskBytes: 100 } } }],
+        location: ['hel1', 'fsn1'].map(id => ({ id, title: id, assignments: [{ path: 'location', value: id }] })),
+        network: [{ id: 'dual', title: 'Dual stack', assignments: [{ path: 'network.ipv6', value: true }],
+          prices: [{ ...price, amount: '2', when: [{ dimension: 'location', optionIds: ['hel1'] }] }] }], duration: [],
+      }, constraints: [{ when: { dimension: 'image', optionIds: ['arm'] }, requires: { dimension: 'location', optionIds: ['hel1'] } }],
+    });
+    const selection = { size: 'small', image: 'arm', location: 'hel1', network: 'dual' };
+    const project = (value: provisioners.MachineProvisionerSelectionV1) => provisioners.projectMachineProvisionerSelectionV1({ options, selection: value, launchSchema: launch.jsonSchema });
+    expect(project(selection)).toMatchObject({ kind: 'ready', launch: { size: 'small', image: 'arm', location: 'hel1', network: { ipv6: true } },
+      prices: [price, { ...price, amount: '2' }], nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 2, diskBytes: 100 } } });
+    expect(project({ size: 'small' })).toMatchObject({ kind: 'incomplete', prices: [price] });
+    expect(project({ ...selection, location: 'fsn1' })).toMatchObject({ kind: 'unavailable', prices: [price] });
+    expect(project({ ...selection, image: 'unknown' })).toMatchObject({ kind: 'invalid', code: 'unknown_option' });
+    const unavailable = structuredClone(options);
+    unavailable.dimensions.network[0]!.available = false;
+    expect(provisioners.projectMachineProvisionerSelectionV1({ options: unavailable, selection, launchSchema: launch.jsonSchema }).kind).toBe('unavailable');
+    const malformed = structuredClone(options);
+    malformed.dimensions.network[0]!.assignments[0]!.value = false;
+    expect(provisioners.projectMachineProvisionerSelectionV1({ options: malformed, selection, launchSchema: launch.jsonSchema })).toMatchObject({ kind: 'invalid', code: 'invalid_launch' });
+  });
+  it('refuses projection bypasses, contradictory selectors and detached reviewed effects', () => {
+    const launch = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+    const project = (options: provisioners.MachineProvisionerOptionsResultV1, selection: provisioners.MachineProvisionerSelectionV1 = {}) =>
+      provisioners.projectMachineProvisionerSelectionV1({ options, selection, launchSchema: launch.jsonSchema });
+    expect(project({ dimensions })).toMatchObject({ kind: 'incomplete' });
+    expect(project({ base: { launch: {} }, dimensions })).toMatchObject({ kind: 'invalid', code: 'invalid_launch' });
+    const reviewed = { base: { launch: { name: 'reviewed' }, effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] } }, dimensions };
+    expect(project(reviewed)).toMatchObject({ kind: 'ready', launch: { name: 'reviewed' }, effectReview: reviewed.base.effectReview });
+    const option = (path: string, value: string) => ({ id: 'one', title: 'One', assignments: [{ path, value }] });
+    expect(project({ ...reviewed, dimensions: { ...dimensions, size: [option('name', 'changed')] } }, { size: 'one' }))
+      .toMatchObject({ kind: 'invalid', code: 'effect_review_mismatch' });
+    expect(project({ base: { launch: {} }, dimensions: { ...dimensions, size: [option('secret', 'x')] } }, { size: 'one' }))
+      .toMatchObject({ kind: 'invalid', code: 'undeclared_selector' });
+    expect(project({ base: { launch: {} }, dimensions: { ...dimensions, size: [option('name', 'x')], image: [option('name', 'y')] } }, { size: 'one', image: 'one' }))
+      .toMatchObject({ kind: 'invalid', code: 'conflicting_selectors' });
+    const retained = { ...option('name', 'x'), retention: { supportedIntents: ['delete' as const], finiteOnly: true } };
+    const conflict = { ...option('name', 'x'), assignments: [], retention: { supportedIntents: ['delete' as const], finiteOnly: false } };
+    expect(project({ base: { launch: {} }, dimensions: { ...dimensions, size: [retained], image: [conflict] } }, { size: 'one', image: 'one' }))
+      .toMatchObject({ kind: 'invalid', code: 'conflicting_retention' });
+  });
   it('retains localized provisioner identity and native check vocabulary through the public schemas', () => {
     const descriptor = {
       ...nativeDurationManifest().contributes.machineProvisioners[0],
@@ -612,39 +687,38 @@ describe('public machine provisioner role schemas', () => {
       location: { id: 'region-1', title: 'Native region' },
     };
     const choice = {
-      id: 'selected',
-      title: 'Selected configuration',
       launch: { nativeSizeId: 'small' },
       nativeFacts,
     };
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
     expect(
       provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({
-        choices: [choice],
+        base: choice, dimensions,
       }),
-    ).toEqual({ choices: [choice] });
+    ).toEqual({ base: choice, dimensions });
     const qualified = {
       ...choice,
       retention: { supportedIntents: ['delete'], finiteOnly: true },
     };
     expect(
       provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({
-        choices: [qualified],
+        base: qualified, dimensions,
       }),
-    ).toEqual({ choices: [qualified] });
+    ).toEqual({ base: qualified, dimensions });
     for (const retention of [
       { ...qualified.retention, finiteOnly: 'yes' },
       { ...qualified.retention, token: 'private' },
     ]) {
       expect(
         provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({
-          choices: [{ ...choice, retention }],
+          base: { ...choice, retention }, dimensions,
         }).success,
       ).toBe(false);
     }
     expect(
       provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({
-        choices: [choice],
-      }).choices[0]?.nativeFacts?.size,
+        base: choice, dimensions,
+      }).base?.nativeFacts?.size,
     ).not.toHaveProperty('diskBytes');
     for (const size of [
       { ...nativeFacts.size, memoryBytes: '1024' },
@@ -652,7 +726,7 @@ describe('public machine provisioner role schemas', () => {
     ]) {
       expect(
         provisioners.MachineProvisionerOptionsResultProtocolV1Schema.safeParse({
-          choices: [{ ...choice, nativeFacts: { ...nativeFacts, size } }],
+          base: { ...choice, nativeFacts: { ...nativeFacts, size } }, dimensions,
         }).success,
       ).toBe(false);
     }

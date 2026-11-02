@@ -126,36 +126,57 @@ export function createCuaByoc(native: CuaNativeClient) {
             const current = await status(cloud, signal);
             if (!current?.success) throw Object.assign(new Error('Native options are unavailable'), { code: 'native_options_unavailable' });
             const providers = current.data.providers.filter(provider => provider.name === cloud && provider.connected);
-            if (providers.length !== 1) return { choices: [] };
+            const dimensions: MachineProvisionerOptionsResultV1['dimensions'] = { size: [], image: [], location: [], network: [], duration: [] };
+            if (providers.length !== 1) return { dimensions };
             const provider = providers[0];
-            const choices = provider.kinds.flatMap(kind => {
+            const qualified = provider.kinds.flatMap(kind => {
                 const launch = ByocLaunchV1Schema.safeParse({ cloud, region: provider.region,
                     nativeImageId: kind.image, nativeSizeId: kind.machine_type,
                     nativeLifetime: provider.ttl_hours === 0 ? { kind: 'no-native-ttl' }
                         : { kind: 'finite', durationSeconds: provider.ttl_hours * 3600 } });
                 if (!launch.success || qualifyByocLaunch(launch.data, provider).kind !== 'qualified') return [];
-                const lifetime = launch.data.nativeLifetime;
-                const retention: NonNullable<MachineProvisionerOptionsResultV1['choices'][number]['retention']> = {
-                    supportedIntents: cloud === 'modal' ? ['delete'] : ['start', 'stop', 'delete'],
-                    finiteOnly: lifetime.kind === 'finite',
-                };
-                const choice = { id: `${kind.image}:${kind.machine_type}`,
-                    title: { key: 'machineCua.byoc.nativeChoice', fallback: `${kind.image} · ${kind.machine_type}` },
-                    launch: launch.data, available: true, retention, nativeFacts: {
-                        size: { id: kind.machine_type, title: kind.machine_type }, image: { id: kind.image, title: kind.image },
-                        location: { id: provider.region, title: provider.region },
-                        ...(lifetime.kind === 'finite' ? { duration: { id: String(lifetime.durationSeconds),
-                            title: `${lifetime.durationSeconds} s`, afterMs: lifetime.durationSeconds * 1000 } } : {}),
-                    } };
-                const priced = MachineProvisionerOptionsResultV1Schema.safeParse({ choices: [{ ...choice, prices: [{
-                    amount: String(kind.usd_per_hour), currency: 'USD', unit: 'hour',
-                    source: 'cua-native-cloud-status', observedAt,
-                }] }] });
-                // An unrepresentable native price remains unknown. It does not
-                // invalidate an otherwise qualified native choice or become zero.
-                return priced.success ? priced.data.choices : [choice];
+                return [{ kind, launch: launch.data }];
             });
-            return MachineProvisionerOptionsResultV1Schema.parse({ choices });
+            const [first] = qualified;
+            if (!first) return { dimensions };
+            const lifetime = first.launch.nativeLifetime;
+            const sizes = new Map<string, typeof qualified>();
+            const images = new Map<string, MachineProvisionerOptionsResultV1['dimensions']['image'][number]>();
+            for (const entry of qualified) {
+                const group = sizes.get(entry.kind.machine_type);
+                if (group) group.push(entry); else sizes.set(entry.kind.machine_type, [entry]);
+                images.set(entry.kind.image, { id: entry.kind.image, title: entry.kind.image,
+                    assignments: [{ path: 'nativeImageId', value: entry.kind.image }],
+                    nativeFacts: { image: { id: entry.kind.image, title: entry.kind.image } } });
+            }
+            const sizeOptions = [...sizes].map(([id, entries]) => {
+                const option = { id, title: id, assignments: [{ path: 'nativeSizeId', value: id }],
+                    nativeFacts: { size: { id, title: id } } };
+                const prices = entries.flatMap(({ kind }) => {
+                    const price = { amount: String(kind.usd_per_hour), currency: 'USD', unit: 'hour',
+                        source: 'cua-native-cloud-status', observedAt,
+                        when: [{ dimension: 'image' as const, optionIds: [kind.image] }] };
+                    // Keep the canonical price grammar: an unrepresentable native
+                    // amount remains unknown without invalidating the native pair.
+                    const priced = MachineProvisionerOptionsResultV1Schema.safeParse({ dimensions: { ...dimensions,
+                        size: [{ ...option, prices: [price] }], image: [images.get(kind.image)!] } });
+                    return priced.success ? [price] : [];
+                });
+                return { ...option, ...(prices.length ? { prices } : {}) };
+            });
+            return MachineProvisionerOptionsResultV1Schema.parse({
+                base: { launch: { cloud, ...(lifetime.kind === 'no-native-ttl' ? { nativeLifetime: lifetime } : {}) },
+                    retention: { supportedIntents: cloud === 'modal' ? ['delete'] : ['start', 'stop', 'delete'],
+                        finiteOnly: lifetime.kind === 'finite' } },
+                dimensions: { ...dimensions, size: sizeOptions, image: [...images.values()],
+                    location: [{ id: provider.region, title: provider.region,
+                        assignments: [{ path: 'region', value: provider.region }],
+                        nativeFacts: { location: { id: provider.region, title: provider.region } } }],
+                    duration: lifetime.kind === 'finite' ? [{ id: String(lifetime.durationSeconds), title: `${lifetime.durationSeconds} s`,
+                        assignments: [{ path: 'nativeLifetime', value: lifetime }], nativeFacts: {
+                            duration: { id: String(lifetime.durationSeconds), title: `${lifetime.durationSeconds} s`, afterMs: lifetime.durationSeconds * 1000 }, } }] : [], },
+                constraints: [...sizes].map(([id, entries]) => ({ when: { dimension: 'size', optionIds: [id] },
+                    requires: { dimension: 'image', optionIds: [...new Set(entries.map(entry => entry.kind.image))] } })), });
         },
         async observe(input: unknown, observedAt: number, signal?: AbortSignal): Promise<MachineProvisionerObservationV1> {
             MachineProvisionerObservationV1Schema.parse({ observedAt, availability: 'unavailable' });

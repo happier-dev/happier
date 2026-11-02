@@ -1,3 +1,5 @@
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -49,15 +51,20 @@ describe('public digitalocean machine provisioner', () => {
       images: [{ id: 1, name: 'Ubuntu 24.04', description: 'Ubuntu base image', distribution: 'Ubuntu', regions: ['nyc3'], status: 'available', type: 'base' }], links: {},
     });
     const result = await runtime.handlers.get('options')!({}, runtime.context);
-    expect(result).toMatchObject({ choices: [
-      { nativeFacts: { size: { id: sizes[0]!.slug, title: 's5-1vcpu-1gb · 1 CPU · 1024 MB · 25 GB', cpuCores: 1,
-        memoryBytes: 1024 * 1024 ** 2, diskBytes: 25 * 1000 ** 3 },
-        image: { id: '1', title: 'Ubuntu 24.04', description: 'Ubuntu base image' }, location: { id: 'nyc3', title: 'New York 3' }, monthlyCapStatus: 'none' },
-        prices: [{ unit: 'hour', amount: '0.02' }, { unit: 'month', amount: '12' }] },
-      { nativeFacts: { monthlyCapStatus: 'none' } },
-      { nativeFacts: { monthlyCapStatus: 'unknown' } },
-      { nativeFacts: { monthlyCapStatus: 'unknown' } },
-    ] });
+    expect(result).toMatchObject({ dimensions: {
+      size: [
+        { nativeFacts: { size: { id: sizes[0]!.slug, title: sizes[0]!.slug, cpuCores: 1,
+          memoryBytes: 1024 * 1024 ** 2, diskBytes: 25 * 1000 ** 3 }, monthlyCapStatus: 'none' },
+          prices: [{ unit: 'hour', amount: '0.02' }, { unit: 'month', amount: '12' }] },
+        { nativeFacts: { monthlyCapStatus: 'unknown' } },
+      ],
+      image: [{ nativeFacts: { image: { id: '1', title: 'Ubuntu 24.04', description: 'Ubuntu base image' } } }],
+      location: [{ nativeFacts: { location: { id: 'nyc3', title: 'New York 3' } } }],
+      network: [
+        { nativeFacts: { network: { id: '0', title: { key: 'machineDigitalOcean.network.ipv4', fallback: 'IPv4 only' } } } },
+        { nativeFacts: { network: { id: '1', title: { key: 'machineDigitalOcean.network.dual', fallback: 'IPv4 and IPv6' } } } },
+      ],
+    } });
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
     expect(JSON.stringify(result)).not.toContain('captured-private');
     expect(JSON.stringify(result)).not.toContain('countryCode');
@@ -130,4 +137,57 @@ describe('brand mark', () => {
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
+  it('keeps native size and image region restrictions independent during selection', async () => {
+    const runtime = await activated({
+      sizes: [
+        { slug: 'nyc-only', memory: 1024, vcpus: 1, disk: 25, transfer: 1, price_hourly: 0.02, regions: ['nyc3'], available: true },
+        { slug: 'both', memory: 1024, vcpus: 1, disk: 25, transfer: 1, price_hourly: 0.02, regions: ['nyc3', 'sfo3'], available: true },
+      ], regions: [
+        { slug: 'nyc3', name: 'New York', available: true, sizes: ['nyc-only', 'both'] },
+        { slug: 'sfo3', name: 'San Francisco', available: true, sizes: ['both'] },
+      ], images: [
+        { id: 1, name: 'Ubuntu NYC', distribution: 'Ubuntu', regions: ['nyc3', 'retired-region'], status: 'available', type: 'base' },
+        { id: 2, name: 'Ubuntu SFO', distribution: 'Ubuntu', regions: ['sfo3'], status: 'available', type: 'base' },
+      ], links: {},
+    });
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    const project = (size: string, image: string) => projectMachineProvisionerSelectionV1({ options,
+      selection: { size, image, location: 'sfo3', network: '0' }, launchSchema: exports.MACHINE_PROVISIONER.launchSchema });
+    expect(project('nyc-only', '2').kind).toBe('unavailable');
+    expect(project('both', '1').kind).toBe('unavailable');
+    expect(project('both', '2')).toMatchObject({ kind: 'ready', launch: {
+      regionSlug: 'sfo3', sizeSlug: 'both', imageId: 2, publicNetworking: { ipv6: false },
+    } });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
+  it('emits each native fact once at the CLOUD4 catalog scale', async () => {
+    // Synthetic REST-v2 catalogs reproduce CLOUD4's dimension counts, not
+    // that account's private catalog. REST v2 defaults to 20 rows, maximum 200.
+    const regions = Array.from({ length: 18 }, (_, index) => ({ slug: `region-${index}`, name: `Region ${index}`, available: true }));
+    const sizes = Array.from({ length: 311 }, (_, index) => ({ slug: `size-${index}`, memory: 1024, vcpus: 1, disk: 25,
+      transfer: 1, price_hourly: 0.02, price_monthly: 12, regions: regions.map(region => region.slug), available: true }));
+    const images = Array.from({ length: 8 }, (_, index) => ({ id: index + 1, name: `Ubuntu ${index}`, distribution: 'Ubuntu',
+      regions: regions.map(region => region.slug), status: 'available', type: 'base' }));
+    const runtime = await activated({ sizes, images, regions: regions.map(region => ({ ...region, sizes: sizes.map(size => size.slug) })), links: {} });
+    const startedAt = performance.now();
+    const output = await runtime.handlers.get('options')!({}, runtime.context);
+    const producedAt = performance.now();
+    const result = MachineProvisionerOptionsResultV1Schema.parse(output);
+    const parsedAt = performance.now();
+    const wire = JSON.stringify(result);
+    const serializedAt = performance.now();
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    // Count the actual emitted fact, independent of container naming. A linear
+    // dimension projection must not copy CPU/memory/disk facts into every launch.
+    const dimensionCount = Object.values(result.dimensions).reduce((total, entries) => total + entries.length, 0);
+    console.info(`DigitalOcean native sizes=${sizes.length}; dimensions=${dimensionCount}; bytes=${new TextEncoder().encode(wire).byteLength}; producerMs=${(producedAt - startedAt).toFixed(1)}; strictParseMs=${(parsedAt - producedAt).toFixed(1)}; stringifyMs=${(serializedAt - parsedAt).toFixed(1)}`);
+    expect(dimensionCount).toBe(339);
+    expect(wire.match(/"cpuCores":/g)?.length ?? 0)
+      .toBe(sizes.length);
+    expect(result.dimensions.size.map(size => size.id)).toEqual(sizes.map(size => size.slug));
+    expect(result.dimensions.image.map(image => image.id)).toEqual(images.map(image => String(image.id)));
+    expect(result.dimensions.location.map(region => region.id)).toEqual(regions.map(region => region.slug));
+  });
+
 });

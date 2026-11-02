@@ -1,6 +1,6 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, MachineProvisionerCheckResultV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, MachineProvisionerOptionsResultV1Schema, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, projectMachineProvisionerSelectionV1, MachineProvisionerCheckResultV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, MachineProvisionerOptionsResultV1Schema, type MachineProvisionerOptionsResultV1, type MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type {
   MachineProvisionerBootstrapCarrierV1,
   MachineProvisionerCheckResultV1,
@@ -16,8 +16,14 @@ const reconciliation = defineMachineProvisionerReconciliationSchemas({ launch: n
 export type MachineProvisionerAuthorAcquireInput = Parameters<typeof roles.acquireInput.parse>[0];
 export type MachineProvisionerAuthorBootstrapInput = Parameters<typeof roles.bootstrapInput.parse>[0];
 export const prepareMachineProvisionerAuthorStoredReaders = () => prepareMachineProvisionerStoredSchemas({ launch: native, resource: native, nativeOperation });
-export const machineProvisionerAuthorOptions = { choices: [{ id: 'small-linux', title: 'Small Linux', launch: { name: 'guest' },
-  nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 0.5 }, image: { id: 'linux', title: 'Linux' } } }] } satisfies MachineProvisionerOptionsResultV1;
+export const machineProvisionerAuthorOptions = { base: { launch: {} }, dimensions: {
+  size: [{ id: 'small', title: 'Small', assignments: [{ path: 'name', value: 'guest' }],
+    nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 0.5 } } }],
+  image: [{ id: 'linux', title: 'Linux', assignments: [], nativeFacts: { image: { id: 'linux', title: 'Linux' } } }],
+  location: [], network: [], duration: [],
+} } satisfies MachineProvisionerOptionsResultV1;
+export const projectMachineProvisionerAuthorSelection = (options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1) =>
+  projectMachineProvisionerSelectionV1({ options, selection, launchSchema: native.jsonSchema });
 function createAuthorFixture(repairNeeded = false) {
   let repaired = !repairNeeded;
   const repairInput = defineProtocolObject({ machineName: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });

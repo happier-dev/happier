@@ -1108,11 +1108,11 @@ describe('managed Machine detail', () => {
                 }
                 if (actionId === 'machines.managed.retention.update') policyWrites.push(request.input);
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [provisioner] }
-                    : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'native-variant', title: 'Native variant',
+                    : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ base: {
                         launch: variant === 'different-launch' ? { ...choices, nativeSizeId: 'other-native-size' } : launch.choices,
                         available: variant !== 'unavailable' && !refreshFailed, ...(variant === 'descriptor-fallback' ? {} : {
                             retention: finite ? { supportedIntents: ['delete'], finiteOnly: true } : { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false },
-                        }) }] }) : actionId === 'machines.managed.inspect' ? { machine } : { available: true };
+                        }) }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } }) : actionId === 'machines.managed.inspect' ? { machine } : { available: true };
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId, actionId,
                     execution: { ok: true, result } }));
             }
@@ -2038,13 +2038,12 @@ describe('managed Machine detail', () => {
                 if (actionId === 'machines.provisioners.options') expect(request.input).toMatchObject({ selectors });
                 const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
                     provisioners: [{ contribution: provider, occurrenceId: 'container-occurrence', descriptor }] })
-                    : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ choices: [{
-                        id: 'current-config', title: 'Devcontainer', available: true,
+                    : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ base: { available: true,
                         launch: { ...selectors, reviewedEffectDigest: 'b'.repeat(64) }, effectReview: { kind: 'devcontainer',
                             reviewedEffectDigest: 'b'.repeat(64), effects: [
                                 { scope: 'host', kind: 'initialize', title: 'Initialize on controller', details: ['touch /source/ready'] },
                                 { scope: 'child', kind: 'lifecycle', title: 'Set up child', details: ['make setup'] },
-                            ] } }] }) : actionId === 'machines.managed.rebuild' ? {
+                            ] } }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } }) : actionId === 'machines.managed.rebuild' ? {
                         kind: 'approval_request_created', artifactId: 'rebuild-approval', actionId,
                     } : { available: true };
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId,

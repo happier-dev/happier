@@ -68,7 +68,8 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       ] },
       async run(input, context) {
         const reviewed = await readDevcontainerEffectReview(await nativeTools(context), input);
-        return { choices: [{ id: reviewed.launch.configPath, title: 'Devcontainer', available: true, ...reviewed }] };
+        return { base: { available: true, ...reviewed },
+          dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
       } },
     check: { ...defaults, title: 'Check Devcontainer availability', dangerLevel: 'safe', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.checkInput,
       resultSchema: MachineProvisionerCheckResultV1Schema,

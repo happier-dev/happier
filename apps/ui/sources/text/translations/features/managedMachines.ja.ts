@@ -149,6 +149,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             billedWhileRunning: "実行中のみ課金されます。",
             imageDescription: "最初に入っているもの。Happier はその上にインストールされます。",
             locationDescription: "近いほど入力の反応が速くなります。",
+            network: "ネットワーク",
+            networkDescription: "割り当てられる公開アドレスを選びます。料金は選択に応じて変わります。",
             localLocationDescription: ({ computer }: { computer: string }) => `${computer} での実行場所。`,
             localSizeDescription: ({ computer }: { computer: string }) => `実行中に使う ${computer} の割り当て。停止すると解放されます。`,
             headroom: ({ computer }: { computer: string }) => `${computer} に残る分`,

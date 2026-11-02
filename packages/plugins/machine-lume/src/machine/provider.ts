@@ -73,16 +73,16 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
       const images = customImage ? [{ reference: customImage.reference, image: customImage }]
         : catalogs.flatMap(catalog => catalog.kind === 'catalog' ? catalog.references : []).filter(qualifiedSshImage)
           .map(reference => ({ reference, image: { kind: 'catalog' as const, id: reference } }));
-      return { choices: [
-        ...images.map(({ reference, image }) => ({ id: reference, title: reference, available: qualifiedImage(image),
-            ...(size && storage && qualifiedImage(image) ? { launch: { image, storage, ...size } } : {}),
-            nativeFacts: { image: { id: reference, title: reference },
-              ...(storage ? { location: { id: storage, title: storage } } : {}),
-              ...(size ? { size: { id: `${size.cpu}/${size.memoryBytes}/${size.diskBytes}`, title: lumeConfigurationLabel('customSize'),
-                cpuCores: size.cpu, memoryBytes: size.memoryBytes, diskBytes: size.diskBytes } } : {}) } })),
-        ...locations.locations.map(location => ({ id: `storage:${location.name}`, title: location.name, available: true,
-          nativeFacts: { location: { id: location.name, title: location.name } } })),
-      ] };
+      const sizeFact = size ? { id: `${size.cpu}/${size.memoryBytes}/${size.diskBytes}`, title: lumeConfigurationLabel('customSize'),
+        cpuCores: size.cpu, memoryBytes: size.memoryBytes, diskBytes: size.diskBytes } : undefined;
+      return { ...(size ? { base: { launch: { ...size, ...(storage ? { storage } : {}) } } } : {}), dimensions: {
+        size: sizeFact ? [{ id: sizeFact.id, title: sizeFact.title, assignments: [], nativeFacts: { size: sizeFact } }] : [],
+        image: images.map(({ reference, image }) => ({ id: reference, title: reference, available: qualifiedImage(image),
+          assignments: [{ path: 'image', value: image }], nativeFacts: { image: { id: reference, title: reference } } })),
+        location: locations.locations.map(location => ({ id: location.name, title: location.name,
+          assignments: [{ path: 'storage', value: location.name }], nativeFacts: { location: { id: location.name, title: location.name } } })),
+        network: [], duration: [],
+      } };
     },
     async acquire(rawLaunch: unknown, managedId: string | undefined, rawResource?: unknown): Promise<MachineProvisionerAcquireResultV1<LumeResourceV1, LumeNativeOperationV1>> {
       const parsed = LumeLaunchV1Schema.safeParse(rawLaunch);

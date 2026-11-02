@@ -131,35 +131,51 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
         async options(signal?: AbortSignal, input: CuaLocalOptionsQueryV1 = {}, localId: 'local-sandbox' | 'local-space' = 'local-sandbox'): Promise<MachineProvisionerOptionsResultV1> {
             const selectors = CuaLocalOptionsQueryV1Schema.parse(input);
             const [doctor, images] = await Promise.all([readDoctor(signal), readImages(signal)]);
-            if (doctor.kind === 'unknown' || images.kind === 'unknown') return { choices: [] };
+            const dimensions: MachineProvisionerOptionsResultV1['dimensions'] = { size: [], image: [], location: [], network: [], duration: [] };
+            if (doctor.kind === 'unknown' || images.kind === 'unknown') return { dimensions };
             const nativeArch = doctor.value.host.arch === 'x86_64' ? 'amd64' : 'arm64';
-            // One native choice owner serves both local leaves. The catalog has
-            // no CPU/RAM presets: complete launches require reviewed selectors.
-            return { choices: images.value.flatMap((image) => image.runtimeIds
-                .filter((runtime) => (!selectors.runtimeId || runtime === selectors.runtimeId)
-                    && (!selectors.imageId || selectors.imageId === image.imageId))
-                .map((runtimeId) => {
-                    const disk = image.disk.kind === 'known' ? image.disk.value.find((value) => value.arch === nativeArch)?.bytes : undefined;
-                    const size = selectors.size;
-                    // The native disk follows the image unless a Space on QEMU is given its own.
-                    const diskBytes = size ? size.diskBytes ?? disk : undefined;
-                    const sizing = !size || (size.memoryBytes % 1024 ** 2 === 0 && diskBytes !== undefined
-                        && (localId === 'local-space' && runtimeId === 'qemu'
-                            ? diskBytes % 1024 ** 3 === 0 && diskBytes / 1024 ** 3 <= 4_294_967_295
-                            : diskBytes === disk));
-                    // Native gVisor readiness does not qualify Happier bootstrap:
-                    // no detached guest-daemon carrier is implemented for it yet.
-                    // Keep its facts visible, but never offer an unusable allocation.
-                    const available = runtimeId !== 'gvisor' && image.spacesd && image.os !== 'windows' && image.architectures.includes(nativeArch)
-                        && doctor.value.runtimes.some((value) => value.id === runtimeId && value.ready) && sizing;
-                    return { id: `${runtimeId}:${image.imageId}`, title: `${image.imageId} (${runtimeId})`, available,
-                        nativeFacts: { image: { id: image.imageId, title: image.imageId },
-                            location: { id: runtimeId, title: runtimeId },
-                            ...(size ? { size: { id: `${size.cpu}:${size.memoryBytes}:${size.diskBytes ?? 'image'}`, title: `${size.cpu} CPU`,
-                                cpuCores: size.cpu, memoryBytes: size.memoryBytes, ...(diskBytes === undefined ? {} : { diskBytes }) } } : {}) },
-                        ...(size && available && diskBytes !== undefined ? { launch: { on: 'local' as const, runtimeId, imageId: image.imageId,
-                            size: { cpu: size.cpu, memoryBytes: size.memoryBytes, diskBytes } } } : {}) };
-                })) };
+            const size = selectors.size;
+            const sizeIdentity = size ? { id: `${size.cpu}:${size.memoryBytes}:${size.diskBytes ?? 'image'}`, title: `${size.cpu} CPU` } : undefined;
+            const selectedImages = images.value.filter(image => !selectors.imageId || selectors.imageId === image.imageId);
+            const runtimes = [...new Set(selectedImages.flatMap(image => image.runtimeIds))]
+                .filter(runtimeId => !selectors.runtimeId || runtimeId === selectors.runtimeId);
+            const diskFor = (image: CuaNativeImageFacts) => image.disk.kind === 'known'
+                ? image.disk.value.find(value => value.arch === nativeArch)?.bytes : undefined;
+            function sizing(image: CuaNativeImageFacts, runtimeId: CuaLocalLaunchV1['runtimeId']) {
+                if (!size) return true;
+                const disk = diskFor(image), diskBytes = size.diskBytes ?? disk;
+                // Preserve the native sizing qualification used at admission.
+                return diskBytes !== undefined && (localId === 'local-space' && runtimeId === 'qemu'
+                    ? diskBytes % 1024 ** 3 === 0 && diskBytes / 1024 ** 3 <= 4_294_967_295
+                    : diskBytes === disk);
+            }
+            return {
+                ...(size ? { base: { launch: { on: 'local' } } } : {}),
+                dimensions: {
+                    ...dimensions,
+                    size: size && sizeIdentity ? [{ ...sizeIdentity,
+                        assignments: [{ path: 'size.cpu', value: size.cpu }, { path: 'size.memoryBytes', value: size.memoryBytes },
+                            ...(size.diskBytes === undefined ? [] : [{ path: 'size.diskBytes', value: size.diskBytes }])],
+                        available: size.memoryBytes % 1024 ** 2 === 0,
+                        nativeFacts: { size: { ...sizeIdentity, cpuCores: size.cpu, memoryBytes: size.memoryBytes,
+                            ...(size.diskBytes === undefined ? {} : { diskBytes: size.diskBytes }) } }, }] : [],
+                    image: selectedImages.map(image => {
+                        const diskBytes = diskFor(image);
+                        return { id: image.imageId, title: image.imageId,                            assignments: [{ path: 'imageId', value: image.imageId },
+                                ...(size && size.diskBytes === undefined && diskBytes !== undefined ? [{ path: 'size.diskBytes', value: diskBytes }] : [])],
+                            available: image.spacesd && image.os !== 'windows' && image.architectures.includes(nativeArch),
+                            nativeFacts: { image: { id: image.imageId, title: image.imageId },
+                                ...(sizeIdentity && size?.diskBytes === undefined && diskBytes !== undefined
+                                    ? { size: { ...sizeIdentity, diskBytes } } : {}) }, };
+                    }),
+                    location: runtimes.map(runtimeId => ({ id: runtimeId, title: runtimeId,
+                        assignments: [{ path: 'runtimeId', value: runtimeId }],
+                        // Native readiness cannot qualify a missing detached guest-daemon carrier.
+                        available: runtimeId !== 'gvisor' && doctor.value.runtimes.some(value => value.id === runtimeId && value.ready),
+                        nativeFacts: { location: { id: runtimeId, title: runtimeId } }, })), },
+                constraints: runtimes.map(runtimeId => ({ when: { dimension: 'location' as const, optionIds: [runtimeId] },
+                    requires: { dimension: 'image' as const, optionIds: selectedImages.filter(image => image.runtimeIds.includes(runtimeId)
+                        && sizing(image, runtimeId)).map(image => image.imageId) } })), };
         },
     };
 }

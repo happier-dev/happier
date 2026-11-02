@@ -19,7 +19,7 @@ import { createCuaNativeClient } from '../../../../../packages/plugins/machine-c
 import { createCuaLocalProvisioner } from '../../../../../packages/plugins/machine-cua/src/machine/localProvisioner';
 import { createCuaByoc } from '../../../../../packages/plugins/machine-cua/src/machine/byoc';
 import { ByocOptionsQueryV1Schema } from '../../../../../packages/plugins/machine-cua/src/machine/remoteSchemas';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
@@ -105,21 +105,25 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
         } });
         if (savedCloud) {
-            const savedLaunch = (await nativeOptions(id, { cloud: savedCloud })).choices[0]?.launch;
-            if (!savedLaunch) throw new Error('Native BYOC setup must qualify the saved launch');
+            const savedOptions = await nativeOptions(id, { cloud: savedCloud });
+            const selection = Object.fromEntries(Object.entries(savedOptions.dimensions).flatMap(([dimension, entries]) =>
+                entries[0] ? [[dimension, entries[0].id]] : []));
+            const selected = projectMachineProvisionerSelectionV1({ options: savedOptions, selection, launchSchema: descriptor.launchSchema });
+            if (selected.kind !== 'ready') throw new Error('Native BYOC setup must qualify the saved launch');
+            const savedLaunch = selected.launch;
             const saved = ManagedMachinePresetV1Schema.parse({ id: 'saved-byoc', homeId: `srv_${id}`, revision: 1, name: 'Saved BYOC',
                 owner: { kind: 'account', accountId: 'owner' }, controller,
                 recipe: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
             home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         }
-        let choices: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse>['choices'] = [];
+        let native: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse> | undefined;
         home.answer(serverId, '/v1/actions/machines.provisioners.options', { async select(value) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             const input = request.input as { selectors: unknown };
             const validate = await compilePluginJsonSchema(declaration.inputSchema);
-            const result = validate(input.selectors) ? MachineProvisionerOptionsResultV1Schema.parse(await nativeOptions(id, input.selectors)) : { choices: [] };
-            choices = result.choices;
+            const result = validate(input.selectors) ? MachineProvisionerOptionsResultV1Schema.parse(await nativeOptions(id, input.selectors)) : { dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
+            native = result;
             return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result } } };
         } });
         const { ManagedMachineConfigurationView } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineConfigurationView');
@@ -127,18 +131,23 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             presetId={savedCloud ? 'saved-byoc' : undefined} />);
         if (fields.length) await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.field:${fields[0][0]}`)).not.toBeNull());
         for (const [path, value] of fields) await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, value));
-        await waitForHomeGovernance(() => expect(choices.some(choice => choice.launch !== undefined)).toBe(true));
-        const choice = choices.find(choice => choice.launch !== undefined);
-        if (!choice) throw new Error('Native options must produce a complete launch');
+        await waitForHomeGovernance(() => expect(native?.base).toBeDefined());
+        const options = native;
+        if (!options) throw new Error('Native options must produce a complete launch');
+        const selection = Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
+            entries[0] ? [[dimension, entries[0].id]] : []));
+        const selected = projectMachineProvisionerSelectionV1({ options, selection, launchSchema: descriptor.launchSchema });
+        expect(selected.kind).toBe('ready');
+        if (selected.kind !== 'ready') throw new Error('Native options must produce a complete launch');
         const validateLaunch = await compilePluginJsonSchema(descriptor.launchSchema);
-        expect(validateLaunch(choice.launch)).toBe(true);
+        expect(validateLaunch(selected.launch)).toBe(true);
         for (const dimension of savedCloud ? [] : ['size', 'image', 'location'] as const) {
-            const nativeFact = choice.nativeFacts?.[dimension];
-            if (!nativeFact) continue;
+            const option = options.dimensions[dimension][0];
+            if (!option) continue;
             const section = dimension === 'size' ? 'sizes' : dimension === 'image' ? 'images' : 'locations';
             await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === `managed-config.${section}` && typeof node.props.onChange === 'function').length).toBeGreaterThan(0));
             const control = screen.tree.findAll(node => node.props.testID === `managed-config.${section}` && typeof node.props.onChange === 'function')[0];
-            await act(async () => control.props.onChange(nativeFact.id));
+            await act(async () => control.props.onChange(option.id));
         }
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
         expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false);

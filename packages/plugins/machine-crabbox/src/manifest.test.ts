@@ -71,9 +71,9 @@ describe('Crabbox lazy family authoring', () => {
       nativeImageId: 'projects/images/global/images/qualified-linux', nativeSizeId: 'n2-standard-4',
       ttlSeconds: 5400, idleTimeoutSeconds: 1800, gcpProject: 'selected-project', gcpZone: 'europe-west1-b' };
     const options = await runtime.handlers.get('options')!(query, runtime.context);
-    expect(options).toMatchObject({ choices: [{ available: true, launch: query }] });
+    expect(options).toMatchObject({ base: { available: true, launch: query } });
     expect(await runtime.handlers.get('options')!({ ...query, namespace: 'other-org' }, runtime.context))
-      .toMatchObject({ choices: [{ available: false }] });
+      .toMatchObject({ base: { available: false } });
     expect(runtime.requests).toEqual([]);
   });
 
@@ -108,7 +108,7 @@ describe('Crabbox lazy family authoring', () => {
     } } as unknown as PluginInvocationContext;
     const selected = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
       nativeImageId: 'ubuntu:24.04', localContainerCpus: 4, localContainerMemory: '8g', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
-    expect(await runtime.handlers.get('options')!(selected, context)).toMatchObject({ choices: [{ available: true, launch: selected }] });
+    expect(await runtime.handlers.get('options')!(selected, context)).toMatchObject({ base: { available: true, launch: selected } });
     const acquired = await runtime.handlers.get('acquire')!({ launch: selected, managedId: 'host-managed-row',
       bootstrapPublicKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQExample host-owned' }, context);
     expect(acquired).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { transport: 'direct', backendId: 'local-container', leaseId: runtime.leaseId } } });
@@ -241,10 +241,7 @@ describe('Crabbox lazy family authoring', () => {
         nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, managedId: 'host-managed-row',
         bootstrapPublicKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQExample host-owned' }))
         .toEqual({ kind: 'rejected', code: 'credential_unavailable' });
-      expect(await testkit.invokeAction('options', {})).toMatchObject({ choices: expect.arrayContaining([
-        { id: 'local-container', title: 'Local container', available: false },
-        { id: 'blacksmith-testbox', title: 'Blacksmith Testbox', available: false },
-      ]) });
+      expect(await testkit.invokeAction('options', {})).toMatchObject({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
     } finally { await testkit.dispose(); }
   });
 });
