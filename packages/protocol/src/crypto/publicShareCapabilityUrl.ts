@@ -1,6 +1,6 @@
 /**
  * Returns a log-safe representation of a URL that may contain a public-share,
- * invitation, native-auth, or browser Artifact bearer capability.
+ * invitation, native-auth, webhook, or browser Artifact bearer capability.
  */
 export function redactPublicShareCapabilityUrl(rawUrl: string): string {
   const storedContentRedacted = rawUrl.replace(
@@ -9,7 +9,7 @@ export function redactPublicShareCapabilityUrl(rawUrl: string): string {
   ).replace(/(\/a\/)([^/?#\s]+)(?:[?#][^\s]*)?/g, '$1:artifact')
     .replace(/(\/v1\/public-shares\/)([^/?#\s]+)(\/content)(?=[/?#\s]|$)/g, '$1:lookup$3');
   const publicShareRedacted = storedContentRedacted.replace(
-    /(\/(?:v1\/public-share|share|join)\/)([^/?#\s]+)/g,
+    /(\/(?:v1\/public-share|v1\/plugins\/webhooks|share|join)\/)([^/?#\s]+)/g,
     '$1:token',
   );
   const nativeAuthRedacted = publicShareRedacted.replace(

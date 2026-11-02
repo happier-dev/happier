@@ -26,6 +26,16 @@ describe('redactPublicShareCapabilityUrl', () => {
     }
   });
 
+  it('templates webhook heartbeat capability paths in relative and absolute log URLs', () => {
+    for (const prefix of ['', 'https://home.example.test']) {
+      expect(redactPublicShareCapabilityUrl(`${prefix}/v1/plugins/webhooks/SENTINEL_HEARTBEAT_BEARER?probe=1`))
+        .toBe(`${prefix}/v1/plugins/webhooks/:token?probe=1`);
+      expect(redactPublicShareCapabilityUrl(`${prefix}/v1/plugins/webhooks/malformed%2Ftoken#fragment`))
+        .toBe(`${prefix}/v1/plugins/webhooks/:token#fragment`);
+    }
+    expect(redactPublicShareCapabilityUrl('/v1/plugins/webhooks')).toBe('/v1/plugins/webhooks');
+  });
+
   it('templates native email verification and password-reset bearers', () => {
     const secret = 'SENTINEL_NATIVE_AUTH_BEARER';
     expect(redactPublicShareCapabilityUrl(
