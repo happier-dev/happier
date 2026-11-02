@@ -1,8 +1,12 @@
+import { isAccountCurrentnessEntityIdV1 } from '@happier-dev/protocol/changes';
 import * as React from 'react';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildAuthenticatedAccountEntryHref } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
-import { createHomeLoginRequesterFingerprintV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { HOME_LOGIN_APPROVALS_HTTP_PATH_V1, createHomeLoginRequesterFingerprintV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { Platform, StyleSheet, View } from 'react-native';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import {
     decideHomeDeviceApproval,
@@ -25,6 +29,7 @@ import { Text } from '@/components/ui/text/Text';
 import {
     buildHomeConnectionDescriptorForProfile,
     resolveServerProfileScopeId,
+    areServerProfileIdentifiersEquivalent,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import {
@@ -40,10 +45,6 @@ import { AccountServiceHomeAuthenticationAdapter } from '@/components/account/au
 import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import { t } from '@/text';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
-import {
-    useAccountDirectoryActivePolling,
-    type AccountDirectoryActivePollingOutcome,
-} from '@/sync/ops/accountDirectory/useAccountDirectoryActivePolling';
 
 type PendingApproval = Readonly<{
     home: ServerProfile;
@@ -66,7 +67,7 @@ type StatusAnnouncement = Readonly<{
     text: string;
 }>;
 
-type ApprovalLoadMode = 'interactive' | 'poll';
+type ApprovalLoadMode = 'interactive' | 'background';
 
 function homeLabel(home: ServerProfile): string {
     return resolveHomeDisplayLabel(home, home.id);
@@ -84,7 +85,7 @@ function describeApprovalLoadFailure(
 
 function approvalSnapshotKey(items: readonly PendingApproval[]): string {
     return items
-        .map(({ home, approval }) => `${home.id}:${approval.approvalId}`)
+        .map(({ home, approval }) => `${home.id}:${approval.approvalId}:${approval.expiresAtMs}`)
         .sort()
         .join('|');
 }
@@ -162,7 +163,15 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
     const mountedRef = React.useRef(false);
     const approvalItemsRef = React.useRef<readonly PendingApproval[]>([]);
     const approvalSnapshotKeyRef = React.useRef<string | null>(null);
-    const approvalRefreshPromiseRef = React.useRef<Promise<AccountDirectoryActivePollingOutcome> | null>(null);
+    const approvalRefreshPromiseRef = React.useRef<Promise<void> | null>(null);
+    const approvalReloadRequestedRef = React.useRef(false);
+    const homesRef = React.useRef(homes);
+    homesRef.current = homes;
+    const presented = useLayoutPresentationActive();
+    const viewed = useHostActivelyViewed();
+    const visible = presented && viewed;
+    const visibleRef = React.useRef(visible);
+    visibleRef.current = visible;
     const pendingEnrollment = React.useSyncExternalStore(
         subscribePendingDirectoryHomeEnrollment,
         getPendingDirectoryHomeEnrollment,
@@ -173,9 +182,14 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         setAnnouncement((current) => ({ revision: current.revision + 1, text }));
     }, []);
 
-    const load = React.useCallback((mode: ApprovalLoadMode = 'interactive'): Promise<AccountDirectoryActivePollingOutcome> => {
+    const load = React.useCallback((mode: ApprovalLoadMode = 'interactive', invalidated = false): Promise<void> => {
         const inFlight = approvalRefreshPromiseRef.current;
-        if (inFlight) return inFlight;
+        if (inFlight) {
+            // A committed wake cannot join a snapshot that began before that commit.
+            if (invalidated) approvalReloadRequestedRef.current = true;
+            return inFlight;
+        }
+        approvalReloadRequestedRef.current = false;
 
         const operation = (async () => {
             if (mode === 'interactive' && mountedRef.current) {
@@ -192,19 +206,18 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
                         { ok: false, reason: 'unauthorized', status: 401 } as const,
                     ),
                 })));
-                if (!mountedRef.current) return 'completed';
+                if (!mountedRef.current || homesRef.current !== homes) return;
 
                 const failures = results.filter(({ result }) => !result.ok && result.reason !== 'unauthorized');
                 const failed = failures.length > 0;
-                if (failed && mode === 'poll') return 'backoff';
+                if (failed && mode === 'background') return;
 
                 const items = results.flatMap(({ home, result }) => result.ok
                     ? result.items.map((approval) => ({ home, approval }))
                     : []);
                 const nextSnapshotKey = approvalSnapshotKey(items);
                 const changed = nextSnapshotKey !== approvalSnapshotKeyRef.current;
-                if (mode === 'poll' && !changed) return 'completed';
-
+                if (mode === 'background' && !changed) return;
                 approvalItemsRef.current = items;
                 approvalSnapshotKeyRef.current = failed ? null : nextSnapshotKey;
                 setState(failed
@@ -224,24 +237,29 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
                             ? t('inbox.emptyDescription')
                             : `${t('homeDeviceApproval.title')}: ${items.map(({ home }) => homeLabel(home)).join(', ')}`,
                 );
-                return failed ? 'backoff' : 'completed';
             } catch {
-                if (mountedRef.current && mode === 'interactive') {
+                if (mountedRef.current && homesRef.current === homes && mode === 'interactive') {
                     approvalSnapshotKeyRef.current = null;
                     setState((current) => ({ kind: 'error', items: current.items, reason: null, unreachableServerIds: [] }));
                     publishAnnouncement(t('homeDeviceApproval.loadError'));
                 }
-                return 'backoff';
             }
         })();
         approvalRefreshPromiseRef.current = operation;
         void operation.finally(() => {
             if (approvalRefreshPromiseRef.current === operation) {
                 approvalRefreshPromiseRef.current = null;
+                if (approvalReloadRequestedRef.current && mountedRef.current && visibleRef.current) {
+                    approvalReloadRequestedRef.current = false;
+                    void loadRef.current('background');
+                }
             }
         });
         return operation;
     }, [homes, publishAnnouncement]);
+    const loadRef = React.useRef(load);
+    loadRef.current = load;
+    const observedLoadRef = React.useRef<typeof load | null>(null);
 
     React.useEffect(() => {
         mountedRef.current = true;
@@ -251,8 +269,40 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
     }, []);
 
     React.useEffect(() => {
-        void load();
-    }, [load]);
+        if (!visible) return;
+        const mode = observedLoadRef.current === load ? 'background' : 'interactive';
+        observedLoadRef.current = load;
+        // Foreground revalidation keeps the existing hydrated/error presentation.
+        void load(mode, true);
+    }, [load, visible]);
+
+    React.useEffect(() => {
+        if (!visible) return;
+        const matchesHome = (serverId: string) => homes.some(home => areServerProfileIdentifiersEquivalent(resolveServerProfileScopeId(home), serverId));
+        const stopChanges = subscribeHomeAccountChange(event => {
+            if (!matchesHome(event.serverId)) return;
+            if (event.source === 'connected' || event.entityIds === undefined
+                || event.entityIds.includes(HOME_LOGIN_APPROVALS_HTTP_PATH_V1) || event.entityIds.some(isAccountCurrentnessEntityIdV1)) {
+                void load('background', true);
+            }
+        }, { serverIds: homes.map(resolveServerProfileScopeId) });
+        const stopCredentials = subscribeHomeCredentialChange(event => {
+            if (matchesHome(event.serverId)) void load('background', true);
+        });
+        return () => { stopChanges(); stopCredentials(); };
+    }, [homes, load, visible]);
+
+    React.useEffect(() => {
+        if (!visible || state.items.length === 0) return;
+        const expiresAtMs = state.items.reduce(
+            (earliest, { approval }) => Math.min(earliest, approval.expiresAtMs),
+            Infinity,
+        );
+        // Expiry has no server mutation to push. Wake once at the Home's actual
+        // deadline; creation, decisions and reconnects use the Account push above.
+        const timeout = setTimeout(() => { void load('background', true); }, Math.max(0, expiresAtMs - Date.now()));
+        return () => clearTimeout(timeout);
+    }, [load, state.items, visible]);
 
     const decide = React.useCallback(async (item: PendingApproval, decision: HomeDeviceApprovalDecision) => {
         const key = `${item.home.id}:${item.approval.approvalId}`;
@@ -335,24 +385,6 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
         ? formatEnrollmentExpiry(pendingEnrollment.expiresAtMs)
         : '';
     const pendingEnrollmentBusy = busyKeys.includes('pending-enrollment');
-
-    const poll = React.useCallback(async (): Promise<AccountDirectoryActivePollingOutcome> => {
-        try {
-            const [loaded, resumed] = await Promise.all([
-                load('poll'),
-                pendingEnrollment ? resumePendingDirectoryHomeEnrollment() : Promise.resolve(null),
-            ]);
-            if (mountedRef.current && pendingEnrollment && resumed && resumed.kind !== 'approval_required') {
-                setContinuation({ input: pendingEnrollment.input, result: resumed });
-            }
-            if (resumed && resumed.kind !== 'approval_required') publishAnnouncement(pendingEnrollmentResultAnnouncement(pendingEnrollmentName, resumed));
-            return loaded === 'backoff' || (resumed?.kind === 'failure' && resumed.recovery === 'retry_stage') ? 'backoff' : 'completed';
-        } catch {
-            // The visible pending card and explicit Retry remain available.
-            return 'backoff';
-        }
-    }, [load, pendingEnrollment, pendingEnrollmentName, publishAnnouncement]);
-    useAccountDirectoryActivePolling(poll);
 
     const pendingEnrollmentGroup = pendingEnrollment ? (
         <ItemGroup title={t('common.homeProductName')}>

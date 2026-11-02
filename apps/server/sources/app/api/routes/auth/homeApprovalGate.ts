@@ -4,6 +4,7 @@ import { resolveHomeDeviceApprovalRequiredFromEnv } from "@happier-dev/cli-commo
 import { z } from "zod/mini";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { assertAccountActive, InactiveAccountError } from "@/app/auth/accountStatus";
 import { acquireAccountSessionOwnerMetadataFenceInTx, AccountSessionOwnerMetadataFenceAccountNotFoundError } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import type { Fastify } from "../../types";
@@ -103,9 +104,12 @@ export function createHomeApprovalGate(env: NodeJS.ProcessEnv = process.env): Ho
                 if (existing) {
                     const effectiveExpiresAtMs = Math.min(existing.expiresAt.getTime(), assertionExpiresAtMs);
                     if (effectiveExpiresAtMs < existing.expiresAt.getTime()) {
-                        await tx.authPairingSession.updateMany({
+                        const shortened = await tx.authPairingSession.updateMany({
                             where: { id: existing.id, approvalStatus: "pending", expiresAt: existing.expiresAt },
                             data: { expiresAt: new Date(effectiveExpiresAtMs) },
+                        });
+                        if (shortened.count > 0) await markAccountChanged(tx, {
+                            accountId: input.accountId, kind: 'account', entityId: HOME_LOGIN_APPROVALS_HTTP_PATH_V1,
                         });
                     }
                     return {
@@ -137,6 +141,11 @@ export function createHomeApprovalGate(env: NodeJS.ProcessEnv = process.env): Ho
                         approvalStatus: "pending",
                     },
                     select: { id: true, expiresAt: true, requestedDeviceLabel: true },
+                });
+                // Invalidate the exact Account's reconstructible approval list after commit.
+                // The wake carries no requester key, device label, or approval binding.
+                await markAccountChanged(tx, {
+                    accountId: input.accountId, kind: 'account', entityId: HOME_LOGIN_APPROVALS_HTTP_PATH_V1,
                 });
                 return {
                     kind: "approval_required" as const,
@@ -226,7 +235,12 @@ export function registerHomeLoginApprovalRoutes(app: Fastify): void {
                 },
                 data: { approvalStatus: status, decidedAt: now },
             });
-            if (transition.count === 1) return status;
+            if (transition.count === 1) {
+                await markAccountChanged(tx, {
+                    accountId: request.userId, kind: 'account', entityId: HOME_LOGIN_APPROVALS_HTTP_PATH_V1,
+                });
+                return status;
+            }
             const existing = await tx.authPairingSession.findFirst({
                 where: { id: approvalId, accountId: request.userId, flow: "account_assertion", expiresAt: { gt: now } },
                 select: { approvalStatus: true },

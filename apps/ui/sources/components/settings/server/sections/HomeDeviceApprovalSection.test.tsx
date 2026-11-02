@@ -2,7 +2,7 @@ import * as React from 'react';
 import { router } from 'expo-router';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
@@ -11,7 +11,6 @@ import { setAccountServiceEndpoint } from '@/sync/domains/server/serverProfiles'
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { completeAccountServicePostAuth, type AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 import { cancelPendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment } from '@/sync/ops/accountDirectory/enrollDirectoryHome';
-import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPollingBackoff';
 import { formatEnrollmentExpiry } from '@/auth/pairing/pairingPresentation';
 
 installTokenStorageWebPlatformMocks();
@@ -32,7 +31,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
 import { HomeDeviceApprovalSection } from './HomeDeviceApprovalSection';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
-import { HOME_LOGIN_APPROVALS_HTTP_PATH_V1, buildHomeLoginApprovalDecisionHttpPathV1 } from '@happier-dev/protocol';
+import { HOME_LOGIN_APPROVALS_HTTP_PATH_V1, buildHomeLoginApprovalDecisionHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 type TextNode = Readonly<{ children?: ReadonlyArray<TextNode | string> }>;
 function collectText(node: TextNode | string | null | undefined): string {
@@ -55,6 +55,67 @@ describe('Home approval visible continuation', () => {
     beforeEach(() => { restore = installLocalStorageMock().restore; fixture = createDirectoryHttpFixture(); boundary.request.mockImplementation(fixture.request); });
     afterEach(async () => { await screen?.unmount(); screen = undefined; await cancelPendingDirectoryHomeEnrollment(); restore(); });
 
+    it('discovers pushed approvals and reconciles reconnect and remote decisions without unrelated invalidation reads', async () => {
+        const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: fixture.home.homeServerIdentityId }, { token: fixture.token });
+        let pending = false;
+        let reads = 0;
+        let expiresAtMs = Date.now() + 600_000;
+        boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+            if (path !== HOME_LOGIN_APPROVALS_HTTP_PATH_V1) return fixture.request(endpoint, path, init);
+            reads += 1;
+            return new Response(JSON.stringify(pending ? [{
+                approvalId: 'pushed', accountId: 'account-home', flow: 'account_assertion',
+                requesterBoxPublicKeyBase64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+                issuerServerIdentityId: fixture.service.serverIdentityId, issuerSubjectId: 'account-directory',
+                deviceLabel: 'Pushed phone', status: 'pending', expiresAtMs, decidedAtMs: null,
+            }] : []));
+        });
+        screen = await renderScreen(<HomeDeviceApprovalSection homes={[home]} />);
+        await vi.waitFor(() => expect(reads).toBe(1));
+        pending = true;
+        await act(async () => { publishHomeAccountChange(home.id, [HOME_LOGIN_APPROVALS_HTTP_PATH_V1]); });
+        expect(screen.findByTestId('settings.server.homeApprovals.pushed.approve')).not.toBeNull();
+        expect(reads).toBe(2);
+        expiresAtMs -= 300_000;
+        await act(async () => { publishHomeAccountChange(home.id, [HOME_LOGIN_APPROVALS_HTTP_PATH_V1]); });
+        expect(screen.getTextContent()).toContain(formatEnrollmentExpiry(expiresAtMs));
+        expect(reads).toBe(3);
+        await act(async () => { publishHomeAccountChange(home.id, ['unrelated'], { changeKinds: ['artifact'] }); });
+        expect(reads).toBe(3);
+        pending = false;
+        await act(async () => { publishHomeAccountChange(home.id, undefined, { source: 'connected' }); });
+        expect(screen.findByTestId('settings.server.homeApprovals.pushed.approve')).toBeNull();
+        expect(reads).toBe(4);
+    });
+
+    it('coalesces committed wakes during an in-flight snapshot into one fresh trailing read', async () => {
+        const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: fixture.home.homeServerIdentityId }, { token: fixture.token });
+        const first = createDeferred<Response>();
+        let reads = 0;
+        boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+            if (path !== HOME_LOGIN_APPROVALS_HTTP_PATH_V1) return fixture.request(endpoint, path, init);
+            reads += 1;
+            if (reads === 1) return first.promise;
+            return new Response(JSON.stringify([{
+                approvalId: 'during-read', accountId: 'account-home', flow: 'account_assertion',
+                requesterBoxPublicKeyBase64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+                issuerServerIdentityId: fixture.service.serverIdentityId, issuerSubjectId: 'account-directory',
+                deviceLabel: 'New phone', status: 'pending', expiresAtMs: Date.now() + 600_000, decidedAtMs: null,
+            }]));
+        });
+        screen = await renderScreen(<HomeDeviceApprovalSection homes={[home]} />);
+        await vi.waitFor(() => expect(reads).toBe(1));
+        await act(async () => {
+            publishHomeAccountChange(home.id, [HOME_LOGIN_APPROVALS_HTTP_PATH_V1]);
+            publishHomeAccountChange(home.id, [HOME_LOGIN_APPROVALS_HTTP_PATH_V1]);
+            first.resolve(new Response('[]'));
+        });
+        await vi.waitFor(() => expect(screen?.findByTestId('settings.server.homeApprovals.during-read.approve')).not.toBeNull());
+        expect(reads).toBe(2);
+    });
+
     it('routes deliberate approval recovery to the original Account Service and enrollment intent', async () => {
         const { service } = fixture;
         await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'directory-token' });
@@ -65,7 +126,7 @@ describe('Home approval visible continuation', () => {
         });
         screen = await renderScreen(<HomeDeviceApprovalSection homes={[]} />);
         fixture.state.approval = 'expired';
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, ENROLLMENT_POLL_IDLE_DELAY_MS + 100)); });
+        await screen.pressByTestIdAsync('settings.server.homeEnrollment.pending.retry');
         await vi.waitFor(() => expect(getPendingDirectoryHomeEnrollment()).toBeNull());
         // The live region speaks the same reason the continuation card shows.
         await vi.waitFor(() => expect(liveRegionText(screen!)).toContain('Start the sign-in again.'));
@@ -81,7 +142,7 @@ describe('Home approval visible continuation', () => {
         expect(fixture.state.calls.some(({ endpoint }) => endpoint === 'ambient' || endpoint === 'https://unrelated.test')).toBe(false);
     });
 
-    it('resumes the pending requester automatically without another Directory assertion', async () => {
+    it('resumes the pending requester on explicit refresh without another Directory assertion', async () => {
         const { service } = fixture;
         await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'directory-token' });
         expect(await completeAccountServicePostAuth({ service,
@@ -92,7 +153,7 @@ describe('Home approval visible continuation', () => {
         screen = await renderScreen(<HomeDeviceApprovalSection homes={[]} />);
         fixture.state.approval = 'approved';
         fixture.state.mode = 'e2ee';
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, ENROLLMENT_POLL_IDLE_DELAY_MS + 100)); });
+        await screen.pressByTestIdAsync('settings.server.homeEnrollment.pending.retry');
         await vi.waitFor(() => expect(getPendingDirectoryHomeEnrollment()).toBeNull());
         expect(screen.findByTestId('settings.server.homeEnrollment.continuation')).not.toBeNull();
         // The live region reads the continuation's own next step, not a separate label.

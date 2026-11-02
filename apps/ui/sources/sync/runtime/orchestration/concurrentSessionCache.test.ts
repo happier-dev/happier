@@ -104,6 +104,26 @@ describe('resolveConcurrentTargets', () => {
         ]);
     });
 
+    it('never makes the active Home a secondary target when it is identified by its profile id and advertises a canonical address', () => {
+        const result = resolveConcurrentTargets({
+            activeServerId: 'server-a',
+            profiles: [
+                {
+                    id: 'server-a', serverUrl: 'http://a.localhost:3000', name: 'Server A', serverIdentityId: 'srv-a',
+                    canonicalServerUrl: 'https://a.example.test',
+                },
+                { id: 'server-c', serverUrl: 'https://c.example.test', name: 'Server C', serverIdentityId: 'srv-c' },
+            ],
+            settings: {
+                serverSelectionGroups: [{ id: 'group-main', name: 'Main', serverIds: ['srv-a', 'srv-c'], presentation: 'grouped' }],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+            observedServerIds: ['srv-a'],
+        });
+        expect(result.map(target => target.id)).toEqual(['srv-c']);
+    });
+
     it('returns targets keyed by stable server identity ids', () => {
         const result = resolveConcurrentTargets({
             activeServerId: 'srv-a',

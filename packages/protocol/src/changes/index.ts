@@ -413,3 +413,11 @@ export function readAccountIdentitiesChangeV1(change: Readonly<{ kind: string; e
   return change.entityId === 'self' && hint !== null && typeof hint === 'object' && !Array.isArray(hint)
     && 'linkedProviders' in hint && hint.linkedProviders === true;
 }
+
+/**
+ * Content-free wake/feed-id form of Account currentness, for readers that ignore hints:
+ * a `self` id or the linked-identities id can change Team/Home qualification.
+ */
+export function isAccountCurrentnessEntityIdV1(entityId: string): boolean {
+  return entityId === 'self' || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1;
+}

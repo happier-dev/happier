@@ -4,7 +4,9 @@ import {
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { accountChangeKindsAffectWorkflowTriggers } from './changesPlanner';
+import { accountChangeKindsAffectWorkflowTriggers, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers } from './changesPlanner';
+import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 /**
  * Observers of the content-free Account-change wake this owner already receives
@@ -19,7 +21,7 @@ import { accountChangeKindsAffectWorkflowTriggers } from './changesPlanner';
 export type HomeAccountChangeEvent = Readonly<{
     serverId: string;
     /** Transport connection, or an early socket wake before detailed catch-up has answered. */
-    source?: 'connected' | 'catch-up-pending';
+    source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
     /** Exact only for a consumed focused-Home change page; absent wakes remain conservative. */
     entityIds?: readonly string[];
     /** Revision hints from the consumed change page; never inferred from a socket wake. */
@@ -53,8 +55,10 @@ type HomeAccountChangeDetails = Readonly<{
     entityRevisions?: Readonly<Record<string, number>>;
     workflowRunsMaterialized?: true;
     savedSecretResourcesRefreshStarted?: true;
-    source?: 'connected' | 'catch-up-pending';
+    source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
     changeKinds?: readonly ChangeEntry['kind'][];
+    /** Exact content-free record/access routing; an empty list excludes record changes. */
+    sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     sessionListQueryAffects?: boolean | 'structural';
     profileCatalogAffects?: boolean;
     accountSettingsAffects?: boolean;
@@ -78,7 +82,22 @@ export function isHomeAdministrationAccountChange(event: HomeAccountChangeEvent)
 
 type HomeAccountChangeObserver = (event: HomeAccountChangeEvent) => void;
 
-const homeAccountChangeObservers = new Map<HomeAccountChangeObserver, boolean>();
+const homeAccountChangeObservers = new Map<HomeAccountChangeObserver, Readonly<{
+    includeCatchUpPending: boolean;
+    serverIds: readonly string[];
+}>>();
+const homeAccountChangeDemandListeners = new Set<() => void>();
+
+/** Connection demand is derived from the existing live subscriptions, never retained separately. */
+export function getHomeAccountChangeDemandedServerIds(): readonly string[] {
+    return [...new Set([...homeAccountChangeObservers.values()].flatMap(observer => observer.serverIds))];
+}
+
+/** The canonical Home connection owner reconciles when visible observers mount or retire. */
+export function subscribeHomeAccountChangeDemand(listener: () => void): () => void {
+    homeAccountChangeDemandListeners.add(listener);
+    return () => { homeAccountChangeDemandListeners.delete(listener); };
+}
 
 // This fences pending raw reads only; it is not an Account cursor or a currentness fact.
 const homeAccountReadRevisions = new Map<string, number>();
@@ -131,11 +150,25 @@ export function subscribeHomeAccountChange(
     observer: HomeAccountChangeObserver,
     // Most projections consume exact planned entities. Catalogs may opt into
     // early revalidation without making every observer refetch on every wake.
-    options?: Readonly<{ includeCatchUpPending?: boolean }>,
+    options?: Readonly<{
+        includeCatchUpPending?: boolean;
+        serverIds?: readonly string[];
+    }>,
 ): () => void {
-    homeAccountChangeObservers.set(observer, options?.includeCatchUpPending === true);
+    const subscription = {
+        includeCatchUpPending: options?.includeCatchUpPending === true,
+        serverIds: (options?.serverIds ?? []).map(resolveServerProfileScopeIdForIdentifier).filter(Boolean),
+    };
+    homeAccountChangeObservers.set(observer, subscription);
+    if (subscription.serverIds.length > 0) {
+        for (const listener of homeAccountChangeDemandListeners) listener();
+    }
     return () => {
+        if (homeAccountChangeObservers.get(observer) !== subscription) return;
         homeAccountChangeObservers.delete(observer);
+        if (subscription.serverIds.length > 0) {
+            for (const listener of homeAccountChangeDemandListeners) listener();
+        }
     };
 }
 
@@ -148,6 +181,36 @@ export function publishHomeAccountChange(
     // listener would depend on insertion order and could join a pre-wake read.
     invalidateHomeAccountReadJoins(serverId);
     if (homeAccountChangeObservers.size === 0) return;
+    const rawKinds = details?.changeKinds;
+    const unknownKinds = rawKinds !== undefined && (rawKinds.length === 0
+        || rawKinds.some(kind => !ChangeKindSchema.safeParse(kind).success));
+    const advisory = details?.source !== undefined;
+    const disclosureOnly = rawKinds?.length === 1 && rawKinds[0] === 'account'
+        && entityIds !== undefined && entityIds.length > 0
+        && entityIds.every(id => readSavedSecretDisclosureActivityEntityIdV1(id) !== null);
+    // Only a single-kind Account wake pairs every id with its kind. Ask the
+    // incumbent planner what these content-free keys mean; no cursor or hint
+    // is inferred and this is never materialization/checkpoint evidence.
+    const accountWakePlan = (details?.source === 'catch-up-pending' || details?.source === 'socket')
+        && rawKinds !== undefined && rawKinds.length > 0 && rawKinds.every(kind => kind === 'account')
+        && entityIds !== undefined && entityIds.length > 0
+        ? planSyncActionsFromChanges(entityIds.map(entityId => ({ kind: 'account', entityId, cursor: 0, changedAt: 0 })))
+        : null;
+    // Generic self/unknown keys need both incumbent readers. Authority changes
+    // also retain the coarse wake that withdraws Session-record access; the
+    // planner's access/list decisions must exclude those before narrowing.
+    const scopedAccountPlan = accountWakePlan && accountWakePlan.unsupportedChanges.length === 0
+        && !(accountWakePlan.invalidate.settings && accountWakePlan.invalidate.profile)
+        && !accountWakePlan.invalidate.savedSecretResources
+        && plannedChangesAffectSessionListQuery(accountWakePlan) === false ? accountWakePlan : null;
+    const workflowTriggersAffect = details?.workflowTriggersAffect
+        ?? (scopedAccountPlan ? plannedChangesAffectWorkflowTriggers(scopedAccountPlan) : undefined);
+    // Explicit record routing is produced only when no unknown Account fact
+    // joined this wake. Retain its Session ids too: legacy workflow readers on
+    // a secondary Home have no detailed feed cursor to recover a mixed wake.
+    const coarse = unknownKinds || (advisory && (rawKinds === undefined
+        || (rawKinds.includes('account') && details?.sessionSystemRecords === undefined && !disclosureOnly && !scopedAccountPlan)));
+    const changeKinds = coarse ? undefined : rawKinds;
     const event = Object.freeze({
         serverId,
         ...(details?.source ? { source: details.source } : {}),
@@ -164,11 +227,11 @@ export function publishHomeAccountChange(
             || details.changeKinds.length === 0
             || details.changeKinds.some(kind => kind === 'account' || !ChangeKindSchema.safeParse(kind).success)),
         ...(details?.usageQueryAffects !== undefined ? { usageQueryAffects: details.usageQueryAffects } : {}),
-        workflowTriggersAffect: details?.source === 'connected' || coarse
-            || (details?.workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds)),
+        workflowTriggersAffect: !disclosureOnly && (details?.source === 'connected' || coarse
+            || (workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds))),
         ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
     });
-    for (const [observer, includeCatchUpPending] of [...homeAccountChangeObservers]) {
+    for (const [observer, { includeCatchUpPending }] of [...homeAccountChangeObservers]) {
         if (event.source === 'catch-up-pending' && !includeCatchUpPending) continue;
         try {
             observer(event);
