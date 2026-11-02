@@ -11282,6 +11282,16 @@
       "types": "./dist/sessions/general.d.ts",
       "default": "./dist/sessions/general.js"
     },
+    "./sessions/identity/botFaceGeometry": {
+      "happier-source": "./src/sessions/identity/botFaceGeometry.ts",
+      "types": "./dist/sessions/identity/botFaceGeometry.d.ts",
+      "default": "./dist/sessions/identity/botFaceGeometry.js"
+    },
+    "./sessions/identity/botFaceShapeValidation": {
+      "happier-source": "./src/sessions/identity/botFaceShapeValidation.ts",
+      "types": "./dist/sessions/identity/botFaceShapeValidation.d.ts",
+      "default": "./dist/sessions/identity/botFaceShapeValidation.js"
+    },
     "./sessions/identity/sessionBotFaceV1": {
       "happier-source": "./src/sessions/identity/sessionBotFaceV1.ts",
       "types": "./dist/sessions/identity/sessionBotFaceV1.d.ts",

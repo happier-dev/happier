@@ -669,11 +669,26 @@ the facet grants neither approval rights nor owner-metadata access. Existing
 0.2-created Sessions start with a zero contribution. This is an unreleased
 layout-1 contract change, not a mixed-0.3-version or rollback representation.
 
-Current 0.3 development source treats a Bot as an ordinary Session with a reversible
-`work.bot: { kind: 'bot' }` owner marker. Its shared projection contains only `bot`;
-the immutable creation fact `work.createdAsBot: true`, memory choice and
-`work.viewPreferences.showToolCalls` remain owner-private. The local compatibility
-view keeps `bot` and `createdAsBot` flat and retains other private fields under `work`.
+Current unreleased 0.3 development source treats a Bot as an ordinary Session with
+a reversible owner `work.bot: { kind: 'bot' }` marker and recipient-safe shared
+`bot` projection. Its optional shared-only `botFace` contains deliberate cosmetic
+overrides: style, body, palette colour, seed and an optional version-1 `shape`.
+The shape carries closed fill paths, optional round-capped `[path, width]`
+strokes, optional fill/stroke cuts, and a `[x, y, scale]` mouth anchor. Its
+optional `origin` is `custom` or `surprise`. Shape takes precedence over body in
+Dither, Solid, Pixel and Dots. Planet always uses the standard planet with the
+Bot's palette and mouth, ignoring body and shape art. The body remains the
+fallback for readers without custom-shape rendering. Generated
+faces store their concrete outline, so generator changes cannot alter saved art.
+`BotFaceBodySchema` contains the
+34 Round-3 roster ids shipped by R6; `BotFacePaletteSchema` owns colour choices.
+Solid uses matte, and there is no configurable finish field.
+`SessionSharedMetadataV1` and `SessionSharedDisplayV1` carry both fields to
+authorized viewers; the face adds no private `work` field. The immutable creation
+fact `work.createdAsBot: true`, memory choice and
+`work.viewPreferences.showToolCalls` remain owner-private. The local
+compatibility view exposes `bot`, `botFace` and `createdAsBot` flat and retains
+other private fields under `work`.
 Stored owner/shared reads recursively discard unknown extensions and validate known
 fields through the canonical stored-read projection. Creation, Actions and writes
 still use strict admission schemas. No separate Bot entity or runtime is introduced.

@@ -20,6 +20,7 @@ export function projectSessionDisplayV1(input: Readonly<{
     ...(shared.summary ? { summaryText: shared.summary.text } : {}),
     ...(shared.agentPresentation ? { agentPresentation: shared.agentPresentation } : {}),
     ...(shared.bot ? { bot: shared.bot } : {}),
+    ...(shared.botFace ? { botFace: shared.botFace } : {}),
     ...(shared.externalSessionOperationPresentationV1 ? { externalSessionOperationPresentationV1: shared.externalSessionOperationPresentationV1 } : {}),
     ...(shared.sessionGuardStateV1 ? { sessionGuardStateV1: shared.sessionGuardStateV1 } : {}),
   });
