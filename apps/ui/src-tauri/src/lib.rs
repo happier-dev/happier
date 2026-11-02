@@ -1,4 +1,14 @@
 #[cfg(desktop)]
+include!("../desktop_commands.rs");
+
+#[cfg(desktop)]
+macro_rules! desktop_invoke_handler {
+    ($($commands:tt)*) => {
+        tauri::generate_handler![$($commands)*]
+    };
+}
+
+#[cfg(desktop)]
 mod autostart;
 
 #[cfg(desktop)]
@@ -119,99 +129,7 @@ pub fn run() {
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(browser::DesktopBrowserState::default())
             .manage(hosted_artifact_desktop::DesktopHostedArtifactState::default())
-            .invoke_handler(tauri::generate_handler![
-                app_updates::desktop_fetch_update,
-                app_updates::desktop_download_update,
-                app_updates::desktop_install_update,
-                desktop_downloads::desktop_download_cache_create,
-                desktop_downloads::desktop_download_cache_write,
-                desktop_downloads::desktop_download_cache_close,
-                desktop_downloads::desktop_download_cache_remove,
-                desktop_dialog::desktop_pick_ssh_identity_file,
-                desktop_dialog::desktop_pick_personal_home_backup_archive,
-                desktop_dialog::desktop_save_personal_home_backup_archive,
-                desktop_lifecycle::desktop_finish_shutdown,
-                tray::desktop_set_tray_state,
-                pet_overlay::sync_desktop_pet_overlay_state,
-                pet_overlay::desktop_pet_overlay_read_window_state,
-                pet_overlay::desktop_pet_overlay_set_input_locked,
-                pet_overlay::desktop_pet_overlay_sync_element_metrics,
-                pet_overlay::desktop_pet_overlay_start_drag_session,
-                pet_overlay::desktop_pet_overlay_apply_drag_delta,
-                pet_overlay::desktop_pet_overlay_release_drag_velocity,
-                pet_overlay::desktop_pet_overlay_apply_momentum_delta,
-                pet_overlay::desktop_pet_overlay_end_drag_session,
-                pet_overlay::desktop_pet_overlay_reset_position,
-                pet_overlay::emit_desktop_pet_overlay_interaction_result,
-                pet_overlay::desktop_pet_overlay_show_main_window,
-                system_tasks::start_system_task,
-                system_tasks::cancel_system_task,
-                system_tasks::get_system_task_snapshot,
-                system_tasks::system_tasks_open_log_path,
-                system_tasks::system_tasks_reveal_output_path,
-                system_tasks::respond_system_task_prompt,
-                window_chrome::desktop_get_window_chrome_policy,
-                window_chrome::desktop_get_window_state,
-                window_chrome::desktop_set_window_title,
-                window_chrome::desktop_get_glass_state,
-                window_chrome::desktop_apply_glass_material,
-                window_chrome::desktop_open_reduce_transparency_settings,
-                window_chrome::desktop_minimize_window,
-                window_chrome::desktop_toggle_window_maximize,
-                window_chrome::desktop_close_window,
-                window_chrome::desktop_show_main_window,
-                window_chrome::desktop_start_window_dragging,
-                window_sizing::desktop_set_window_mode,
-                desktop_boot_credentials::desktop_read_stack_boot_credentials,
-                iroh::iroh_ensure_home_tunnel,
-                iroh::iroh_release_home_tunnel,
-                iroh::iroh_get_tunnel_status,
-                iroh::iroh_get_availability,
-                iroh::iroh_get_application_endpoint,
-                iroh::iroh_start_machine_tunnel,
-                iroh::iroh_start_machine_http_tunnel,
-                iroh::iroh_stop_machine_tunnel,
-                iroh::iroh_wait_machine_tunnel_closed,
-                secure_storage::desktop_secure_storage_read,
-                secure_storage::desktop_secure_storage_write,
-                secure_storage::desktop_secure_storage_remove,
-                browser::desktop_browser_get_availability,
-                browser::desktop_browser_open_view,
-                browser::desktop_browser_navigate,
-                browser::desktop_browser_set_bounds,
-                browser::desktop_browser_set_pointer_passthrough,
-                browser::desktop_browser_close_view,
-                browser::desktop_browser_open_devtools,
-                browser::desktop_browser_get_page_info,
-                browser::desktop_browser_capture_snapshot,
-                browser::desktop_browser_capture_recording_frame,
-                browser::desktop_browser_drain_diagnostics,
-                browser::desktop_browser_eval_script,
-                browser::desktop_browser_dispatch_navigation,
-                hosted_artifact_desktop::desktop_hosted_artifact_get_frame_capability,
-                hosted_artifact_desktop::desktop_hosted_artifact_register,
-                hosted_artifact_desktop::desktop_hosted_artifact_unregister,
-                hosted_artifact_desktop::desktop_hosted_artifact_cache_read,
-                hosted_artifact_desktop::desktop_hosted_artifact_cache_write,
-                hosted_artifact_desktop::desktop_hosted_artifact_cache_describe,
-                hosted_artifact_desktop::desktop_hosted_artifact_cache_remove,
-                hosted_artifact_desktop::desktop_hosted_artifact_cache_remove_account,
-                hosted_artifact_desktop::desktop_hosted_artifact_open_view,
-                hosted_artifact_desktop::desktop_hosted_artifact_set_bounds,
-                hosted_artifact_desktop::desktop_hosted_artifact_post_message,
-                hosted_artifact_desktop::desktop_hosted_artifact_go_back,
-                hosted_artifact_desktop::desktop_hosted_artifact_close_view,
-                activity_overlay::desktop_activity_overlay_sync,
-                activity_overlay::desktop_activity_overlay_get_window_state,
-                activity_overlay::desktop_activity_overlay_set_expanded,
-                activity_overlay::desktop_activity_overlay_set_input_locked,
-                activity_overlay::desktop_activity_overlay_apply_drag_delta,
-                activity_overlay::desktop_activity_overlay_release_drag_velocity,
-                activity_overlay::desktop_activity_overlay_apply_momentum_delta,
-                activity_overlay::desktop_activity_overlay_reset_position,
-                activity_overlay::desktop_activity_overlay_emit_interaction,
-                activity_overlay::desktop_activity_overlay_emit_interaction_result,
-            ]);
+            .invoke_handler(with_desktop_commands!(desktop_invoke_handler));
     }
 
     #[cfg(target_os = "macos")]
