@@ -55,6 +55,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     operationCancellation?: ActionExecutorContext['operationCancellation'];
     operationReview?: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationReviewContinuation;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+    /** Captured Account Environment read; never serialized or accepted from a Process DTO. */
+    processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
 }>;
 
 /** Content-free, host-owned operation observations; never part of an RPC DTO. */
