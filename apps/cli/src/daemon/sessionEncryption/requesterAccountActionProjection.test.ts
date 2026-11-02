@@ -117,7 +117,33 @@ describe('admitted requester Action projection', () => {
     expect(storedCredentials).not.toHaveBeenCalled();
   });
 
-  it('overlaps admitted profile and Settings-floor reads without opening Settings before identity admission', async () => {
+  it('takes one requester mode observation per parallel admitted request and retains each Settings floor', async () => {
+    let modeReads = 0;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, settingsVersion: ++modeReads,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 3 } };
+      throw new Error(`Unexpected parallel requester read ${url}`);
+    });
+    const admitted = await Promise.all(Array.from({ length: 3 }, () => requesterAccountOwner.admitRequesterAccountActionContext({
+      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' } },
+      credentials: { token: 'bob', encryption: null }, serverId: 'parallel-home', serverIdentityId: 'stable-home',
+      serverHttpBaseUrl: 'https://parallel-requester-home.test', isCurrent: async () => true,
+    })));
+    try {
+      expect(admitted.every(context => context !== null)).toBe(true);
+      expect(admitted.map(context => context?.accountEncryptionCurrentness.settingsVersion)).toEqual([1, 2, 3]);
+      expect(modeReads).toBe(admitted.length);
+      for (const context of admitted) for (let read = 0; read < 5; read++) expect(await context!.isCurrent()).toBe(true);
+      expect(modeReads).toBe(admitted.length);
+      expect(get.mock.calls.filter(([url]) => String(url).endsWith('/v2/account/settings'))).toHaveLength(admitted.length);
+    } finally { await Promise.all(admitted.map(context => context?.dispose())); }
+  });
+
+
+  it('admits requester identity before opening its observation and Settings floor', async () => {
     let releaseProfile!: () => void;
     const profileHeld = new Promise<void>(resolve => { releaseProfile = resolve; });
     let profileStarted = false;
@@ -144,10 +170,9 @@ describe('admitted requester Action projection', () => {
       credentials: { token: 'bob', encryption: null }, serverId: 'home-profile', serverIdentityId: 'stable-home',
       serverHttpBaseUrl: 'https://requester-home.test', isCurrent: async () => true };
     const pending = requesterAccountOwner.admitRequesterAccountActionContext(input);
-    let overlapped = false;
     try {
       await vi.waitFor(() => expect(profileStarted).toBe(true));
-      overlapped = floorStarted;
+      expect(floorStarted).toBe(false);
       expect(settingsReads).toBe(0);
     } finally {
       releaseProfile();
@@ -164,7 +189,7 @@ describe('admitted requester Action projection', () => {
     });
     await expect(requesterAccountOwner.admitRequesterAccountActionContext(input)).resolves.toBeNull();
     expect(settingsReads).toBe(0);
-    expect(overlapped).toBe(true);
+    expect(floorStarted).toBe(true);
   });
 
   it('cancels the held Settings HTTP read when finite requester admission is aborted', async () => {

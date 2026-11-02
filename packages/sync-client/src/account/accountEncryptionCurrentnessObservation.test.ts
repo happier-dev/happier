@@ -12,6 +12,70 @@ const update = (fact: unknown, id = 'account') => ({ id: 'update', seq: 2, creat
 const unavailable = () => new Error('currentness unavailable');
 
 describe('portable Account encryption observation', () => {
+
+    it('shares one fresh admission witness with retained identity readers', async () => {
+        let settingsVersion = 1;
+        const readFresh = vi.fn(async () => ({ ...plain, settingsVersion }));
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected({ refresh: false });
+            for (let admissions = 1; admissions <= 3; admissions++) {
+                settingsVersion = admissions;
+                expect((await observation.readWitness(undefined, { refresh: true })).settingsVersion).toBe(admissions);
+                for (let read = 0; read < 5; read++) expect((await observation.read()).mode).toBe('plain');
+                expect(readFresh).toHaveBeenCalledTimes(admissions);
+            }
+        } finally { observation.dispose(); }
+    });
+
+    it('reads one fresh witness for each concurrent admission while identity borrowers stay retained', async () => {
+        let admissions = 0;
+        const readFresh = vi.fn(async () => ({ ...plain, settingsVersion: ++admissions }));
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected({ refresh: false });
+            const witnesses = await Promise.all(Array.from({ length: 3 }, () => observation.readWitness(undefined, { refresh: true })));
+            expect(witnesses.map(witness => witness.settingsVersion)).toEqual([1, 2, 3]);
+            expect(readFresh).toHaveBeenCalledTimes(witnesses.length);
+            await Promise.all(Array.from({ length: 5 }, () => observation.read()));
+            expect(readFresh).toHaveBeenCalledTimes(witnesses.length);
+        } finally { observation.dispose(); }
+    });
+
+    it('shares in-flight admission reads with overlapping identity borrowers without coalescing admissions', async () => {
+        const replies: Array<() => void> = [];
+        let admissions = 0;
+        const readFresh = vi.fn(() => {
+            const witness = { ...plain, settingsVersion: ++admissions };
+            return new Promise<typeof witness>(resolve => { replies.push(() => resolve(witness)); });
+        });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        observation.connected({ refresh: false });
+        const witnesses = Promise.allSettled(Array.from({ length: 3 }, () => observation.readWitness(undefined, { refresh: true })));
+        const identities = Promise.allSettled(Array.from({ length: 5 }, () => observation.read()));
+        try {
+            expect(readFresh).toHaveBeenCalledTimes(3);
+            for (const reply of replies) reply();
+            expect((await witnesses).map(result => result.status === 'fulfilled' ? result.value.settingsVersion : 'refused')).toEqual([1, 2, 3]);
+            expect((await identities).every(result => result.status === 'fulfilled' && result.value.mode === 'plain')).toBe(true);
+            expect(readFresh).toHaveBeenCalledTimes(3);
+        } finally { observation.dispose(); await witnesses; await identities; }
+    });
+
+    it('refuses a failed admission witness instead of reusing an older Settings floor', async () => {
+        const failure = Object.assign(new Error('Home unavailable for admission'), { canTryAgain: true });
+        const readFresh = vi.fn().mockResolvedValueOnce(plain).mockRejectedValueOnce(failure);
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        try {
+            observation.connected({ refresh: false });
+            const first = await observation.readWitness(undefined, { refresh: true });
+            await expect(observation.readWitness(undefined, { refresh: true })).rejects.toBe(failure);
+            expect(observation.isCurrent(first)).toBe(true);
+            expect((await observation.read()).mode).toBe('plain');
+            expect(readFresh).toHaveBeenCalledTimes(2);
+        } finally { observation.dispose(); }
+    });
+
     it('settles a non-retryable initialization failure across repeated borrowers until real invalidation', async () => {
         const failure = Object.assign(new Error('currentness response unavailable'), { canTryAgain: false });
         let available = false;

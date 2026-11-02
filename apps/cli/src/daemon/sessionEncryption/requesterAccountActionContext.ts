@@ -1,3 +1,4 @@
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -11,6 +12,7 @@ export type RequesterAccountActionContext = Readonly<{
   invocation?: ExternalActionRequesterInvocationV1;
   deploymentChild?: import('@happier-dev/protocol').DeploymentChildRpcV1;
   credentials: StoredCredentials;
+  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   accountSettingsContext: AccountSettingsContext;
   savedSecretOperationContext: SavedSecretOperationContextV1;
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -38,3 +40,9 @@ export function readRequesterAccountActionContext(authorization?: ExternalAction
     = authorization?.requesterAccountProjection;
   return projection?.[requesterActionContext] ?? null;
 }
+
+/** Enumerable only for host-local object spread; HTTP header enumeration omits Symbols. */
+export const requesterAccountEncryptionMode = Symbol('admittedRequesterAccountEncryptionMode');
+export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, string>> & Readonly<{
+  [requesterAccountEncryptionMode]?: 'plain' | 'e2ee';
+}>;

@@ -1,6 +1,5 @@
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { acquireRequesterAccountEncryptionCurrentness, waitForObservation,
   sameRequesterAccountEncryptionCurrentness, type RequesterAccountSettingsObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -40,15 +39,13 @@ export function createRequesterAccountSettingsPublication(input: Readonly<{
     const captured = publication;
     const current = () => !retirement.signal.aborted && !captured.signal.aborted && publication === captured;
     pending = (async () => {
-      const fact = await input.observation.read(captured.signal);
+      const fact = await input.observation.readWitness(captured.signal,
+        !update?.success && needsFreshSettingsWitness ? { refresh: true } : undefined);
       if (!current()) return false;
       if (!update?.success && needsFreshSettingsWitness) {
         // Missing Settings publication is recovered from a fresh Home witness,
         // never from the cursor of an otherwise unchanged socket identity.
-        const witness = await fetchAccountEncryptionCurrentness({ token: context.credentials.token,
-          serverBaseUrl: context.serverHttpBaseUrl, signal: captured.signal });
-        if (!current() || !sameRequesterAccountEncryptionCurrentness(witness, fact)) return false;
-        highestVersion = Math.max(highestVersion, witness.settingsVersion ?? highestVersion);
+        highestVersion = Math.max(highestVersion, fact.settingsVersion ?? highestVersion);
       }
       const next = await runWithServerHttpBaseUrl(context.serverHttpBaseUrl, () => update?.success
         ? applyAccountSettingsV2Update({ credentials: context.credentials, update: update.data,

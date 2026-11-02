@@ -1,3 +1,5 @@
+import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
@@ -60,10 +62,12 @@ export async function resolveAutomationWorkerAccountEncryption(params: Readonly<
   return await resolveValidatedAutomationAccountEncryptionV1({
     signal,
     resolveAccountEncryptionCurrentness: async (currentnessSignal) =>
-      await fetchAccountEncryptionCurrentness({
-        token: params.token,
-        ...(currentnessSignal ? { signal: currentnessSignal } : {}),
-      }),
+      await (readObservedAccountEncryptionCurrentnessWitness({ token: params.token,
+        serverBaseUrl: resolveServerHttpBaseUrl(), ...(currentnessSignal ? { signal: currentnessSignal } : {}) })
+        ?? fetchAccountEncryptionCurrentness({ token: params.token,
+          ...(params.credentials ? { credentials: params.credentials } : {}),
+          ...(currentnessSignal ? { signal: currentnessSignal } : {}),
+        })),
     resolveAccountEncryptionMaterial: async () => (
       params.credentials
         ? createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials)

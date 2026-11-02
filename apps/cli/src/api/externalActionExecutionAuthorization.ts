@@ -75,7 +75,7 @@ import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/m
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MachineEnvironmentApplyInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, type MachineEnvironmentApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { readRequesterAccountActionContext, requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
@@ -717,8 +717,10 @@ export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
   body?: unknown;
   idempotencyKey?: string;
   privateKey: ExternalActionMachineRequestSigningKey;
-}>): Readonly<Record<string, string>> {
+}>): RequesterAccountAuthorizationHeaders {
+  const mode = input.authorization.requesterAccountProjection?.accountEncryptionMode;
   return {
+    ...(mode === undefined ? {} : { [requesterAccountEncryptionMode]: mode }),
     ...(input.idempotencyKey === undefined ? {} : { 'Idempotency-Key': input.idempotencyKey }),
     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: input.authorization.token,
     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: input.effectActionId,

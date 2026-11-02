@@ -1,3 +1,4 @@
+import { classifyServerEndpointError } from './classifyServerEndpointError';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { readObservedAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
 
@@ -15,7 +16,14 @@ export async function readAccountEncryptionModeOnce(input: Readonly<{
   usage?: 'identity' | 'fresh-authority';
 }>): Promise<AccountEncryptionModeReadResult> {
   const observed = input.usage === 'identity' && input.scope ? readObservedAccountEncryptionCurrentness(input.scope) : null;
-  if (observed) return { kind: 'resolved', mode: (await observed).mode };
+  if (observed) {
+    try { return { kind: 'resolved', mode: (await observed).mode }; }
+    catch (error) {
+      // A predecessor Home without currentness can still report mode. This
+      // compatibility read never publishes or grants an observed identity.
+      if (classifyServerEndpointError(error).statusCode !== 404) throw error;
+    }
+  }
   const response = await input.request();
   if (response.status < 200 || response.status >= 300) {
     return { kind: 'http_error', status: response.status };

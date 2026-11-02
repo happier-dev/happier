@@ -1,8 +1,9 @@
+import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { PublishWorkflowInvocationRead } from '@/workspaces/publishProject';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
-import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
@@ -269,16 +270,38 @@ export function createCliWorkflowFamily(
       ...(directory ? { directory } : {}),
     });
   };
+  const resolveWorkflowEncryption = async (context: ActionExecutorContext, signal?: AbortSignal, actionId?: string) => {
+    const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
+    const credentials = requester?.credentials ?? params.credentials;
+    if (!credentials) {
+      throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+    }
+    return await resolveValidatedAutomationAccountEncryptionV1({
+      signal: signal ?? context.signal ?? new AbortController().signal,
+      resolveAccountEncryptionCurrentness: currentnessSignal => {
+        if (requester) return Promise.resolve(requester.accountEncryptionCurrentness);
+        // Session birth keeps its existing signed requester transport. It has
+        // no finite Account context and cannot borrow Machine custody instead.
+        if (context.externalActionExecutionAuthorization && actionId) {
+          const authorizationHeaders = resolveServerRequestHeaders(context, actionId, {
+            method: 'GET', path: '/v1/account/encryption/currentness',
+          });
+          if (!authorizationHeaders) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+          return fetchAccountEncryptionCurrentness({ token: credentials.token, credentials,
+            serverBaseUrl: workflowRunServerHttpBaseUrl, authorizationHeaders, signal: currentnessSignal });
+        }
+        const scope = { token: credentials.token, serverBaseUrl: workflowRunServerHttpBaseUrl,
+          ...(currentnessSignal ? { signal: currentnessSignal } : {}) };
+        return readObservedAccountEncryptionCurrentnessWitness(scope)
+          ?? fetchAccountEncryptionCurrentness({ ...scope, credentials });
+      },
+      resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
+    });
+  };
   const readWorkflowApprovedOperation = params.credentials ? createWorkflowApprovedOperationReader({
     storage: workflowRunStorage,
     resolveEncryption: async context => {
-      const resolved = await resolveValidatedAutomationAccountEncryptionV1({
-        signal: context.signal ?? new AbortController().signal,
-        resolveAccountEncryptionCurrentness: signal => fetchAccountEncryptionCurrentness({
-          token: params.token, serverBaseUrl: workflowRunServerHttpBaseUrl, signal,
-        }),
-        resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials!),
-      });
+      const resolved = await resolveWorkflowEncryption(context);
       return resolved.kind === 'available' ? resolved : null;
     },
   }) : undefined;
@@ -286,27 +309,8 @@ export function createCliWorkflowFamily(
     caller: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0],
     signal?: AbortSignal,
   ) => {
-    const authorizationHeaders = resolveServerRequestHeaders(caller.context, caller.actionId, {
-      method: 'GET', path: '/v1/account/encryption/currentness',
-    });
-    if (!authorizationHeaders) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-    const [{ resolveValidatedAutomationAccountEncryptionV1 }, { classifyServerEndpointError }] = await Promise.all([import("@/plugins/runtime/automations/automationAccountCurrentness"), import("@/api/client/classifyServerEndpointError")]);
-    const resolved = await resolveValidatedAutomationAccountEncryptionV1({
-      signal: signal ?? new AbortController().signal,
-      resolveAccountEncryptionCurrentness: async (currentnessSignal) => {
-        const { fetchAccountEncryptionCurrentness } = await import("@/api/client/connectedServiceCredentialApi");
-        return await fetchAccountEncryptionCurrentness({
-        token: params.token,
-        serverBaseUrl: workflowRunServerHttpBaseUrl,
-        authorizationHeaders,
-        ...(currentnessSignal ? { signal: currentnessSignal } : {}),
-      });
-      },
-      resolveAccountEncryptionMaterial: async () => {
-        const { createAutomationAccountEncryptionMaterialSnapshotV1 } = await import("@/plugins/runtime/automations/automationAccountCurrentness");
-        return createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials!);
-      },
-    });
+    const resolved = await resolveWorkflowEncryption(caller.context, signal, caller.actionId);
+    const { classifyServerEndpointError } = await import('@/api/client/classifyServerEndpointError');
     if (resolved.kind === 'unavailable' && 'cause' in resolved
       && classifyServerEndpointError(resolved.cause).retryable) throw resolved.cause;
     if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });

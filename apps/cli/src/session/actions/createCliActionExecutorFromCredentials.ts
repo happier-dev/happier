@@ -697,6 +697,7 @@ function createApprovalRoutingContext(
 
 function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
+  admittedAccountEncryptionMode?: Parameters<typeof createCliActionDeps>[0]['admittedAccountEncryptionMode'];
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
   providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
@@ -1016,6 +1017,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     });
     return createCliActionExecutor({
       ...cryptoContext,
+      ...(params.admittedAccountEncryptionMode !== undefined
+        ? { admittedAccountEncryptionMode: params.admittedAccountEncryptionMode } : {}),
       ...(routeHostChildAction ? { routeHostChildAction } : {}),
       ...(readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions } : {}),
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
@@ -1119,7 +1122,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             // Account live-only decisions use the same Artifact decision owner;
             // Machine custody still returns to its exact admitting daemon.
             const store = createCliApprovalsArtifactStore({ credentials, serverId: approvalServerId,
-              serverHttpBaseUrl: approvalServerApiUrl });
+              serverHttpBaseUrl: approvalServerApiUrl,
+              ...(params.admittedAccountEncryptionMode !== undefined
+                ? { getAccountEncryptionMode: async () => params.admittedAccountEncryptionMode! } : {}) });
             let request: TargetActionApprovalRequestV1 | null;
             try { request = await runWithServerHttpBaseUrl(approvalServerApiUrl,
               () => store.targetActionApprovalsGet({ artifactId })); }

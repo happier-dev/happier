@@ -86,7 +86,38 @@ afterAll(async () => {
   if (pluginReloadController.getState().activeRegistry) await pluginReloadController.shutdown();
 });
 
+const workflowAccountPersonToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 0,
+  provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+
 describe('createCliActionDeps workflow boundary', () => {
+
+  it.each(['plain', 'unknown'] as const)('keeps an admitted approval mode %s when Home mode changes before the Artifact write', async admittedAccountEncryptionMode => {
+    const credentials = { token: workflowAccountPersonToken, encryption: null, credentialProvenance: 'stored_session' as const };
+    const modeReads: string[] = [];
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption')) { modeReads.push(url); return { status: 200, data: { mode: 'e2ee', updatedAt: 2 } }; }
+      if (new URL(url).pathname.startsWith('/v1/artifacts/')) return { status: 404, data: { error: 'artifact_not_found' } };
+      throw new Error(`Unexpected admitted approval read ${url}`);
+    });
+    const writes: unknown[] = [];
+    http.post.mockImplementation(async (url: string, input: Record<string, unknown>) => {
+      if (new URL(url).pathname !== '/v1/artifacts') throw new Error(`Unexpected admitted approval write ${url}`);
+      writes.push(input);
+      return { status: 400, data: { error: 'artifact_account_mode_mismatch' } };
+    });
+    const params = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+      admittedAccountEncryptionMode };
+    const deps = createCliActionDeps(params);
+    await expect(deps.approvalsCreate!({ request: { v: 1, actionId: 'session.message.send', status: 'open',
+      summary: 'Approve a message', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli', sessionId: 's1' }, actionArgs: { sessionId: 's1', message: 'hello' } }, serverId: null }))
+      .rejects.toMatchObject({ code: admittedAccountEncryptionMode === 'plain'
+        ? 'artifact_account_mode_mismatch' : 'account_encryption_mode_unavailable' });
+    expect(modeReads).toEqual([]);
+    expect(writes).toEqual(admittedAccountEncryptionMode === 'plain'
+      ? [expect.objectContaining({ dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER })] : []);
+  });
+
   it('refuses a missing daemon runtime before Workflow materialization or storage', async () => {
     expect(pluginReloadController.getState().activeRegistry).toBeNull();
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;

@@ -58,33 +58,50 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         pending = null;
         readError = null;
     };
+    const hasTerminalReadFailure = () => readError !== null && typeof readError === 'object'
+        && 'canTryAgain' in readError && readError.canTryAgain === false;
+    const readFresh = async (captured: AbortController) => {
+        if (hasTerminalReadFailure()) throw readError;
+        const next = await waitForAccountEncryptionObservation(options.readFresh(captured.signal), captured.signal);
+        const witness = AccountEncryptionCurrentnessResponseSchema.parse(next);
+        if (connected && !disposed && lifetime === captured) {
+            fact = { witness, identity: fact && sameAccountEncryptionIdentity(witness, fact.identity)
+                ? fact.identity : projectAccountEncryptionIdentity(witness) };
+            readError = null;
+        }
+        return witness;
+    };
     const refresh = () => {
-        if (!connected || disposed || fact || pending) return;
-        // Respect the transport owner's explicit terminal verdict. Retaining
-        // unavailable authority grants nothing; real invalidation clears it.
-        if (readError !== null && typeof readError === 'object'
-            && 'canTryAgain' in readError && readError.canTryAgain === false) return;
+        if (!connected || disposed || fact !== null || pending || hasTerminalReadFailure()) return;
         const captured = lifetime;
-        pending = waitForAccountEncryptionObservation(options.readFresh(captured.signal), captured.signal)
-            .then(next => {
-                if (connected && !disposed && lifetime === captured) {
-                    const witness = AccountEncryptionCurrentnessResponseSchema.parse(next);
-                    fact = { witness, identity: projectAccountEncryptionIdentity(witness) };
-                }
-            })
+        readError = null;
+        pending = readFresh(captured).then(() => undefined)
             .catch(error => { if (lifetime === captured) readError = error; })
             .finally(() => { if (lifetime === captured) pending = null; });
+    };
+    const readFact = async (signal?: AbortSignal) => {
+        if (signal?.aborted) throw abortReason(signal);
+        if (disposed) throw options.unavailable();
+        if (connected && !fact) refresh();
+        if (pending) {
+            const operation = waitForAccountEncryptionObservation(pending, retirement.signal);
+            await (signal ? waitForAccountEncryptionObservation(operation, signal) : operation);
+        }
+        if (signal?.aborted) throw abortReason(signal);
+        if (retirement.signal.aborted) throw abortReason(retirement.signal);
+        if (!connected || !fact) throw readError ?? Object.assign(options.unavailable(), { retryable: true });
+        return fact;
     };
     return {
         /** Passive redacted facts; never refreshes or exposes Account identity/content. */
         getDiagnosticState: (): Readonly<{ connected: boolean; factPresent: boolean; pending: boolean; disposed: boolean }> =>
             ({ connected, factPresent: fact !== null, pending: pending !== null, disposed }),
         invalidate,
-        connected() {
+        connected(input?: Readonly<{ refresh?: boolean }>) {
             if (disposed) return;
             connected = true;
             invalidate();
-            refresh();
+            if (input?.refresh !== false) refresh();
         },
         disconnected() { connected = false; invalidate(); },
         update(raw: unknown): boolean {
@@ -119,17 +136,25 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         peek: (): AccountEncryptionIdentity | null => !disposed && connected && fact
             ? fact.identity : null,
         async read(signal?: AbortSignal): Promise<AccountEncryptionIdentity> {
+            return (await readFact(signal)).identity;
+        },
+        /** The full response is retained for Settings floors, not identity currentness. */
+        async readWitness(signal?: AbortSignal, input?: Readonly<{ refresh?: true }>): Promise<AccountEncryptionCurrentnessResponse> {
+            if (!input?.refresh) return (await readFact(signal)).witness;
             if (signal?.aborted) throw abortReason(signal);
-            if (disposed) throw options.unavailable();
-            if (connected && !fact) refresh();
-            if (pending) {
-                const operation = waitForAccountEncryptionObservation(pending, retirement.signal);
-                await (signal ? waitForAccountEncryptionObservation(operation, signal) : operation);
+            if (disposed || !connected) throw options.unavailable();
+            // Every admission owns its one full response and Settings floor.
+            // Identity borrowers can share that read without another HTTP request.
+            const captured = lifetime;
+            const operation = readFresh(captured).catch(error => {
+                if (lifetime === captured) readError = error;
+                throw error;
+            });
+            if (!pending) {
+                pending = operation.then(() => undefined, () => undefined)
+                    .finally(() => { if (lifetime === captured) pending = null; });
             }
-            if (signal?.aborted) throw abortReason(signal);
-            if (retirement.signal.aborted) throw abortReason(retirement.signal);
-            if (!connected || !fact) throw readError ?? Object.assign(options.unavailable(), { retryable: true });
-            return fact.identity;
+            return await (signal ? waitForAccountEncryptionObservation(operation, signal) : operation);
         },
         dispose() { disposed = true; connected = false; retirement.abort(); invalidate(); },
     };

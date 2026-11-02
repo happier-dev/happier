@@ -449,7 +449,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const resolveAgentStartContext = createCliAgentStartContext(params, { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession }, () => readEffectiveDeps?.() ?? actionDeps);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials,
     serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl,
-    operationContext: params.savedSecretOperationContext }) : null;
+    operationContext: params.savedSecretOperationContext,
+    ...(params.admittedAccountEncryptionMode !== undefined
+      ? { getAccountEncryptionMode: async () => params.admittedAccountEncryptionMode! } : {}) }) : null;
   const resolveSessionAgentIdentity = async (metadata: Record<string, unknown> | null | undefined, backendTarget?: BackendTargetRefV2 | null) => {
     const [{ resolveAgentIdFromSessionMetadata, isBundledAgentId }, { readAgentCatalogSnapshot }, { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES }] = await Promise.all([import("@happier-dev/agents"), import("@/agent/catalog/snapshot"), import('@happier-dev/agents/agent-ids')]);
     const agentId = backendTarget?.sourceKind === 'built_in'

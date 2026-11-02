@@ -1742,6 +1742,7 @@ export class ApiSessionClient extends EventEmitter {
                     }),
                     createExecutor: (admitted, installation) => createCliActionExecutorFromCredentials({
                         credentials: admitted.credentials, serverId: this.serverBinding.serverId,
+                        admittedAccountEncryptionMode: admitted.accountEncryptionCurrentness?.mode ?? 'unknown',
                         serverApiUrl: this.serverBinding.serverUrl, serverIdentityId: admitted.authorization.binding.serverIdentityId,
                         machineId: options.localMachineId!, externalActionMachineInstallationId: installation.installationId,
                         externalActionMachineRequestPrivateKey: installation.privateKey,

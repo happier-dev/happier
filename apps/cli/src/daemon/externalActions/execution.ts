@@ -671,6 +671,7 @@ resolveServerFeaturesSnapshot?: () =>
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
+        ...(requesterAccountContext ? { admittedAccountEncryptionMode: requesterAccountContext.accountEncryptionCurrentness?.mode ?? 'unknown' } : {}),
         ...(sessionStopEffect ? { sessionStop: sessionStopEffect } : {}),
         postWorkflowDiscussionMessage: createApprovedWorkflowDiscussionPublisher({
           credentials, machineId: params.machineId, serverId: params.serverId,

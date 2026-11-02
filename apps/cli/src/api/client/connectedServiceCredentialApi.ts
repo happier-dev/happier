@@ -15,7 +15,6 @@ import { logServerEndpointFailure } from './serverEndpointFailureLog';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { readAccountEncryptionModeOnce } from './accountEncryptionMode';
 import { createHttpStatusError } from './httpStatusError';
-import { readObservedAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
 import { fetchAccountEncryptionCurrentness } from './accountEncryptionCurrentness';
 export { AccountEncryptionCurrentnessUnavailableError, fetchAccountEncryptionCurrentness, fetchAccountEncryptionCurrentnessFromServer } from './accountEncryptionCurrentness';
 
@@ -357,17 +356,16 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
   }
 
   private async readAccountEncryptionMode(options?: AccountEncryptionModeReadOptions): Promise<ConnectedServiceAccountEncryptionMode> {
-    const observed = options?.refresh || options?.usage === 'fresh-authority' ? null
-      : readObservedAccountEncryptionCurrentness({ token: this.token, serverBaseUrl: resolveServerHttpBaseUrl(), signal: options?.signal });
-    if (observed) return (await observed).mode;
-    return await this.fetchAccountEncryptionModeFromServer(options?.signal);
+    return await this.fetchAccountEncryptionModeFromServer(options?.signal,
+      options?.refresh ? 'fresh-authority' : options?.usage ?? 'identity');
   }
 
-  private async fetchAccountEncryptionModeFromServer(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode> {
+  private async fetchAccountEncryptionModeFromServer(signal?: AbortSignal, usage: 'identity' | 'fresh-authority' = 'fresh-authority'): Promise<ConnectedServiceAccountEncryptionMode> {
     const serverUrl = resolveServerHttpBaseUrl();
     try {
       const result = await readAccountEncryptionModeOnce({
-        usage: 'fresh-authority',
+        scope: { token: this.token, serverBaseUrl: serverUrl, ...(signal ? { signal } : {}) },
+        usage,
         request: async () => await axios.get(`${serverUrl}/v1/account/encryption`, {
           headers: createHeaders(this.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),

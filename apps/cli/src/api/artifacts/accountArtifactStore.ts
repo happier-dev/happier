@@ -59,7 +59,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
+import { requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError, HttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 import { createBackoff } from '@/utils/time';
@@ -88,7 +88,7 @@ const retryArtifactRevisionUpdate = createBackoff({
   },
 });
 
-export type ArtifactRequestAuthorizationHeaders = (request: Readonly<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown }>) => Promise<Record<string, string>>;
+export type ArtifactRequestAuthorizationHeaders = (request: Readonly<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown }>) => Promise<RequesterAccountAuthorizationHeaders>;
 export type AccountArtifact = Readonly<{
   ownerAccountId: string;
   access: ArtifactCallerAccessV1;
@@ -487,9 +487,22 @@ export function createAccountArtifactStore(params: Readonly<{
         await axios.post(accessUrl(stored.id, 'key-envelopes'), input, await authorizedAccessConfig(stored.id, 'key-envelopes', 'POST', signal, authorizationHeaders, input)))),
     });
   };
+  const readAccountMode = async (options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
+    signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> => {
+    if (!params.accountContent && options?.authorizationHeaders) {
+      const authorization = await options.authorizationHeaders({ method: 'GET', path: '/v1/account/encryption/currentness' });
+      const requesterMode = authorization[requesterAccountEncryptionMode];
+      if (requesterMode !== undefined) return requesterMode;
+      // Only this store's own bearer may borrow its Account observation.
+      // A transported signed proof without the host-local admission fails closed.
+      const bearer = Object.entries(authorization).find(([key]) => key.toLowerCase() === 'authorization')?.[1];
+      if (bearer !== `Bearer ${params.credentials!.token}`) return 'unknown';
+    }
+    return params.getAccountEncryptionMode({ ...options, usage: 'identity' });
+  };
   const assertOwnerAccountMode = async (stored: Pick<StoredArtifact, 'access' | 'encryptionMode'>,
     timing?: { accountModeMs: number; codecMs: number },
-    options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders; signal?: AbortSignal; usage?: AccountEncryptionModeReadOptions['usage'] }>,
+    options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders; signal?: AbortSignal }>,
     admittedMode?: Promise<ConnectedServiceAccountEncryptionMode>) => {
     // Personal Artifact reads/writes follow the persisted Account mode. Shared
     // recipients instead open the owner's content mode, which may differ from theirs.
@@ -696,7 +709,7 @@ export function createAccountArtifactStore(params: Readonly<{
         throw new ArtifactEncryptionMaterialUnavailableError();
       }
       if (options?.prepareRecipients !== false) await prepare(stored, codec, options?.signal);
-      await assertOwnerAccountMode(stored, undefined, { usage: 'fresh-authority', signal: options?.signal });
+      await assertOwnerAccountMode(stored, undefined, { signal: options?.signal });
       options?.signal?.throwIfAborted();
       return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
         ownerAccountId: stored.ownerAccountId, access: stored.access, publicAudience: stored.publicAudience,
@@ -812,13 +825,6 @@ export function createAccountArtifactStore(params: Readonly<{
         codec, input.signal, input.authorizationHeaders);
     } } as const;
   };
-  const readAccountMode = async (options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
-    signal?: AbortSignal; usage?: AccountEncryptionModeReadOptions['usage'] }>) => params.accountContent
-    ? params.getAccountEncryptionMode(options) : options?.authorizationHeaders
-    ? (await fetchAccountEncryptionCurrentness({ credentials: contentCredentials!, token: params.credentials!.token,
-        authorizationHeaders: await options.authorizationHeaders({ method: 'GET', path: '/v1/account/encryption/currentness' }),
-        allowCredentialRecovery: false, ...(options.signal ? { signal: options.signal } : {}) })).mode
-    : params.getAccountEncryptionMode(options);
   type UpdateInput = Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent;
   const update = async (input: UpdateInput, storedBasis?: StoredArtifact) => {
     const prepared = await prepareUpdateContent(input, storedBasis);
@@ -830,7 +836,7 @@ export function createAccountArtifactStore(params: Readonly<{
       response = await retryArtifactRevisionUpdate(async () => {
         input.signal?.throwIfAborted();
         if (input.beforeWrite) await input.beforeWrite();
-        await assertOwnerAccountMode(stored, undefined, { usage: 'fresh-authority', signal: input.signal, authorizationHeaders: input.authorizationHeaders });
+        await assertOwnerAccountMode(stored, undefined, { signal: input.signal, authorizationHeaders: input.authorizationHeaders });
         input.signal?.throwIfAborted();
         writeAttempts += 1;
         let result;
@@ -908,7 +914,7 @@ export function createAccountArtifactStore(params: Readonly<{
         assertCurrent: async () => {
           input.signal?.throwIfAborted();
           if (input.beforeWrite) await input.beforeWrite();
-          await assertOwnerAccountMode(prepared.stored, undefined, { usage: 'fresh-authority', signal: input.signal, authorizationHeaders: input.authorizationHeaders });
+          await assertOwnerAccountMode(prepared.stored, undefined, { signal: input.signal, authorizationHeaders: input.authorizationHeaders });
           input.signal?.throwIfAborted();
         },
         afterCommit: prepared.afterCommit,
@@ -953,14 +959,14 @@ export function createAccountArtifactStore(params: Readonly<{
     openStoredEnvelope: async (envelope: Readonly<{ header: string; body: string; dataEncryptionKey: string }>,
       options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null }>> => {
       options?.signal?.throwIfAborted();
-      const mode = await params.getAccountEncryptionMode({ ...options, usage: 'fresh-authority' });
+      const mode = await readAccountMode(options);
       options?.signal?.throwIfAborted();
       const codec = await openCodec(contentCredentials, envelope.dataEncryptionKey, mode);
       const header = decode(codec, envelope.header);
       const body = decodeBody(codec, envelope.body);
       if (!header || typeof header !== 'object' || Array.isArray(header)) throw new ArtifactEncryptionMaterialUnavailableError();
       requireBodyForArtifactKind(header as Readonly<Record<string, unknown>>, body);
-      await assertOwnerAccountMode({ access: 'owner', encryptionMode: codec.mode }, undefined, { ...options, usage: 'fresh-authority' });
+      await assertOwnerAccountMode({ access: 'owner', encryptionMode: codec.mode }, undefined, { ...options });
       options?.signal?.throwIfAborted();
       return { header: header as Readonly<Record<string, unknown>>, body };
     },
@@ -1112,7 +1118,7 @@ export function createAccountArtifactStore(params: Readonly<{
         const provenance = await writeProvenance({ artifactId: input.artifactId, bodyVersion: stored.bodyVersion + 1,
           savedBy: input.savedBy, source: retained.provenance?.source, restoredFromBodyVersion: input.bodyVersion, signal }, stored, codec);
         const kind = await writeKind(nextHeader);
-        await assertOwnerAccountMode(stored, undefined, { usage: 'fresh-authority', signal });
+        await assertOwnerAccountMode(stored, undefined, { signal });
         signal?.throwIfAborted();
         const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(input.artifactId)}/revisions/${input.bodyVersion}/restore`,
           { expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion,
@@ -1192,7 +1198,7 @@ export function createAccountArtifactStore(params: Readonly<{
       // immediately before the first HTTP write. It is never a persisted field.
       if (input.beforeWrite) await input.beforeWrite();
       await assertOwnerAccountMode({ access: 'owner', encryptionMode: codec.mode }, undefined,
-        { usage: 'fresh-authority', signal: input.signal, authorizationHeaders: input.authorizationHeaders });
+        { signal: input.signal, authorizationHeaders: input.authorizationHeaders });
       input.signal?.throwIfAborted();
       const path = content.blob?.content ? ARTIFACT_UPLOAD_PATH_V1
         : `/v1/artifacts${input.memoryDecisionSource ? '/memory-decision/create' : content.blob ? '/content/binary' : ''}`;
@@ -1289,7 +1295,7 @@ export function createAccountArtifactStore(params: Readonly<{
     if (accountMode && result.items.some(item => item.access === 'owner' && Object.hasOwn(item, 'body'))) {
       const mode = await accountMode;
       if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
-      await assertOwnerAccountMode({ access: 'owner', encryptionMode: mode }, undefined, { usage: 'fresh-authority', signal: options?.signal });
+      await assertOwnerAccountMode({ access: 'owner', encryptionMode: mode }, undefined, { signal: options?.signal });
     }
     options?.signal?.throwIfAborted();
     return result;

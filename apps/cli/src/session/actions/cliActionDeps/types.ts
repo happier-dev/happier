@@ -1,3 +1,4 @@
+import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { UsageLimitContinuationResult } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
@@ -162,6 +163,8 @@ export type CliActionDepsParams = Readonly<{
   /** Local delivery only; a host without a link consumer refuses creation before HTTP. */
   onPublicLinkIssued?: (link: import('@happier-dev/protocol').ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
+  /** Immutable Account mode from finite requester admission, including unavailable. */
+  admittedAccountEncryptionMode?: ConnectedServiceAccountEncryptionMode;
   /** Daemon startup already owns this service; do not loop through its not-yet-open control transport. */
   pluginChangeService?: DaemonPluginChangeService;
   /** Canonical private-secret Action adapter supplied by the captured Account host. */

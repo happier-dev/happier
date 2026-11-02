@@ -1,3 +1,4 @@
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 
 
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -42,6 +43,7 @@ export type RequesterSessionInventoryObservation =
     | Readonly<{ kind: 'activity'; id: string; active: boolean; activeAt: number }>;
 type Observation = Readonly<{
     read(signal?: AbortSignal, options?: Readonly<{ requireLiveObservation?: true }>): Promise<AccountEncryptionIdentity>;
+    readWitness(signal?: AbortSignal, options?: Readonly<{ requireLiveObservation?: true; refresh?: true }>): Promise<AccountEncryptionCurrentnessResponse>;
     isCurrent(expected: AccountEncryptionIdentity): boolean;
     subscribeAccountSettings(listener: (event: RequesterAccountSettingsObservation) => void): () => void;
     subscribeSessionFollowRules(listener: (change?: RequesterSessionFollowRuleInvalidation) => void): () => void;
@@ -78,11 +80,11 @@ function admittedObservation(scope: Readonly<{ accountId?: string; token: string
     return undefined;
 }
 
-async function readAdmittedObservation(observed: SharedObservation, scope: Readonly<{
+async function readAdmittedObservation<T>(observed: SharedObservation, scope: Readonly<{
     accountId?: string; token: string; serverBaseUrl: string; signal?: AbortSignal;
-}>): Promise<AccountEncryptionIdentity> {
+}>, read: () => Promise<T>): Promise<T> {
     const credentialReference = observed.references.get(scope.token);
-    const identity = await observed.read(scope.signal);
+    const identity = await read();
     // A surviving peer (or a newly admitted reference for the same token)
     // cannot extend this borrower's captured credential-reference lifetime.
     if (scope.signal?.aborted) throw scope.signal.reason ?? new AccountEncryptionCurrentnessUnavailableError();
@@ -98,7 +100,15 @@ export function readObservedAccountEncryptionCurrentness(scope: Readonly<{
     token: string; serverBaseUrl: string; signal?: AbortSignal;
 }>): Promise<AccountEncryptionIdentity> | null {
     const observed = admittedObservation(scope);
-    return observed ? readAdmittedObservation(observed, scope) : null;
+    return observed ? readAdmittedObservation(observed, scope, () => observed.read(scope.signal)) : null;
+}
+
+/** Full retained response for consumers already inside this exact Account/Home admission. */
+export function readObservedAccountEncryptionCurrentnessWitness(scope: Readonly<{
+    token: string; serverBaseUrl: string; signal?: AbortSignal;
+}>): Promise<AccountEncryptionCurrentnessResponse> | null {
+    const observed = admittedObservation(scope);
+    return observed ? readAdmittedObservation(observed, scope, () => observed.readWitness(scope.signal)) : null;
 }
 
 export function sameRequesterAccountEncryptionCurrentness(a: AccountEncryptionIdentity, b: AccountEncryptionIdentity): boolean {
@@ -117,7 +127,7 @@ export async function readRequesterAccountEncryptionCurrentness(scope: Readonly<
     // A signed Action request must retain its own fresh authenticated transport.
     const observed = !scope.authorizationHeaders || suppliedAuthorization === `Bearer ${scope.token}`
         ? admittedObservation({ ...scope, serverBaseUrl }) : undefined;
-    return observed ? await readAdmittedObservation(observed, { ...scope, serverBaseUrl })
+    return observed ? await readAdmittedObservation(observed, { ...scope, serverBaseUrl }, () => observed.read(scope.signal))
         : projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentnessFromServer({ ...scope, serverBaseUrl }));
 }
 
@@ -144,6 +154,8 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
     return {
         read: (signal, options) => released ? Promise.reject(new AccountEncryptionCurrentnessUnavailableError())
             : owned.read(signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal, options),
+        readWitness: (signal, options) => released ? Promise.reject(new AccountEncryptionCurrentnessUnavailableError())
+            : owned.readWitness(signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal, options),
         isCurrent: expected => !released && owned.isCurrent(expected),
         subscribeAccountSettings(listener) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
@@ -263,7 +275,10 @@ function createObservation(scope: Scope): SharedObservation {
     const hasFollowDemand = () => followListeners.size > 0 || sourceListeners.size > 0 || connectedAccountListeners.size > 0
         || inventoryListeners.size > 0 || environmentAccessListeners.size > 0;
     const publishSettings = (event: RequesterAccountSettingsObservation) => {
-        settingsEvent = event;
+        // Reconnect invalidates existing publications. A newly admitted holder
+        // already bootstrapped Settings after its fresh witness and must not
+        // recover again from a replayed connection edge.
+        settingsEvent = event.kind === 'reconnected' ? null : event;
         for (const listener of settingsListeners) listener(event);
     };
     const invalidate = () => { lifetime.abort(); lifetime = new AbortController(); followCursorAcknowledged = false; currentness.invalidate(); };
@@ -480,7 +495,7 @@ function createObservation(scope: Scope): SharedObservation {
             transport.onConnected(() => { if (isActive()) {
                 const reconnected = hasConnected;
                 hasConnected = true;
-                connected = true; invalidate(); currentness.connected(); publishInventory({ kind: 'connected' });
+                connected = true; invalidate(); currentness.connected({ refresh: false }); publishInventory({ kind: 'connected' });
                 publishEnvironmentAccess({ kind: 'reset' });
                 publishSettings({ kind: 'reconnected' }); publishFollow(true); publishSource(null);
                 // Initial attachment already has its caller's cold demand.
@@ -510,6 +525,31 @@ function createObservation(scope: Scope): SharedObservation {
             unsupported = true;
         }
     })();
+    const prepareRead = async (signal?: AbortSignal, options?: Readonly<{ requireLiveObservation?: true }>) => {
+        signal?.throwIfAborted();
+        const readerSignal = signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal;
+        await waitForObservation(initial, readerSignal);
+        if (disposed) throw new AccountEncryptionCurrentnessUnavailableError();
+        if (unsupported) {
+            if (options?.requireLiveObservation) throw new AccountEncryptionCurrentnessUnavailableError();
+            return readerSignal;
+        }
+        // A credential may retire while its previous connection is still starting.
+        while (connectionReady) {
+            const starting = connectionReady;
+            await waitForObservation(starting, readerSignal);
+            if (connectionReady === starting) break;
+        }
+        signal?.throwIfAborted();
+        if (disposed) throw new AccountEncryptionCurrentnessUnavailableError();
+        if (!connected) throw Object.assign(new AccountEncryptionCurrentnessUnavailableError(), { retryable: true });
+        return readerSignal;
+    };
+    const readFallback = (signal: AbortSignal) => {
+        const fallbackSignal = AbortSignal.any([signal, lifetime.signal]);
+        return waitForObservation(fetchAccountEncryptionCurrentnessFromServer({ token: activeToken,
+            serverBaseUrl: scope.serverBaseUrl, signal: fallbackSignal }), fallbackSignal);
+    };
     return {
         scope: { accountId: scope.accountId, serverBaseUrl: normalizeServerHttpBaseUrl(scope.serverBaseUrl) },
         references,
@@ -582,28 +622,13 @@ function createObservation(scope: Scope): SharedObservation {
         },
         isCurrent: expected => !disposed && (unsupported || connected && currentness.isCurrent(expected)),
         async read(signal, options) {
-            signal?.throwIfAborted();
-            const readerSignal = signal ? AbortSignal.any([signal, retirement.signal]) : retirement.signal;
-            await waitForObservation(initial, readerSignal);
-            if (disposed) throw new AccountEncryptionCurrentnessUnavailableError();
-            if (unsupported) {
-                // Retained private snapshots require push continuity. Other
-                // readers retain their incumbent fresh-HTTP fallback.
-                if (options?.requireLiveObservation) throw new AccountEncryptionCurrentnessUnavailableError();
-                const fallbackSignal = AbortSignal.any([readerSignal, lifetime.signal]);
-                return projectAccountEncryptionIdentity(await waitForObservation(fetchAccountEncryptionCurrentnessFromServer({ token: activeToken,
-                    serverBaseUrl: scope.serverBaseUrl, signal: fallbackSignal }), fallbackSignal));
-            }
-            // A credential may retire while its previous connection is still starting.
-            while (connectionReady) {
-                const starting = connectionReady;
-                await waitForObservation(starting, readerSignal);
-                if (connectionReady === starting) break;
-            }
-            signal?.throwIfAborted();
-            if (disposed) throw new AccountEncryptionCurrentnessUnavailableError();
-            if (!connected) throw Object.assign(new AccountEncryptionCurrentnessUnavailableError(), { retryable: true });
-            return await currentness.read(readerSignal);
+            const readerSignal = await prepareRead(signal, options);
+            return unsupported ? projectAccountEncryptionIdentity(await readFallback(readerSignal))
+                : await currentness.read(readerSignal);
+        },
+        async readWitness(signal, options) {
+            const readerSignal = await prepareRead(signal, options);
+            return unsupported ? await readFallback(readerSignal) : await currentness.readWitness(readerSignal, options);
         },
         async dispose() {
             disposed = true; activeTransport = undefined; connected = false; retirement.abort(); invalidate();
