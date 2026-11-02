@@ -115,7 +115,9 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     const closeIconColor = theme.dark ? theme.colors.background.canvas : theme.colors.text.primary;
     const scannerActive = props.active ?? true;
 
-    const [permission, requestPermission] = useCameraPermissions();
+    const canQueryCameraPermission = Platform.OS !== 'web'
+        || (typeof navigator !== 'undefined' && typeof navigator.permissions?.query === 'function');
+    const [permission, requestPermission] = useCameraPermissions({ get: canQueryCameraPermission });
     const isProcessingRef = React.useRef(false);
 
     const canUseCamera = React.useMemo(() => {
@@ -186,7 +188,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
         );
     }
 
-    if (!permission) {
+    if (!permission && canQueryCameraPermission) {
         return (
             <View style={styles.permissionsCard}>
                 <ActivitySpinner size="small" color={theme.colors.text.primary} />
@@ -195,7 +197,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
         );
     }
 
-    if (!permission.granted) {
+    if (!permission?.granted) {
         return (
             <View style={styles.permissionsCard}>
                 <Text style={styles.permissionsTitle}>{props.title}</Text>

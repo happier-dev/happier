@@ -10,6 +10,7 @@ const deviceState = vi.hoisted(() => ({
     windowWidth: 360,
     windowHeight: 800,
     safeAreaInsets: { top: 0, bottom: 0, left: 0, right: 0 },
+    realWebPermissions: false,
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -83,14 +84,45 @@ vi.mock('@expo/vector-icons', async () => {
     };
 });
 
+// Keep Expo's permission hook and browser permission implementation real. Only
+// the camera preview and browser APIs are boundaries in the permission regression.
+vi.mock('expo-modules-core', async () => {
+    const { createRequire } = await import('node:module');
+    const appRequire = createRequire(import.meta.url);
+    const coreRequire = createRequire(appRequire.resolve('expo-modules-core/package.json'));
+    const core = await import('@/dev/expoModulesCoreStub');
+    const { UnavailabilityError } = await vi.importActual<typeof import('expo-modules-core')>(
+        coreRequire.resolve('./src/errors/UnavailabilityError.ts'),
+    );
+    return { ...core, UnavailabilityError };
+});
+
 let lastCameraProps: any = null;
-vi.mock('expo-camera', () => ({
-    CameraView: (props: any) => {
-        lastCameraProps = props;
-        return React.createElement('CameraView', props);
-    },
-    useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
-}));
+vi.mock('expo-camera', async () => {
+    const { createRequire } = await import('node:module');
+    const appRequire = createRequire(import.meta.url);
+    const coreRequire = createRequire(appRequire.resolve('expo-modules-core/package.json'));
+    const { createPermissionHook } = await vi.importActual<typeof import('expo-modules-core')>(
+        coreRequire.resolve('./src/PermissionsHook.ts'),
+    );
+    const cameraRequire = createRequire(appRequire.resolve('expo-camera/package.json'));
+    const { default: camera } = await vi.importActual<{
+        default: Pick<typeof import('expo-camera').Camera, 'getCameraPermissionsAsync' | 'requestCameraPermissionsAsync'>;
+    }>(cameraRequire.resolve('./src/ExpoCameraManager.web.ts'));
+    const useWebPermissions = createPermissionHook({
+        getMethod: () => camera.getCameraPermissionsAsync(),
+        requestMethod: () => camera.requestCameraPermissionsAsync(),
+    });
+    return {
+        CameraView: (props: any) => {
+            lastCameraProps = props;
+            return React.createElement('CameraView', props);
+        },
+        useCameraPermissions: (options?: Parameters<typeof useWebPermissions>[0]) => deviceState.realWebPermissions
+            ? useWebPermissions(options)
+            : [{ granted: true }, vi.fn(async () => ({ granted: true }))],
+    };
+});
 
 describe('QrCodeScannerView', () => {
     beforeEach(() => {
@@ -99,6 +131,7 @@ describe('QrCodeScannerView', () => {
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+        deviceState.realWebPermissions = false;
         vi.unstubAllGlobals();
     });
 
@@ -139,6 +172,32 @@ describe('QrCodeScannerView', () => {
                     onScan={vi.fn()}
                     testIDPrefix="test"
                 />);
+        expect(lastCameraProps).not.toBeNull();
+    });
+
+    it('requests camera access on user action when the browser cannot query permissions', async () => {
+        deviceState.platformOs = 'web';
+        deviceState.realWebPermissions = true;
+        const track = { stop: vi.fn() };
+        const stream = { getTracks: () => [track], removeTrack: vi.fn() };
+        const getUserMedia = vi.fn(async () => stream);
+        vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia } });
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(<QrCodeScannerView
+            title="t"
+            permissionRequiredMessage="perm"
+            onCancel={vi.fn()}
+            onScan={vi.fn()}
+            testIDPrefix="test"
+        />);
+
+        expect(getUserMedia).not.toHaveBeenCalled();
+        const request = screen.root.findByProps({ testID: 'test-retry-permission' });
+        await React.act(async () => { await request.props.action(); });
+
+        expect(getUserMedia).toHaveBeenCalledWith({ video: true });
+        expect(track.stop).toHaveBeenCalled();
         expect(lastCameraProps).not.toBeNull();
     });
 
