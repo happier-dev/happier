@@ -33,6 +33,7 @@ import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descri
 import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
 import { normalizePluginWorkflowContributionV1 } from './workflows.js';
 import { parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
+import { readDeploymentTargetReferenceRolesV1, type DeploymentTargetContributionV1 } from './deploymentTargets.js';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import type { ProjectNativeAdapterRoleV1 } from './projectNativeAdapters.js';
 
@@ -195,6 +196,7 @@ type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
   'identityField' | 'disposition' | 'activationDemand' | 'projectionFamily' | 'allowedRuntimeRegistration' | 'consumer' | 'platforms'> &
   Readonly<{ registrationHost?: Exclude<PluginContributionCatalogEntryV2['registrationHost'], null> }>;
 const FAMILY_POLICIES = {
+  deploymentTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'deploymentTargets', allowedRuntimeRegistration: null, consumer: 'deployment-target-catalog', platforms: ALL_PLATFORMS },
   healthCheckKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'healthCheckKinds', allowedRuntimeRegistration: null, consumer: 'health-check-source-catalog', platforms: ALL_PLATFORMS },
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
@@ -267,6 +269,11 @@ function extractRuleReferences(
 }
 
 function extractNestedReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  if (family === 'deploymentTargets') {
+    return readDeploymentTargetReferenceRolesV1(value as DeploymentTargetContributionV1).map(binding => ({
+      targetFamily: binding.targetFamily, reference: binding.reference, path: binding.path, allowQualifiedCrossPlugin: false,
+    }));
+  }
   if (family === 'machineSetupPresets') {
     const preset = value as MachineSetupPresetContributionV1;
     return (preset.setup.items ?? []).flatMap((item, index) => item.kind === 'app' ? [] : [{

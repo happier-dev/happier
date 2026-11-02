@@ -1,3 +1,4 @@
+import { DeploymentTargetContributionV1Schema, validateDeploymentTargetContributionsV1 } from './deploymentTargets.js';
 import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
 export * from './healthCheckKinds.js';
 import { MachineRecipeV1Schema } from './machineRecipes.js';
@@ -896,6 +897,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'providers', schema: ProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineProvisioners', schema: MachineProvisionerContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'deploymentTargets', schema: DeploymentTargetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'healthCheckKinds', schema: HealthCheckKindContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineRecipes', schema: MachineRecipeV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineSetupPresets', schema: MachineSetupPresetContributionV1Schema }),
@@ -1003,6 +1005,7 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
   validatePluginSearchProviderContributionsV1(value, ctx);
   validateHealthCheckKindContributionsV1(value, ctx);
   validateMachineProvisionerContributionsV1(value, ctx);
+  validateDeploymentTargetContributionsV1(value, ctx);
   validateTargetedContributionEnvelopeBoundsV1(value, ctx);
 })));
 }

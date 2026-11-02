@@ -116,3 +116,93 @@ export function readDeploymentTargetActionRolesV1(descriptor: DeploymentTargetCo
     return readDeploymentTargetReferenceRolesV1(descriptor).flatMap(binding => binding.targetFamily === 'actions'
         ? [{ role: binding.role, action: binding.reference, path: binding.path, readOnly: binding.readOnly }] : []);
 }
+
+/** Declaration admission grants no invocation authority; installation and role custody remain host-owned. */
+export function validateDeploymentTargetContributionsV1(
+    value: Readonly<{ deploymentTargets: readonly DeploymentTargetContributionV1[]; actions: readonly PluginActionContributionV2[];
+        resources: readonly PluginResourceContributionV2[]; events?: readonly PluginEventContributionV1[] }>,
+    context: z.core.$RefinementCtx,
+): void {
+    const ids = new Set<string>();
+    value.deploymentTargets.forEach((descriptor, index) => {
+        if (ids.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['deploymentTargets', index, 'id'], message: 'Duplicate deployment target id.' });
+        ids.add(descriptor.id);
+        if (descriptor.role === 'runtime' && descriptor.failureTransitionEvent !== undefined) {
+            const path = ['deploymentTargets', index, 'failureTransitionEvent'];
+            const event = value.events?.find(candidate => candidate.id === descriptor.failureTransitionEvent);
+            if (event?.kind !== 'event' || !event.payloadSchema) {
+                context.addIssue({ code: 'custom', path, message: 'Deployment failures require a declared same-plugin Event.' });
+            } else {
+                try {
+                    if (!pluginJsonValuesEqual(normalizePluginJsonSchema(event.payloadSchema),
+                        normalizePluginJsonSchema(DeploymentTargetFailureTransitionV1ProtocolSchema.jsonSchema))) {
+                        context.addIssue({ code: 'custom', path, message: 'Deployment failure Events require the canonical transition payload.' });
+                    }
+                } catch {
+                    context.addIssue({ code: 'custom', path, message: 'Deployment failure Events require a valid closed transition payload.' });
+                }
+            }
+        }
+        for (const binding of readDeploymentTargetReferenceRolesV1(descriptor)) {
+            const path = ['deploymentTargets', index, ...binding.path];
+            if (binding.targetFamily === 'resources') {
+                const resource = value.resources.find(candidate => candidate.id === binding.reference);
+                if (!resource || resource.source !== 'dynamic') {
+                    context.addIssue({ code: 'custom', path, message: 'Deployment data reads require declared same-plugin dynamic Resources.' });
+                }
+                continue;
+            }
+            const action = value.actions.find(candidate => candidate.id === binding.reference);
+            if (!action) {
+                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require declared same-plugin Actions.' });
+                continue;
+            }
+            if (action.execution.target === 'client' || binding.role === 'uploadDeploy' && action.execution.target !== 'daemon') {
+                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require Account or daemon placement; uploadDeploy requires daemon placement.' });
+            }
+            if (!action.inputSchema || !action.resultSchema
+                || !isRecursivelyClosedPluginJsonSchemaV2(action.inputSchema)
+                || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
+                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
+            }
+            if (descriptor.role === 'runtime' && binding.role !== 'inspect' && binding.role !== 'link'
+                && Object.hasOwn(DeploymentTargetRoleInputProtocolSchemasV1, binding.role)) {
+                const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;
+                try {
+                    if (!action.inputSchema || !action.resultSchema
+                        || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
+                            normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema))
+                        || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
+                            normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema))) {
+                        context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require their exact canonical input and observation schemas.' });
+                    }
+                } catch {
+                    context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require valid canonical schemas.' });
+                }
+            }
+            if (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link') {
+                try {
+                    const declared = action.inputSchema && normalizePluginJsonSchema(action.inputSchema);
+                    const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;
+                    const base = normalizePluginJsonSchema(descriptor.role === 'data'
+                        ? DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema
+                        : DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema);
+                    const valid = declared?.type === 'object' && (base.required ?? []).every(key =>
+                        declared.required?.includes(key) && declared.properties?.[key] !== undefined
+                        && (key === 'providerEnvironment' || pluginJsonValuesEqual(declared.properties[key], base.properties?.[key])))
+                        && Object.keys(base.properties ?? {}).every(key => declared.properties?.[key] === undefined
+                            || key === 'providerEnvironment' || pluginJsonValuesEqual(declared.properties[key], base.properties?.[key]));
+                    if (!valid) context.addIssue({ code: 'custom', path,
+                        message: 'Deployment preparation requires canonical shared custody fields; product scope and operands remain declared.' });
+                } catch {
+                    context.addIssue({ code: 'custom', path, message: 'Deployment preparation requires valid canonical custody schemas.' });
+                }
+            }
+            if (binding.readOnly ? action.dangerLevel !== 'safe' || action.readOnly === false
+                || descriptor.role === 'data' && action.readOnly !== true
+                : action.dangerLevel === 'safe' || action.readOnly === true) {
+                context.addIssue({ code: 'custom', path, message: 'Deployment target role effect metadata must match its read or mutation contract.' });
+            }
+        }
+    });
+}

@@ -533,6 +533,7 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
   }))),
   priority: z.optional(z.number().check(z.int())),
   dangerLevel: PluginActionDangerLevelV2Schema,
+  readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   confirmation: z.optional(PluginActionConfirmationV2Schema),
   confirmationWhen: z.optional(PluginActionConfirmationWhenV2Schema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),

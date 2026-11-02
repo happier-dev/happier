@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { defineProtocolObject, defineProtocolString } from '../actions/protocolComposableSchema.js';
 import * as provisioners from './machineProvisioners.js';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, readDeploymentTargetReferenceRolesV1 } from './deploymentTargets.js';
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from './machineProvisioners.js';
 
 import {
@@ -21,6 +22,28 @@ import {
 } from './v2.js';
 
 describe('plugin contribution catalog', () => {
+  it('admits data read Resources with explicit backing Actions and product operands under canonical custody', () => {
+    const closed = { type: 'object', properties: {}, additionalProperties: false };
+    const inputSchema = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
+      properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, region: { type: 'string' } } };
+    const target = { id: 'database', role: 'data' as const, targetKind: 'database', title: 'Database', icon: 'server-outline',
+      targetSchema: closed, linkSchema: closed, dataV1: { projects: { list: 'projects', listAction: 'list-projects', link: 'link' } } };
+    const actions = ['list-projects', 'link'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe', readOnly: true, inputSchema, resultSchema: closed }));
+    const resources = [{ id: 'projects', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' }];
+    const result = PluginContributesV2Schema.safeParse({ deploymentTargets: [target], actions, resources });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(readDeploymentTargetReferenceRolesV1(result.data.deploymentTargets![0]!)).toEqual([
+      { role: 'projects.list', reference: 'projects', targetFamily: 'resources', path: ['dataV1', 'projects', 'list'], readOnly: true },
+      { role: 'projects.list', reference: 'list-projects', targetFamily: 'actions', path: ['dataV1', 'projects', 'listAction'], readOnly: true },
+      { role: 'projects.link', reference: 'link', targetFamily: 'actions', path: ['dataV1', 'projects', 'link'], readOnly: true },
+    ]);
+    expect(PluginContributesV2Schema.safeParse({ deploymentTargets: [target], resources,
+      actions: actions.map(action => action.id === 'list-projects' ? { ...action, readOnly: false } : action) }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ deploymentTargets: [target], resources,
+      actions: actions.map(action => ({ ...action, inputSchema: closed })) }).success).toBe(false);
+  });
   it('extracts portable Action artifact references only from their declared execution target', () => {
     const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === 'actions')!;
     expect(entry.extractReferences({ execution: {
