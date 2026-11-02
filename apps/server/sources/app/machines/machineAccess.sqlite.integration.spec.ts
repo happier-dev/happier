@@ -39,6 +39,22 @@ describe('Machine current access (real SQLite)', () => {
     }
     const grant = (actorAccountId: string, machineId: string, accountId: string, level: 'view' | 'admin' = 'view') => inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
 
+    it('admits host Computer controls only for the custodian and Manage grantees', async () => {
+        const f = await fixture();
+        const viewer = await account();
+        const manager = await account();
+        await grant(f.owner.id, f.machine.id, viewer.id, 'view');
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        for (const rpcMethod of [RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE]) {
+            expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, rpcMethod }))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+            expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id, rpcMethod }))
+                .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
+            expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id, rpcMethod }))
+                .toMatchObject({ kind: 'admitted', role: 'manage' });
+        }
+    });
+
     it('admits reachability inspect (native firewall CHECK) only for the custodian and Manage grantees', async () => {
         const f = await fixture();
         const user = await account();

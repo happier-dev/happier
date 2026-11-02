@@ -73,8 +73,9 @@ describe.skipIf(process.platform !== 'linux' || !executablePath || !fixturePath)
       expect(other).toBe(connection);
       expect(process.env.DISPLAY).toBe(inheritedDisplay);
       expect(process.env.DBUS_SESSION_BUS_ADDRESS).toBe(inheritedBus);
+      // An explicit-target app: DISPLAY alone, admitted as the daemon's own OS user.
       const environment: NodeJS.ProcessEnv = { ...process.env, DISPLAY: connection.displayId };
-      for (const key of ['WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', 'AT_SPI_BUS_ADDRESS']) delete environment[key];
+      for (const key of ['WAYLAND_DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS', 'AT_SPI_BUS_ADDRESS']) delete environment[key];
       fixture = spawn(fixturePath!, [], { env: environment, stdio: ['ignore', 'pipe', 'ignore'] });
       const ready = once(fixture.stdout!, 'data');
       await Promise.race([ready, once(fixture, 'exit').then(() => { throw new Error('Fixture exited before readiness'); })]);

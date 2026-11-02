@@ -19,6 +19,10 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('requires Manage for raw host desktop controls', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toMatchObject({ sharedMachineAccess: 'manage' });
+  });
   it('routes revision file reads through the server under their SCM Action', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
