@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { ComputerDriverError } from './driver/nativeTransport';
 
 export type ComputerDesktopConnection = Readonly<{ displayId: string; environment: Readonly<Record<string, string>> }>;
@@ -26,12 +27,12 @@ export function createComputerDesktop() {
     for (const child of [...children].reverse()) {
       if (child.exitCode !== null || child.signalCode !== null || !child.pid) continue;
       exits.push(once(child, 'close'));
-      // Each child owns a new POSIX process group; include D-Bus-activated AT-SPI children.
-      try { process.kill(-child.pid, 'SIGTERM'); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      // Stop the WM tree while X11 and D-Bus are still available. The daemon's
+      // termination owner supplies the grace period, escalation and exit proof.
+      await terminateProcessTree(child, { ownedProcessGroup: true });
     }
     // Activated desktop services can inherit another child's output handles.
-    // Signal every owned group before waiting for those handles to close.
+    // Retire every owned process before waiting for inherited handles to close.
     await Promise.all(exits);
     children.length = 0;
     if (runtimeDirectory) await rm(runtimeDirectory, { recursive: true, force: true });
