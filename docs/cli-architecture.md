@@ -13,6 +13,11 @@ setup: an unenrolled guest retains its bootstrap cause; a running guest reports
 incomplete when no prior cause exists. A native absence or newer native failure
 still takes precedence. This is 0.3 development behavior.
 
+In 0.3 development, the Machine client's acknowledged core RPC registration
+publishes daemon-local readiness immediately through the existing lifecycle
+lock owner. `daemon status` and `doctor` read that current fact; they need not
+wait for the next heartbeat after registration or disconnect.
+
 Bootstrap retry keeps the retained allocation and reuses the acquisition
 driver's shared bootstrap recipe. A durable retry approval with a captured
 Machine target returns to that controller, including from a public approval

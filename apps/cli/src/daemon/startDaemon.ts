@@ -75,7 +75,6 @@ import {
   readStoredCredentials,
   readStoredCredentialsForServerId,
   sameStoredCredentials,
-  type DaemonStateOwner,
   writeDaemonStateForLockOwner,
 } from '@/persistence';
 
@@ -405,7 +404,7 @@ export async function startDaemon(
   const { waitForAuthEnabled, waitForAuthTimeoutMs } = resolveWaitForAuthConfig(process.env);
 
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
-  let daemonStateOwner: DaemonStateOwner | null = null;
+  let daemonStateOwner: Parameters<typeof writeDaemonStateForLockOwner>[1] | null = null;
   let machineVitals: MachineVitalsSampler | null = null;
   let machineVitalsAlerts: ReturnType<typeof createMachineVitalsAlerts> | null = null;
   let processLeftBehindPass: ReturnType<typeof createLeftBehindPass> | null = null;
@@ -3215,6 +3214,16 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       isShuttingDown: admissionDrain.isFinalShutdown,
       isQuiescing: admissionDrain.isPublicationQuiescing,
       bootstrapRuntime: machineBootstrapRuntime = createDaemonMachineBootstrapRuntime({
+        onMachineControlReadinessChange: machineControlReady => {
+          if (admissionDrain.isPublicationQuiescing()) return;
+          // Registration may finish before bootstrap begins reading status.
+          // Publish through the existing lock owner at the transition, not the heartbeat.
+          if (!publishDaemonStateForCurrentOwner({ ...daemonStateOwner!, machineControlReady })) {
+            requestShutdown('exception', 'daemon_state_publication_ownership_lost');
+            return;
+          }
+          fileState.machineControlReady = machineControlReady;
+        },
 agentIsolation,
 
         api,

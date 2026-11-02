@@ -497,6 +497,8 @@ export type ConnectedServicesProjectionNotification = Readonly<{
 export type ApiMachineClientLifecycleDependencies = Readonly<{
     /** Current daemon control listener port, published only after machine-control readiness. */
     controlPort?: number;
+    /** Publish this client’s acknowledged control readiness to daemon-local status. */
+    onMachineControlReadinessChange?: (ready: boolean) => void;
     /** The daemon's one outside-install copy owner consumes current Prompt Library reads. */
     machineSkillInstalls?: MachineSkillInstallCatalogDemand & Readonly<{
         refresh(input: Readonly<{ signal: AbortSignal; artifactIds?: readonly string[] }>): Promise<void>;
@@ -1050,7 +1052,9 @@ export class ApiMachineClient {
         this.rpcHandlerManager.onSocketDisconnect();
         this.machineControlReadinessRetry.cancel();
         this.stopKeepAlive();
+        const wasReady = this.isMachineControlRegistrationReady();
         this.socket = null;
+        if (wasReady) this.lifecycleDependencies.onMachineControlReadinessChange?.(false);
     }
 
     /** The existing requester visitor reopens only its retained exact Session custody. */
@@ -1243,6 +1247,7 @@ export class ApiMachineClient {
                 && socket.connected === true
             ) {
                 this.machineControlRunningGeneration = transportGeneration;
+                this.lifecycleDependencies.onMachineControlReadinessChange?.(true);
                 // Connect precedes server-side asynchronous admission. Existing
                 // registration readiness proves its Machine listeners are mounted.
                 this.requestSessionMessageReplyRecovery(socket, transportGeneration);
@@ -3175,8 +3180,8 @@ export class ApiMachineClient {
      *
      * This is the only fact that separated a working daemon from the 56-minute pid-26058
      * outage — the process, its heartbeat, its control-server ping and its socket were all
-     * healthy while every machine RPC was unreachable. It is read by the heartbeat so
-     * `happier daemon status` and `happier doctor` can report it instead of a PID probe.
+     * healthy while every machine RPC was unreachable. Registration transitions publish
+     * it to local status immediately; the heartbeat also samples this same owner.
      */
     isMachineControlRegistrationReady(): boolean {
         return this.machineContentReady && this.socket !== null

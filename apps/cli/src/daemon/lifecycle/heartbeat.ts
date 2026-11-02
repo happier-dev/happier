@@ -315,8 +315,8 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         // since the enumeration was written — the running-runtime identity `happier doctor`
         // reports survived exactly one heartbeat before this was a spread.
         //
-        // The heartbeat is the only writer of this record after startup, so the readiness fact
-        // it stamps and `lastHeartbeatAt` always describe the same instant. While no machine
+        // Registration transitions also publish readiness immediately. The heartbeat samples
+        // the same owner alongside `lastHeartbeatAt`. While no machine
         // client exists yet the fact is genuinely unavailable, so the field is omitted and
         // readers report unknown rather than inventing a negative.
         const machineControlClient = getApiMachineForSessions();

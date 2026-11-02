@@ -136,4 +136,6 @@ export {
   formatBackgroundServiceReplacementPrompt,
 } from './setupServiceGuidance/formatBackgroundServiceSetupPrompts.js';
 
+export { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from './executors/enrollMachineFlowExecutor.js';
+
 export * from './kinds/index.js';

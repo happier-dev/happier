@@ -175,6 +175,7 @@ export function createDaemonMachineBootstrapRuntime(
   params: Readonly<{
     api: ApiClient;
     controlPort: number;
+    onMachineControlReadinessChange?: ApiMachineClientLifecycleDependencies['onMachineControlReadinessChange'];
     credentials: StoredCredentials;
     requesterServerId?: BootstrapRuntime['requesterServerId'];
     resolveCurrentMachineExecutionOriginContext?: BootstrapRuntime['resolveCurrentMachineExecutionOriginContext'];
@@ -465,6 +466,7 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
 agentIsolation: params.agentIsolation,
 
             controlPort: params.controlPort,
+            onMachineControlReadinessChange: params.onMachineControlReadinessChange,
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
             readSpawnFailureLimits: params.readSpawnFailureLimits,
             ownerRemainder: params.ownerRemainder,

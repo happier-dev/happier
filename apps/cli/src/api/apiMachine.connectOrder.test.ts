@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '@happier-dev/cli-common/systemTasks';
 
 import {
   bindApiSessionSocketSequenceMock,
@@ -239,6 +240,7 @@ describe('ApiMachineClient connect ordering', () => {
     });
     bindApiSessionSocketSequenceMock(ioMock, [firstSocket, secondSocket]);
 
+    const localReadiness: boolean[] = [];
     const client = new ApiMachineClient('token', {
       id: 'machine-1',
       encryptionKey: new Uint8Array(32).fill(1),
@@ -252,7 +254,9 @@ describe('ApiMachineClient connect ordering', () => {
           peerMediation: { loopback: { flows: { machine_rpc: { active: true } } } },
         },
       daemonStateVersion: 0,
-    }, undefined, { controlPort: 41233 });
+    }, undefined, { controlPort: 41233,
+      onMachineControlReadinessChange: ready => { localReadiness.push(ready); },
+    });
 
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     rpcHandlerManager.registerHandler('neutral.reconnect', async () => ({ ok: true }));
@@ -277,6 +281,22 @@ describe('ApiMachineClient connect ordering', () => {
       expect(callOrder).not.toContain('state:machine-socket-1');
       acknowledgeRegistrations(firstSocket);
       await vi.waitFor(() => expect(callOrder).toContain('state:machine-socket-1'));
+      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+      expect(localReadiness).toEqual([true]);
+      // The native CLI boundary is read after registration, before any heartbeat.
+      // The real waiter consumes that current fact even when it attaches late.
+      let statusReads = 0;
+      const waiter = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+        runHappierText: async () => { throw new Error('Readiness never reinstalls the service'); },
+        runHappierJson: async () => {
+          statusReads++;
+          return { daemon: { pid: process.pid, running: true, healthy: localReadiness.at(-1) },
+            service: { installed: true }, auth: { needsAuth: false, machineId: 'machine-1' } };
+        },
+      } });
+      await expect(waiter.waitForReadyDaemon!({ timeoutMs: 1_000, requireMachineControlReady: true }))
+        .resolves.toMatchObject({ daemonHealthy: true, machineId: 'machine-1' });
+      expect(statusReads).toBe(1);
       const runningPublication = firstSocket.emitWithAck.mock.calls.find(([event]) => event === 'machine-update-state');
       expect(runningPublication).toBeDefined();
       // Exercise the actual encrypted publication, not only its scheduling.
@@ -294,6 +314,7 @@ describe('ApiMachineClient connect ordering', () => {
       const realNow = Date.now.bind(Date);
       const laterClock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 60_000);
       firstSocket.disconnect();
+      expect(localReadiness).toEqual([true, false]);
       await vi.waitFor(() => expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER,
         { method: 'machine-1:neutral.reconnect' }));
       expect(callOrder).not.toContain('state:machine-socket-2');
@@ -302,6 +323,9 @@ describe('ApiMachineClient connect ordering', () => {
       // current, so nothing is republished. A fresh startedAt would make every reader treat it as a
       // replaced daemon and re-read its contribution projection.
       await vi.waitFor(() => expect(Reflect.get(client, 'machineControlRunningGeneration')).toBe(Reflect.get(client, 'activeTransportGeneration')));
+      expect(localReadiness).toEqual([true, false, true]);
+      acknowledgeRegistrations(secondSocket);
+      expect(localReadiness).toHaveLength(3);
       expect(callOrder).not.toContain('state:machine-socket-2');
       laterClock.mockRestore();
 
