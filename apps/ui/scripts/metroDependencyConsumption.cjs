@@ -16,12 +16,10 @@ exports.processMetroDependencyChanges = (projectRoot, processChanges, signal) =>
 exports.protectMetroDependencyConsumption = (metroServer, projectRoot) => {
   const controller = new AbortController();
   const deltaBundler = metroServer.getBundler().getDeltaBundler();
-  for (const method of ['getDependencies', 'buildGraph', 'getDelta']) {
-    const consume = deltaBundler[method].bind(deltaBundler);
-    deltaBundler[method] = async (...args) => {
-      return consumeDependencies(projectRoot, controller.signal, () => consume(...args));
-    };
-  }
+  // DeltaCalculator owns the current-build wait. Its callback runs only for
+  // the graph read that is executing, so queued HMR requests retain no lock.
+  deltaBundler.unstable_setDependencyConsumption(read =>
+    consumeDependencies(projectRoot, controller.signal, read));
   const end = metroServer.end.bind(metroServer);
   metroServer.end = async () => {
     controller.abort();

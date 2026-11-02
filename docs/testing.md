@@ -308,7 +308,10 @@ changes recheck existing graph resolutions; they do not invalidate every
 transform. Changed source files still use normal incremental transformation.
 Metro's file-map batches, graph construction, dependency queries and HMR
 updates share the refresh owner's finite dependency reader boundary, so they
-wait while an installer changes packages. The file map reconciles each changed
+wait while an installer changes packages. DeltaCalculator admits each executing
+graph read after its current-build wait; queued HMR requests hold no reader lock.
+The active read retains exclusion until it settles, then releases it before the
+next queued read is admitted. The file map reconciles each changed
 path from the completed tree and keeps unchanged contents out of graph updates.
 The Node fallback watcher renews directory handles when installation replaces
 their filesystem identities, preserving later package-file notifications.

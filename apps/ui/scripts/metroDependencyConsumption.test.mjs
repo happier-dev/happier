@@ -35,6 +35,7 @@ test('Metro watcher and HTTP/HMR readers consume completed installs and stop on 
   await owner.withDependencyRefresh({ installDir: root, env, force: true }, async () => {});
   const config = await require('metro-config').getDefaultConfig(root);
   config.resolver.useWatchman = false;
+  config.resolver.blockList = [/[\\/](?:\.project|filemap|transforms)(?:[\\/]|$)/];
   config.resolver.nodeModulesPaths = [join(repo, 'node_modules')];
   config.maxWorkers = 1;
   config.watchFolders = [root, dirname(require.resolve('metro-runtime/package.json'))];
@@ -55,11 +56,62 @@ test('Metro watcher and HTTP/HMR readers consume completed installs and stop on 
   const resolve = { dev: true, customResolverOptions: {} };
   let { revision } = await bundler.initializeGraph(entry, transform, resolve, { lazy: false, shallow: false });
   const watcher = bundler.getBundler().getWatcher();
+  // Cache I/O is a storage boundary. Hold one actual graph read there while
+  // neighboring HMR requests wait on Metro's current-build promise.
+  const cacheStore = config.cacheStores[0];
+  const cacheGet = cacheStore.get.bind(cacheStore);
+  let holdNextCacheRead = false;
+  let cacheReadEntered, releaseCacheRead;
+  const cacheReadStarted = new Promise(resolve => { cacheReadEntered = resolve; });
+  const cacheReadHeld = new Promise(resolve => { releaseCacheRead = resolve; });
+  cacheStore.get = async (...args) => {
+    if (holdNextCacheRead) {
+      holdNextCacheRead = false;
+      cacheReadEntered(); await cacheReadHeld;
+    }
+    return cacheGet(...args);
+  };
   const changed = (file, type) => new Promise(resolve => {
     const listener = event => {
       if (event.eventsQueue.some(entry => entry.filePath === file && (!type || entry.type === type))) { watcher.off('change', listener); resolve(); }
     }; watcher.on('change', listener);
   });
+  const { readdir } = require('node:fs/promises');
+  const readLockDirectory = owner.resolveDependencyRefreshLockPath(root, env) + '.readers';
+  const queuedChange = changed(generated, 'change');
+  await writeFile(generated, 'module.exports = "held-read";');
+  await queuedChange;
+  holdNextCacheRead = true;
+  const activeRead = bundler.updateGraph(revision, false);
+  const queuedReads = [];
+  let writerStarted, releaseQueuedWriter, queuedWriter;
+  const writerAdmitted = new Promise(resolve => { writerStarted = resolve; });
+  const writerHeld = new Promise(resolve => { releaseQueuedWriter = resolve; });
+  try {
+    await cacheReadStarted;
+    for (let index = 0; index < 3; index++) {
+      queuedReads.push(bundler.getDeltaBundler().getDelta(revision.graph, { reset: false, shallow: false }));
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const readers = await readdir(readLockDirectory);
+    console.log(JSON.stringify({ phase: 'busy-graph-custody', readers: readers.length, queued: queuedReads.length }));
+    assert.equal(readers.length, 1, 'only the currently executing graph read holds dependency custody; queued HMR requests hold none');
+    queuedWriter = owner.withDependencyRefresh({ installDir: root, env, force: true }, async () => {
+      writerStarted(); await writerHeld;
+    });
+    void queuedWriter.catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 100));
+    releaseCacheRead();
+    await writerAdmitted;
+    assert.deepEqual(await readdir(readLockDirectory), [], 'a waiting installer enters after the current read, ahead of queued HMR work');
+    releaseQueuedWriter();
+    await queuedWriter;
+  } finally {
+    releaseCacheRead(); releaseQueuedWriter();
+    await Promise.allSettled([activeRead, ...queuedReads, queuedWriter]);
+    cacheStore.get = cacheGet;
+  }
+  assert.deepEqual(await readdir(readLockDirectory), [], 'finished graph reads release all dependency custody');
   const { createMetroMiddleware } = require(join(dirname(require.resolve('@expo/cli/package.json')), 'build/src/start/server/metro/dev-server/createMetroMiddleware.js'));
   const { middleware } = createMetroMiddleware(config, { getMetroBundler: () => bundler.getBundler() });
   middleware.use(enhanced);
