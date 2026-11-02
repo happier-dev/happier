@@ -138,7 +138,12 @@ export type PluginUiHostApiErrorCodeV1 =
  * Action JSON is allowed to carry a `code` member with the same spelling.
  */
 export const PluginUiHostApiErrorPayloadV1Schema = lazyZodSchema(() => z.strictObject({
-  code: PluginUiHostApiErrorCodeV1Schema,
+  // The deciding owner's code, including domain refusals. The coarse Host API
+  // vocabulary above remains available for failures decided at that boundary.
+  code: z.string().check(z.trim(), z.minLength(1)),
+  layer: z.optional(z.enum(['target', 'accountSelection', 'executionSelection', 'transport', 'source', 'artifact', 'registration', 'policy', 'input', 'approval', 'host'])),
+  phase: z.optional(z.enum(['admission', 'preparation', 'activation', 'invocation', 'settlement'])),
+  retryable: z.optional(z.boolean()),
   message: z.optional(z.string().check(z.trim(), z.minLength(1))),
   diagnostics: z._default(z.array(z.string().check(z.trim(), z.minLength(1))), []),
 }));

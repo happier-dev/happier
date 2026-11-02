@@ -83,7 +83,7 @@ export async function executePreparedPluginSurfaceAction(args: Readonly<{
     const execute: FrontDoorActionExecute = Object.assign(async () => shared('action.invoke', wrapper, context), { confirmed, prepare });
     const result = await executeSpokenAction(execute, 'action.invoke', exact, context, spoken.confirmation, spoken.playHostText);
     if (settledOutcome) return settledOutcome;
-    if (!result.ok) return actionOutcomeUnknownFailure(result.errorCode) ?? clientActionFailure(result.errorCode);
+    if (!result.ok) return actionOutcomeUnknownFailure(result.errorCode, action, args.normalizedInput) ?? clientActionFailure(result.errorCode);
     const parsed = projectNativeJsonValueForTransport(result.result ?? null);
     return { ok: true, result: parsed };
 }

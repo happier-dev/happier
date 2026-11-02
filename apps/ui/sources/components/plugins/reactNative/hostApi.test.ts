@@ -1312,6 +1312,8 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
                         kind: 'error',
                         error: {
                             code: 'unavailable',
+                            retryable: false,
+                            details: { layer: 'transport', phase: 'settlement' },
                             diagnostics: [{ code: 'aborted', severity: 'error' }],
                         },
                     });
@@ -1921,7 +1923,8 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         expect(failure).toMatchObject({
             name: 'PluginError',
             code: 'unavailable',
-            retryable: true,
+            retryable: false,
+            details: { layer: 'transport', phase: 'settlement' },
             diagnostics: [{ code: 'aborted', severity: 'error' }],
         });
     });
@@ -1995,8 +1998,9 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             },
             isMethodAvailable: (method) => method === 'context' || daemonReachable,
             resolveUnavailableError: error => targetReadTimedOut
-                ? { code: 'timeout', diagnostics: [...error.diagnostics, 'targeted_contributions_timeout'], message: 'Target read timed out' }
-                : { ...error, message: unavailableMessage },
+                ? { code: 'timeout', diagnostics: [...error.diagnostics, 'targeted_contributions_timeout'], message: 'Target read timed out',
+                    layer: 'target', phase: 'admission', retryable: true }
+                : { ...error, message: unavailableMessage, layer: 'transport', phase: 'admission', retryable: true },
         });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
@@ -2018,6 +2022,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             name: 'PluginError',
             code: 'unavailable',
             retryable: true,
+            details: { layer: 'transport', phase: 'admission' },
             message: unavailableMessage,
             diagnostics: [{ code: 'host_api_method_unavailable:watchResource', severity: 'error' }],
         });
@@ -2030,6 +2035,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             () => undefined,
         )).rejects.toMatchObject({
             name: 'PluginError', code: 'timeout', retryable: true,
+            details: { layer: 'target', phase: 'admission' },
             diagnostics: expect.arrayContaining([{ code: 'targeted_contributions_timeout', severity: 'error' }]),
         });
         targetReadTimedOut = false;
@@ -2053,7 +2059,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const withoutAdmissionSource = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-narrowed-control',
+            requestIdPrefix: 'rn-narrowed',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
             getInstalledMethods: () => host.installedMethods,

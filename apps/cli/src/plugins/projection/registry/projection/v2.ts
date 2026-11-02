@@ -787,6 +787,7 @@ function buildActionsById(
             ...(action.definition.priority === undefined ? {} : { priority: action.definition.priority }),
             dangerLevel: action.definition.dangerLevel,
             ...(action.definition.confirmationWhen === undefined ? {} : { confirmationWhen: action.definition.confirmationWhen }),
+            ...(action.definition.readOnly === undefined ? {} : { readOnly: action.definition.readOnly }),
             ...(action.definition.confirmation
                 ? { confirmation: action.definition.confirmation }
                 : {}),

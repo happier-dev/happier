@@ -51,7 +51,6 @@ import {
     ComposerReadResultV1Schema,
     ComposerSnapshotV1Schema,
     ComposerTransactionResultV1Schema,
-    type PluginUiHostApiErrorCodeV1,
     type PluginUiHostApiRequestMethodV1,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiHostMethodV1,
@@ -155,15 +154,16 @@ type PluginReactNativeHostRequestTransport = Readonly<{
 }>;
 
 function createHostApiError(
-    code: PluginUiHostApiErrorCodeV1,
+    code: string,
     diagnostics: readonly string[] = [],
     message?: string,
+    metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
 ): PluginError {
-    return new PluginError(createPluginSurfaceHostApiPluginErrorData(code, diagnostics, message));
+    return new PluginError(createPluginSurfaceHostApiPluginErrorData(code, diagnostics, message, metadata));
 }
 
 function throwHostApiError(
-    code: PluginUiHostApiErrorCodeV1,
+    code: string,
     diagnostics: readonly string[] = [],
     message?: string,
 ): never {
@@ -247,11 +247,13 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
     ): Promise<T> {
         if (!signal) return settlement;
         if (signal.aborted) {
-            return Promise.reject(createHostApiError('unavailable', ['aborted']));
+            return Promise.reject(createHostApiError('unavailable', ['aborted'], undefined,
+                { layer: 'transport', phase: 'settlement', retryable: false }));
         }
         let removeAbortListener: (() => void) | undefined;
         const cancellation = new Promise<never>((_resolve, reject) => {
-            const onAbort = () => reject(createHostApiError('unavailable', ['aborted']));
+            const onAbort = () => reject(createHostApiError('unavailable', ['aborted'], undefined,
+                { layer: 'transport', phase: 'settlement', retryable: false }));
             removeAbortListener = () => signal.removeEventListener('abort', onAbort);
             signal.addEventListener('abort', onAbort, { once: true });
         });
@@ -321,7 +323,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             throwHostApiError('stale_surface');
         }
         if (response.kind === 'error') {
-            throwHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message);
+            throw createHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message, response.payload);
         }
         return response.payload;
     }

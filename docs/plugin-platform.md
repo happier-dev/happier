@@ -3092,7 +3092,12 @@ Raw `executeAction`, `useExecutePluginAction` and `Action.Execute` retain
 explicit Settings → Actions Ask and setup consent still apply. An Allow preference
 control and a Run control remain separate gestures; registering, updating or allowing
 does not launch a command. Disposal and mount retirement cancel preparation, and an
-unknown execution outcome never causes a replay. Unsupported hosts omit the negotiated
+unknown execution outcome never causes an automatic replay. The UI host's shared
+Action failure owner uses the declared input-sensitive `readOnly` effect to make
+unknown or timed-out reads manually retryable. Unknown mutations remain
+non-retryable because their effect may already have happened. Plugin surfaces
+consume this retryability without classifying the Action again.
+Unsupported hosts omit the negotiated
 `actionControl` method; authors retain an unavailable explanation rather than falling
 back to a person-stamped raw call. This is an unreleased source contract.
 

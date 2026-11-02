@@ -133,7 +133,7 @@ describe('createPluginSurfaceHostApi', () => {
         expect(createPluginSurfaceHostApiPluginErrorData('timeout', ['host_timeout'])).toEqual({
             name: 'PluginError',
             code: 'timeout',
-            retryable: true,
+            retryable: false,
             diagnostics: [{ code: 'host_timeout', severity: 'error' }],
         });
         expect(createPluginSurfaceHostApiPluginErrorData('denied')).toEqual({
@@ -270,7 +270,7 @@ describe('createPluginSurfaceHostApi', () => {
         expect(methodReads).toEqual([]);
     });
 
-    it('answers a transiently narrowed method as retryably unavailable, not unsupported', async () => {
+    it('keeps a narrowed method structurally supported without guessing replay safety', async () => {
         let daemonReachable = false;
         const hostApi = createPluginSurfaceHostApi({
             surfaceContext,
@@ -290,7 +290,8 @@ describe('createPluginSurfaceHostApi', () => {
             diagnostics: ['host_api_method_unavailable:watchResource'],
             message: 'Studio Mac is unavailable',
         });
-        expect(createPluginSurfaceHostApiPluginErrorData('unavailable').retryable).toBe(true);
+        expect(createPluginSurfaceHostApiPluginErrorData('unavailable').retryable).toBe(false);
+        expect(createPluginSurfaceHostApiPluginErrorData('unavailable', [], undefined, { retryable: true }).retryable).toBe(true);
 
         // A method with no installed handler stays permanently unsupported.
         expect(hostApi.handleRequest(request('openSurface'))).toEqual({

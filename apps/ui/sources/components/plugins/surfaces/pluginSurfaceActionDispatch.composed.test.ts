@@ -390,6 +390,7 @@ function createClientActionActivation(input: Readonly<{
     outputSchema?: object;
     handler?: PluginClientActionHandler;
     accountHandler?: PluginAccountActionHandler;
+    readOnly?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['readOnly'];
     accountLifetime?: ActiveServerAccountScopeLifetime;
     occurrenceId?: string;
     artifactGraph?: PluginUiArtifactsManifestEntryV2;
@@ -440,6 +441,7 @@ function createClientActionActivation(input: Readonly<{
             execution: action.execution, dangerLevel: action.dangerLevel, placementBindings: action.placementBindings,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}), inputSchema: input.inputSchema ?? {},
             ...(input.accountAvailability ? { availability: input.accountAvailability } : {}),
+            ...(input.readOnly === undefined ? {} : { readOnly: input.readOnly }),
             ...(input.outputSchema ? { resultSchema: input.outputSchema } : {}) }] },
     } : undefined);
     const projectedAction = Object.freeze({
@@ -2447,7 +2449,11 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
-    it.each([false, true])('projects post-handler cancellation without a non-start proof as outcome unknown (Account=%s)', async (accountPlacement) => {
+    it.each([
+        { accountPlacement: false, readOnly: false },
+        { accountPlacement: true, readOnly: false },
+        { accountPlacement: true, readOnly: true },
+    ])('projects post-handler cancellation according to declared effect ($accountPlacement, readOnly=$readOnly)', async ({ accountPlacement, readOnly }) => {
         const cancellation = new AbortController();
         let handlerEntered!: () => void;
         const handlerEnteredPromise = new Promise<void>((resolve) => { handlerEntered = resolve; });
@@ -2457,7 +2463,7 @@ describe('plugin-surface action branch selection', () => {
         });
         const clientHandler: PluginClientActionHandler = () => handler();
         const accountLifetime = accountPlacement ? clientAccountLifetime() : undefined;
-        const activation = createClientActionActivation({ handler: clientHandler, accountPlacement, accountLifetime });
+        const activation = createClientActionActivation({ handler: clientHandler, accountPlacement, accountLifetime, readOnly });
         const action = activation.action;
         await activation.composition.unload();
         try {
@@ -2477,6 +2483,9 @@ describe('plugin-surface action branch selection', () => {
                 ok: false,
                 code: 'timeout',
                 reason: 'plugin_ui_action_outcome_unknown',
+                layer: 'transport',
+                phase: 'settlement',
+                retryable: readOnly,
             });
             expect(handler).toHaveBeenCalledOnce();
         } finally {
@@ -3413,7 +3422,13 @@ describe('plugin-surface action branch selection', () => {
         expect(getMachineContributionRegistryProjectionRevision(scope)).toBeGreaterThan(before);
     });
 
-    it('projects a post-handler daemon retirement as outcome unknown', async () => {
+    it.each([
+        { readOnly: undefined, input: {}, retryable: false },
+        { readOnly: true, input: {}, retryable: true },
+        { readOnly: { op: 'eq', path: 'kind', value: 'get' }, input: { kind: 'get' }, retryable: true },
+        { readOnly: { op: 'eq', path: 'kind', value: 'get' }, input: { kind: 'set' }, retryable: false },
+    ] satisfies readonly { readOnly: PluginProjectedActionV2['readOnly']; input: PluginUiJsonValueV1; retryable: boolean }[])(
+        'projects unknown daemon settlement using declared read effect ($retryable, $input)', async ({ readOnly, input, retryable }) => {
         const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
             supported: true as const,
             result: { ok: false as const, code: 'plugin_action_outcome_unknown' },
@@ -3422,8 +3437,9 @@ describe('plugin-surface action branch selection', () => {
         await expect(dispatchPluginSurfaceAction({
             callerPluginId: CALLER_PLUGIN_ID,
             action: 'refresh-index',
-            input: {},
+            input,
             invocationSurface: 'voice',
+            resolveContributedAction: identity => ({ ...resolveDaemonTargetAction(identity), readOnly }),
             contributedAction: {
                 machineId: 'machine-1',
                 execute: contributed,
@@ -3432,7 +3448,11 @@ describe('plugin-surface action branch selection', () => {
             ok: false,
             code: 'timeout',
             reason: 'plugin_ui_action_outcome_unknown',
+            layer: 'transport',
+            phase: 'settlement',
+            retryable,
         });
+        expect(contributed).toHaveBeenCalledOnce();
     });
 });
 

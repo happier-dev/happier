@@ -1,6 +1,6 @@
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
-import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, projectPluginActionUnavailableOutcomeCode, readPluginActionFailureAuthorPayload, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
@@ -261,7 +261,16 @@ export type PluginSurfaceActionCurrentIntentPresenter = (
 ) => Promise<PluginActionCurrentIntentResult>;
 
 export type { PluginSurfaceActionDispatchOutcome } from './actionFailure';
-import { createPluginSurfaceActionFailure as failure, clientActionFailure, actionDeclinedFailure, actionOutcomeUnknownFailure, type PluginSurfaceActionDispatchOutcome } from './actionFailure';
+import {
+    createPluginSurfaceActionFailure as failure,
+    createPluginSurfaceActionFailureError as pluginActionDispatchFailureError,
+    createPluginSurfaceActionFailurePayload,
+    actionDeclinedFailure,
+    actionOutcomeUnknownFailure,
+    clientActionFailure,
+    projectClientActionInvocationFailure,
+    type PluginSurfaceActionDispatchOutcome,
+} from './actionFailure';
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
     /** Host-only placement for an effect already owned by a mounted Account client. */
@@ -355,17 +364,6 @@ type PluginSurfaceContributedActionSettlement = (
     identity: PluginContributionIdentityV1,
     options: Readonly<{ signal?: AbortSignal; requestId?: string }>,
 ) => Promise<Readonly<{ ok: true; binding: PluginSurfaceContributedActionBinding | undefined }> | PluginSurfaceActionDispatchFailure>;
-
-/** Keep the public failure envelope when an Action is called by plugin code. */
-function pluginActionDispatchFailureError(outcome: PluginSurfaceActionDispatchFailure): PluginError {
-    return new PluginError({
-        code: outcome.reason === 'plugin_ui_action_outcome_unknown'
-            ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason,
-        ...(outcome.message === undefined ? {} : { message: outcome.message }),
-        ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
-        ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
-    });
-}
 
 function readActionOriginSurface(input: DispatchPluginSurfaceActionInput) {
     const surface = input.invocationSurface ?? 'ui';
@@ -1308,24 +1306,7 @@ async function executeClientContributedAction(
     if (result.status === 'executed') {
         return { ok: true, result: result.value as PluginUiJsonValueV1 };
     }
-    if (result.status === 'invalid') {
-        return clientActionFailure(result.code);
-    }
-    if (result.status === 'unavailable') {
-        const code = projectPluginActionUnavailableOutcomeCode(
-            result.code,
-            result.actionHandlerInvocation,
-        );
-        return actionOutcomeUnknownFailure(code) ?? clientActionFailure(code);
-    }
-    const authorPayload = readPluginActionFailureAuthorPayload(result.data);
-    return actionOutcomeUnknownFailure(result.code) ?? clientActionFailure(result.code, {
-        message: result.message,
-        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
-        ...(authorPayload.remediation === undefined
-            ? {}
-            : { remediation: authorPayload.remediation }),
-    });
+    return projectClientActionInvocationFailure(result, projectedAction, preparedInput.input);
 }
 
 type SubmittedSelectedActionInput = Extract<
@@ -1755,10 +1736,7 @@ async function executeContributedAction(
 
     if (!result.supported) {
         if (result.reason === 'outcomeUnknown') {
-            // The exact daemon Action was emitted, but its settlement did not
-            // arrive. Keep the host API's bounded timeout code while carrying
-            // the private indeterminate-effect fact to Voice custody.
-            return failure('timeout', 'plugin_ui_action_outcome_unknown');
+            return actionOutcomeUnknownFailure(PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE, projectedAction, actionInput)!;
         }
         return failure('unavailable', 'plugin_ui_action_host_unavailable');
     }
@@ -1768,7 +1746,7 @@ async function executeContributedAction(
         // outward result already known — that would invite a blind mutation retry.
         return { ok: true, result: result.result.result as PluginUiJsonValueV1 };
     }
-    const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code);
+    const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code, projectedAction, actionInput);
     if (outcomeUnknown) return outcomeUnknown;
     return staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
         ?? actionDeclinedFailure(result.result.code)
@@ -1891,7 +1869,7 @@ export function createPluginSurfaceActionDispatchHandler(
             ...(selectedActionInput ? { selectedActionInput } : {}),
             ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
         }).finally(cancellation.dispose);
-        if (!outcome.ok) return createPluginSurfaceHostApiError(outcome.code, [outcome.reason], outcome.message, { connectionPendingEligible });
+        if (!outcome.ok) return createPluginSurfaceActionFailurePayload(outcome, { connectionPendingEligible });
         return outcome.result;
     };
 }
@@ -2185,7 +2163,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
                     });
                     if (outcome.ok) return outcome.result;
                     if (outcome.reason === PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE) return { admitted: false };
-                    return createPluginSurfaceHostApiError(outcome.code, [outcome.reason]);
+                    return createPluginSurfaceActionFailurePayload(outcome);
                 } finally {
                     cancellation.dispose();
                 }

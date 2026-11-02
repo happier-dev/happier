@@ -8,6 +8,7 @@ import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
+import { InputPredicateSchema } from '../inputs/inputPredicates.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from '../widgets/widgetConnectedAccountPurposeBindingV1.js';
 import { WidgetSizeDeclarationV1Schema } from '../widgets/widgetPresentationV1.js';
 import { WidgetPublicSnapshotPresentationV1Schema } from '../widgets/widgetPublicSnapshotV1.js';
@@ -1342,6 +1343,7 @@ export const PluginProjectedActionV2Schema = lazyZodSchema(() => (<T extends z.Z
   dangerLevel: PluginActionDangerLevelV2Schema,
   confirmation: zMini.optional(PluginActionConfirmationV2Schema),
   confirmationWhen: zMini.optional(PluginActionConfirmationWhenV2Schema),
+  readOnly: zMini.optional(zMini.union([zMini.boolean(), InputPredicateSchema])),
   available: z.optional(z.boolean()),
   /**
    * Read-only canonical Action policy facts. This additive field is absent

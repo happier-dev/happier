@@ -369,6 +369,7 @@ type ResolvedActionPresentation = Readonly<{
     /** Authored contribution surfaces retained by the canonical Action projection. */
     contributionSurfaces?: PluginActionContributionV2['surfaces'];
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
+    readOnly?: PluginActionContributionV2['readOnly'];
     /** Manifest Action icon retained for host-rendered catalog consumers. */
     icon?: PluginActionContributionV2['icon'];
     /** Canonical V2 semantic bindings retained through the legacy passthrough shell. */

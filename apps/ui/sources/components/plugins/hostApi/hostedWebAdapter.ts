@@ -573,9 +573,10 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             requestId: string;
             method: PluginUiHostMethodV1;
         }>,
-        code: PluginUiHostApiErrorCodeV1,
+        code: string,
         diagnostics: readonly string[] = [],
         messageText?: string,
+        metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
     ): PluginHostedWebBridgeResponseEnvelopeV1 {
         return canonicalBridgeResponse(envelope, PluginUiHostApiWireEnvelopeV1Schema.parse({
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -583,7 +584,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
             identity: message.identity,
             requestId: message.requestId,
             method: message.method,
-            error: createPluginSurfaceHostApiPluginErrorData(code, diagnostics, messageText),
+            error: createPluginSurfaceHostApiPluginErrorData(code, diagnostics, messageText, metadata),
         }));
     }
 
@@ -705,6 +706,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                         response.payload.code,
                         response.payload.diagnostics,
                         response.payload.message,
+                        response.payload,
                     );
                 }
                 admission = response.payload;
@@ -860,6 +862,7 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     response.payload.code,
                     response.payload.diagnostics,
                     response.payload.message,
+                    response.payload,
                 );
             }
             const result = response.payload;

@@ -4,7 +4,6 @@ import {
     PluginUiHostApiErrorPayloadV1Schema,
     PluginUiHostApiResponseEnvelopeV1Schema,
     PluginUiSurfaceContextV1Schema,
-    type PluginUiHostApiErrorCodeV1,
     type PluginUiHostApiErrorPayloadV1,
     type PluginUiHostApiRequestMethodV1,
     type PluginUiHostApiRequestEnvelopeV1,
@@ -15,7 +14,8 @@ import {
     type PluginUiSelectActionInputResultV1,
     type PluginUiTargetedContributionOperationV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginErrorData } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginErrorData } from '@happier-dev/plugin-sdk';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 
 /**
  * The CALLER's cancellation for one in-flight request (§3.4).
@@ -131,22 +131,25 @@ const pluginSurfaceHostApiErrorPayloads = new WeakMap<object, Readonly<{
  * below; the returned value itself remains ordinary strict JSON.
  */
 export function createPluginSurfaceHostApiError(
-    code: PluginUiHostApiErrorCodeV1,
+    code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    options?: Readonly<{ connectionPendingEligible?: boolean }>,
+    options?: Readonly<{ connectionPendingEligible?: boolean }> & Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
 ): PluginUiJsonValueV1 {
+    const writtenMessage = message ?? (options?.layer ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body : undefined);
     const payload = PluginUiHostApiErrorPayloadV1Schema.parse({
         code,
-        ...(message === undefined ? {} : { message }),
+        ...(options?.layer === undefined ? {} : { layer: options.layer }),
+        ...(options?.phase === undefined ? {} : { phase: options.phase }),
+        ...(options?.retryable === undefined ? {} : { retryable: options.retryable }),
+        ...(writtenMessage === undefined ? {} : { message: writtenMessage }),
         diagnostics: diagnostics.flatMap((diagnostic) => {
             const normalized = diagnostic.trim();
             return normalized.length > 0 ? [normalized] : [];
         }),
     });
     const result = Object.freeze({
-        code: payload.code,
-        ...(payload.message === undefined ? {} : { message: payload.message }),
+        ...payload,
         diagnostics: Object.freeze([...payload.diagnostics]),
     }) satisfies PluginUiJsonValueV1;
     pluginSurfaceHostApiErrorPayloads.set(result, { payload, connectionPendingEligible: options?.connectionPendingEligible === true });
@@ -158,15 +161,21 @@ export function createPluginSurfaceHostApiError(
  * exception shape consumed by both physical transports.
  */
 export function createPluginSurfaceHostApiPluginErrorData(
-    code: PluginUiHostApiErrorCodeV1,
+    code: string,
     diagnostics: readonly string[] = [],
     message?: string,
+    metadata?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
 ): PluginErrorData {
     return {
         name: 'PluginError',
         code,
         ...(message === undefined ? {} : { message }),
-        retryable: code === 'unavailable' || code === 'timeout',
+        // A coarse wrapper code says nothing about whether an effect entered.
+        retryable: metadata?.retryable ?? false,
+        ...(metadata && (metadata.layer !== undefined || metadata.phase !== undefined) ? { details: {
+            ...(metadata.layer === undefined ? {} : { layer: metadata.layer }),
+            ...(metadata.phase === undefined ? {} : { phase: metadata.phase }),
+        } } : {}),
         ...(diagnostics.length === 0
             ? {}
             : {
@@ -175,6 +184,19 @@ export function createPluginSurfaceHostApiPluginErrorData(
                     severity: 'error' as const,
                 })),
             }),
+    };
+}
+
+/** Read only the closed failure metadata from the incumbent SDK details seam. */
+export function readPluginSurfaceHostApiFailureMetadata(
+    details: unknown,
+): Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase'> {
+    if (!details || typeof details !== 'object' || Array.isArray(details)) return {};
+    const layer = PluginUiHostApiErrorPayloadV1Schema.shape.layer.safeParse(Reflect.get(details, 'layer'));
+    const phase = PluginUiHostApiErrorPayloadV1Schema.shape.phase.safeParse(Reflect.get(details, 'phase'));
+    return {
+        ...(layer.success && layer.data !== undefined ? { layer: layer.data } : {}),
+        ...(phase.success && phase.data !== undefined ? { phase: phase.data } : {}),
     };
 }
 
@@ -207,6 +229,13 @@ export async function settlePluginSurfaceHostApiRequest(
             ? { ...base, kind: 'error' as const, payload: error }
             : { ...base, kind: 'result' as const, payload });
     } catch (error) {
+        if (isPluginError(error)) {
+            return PluginUiHostApiResponseEnvelopeV1Schema.parse({ ...base, kind: 'error', payload: {
+                code: error.code, message: error.message, retryable: error.retryable,
+                ...readPluginSurfaceHostApiFailureMetadata(error.details),
+                diagnostics: error.diagnostics?.map(diagnostic => diagnostic.code) ?? [],
+            } });
+        }
         const aborted = error !== null && typeof error === 'object'
             && 'name' in error && error.name === 'AbortError';
         return PluginUiHostApiResponseEnvelopeV1Schema.parse({
@@ -344,7 +373,7 @@ export function createPluginSurfaceHostApi(
             return pending.then(() => handleRequest(request, options));
         }
         const resolved = input.resolveUnavailableError?.(error, request) ?? error;
-        return resolved === error ? result : createPluginSurfaceHostApiError(resolved.code, resolved.diagnostics, resolved.message);
+        return resolved === error ? result : createPluginSurfaceHostApiError(resolved.code, resolved.diagnostics, resolved.message, resolved);
     };
     const resolveLiveInstalledMethods = (): readonly PluginUiHostMethodV1[] => {
         // A retired mount cannot serve even its locally synthesized context.
