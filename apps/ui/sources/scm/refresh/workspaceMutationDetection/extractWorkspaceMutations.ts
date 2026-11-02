@@ -256,6 +256,9 @@ export function readToolCallMutationPaths(toolPart: Readonly<{ name: string; inp
         const diffPaths = collectPathsFromDiffFiles(toolInput);
         for (const path of diffPaths) paths.add(path);
         hasUnknownMutations = diffPaths.length === 0;
+        // A turn recap invalidates SCM, but does not perform a write. Its paths
+        // belong to the repository checkpoint, not the live tool's Session cwd.
+        return { paths, hasUnknownMutations, mutations };
     } else if (toolKind === 'single-path') {
         const path = readStringField(toolInput, FILE_PATH_FIELD_KEYS);
         if (path) paths.add(path);

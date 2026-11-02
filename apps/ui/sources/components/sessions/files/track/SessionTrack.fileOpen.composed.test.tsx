@@ -44,6 +44,9 @@ describe('Track/Watch file opening through the Session file owner', () => {
         { entry: 'track', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'watch', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'watchRoute', root: '/repo', cwd: '/repo/nested', path: 'nested/tracking.ts', absolute: '/repo/nested/tracking.ts' },
+        { entry: 'track', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
+        { entry: 'watch', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
+        { entry: 'watchRoute', root: '/repo/nested', cwd: '/repo/nested', path: 'tracking.ts', absolute: '/repo/nested/tracking.ts' },
         { entry: 'track', root: '/Users/alice/repo', cwd: '/Users/alice/repo', path: 'tracking.ts', absolute: '/Users/alice/repo/tracking.ts' },
         { entry: 'watch', root: 'C:\\Users\\alice\\repo', cwd: 'C:\\Users\\alice\\repo\\nested', path: 'nested/tracking.ts', absolute: 'c:/users/alice/repo/nested/tracking.ts' },
     ])('$entry reads actual content at $absolute from cwd $cwd', async ({ entry, root, cwd, path, absolute }) => {
@@ -69,13 +72,27 @@ describe('Track/Watch file opening through the Session file owner', () => {
         const address = { sessionId: session.id, serverId: scope.serverId };
         const scopeId = createSessionPaneScopeId(session.id, scope.serverId);
         const message = createToolCallMessageFixture({ id: 'writing', tool: {
-            id: 'writing', name: 'Write', input: { file_path: absolute, content }, state: 'running',
+            // Captured FILES-LIVE63 Patch shape: the Agent already supplied an absolute target.
+            id: 'writing', name: 'Patch', input: { changes: { [absolute]: {
+                type: 'update', unified_diff: '@@ -1 +1 @@\n-old\n+new\n',
+                modify: { old_content: 'old\n', new_content: 'new\n' },
+            } }, _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Patch', canonicalToolName: 'Patch' } }, state: 'running',
             createdAt: 1, startedAt: 2, completedAt: null, description: null,
         } });
-        const messagesById = { [message.id]: message };
+        // A turn-summary call can arrive before its result, or remain in the transcript
+        // during the next turn. Its repository-relative path is not a live-write target.
+        const summary = createToolCallMessageFixture({ id: 'turn-diff', tool: {
+            id: 'turn-diff', name: 'Diff', input: {
+                files: [{ file_path: 'nested/tracking.ts', change_kind: 'modified', source: 'provider_tool',
+                    confidence: 'exact', provider: 'codex' }],
+                _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Diff', canonicalToolName: 'Diff',
+                    workspaceMutationSignal: 'turn-change-set', sessionChangeScope: 'turn', turnStatus: 'completed' },
+            }, state: 'running', createdAt: 3, startedAt: 3, completedAt: null, description: null,
+        } });
+        const messagesById = { [message.id]: message, [summary.id]: summary };
         storage.getState().applySessions([{ ...session, thinking: true, thinkingAt: Date.now(), latestTurnStatus: 'in_progress', activeAt: Date.now() }]);
         storage.setState({ localSettings: { ...storage.getState().localSettings, filesTrackAgentEdits: entry === 'track', detailsPaneTabsBehavior: 'preview' },
-            sessionMessages: { [session.id]: { messageIdsOldestFirst: [message.id], messagesById, messagesMap: messagesById,
+            sessionMessages: { [session.id]: { messageIdsOldestFirst: [message.id, summary.id], messagesById, messagesMap: messagesById,
                 reducerState: createReducer(), messagesVersion: 1, isLoaded: true, latestThinkingMessageId: null, latestThinkingMessageActivityAtMs: null } } });
         currentFixture.setSnapshot(fileViewSnapshot({ rootPath: root }));
         const state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: session.id, serverId: scope.serverId } }, pinned: true, preview: false });
