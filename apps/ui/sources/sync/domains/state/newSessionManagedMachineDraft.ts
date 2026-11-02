@@ -8,11 +8,13 @@ import {
 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ActionOperationGetV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 /** Local reviewed intent; admission and acquired resource identity stay with their real owners. */
 export const ManagedMachineSelectionDraftSchema = z.strictObject({
     selection: ManagedCreationSelectionV1Schema,
     receipt: ManagedConfigurationFactsV1Schema,
+    enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     archiveEffect: z.enum(['keep', 'stop', 'delete']),
 });
 
@@ -22,8 +24,9 @@ export type ManagedMachineSelectionDraft = z.infer<typeof ManagedMachineSelectio
 /** Archive continuation is a local post-start choice, not part of paid acquire intent. */
 export function managedMachineCreationIntent(
     draft: ManagedMachineSelectionDraft | null | undefined,
-): Readonly<Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt'>> | null {
-    return draft ? { selection: draft.selection, receipt: draft.receipt } : null;
+): Readonly<Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'>> | null {
+    return draft ? { selection: draft.selection, receipt: draft.receipt,
+        ...(draft.enrollmentIdentity ? { enrollmentIdentity: draft.enrollmentIdentity } : {}) } : null;
 }
 
 /** The ordinary draft retains only replay identity and the canonical managed reference. */
@@ -39,11 +42,13 @@ export type ManagedMachineAcquisitionDraft = z.infer<typeof ManagedMachineAcquis
 export function createManagedMachineSelectionDraft(input: Readonly<{
     selection: ManagedCreationSelectionV1;
     receipt: ManagedConfigurationFactsV1;
+    enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     archiveEffect?: ManagedMachineSelectionDraft['archiveEffect'];
 }>): ManagedMachineSelectionDraft {
     return ManagedMachineSelectionDraftSchema.parse({
         selection: input.selection,
         receipt: input.receipt,
+        ...(input.enrollmentIdentity ? { enrollmentIdentity: input.enrollmentIdentity } : {}),
         archiveEffect: input.archiveEffect ?? 'keep',
     });
 }
