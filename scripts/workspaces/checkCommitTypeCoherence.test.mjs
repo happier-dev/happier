@@ -1,11 +1,13 @@
 import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import * as coherence from './checkCommitTypeCoherence.mjs';
 import test from 'node:test';
 import { checkCommitTypeCoherence } from './checkCommitTypeCoherence.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
@@ -107,6 +109,183 @@ test('UI coherence prepares typed routes from each Git tree despite empty live E
   assert.deepEqual(rejected.fresh.map(({ file, code }) => ({ file, code })), [
     { file: 'apps/ui/src/consumer.ts', code: 2322 },
   ], 'uncommitted routes cannot authorize a committed navigation target');
+});
+
+async function checkedPacket(t) {
+  const fixture = await checkout(t);
+  const { repo, write, commitOnly } = fixture;
+  for (const dir of ['a', 'b']) {
+    await mkdir(join(repo, dir));
+    await write(`${dir}/tsconfig.json`, JSON.stringify({ extends: '../tsconfig.json', include: ['*.ts'], exclude: ['excluded.ts'] }));
+    await write(`${dir}/producer.ts`, 'export const value = 1;\n');
+    await write(`${dir}/consumer.ts`, "import { value } from './producer';\nexport const prior = value;\n");
+    await write(`${dir}/excluded.ts`, "import { prior } from './consumer';\nexport const excluded = prior;\n");
+  }
+  const base = commitOnly('a', 'b');
+  for (const dir of ['a', 'b'])
+    await write(`${dir}/consumer.ts`, "import { value } from './producer';\nexport const prior = value;\nexport const added: number = value;\n");
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', 'a/consumer.ts', 'b/consumer.ts');
+  const tree = git('write-tree');
+  git('read-tree', base);
+  const checked = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(checked.fresh, []);
+  return { ...fixture, git, checked };
+}
+
+test('moved HEAD with disjoint commits carries over the checked packet and preserves concurrent history', async (t) => {
+  const { repo, write, commitOnly, git, checked } = await checkedPacket(t);
+  await write('unrelated.md', 'concurrent work\n');
+  const parent = commitOnly('unrelated.md');
+  const index = git('write-tree');
+  assert.equal(typeof coherence.finalizeCommitTypeCoherence, 'function');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.deepEqual(result.recheckedGroups, []);
+  assert.deepEqual(result.reusedGroups, ['a', 'b']);
+  assert.equal(git('rev-parse', 'HEAD^'), parent);
+  assert.equal(git('rev-parse', 'HEAD'), result.commit);
+  assert.equal(git('show', 'HEAD:unrelated.md'), 'concurrent work');
+  assert.match(git('show', 'HEAD:a/consumer.ts'), /added: number/);
+  assert.equal(git('write-tree'), index, 'finalization leaves shared staging to its caller');
+  assert.match(await readFile(join(repo, 'a/consumer.ts'), 'utf8'), /added: number/);
+});
+
+test('moved HEAD rechecks only the intersecting program and refuses its newly broken packet', async (t) => {
+  const { repo, write, commitOnly, git, checked } = await checkedPacket(t);
+  await write('a/producer.ts', "export const value = 'changed';\n");
+  const parent = commitOnly('a/producer.ts');
+  assert.equal(typeof coherence.finalizeCommitTypeCoherence, 'function');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.deepEqual(result.recheckedGroups, ['a']);
+  assert.deepEqual(result.reusedGroups, ['b']);
+  assert.equal(result.commit, undefined);
+  assert.deepEqual(result.checked.fresh.map(({ file, code }) => [file, code]), [['a/consumer.ts', 2322]]);
+  assert.equal(git('rev-parse', 'HEAD'), parent);
+});
+
+test('moved HEAD replays compatible same-file hunks and rechecks even changes later reverted', async (t) => {
+  const { repo, write, commitOnly, git, checked } = await checkedPacket(t);
+  await write('a/producer.ts', 'export const value = 2;\n');
+  commitOnly('a/producer.ts');
+  await write('a/producer.ts', 'export const value = 1;\n');
+  commitOnly('a/producer.ts');
+  await write('a/consumer.ts', "// concurrent comment\nimport { value } from './producer';\nexport const prior = value;\n");
+  const parent = commitOnly('a/consumer.ts');
+  assert.equal(typeof coherence.finalizeCommitTypeCoherence, 'function');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.deepEqual(result.recheckedGroups, ['a']);
+  assert.deepEqual(result.reusedGroups, ['b']);
+  assert.equal(git('rev-parse', 'HEAD^'), parent);
+  assert.match(git('show', 'HEAD:a/consumer.ts'), /^\/\/ concurrent comment[\s\S]*added: number/);
+});
+
+test('moved HEAD discovers a new importer group without rechecking disjoint existing groups', async (t) => {
+  const { repo, write, commitOnly, checked } = await checkedPacket(t);
+  await mkdir(join(repo, 'c'));
+  await write('c/tsconfig.json', JSON.stringify({ extends: '../tsconfig.json', include: ['*.ts'] }));
+  await write('c/consumer.ts', "import { prior } from '../a/consumer';\nexport const value = prior;\n");
+  commitOnly('c');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.ok(result.commit);
+  assert.deepEqual(result.recheckedGroups, ['c']);
+  assert.deepEqual(result.reusedGroups, ['a', 'b']);
+});
+
+test('a packet already committed by another writer never creates an empty duplicate commit', async (t) => {
+  const { repo, git, checked } = await checkedPacket(t);
+  const other = execFileSync('git', ['commit-tree', checked.tree, '-p', checked.base], {
+    cwd: repo, input: 'fix: packet already landed\n', encoding: 'utf8',
+  }).trim();
+  git('update-ref', 'HEAD', other, checked.base);
+  assert.throws(() => coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' }), /already present/u);
+  assert.equal(git('rev-parse', 'HEAD'), other);
+});
+
+test('conflicting concurrent packet edits leave HEAD, shared staging and worktree untouched', async (t) => {
+  const { repo, write, commitOnly, git, checked } = await checkedPacket(t);
+  await write('a/consumer.ts', "import { value } from './producer';\nexport const prior = value;\nexport const added = 'other writer';\n");
+  const parent = commitOnly('a/consumer.ts');
+  const index = git('write-tree');
+  const before = await readFile(join(repo, 'a/consumer.ts'), 'utf8');
+  assert.throws(() => coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' }));
+  assert.equal(git('rev-parse', 'HEAD'), parent);
+  assert.equal(git('write-tree'), index);
+  assert.equal(await readFile(join(repo, 'a/consumer.ts'), 'utf8'), before);
+});
+
+test('moved HEAD inspects intervening commits even when their program changes were reverted', async (t) => {
+  const { repo, write, commitOnly, checked } = await checkedPacket(t);
+  await write('a/producer.ts', 'export const value = 2;\n');
+  commitOnly('a/producer.ts');
+  await write('a/producer.ts', 'export const value = 1;\n');
+  commitOnly('a/producer.ts');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
+  assert.ok(result.commit);
+  assert.deepEqual(result.recheckedGroups, ['a']);
+  assert.deepEqual(result.reusedGroups, ['b']);
+});
+
+test('a competing writer wins CAS during finalization and its disjoint commit is preserved on retry', { skip: process.platform === 'win32' }, async (t) => {
+  const { repo, write, git, checked } = await checkedPacket(t);
+  const ref = git('symbolic-ref', 'HEAD');
+  await write('concurrent.md', 'another writer\n');
+  git('add', '--', 'concurrent.md');
+  const otherTree = git('write-tree');
+  git('read-tree', checked.base);
+  const otherCommit = execFileSync('git', ['commit-tree', otherTree, '-p', checked.base], {
+    cwd: repo, input: 'fix: competing writer\n', encoding: 'utf8',
+  }).trim();
+  const bin = await mkdtemp(join(tmpdir(), 'happier-coherence-git-boundary-'));
+  t.after(() => rm(bin, { recursive: true, force: true }));
+  const previousPath = process.env.PATH;
+  const realGit = previousPath.split(delimiter).map(dir => join(dir, 'git')).find(existsSync);
+  assert.ok(realGit);
+  // Mock only the OS process boundary: all Git object, replay and CAS operations remain real.
+  const shim = join(bin, 'git');
+  await writeFile(shim, `#!/usr/bin/env node
+import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const marker = ${JSON.stringify(join(bin, 'raced'))};
+if (args[0] === 'update-ref' && (args[1] !== ${JSON.stringify(ref)} || args.length !== 4)) {
+  process.stderr.write('Finalization must CAS the explicit branch with its observed old value');
+  process.exit(1);
+}
+if (args[0] === 'update-ref' && !existsSync(marker)) {
+  writeFileSync(marker, 'raced');
+  const raced = spawnSync(${JSON.stringify(realGit)}, ['update-ref', 'HEAD', ${JSON.stringify(otherCommit)}, ${JSON.stringify(checked.base)}], { stdio: 'inherit' });
+  if (raced.status !== 0) process.exit(raced.status ?? 1);
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  await chmod(shim, 0o755);
+  let result;
+  try {
+    process.env.PATH = `${bin}${delimiter}${previousPath}`;
+    result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n', ref });
+  } finally {
+    process.env.PATH = previousPath;
+  }
+  assert.equal(git('rev-parse', 'HEAD^'), otherCommit);
+  assert.equal(git('show', 'HEAD:concurrent.md'), 'another writer');
+  assert.deepEqual(result.recheckedGroups, []);
+  assert.deepEqual(result.reusedGroups, ['a', 'b']);
+});
+
+test('the public checker CLI checks and finalizes a private packet with its message file', async (t) => {
+  const { repo, git, checked } = await checkedPacket(t);
+  const messageFile = join(repo, 'message.txt');
+  await writeFile(messageFile, 'fix: public checker finalization\n');
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)),
+    `--base=${checked.base}`, `--tree=${checked.tree}`, `--message-file=${messageFile}`, `--ref=${git('symbolic-ref', 'HEAD')}`,
+  ], { cwd: repo, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const committed = /^committed ([a-f0-9]+):/mu.exec(result.stdout)?.[1];
+  assert.equal(committed, git('rev-parse', 'HEAD'));
+  assert.equal(git('show', '-s', '--format=%s', 'HEAD'), 'fix: public checker finalization');
+  assert.equal(git('rev-parse', 'HEAD^'), checked.base);
 });
 
 test('inserted lines move inherited diagnostics without hiding a new changed-line error', async (t) => {

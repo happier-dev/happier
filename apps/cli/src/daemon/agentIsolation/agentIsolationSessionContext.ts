@@ -43,7 +43,9 @@ export function createAgentIsolationSessionContext(input: Readonly<{
         || (!mcpLaunchMaterial || agentNativeLaunch) && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
         message: 'Current Session isolation material is unavailable', retryable: false });
       const member = material.memberIdentity;
-      const home = input.sessionRequesterHomeServerIdentityId;
+      // Ordinary Account Sessions use the Home already qualified by the
+      // requester resolver; protected requester birth keeps its retained Home.
+      const home = input.sessionRequesterHomeServerIdentityId ?? input.hostHomeServerIdentityId;
       if (requesterIdentity?.kind !== 'isolated' || !home) throw new PluginError({
         code: 'agent_isolation_unavailable', message: 'Current Session requester is unavailable', retryable: false });
       if (member) {

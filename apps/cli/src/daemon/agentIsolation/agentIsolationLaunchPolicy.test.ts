@@ -1,5 +1,8 @@
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { join } from 'node:path';
+import { createAgentIsolationSessionContext } from './agentIsolationSessionContext';
 import { describe, expect, it } from 'vitest';
-import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 
@@ -173,4 +176,33 @@ describe('held Agent isolation launch admission', () => {
         expect(selectHostRequesterExecutionIdentity({ rpcContext: { ...rpcContext, callerInputAuthorization } }))
             .toMatchObject({ kind: 'owner_person' });
     });
+    it.skipIf(process.platform !== 'linux')('prepares ordinary Account Session material with its qualified host Home without private birth', async () => {
+        await withTempDir('ordinary-account-isolation-', async home => {
+            const hostHomeServerIdentityId = 'srv_actual_home';
+            const identity = selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId,
+                hostAccountAgent: { accountId: 'owner', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation' } });
+            const material = { runtimeHome: join(home, 'runtime'), environment: { SELECTED: 'owner' }, selectedMaterials: [] };
+            const input = { managedHappierBinaryPath: '/opt/happier/current/happier', hostHomeServerIdentityId,
+                sessionCustodianAccountId: 'owner', readMaterial: () => material,
+                machine: { read: (): HostAgentIsolationLaunchSnapshot => ({ enabled: true,
+                    status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [home] }) } };
+            const context = createAgentIsolationSessionContext(input);
+            const mcpLaunchMaterial = { ...material, nativeIdentity: { home, agentUid: 2401, agentGid: 2401 } };
+            const prepared = await context.prepareLaunch!({ requesterIdentity: identity, mcpLaunchMaterial,
+                signal: new AbortController().signal });
+            expect(prepared.read()).toMatchObject({ localTransport: { agentUid: 2401, agentGid: 2401 },
+                launch: { runtimeHome: material.runtimeHome, environment: material.environment } });
+            await expect(context.prepareLaunch!({ requesterIdentity: { kind: 'unknown', reason: 'session_requester_unavailable' },
+                mcpLaunchMaterial, signal: new AbortController().signal }))
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+            // A retained foreign birth remains authoritative; actual host Home
+            // cannot turn that rejected custody into an ordinary Account launch.
+            const foreign = createAgentIsolationSessionContext({ ...input, sessionRequester: {
+                serverId: 'saved-profile', accountId: 'owner', machineId: 'machine', installationId: 'installation',
+            }, sessionRequesterHomeServerIdentityId: 'srv_foreign_home' });
+            await expect(admitAgentIsolationLaunchForHost({ context: foreign, cwd: home, agentNativeLaunch: true }))
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+        });
+    });
+
 });

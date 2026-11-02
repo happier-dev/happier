@@ -566,8 +566,7 @@ describe('installed Machine filesystem requester custody', () => {
                     expect(result).not.toHaveProperty('tree');
                 }
                 expect(await readFile(join(outside, 'private.txt'), 'utf8') === 'synthetic-outside-file').toBe(true);
-                // Widening the extent is legitimate only for the admitted owner;
-                // listing the original link itself did not widen that extent.
+                // Listing the original link does not widen the requested extent.
                 const widened = await invoke('daemon.filesystem.readFile', { rootPath: f.directory,
                     path: join(rootPath, 'outside-link') }, authority);
                 expect(typeof widened === 'object' && widened !== null && 'success' in widened && widened.success === true).toBe(true);
@@ -575,8 +574,7 @@ describe('installed Machine filesystem requester custody', () => {
                     && widened.content === Buffer.from('synthetic-outside-file').toString('base64')).toBe(true);
                 for (const method of ['daemon.filesystem.readFile', RPC_METHODS.READ_FILE] as const) {
                     const result = await invoke(method, { rootPath: f.directory, path: join(outside, 'private.txt') }, authority, 'member', 'use');
-                    expect(result).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
-                    expect(result).not.toHaveProperty('content');
+                    expect(result).toMatchObject({ success: true, content: Buffer.from('synthetic-outside-file').toString('base64') });
                 }
             }
         } finally {
@@ -732,7 +730,7 @@ describe('installed Machine filesystem requester custody', () => {
             await f.machine.shutdown();
         }
     });
-    it('allows Manage file access and refuses Use through the server forwarder', async () => {
+    it('allows admitted file access with isolation disabled through the server forwarder', async () => {
         const f = await createInstalledFilesystemMachineFixture();
         const terminalEnv = createEnvKeyScope(['HAPPIER_DAEMON_TERMINAL_SHELL', 'NODE_REPL_HISTORY']);
         terminalEnv.patch({ HAPPIER_DAEMON_TERMINAL_SHELL: process.execPath, NODE_REPL_HISTORY: join(f.directory, 'terminal-history') });
@@ -766,21 +764,16 @@ describe('installed Machine filesystem requester custody', () => {
                 protocolVersion: 1, results: { 'tool.systemTasks': { ok: true,
                     data: { available: true, methods: ['start', 'poll', 'respond', 'wait'] } } },
             });
-            for (const [method, params] of [
-                ['daemon.filesystem.readFile', { rootPath, path }],
-                [RPC_METHODS.READ_FILE, { path }],
-                [RPC_METHODS.WRITE_FILE, { path, content: Buffer.from('forbidden-member-write').toString('base64') }],
-                [RPC_METHODS.STAT_FILE, { path, includeContentHash: true }],
-                [RPC_METHODS.CAPABILITIES_DETECT, detectRequest],
-            ] as const) {
-                const result = await invoke(method, params, 'member', 'use');
-                expect(result).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
-                expect(result).not.toMatchObject({ success: true });
-                expect(result).not.toHaveProperty('content');
-                expect(result).not.toHaveProperty('contentHash');
-                expect(result).not.toHaveProperty('results');
-                expect(JSON.stringify(result)).not.toContain('updated-owner-relay-fixture');
-            }
+            for (const method of ['daemon.filesystem.readFile', RPC_METHODS.READ_FILE] as const)
+                await expect(invoke(method, { rootPath, path }, 'member', 'use')).resolves.toMatchObject({
+                    success: true, content: Buffer.from('updated-owner-relay-fixture').toString('base64'),
+                });
+            await expect(invoke(RPC_METHODS.WRITE_FILE, replacement, 'member', 'use')).resolves.toMatchObject({ success: true });
+            await expect(invoke(RPC_METHODS.STAT_FILE, { path, includeContentHash: true }, 'member', 'use'))
+                .resolves.toMatchObject({ success: true, exists: true, contentHash: createHash('sha256').update('updated-owner-relay-fixture').digest('hex') });
+            await expect(invoke(RPC_METHODS.CAPABILITIES_DETECT, detectRequest, 'member', 'use'))
+                .resolves.toMatchObject({ protocolVersion: 1, results: { 'tool.systemTasks': { ok: true,
+                    data: { available: true, methods: ['start', 'poll', 'respond', 'wait'] } } } });
             await expect(invoke('daemon.filesystem.readFile', { rootPath, path }, 'member', 'manage'))
                 .resolves.toMatchObject({ success: true, content: Buffer.from('updated-owner-relay-fixture').toString('base64') });
             expect(await readFile(path, 'utf8')).toBe('updated-owner-relay-fixture');
@@ -928,7 +921,7 @@ describe('installed Machine filesystem requester custody', () => {
             expect(f.admissionChecks()).toBeGreaterThan(0);
         } finally { await f.machine.shutdown(); }
     });
-    it('keeps member, copied Session, missing Home and withdrawn admission away from registered private effects', async () => {
+    it('permits admitted Use while refusing copied Session, missing Home and withdrawn admission', async () => {
         const f = await createInstalledFilesystemMachineFixture();
         const rootPath = join(f.directory, 'workspace');
         await mkdir(rootPath);
@@ -953,8 +946,9 @@ describe('installed Machine filesystem requester custody', () => {
             }
             expect(await readFile(path, 'utf8')).toBe('private-fixture-bytes');
         };
-        await refuse({ actorAccountId: 'member', role: 'use' });
-        await refuse({ actorAccountId: 'member', role: 'use', callerAuthority: 'account_automation' });
+        for (const callerAuthority of ['present_user', 'account_automation'] as const)
+            await expect(f.invoke('daemon.filesystem.readFile', { rootPath, path }, { actorAccountId: 'member', role: 'use', callerAuthority }))
+                .resolves.toMatchObject({ success: true, content: Buffer.from('private-fixture-bytes').toString('base64') });
         await refuse({ sessionActionOrigin: copiedOrigin });
         f.setHeldHome(null);
         await refuse({});

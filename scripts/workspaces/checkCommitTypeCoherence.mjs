@@ -5,6 +5,7 @@
 // that the base tree does not already have.
 //
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
+//   ... --base=<head> --tree=<private-tree> --message-file=<file>  (check, replay if needed, CAS commit)
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
 //
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
@@ -18,7 +19,8 @@
 // builds those packages at the commit. This is a fast slice check, not a package typecheck verdict:
 // importers reached only through barrels are not roots, and the package typecheck remains the gate.
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API } from '@typescript/native/sync';
@@ -329,6 +331,7 @@ function repository(repo) {
   }
 
   return {
+    git,
     gitText,
     treeEntries,
     readBlobs,
@@ -343,12 +346,14 @@ function repository(repo) {
   };
 }
 
-export function checkCommitTypeCoherence({ repo, base, tree }) {
+export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
   const started = Date.now();
   const git = repository(repo);
+  base = git.gitText(['rev-parse', '--verify', base]).trim();
+  tree = git.gitText(['rev-parse', '--verify', `${tree}^{tree}`]).trim();
   const slice = git.sliceOf(base, tree);
   const changed = slice.filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
-  const result = { changed: changed.length, roots: 0, unowned: [], fresh: [] };
+  const result = { base, tree, changed: changed.length, roots: 0, unowned: [], fresh: [], groups: [], candidates: [] };
   if (changed.length === 0) return { ...result, ms: Date.now() - started };
   const treeIndex = git.treeEntries(tree);
   let roots = [
@@ -358,6 +363,8 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
     ]),
   ];
   const { groups, unowned } = git.groupRoots(roots, treeIndex);
+  result.candidates = [...groups].map(([id, files]) => ({ id, roots: files }));
+  if (onlyGroups) for (const dir of groups.keys()) if (!onlyGroups.has(dir)) groups.delete(dir);
   Object.assign(result, { roots: roots.length, unowned });
   const compiler = resolveTypeScriptCliInvocation({ args: ['--api'], workspaceDir: repo });
   const api = new API({ cwd: repo, tsserverPath: compiler.apiExecutable });
@@ -384,6 +391,24 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
     const headSnapshot = api.createSnapshot({
       openProjects: [...head.configs.keys()],
       fileSystem: layer,
+    });
+    // Retain the actual program inputs, including dependencies and extended configs, so a
+    // finalizer can carry this result across unrelated commits without starting another API.
+    result.groups = [...groups].map(([id, selected]) => {
+      const config = git.abs(id === '.' ? VIRTUAL_CONFIG : `${id}/${VIRTUAL_CONFIG}`);
+      const program = headSnapshot.getProjects().find(project => project.configFileName === config).program;
+      const paths = new Set();
+      for (const absolute of [...program.getSourceFileNames(), ...program.getConfigFileNames()]) {
+        const path = posix.relative(repo, absolute);
+        if (path.startsWith('../') || path.includes('node_modules/')) continue;
+        if (!path.endsWith(`/${VIRTUAL_CONFIG}`) && path !== VIRTUAL_CONFIG) paths.add(path);
+        for (let dir = posix.dirname(path);; dir = posix.dirname(dir)) {
+          paths.add(dir === '.' ? 'package.json' : `${dir}/package.json`);
+          if (dir === '.') break;
+        }
+      }
+      paths.add(id === '.' ? 'tsconfig.json' : `${id}/tsconfig.json`);
+      return { id, roots: selected, paths: [...paths], fresh: [] };
     });
     const headRows = git.collect(headSnapshot, head.configs);
     if (headRows.length === 0) return { ...result, ms: Date.now() - started };
@@ -454,9 +479,101 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
         'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--unified=0', base, tree, '--', path,
       ]))]));
     result.fresh = newDiagnostics(baseRows, headRows, hunksByFile);
+    for (const group of result.groups)
+      group.fresh = result.fresh.filter(row => group.roots.includes(row.file) || row.file === '<global>');
     return { ...result, ms: Date.now() - started };
   } finally {
     api.close();
+  }
+}
+
+// Replays only the reviewed packet into a temporary index; neither the worktree nor the shared
+// staging state is changed. A conflicting concurrent edit is left for the packet owner to merge.
+function replayPacket(git, base, tree, head) {
+  const directory = mkdtempSync(resolve(tmpdir(), 'happier-coherence-index-'));
+  const env = { ...process.env, GIT_INDEX_FILE: resolve(directory, 'index') };
+  try {
+    git.git(['read-tree', head], { env });
+    const patch = git.git(['diff-tree', '-p', '--binary', '--full-index', '--no-renames', base, tree]);
+    git.git(['apply', '--cached', '--3way'], { env, input: patch });
+    return git.git(['write-tree'], { env, encoding: 'utf8' }).trim();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+/** Finalizes an in-memory checker result. The caller still owns identity, hooks, own-hunk
+ * verification and shared-index synchronization. No lock is held while the compiler queues. */
+export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
+  const git = repository(repo);
+  const original = checked;
+  const packetPaths = git.sliceOf(original.base, original.tree).map(({ path }) => path);
+  if (!packetPaths.length) throw new Error('Cannot finalize an empty packet');
+  const rechecked = new Set();
+  const outcome = (commit) => ({
+    commit, checked,
+    recheckedGroups: [...rechecked].sort(),
+    reusedGroups: checked.groups.map(group => group.id).filter(id => !rechecked.has(id)).sort(),
+  });
+  while (true) {
+    if (checked.fresh.length || checked.unowned.length) return outcome();
+    const head = git.gitText(['rev-parse', 'HEAD']).trim();
+    if (head !== checked.base) {
+      git.git(['merge-base', '--is-ancestor', checked.base, head]);
+      // Inspect each intervening commit, including merge parents: a change followed by a revert
+      // still intersects the checked program even though a net tree diff would conceal it.
+      const changed = new Set(nulList(git.gitText([
+        'log', '--format=', '--name-only', '-z', '-m', `${checked.base}..${head}`,
+      ])));
+      const tree = replayPacket(git, original.base, original.tree, head);
+      if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
+        throw new Error('Packet is already present at HEAD');
+      const entries = git.treeEntries(tree);
+      const packetChanges = git.sliceOf(head, tree).filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
+      const roots = [...new Set([
+        ...packetChanges.filter(({ status }) => status !== 'D').map(({ path }) => path),
+        ...git.importersOf(tree, packetChanges),
+      ])];
+      const discovered = git.groupRoots(roots, entries);
+      const previousEntries = git.treeEntries(checked.tree);
+      const affected = new Set(checked.groups.filter(group => {
+        const paths = new Set(group.paths);
+        return [...changed].some(path => paths.has(path)
+          || ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].includes(path)
+          || path.startsWith('patches/')
+          // New compiler inputs in this project's directory can join its configured membership
+          // or resolve an import that was previously unresolved.
+          || (!previousEntries.has(path) && COMPILER_INPUT.test(path)
+            && (group.id === '.' || path.startsWith(`${group.id}/`))));
+      }).map(group => group.id));
+      for (const [id, files] of discovered.groups) {
+        const previous = checked.candidates.find(group => group.id === id);
+        if (!previous || files.some(file => !previous.roots.includes(file))) affected.add(id);
+      }
+      let groups = checked.groups;
+      if (affected.size) {
+        const refreshed = checkCommitTypeCoherence({ repo, base: head, tree, onlyGroups: affected });
+        for (const id of affected) rechecked.add(id);
+        groups = [...groups.filter(group => !affected.has(group.id)), ...refreshed.groups];
+      }
+      checked = {
+        ...checked, base: head, tree, groups,
+        candidates: [...discovered.groups].map(([id, files]) => ({ id, roots: files })),
+        roots: groups.reduce((sum, group) => sum + group.roots.length, 0),
+        unowned: discovered.unowned,
+        fresh: groups.flatMap(group => group.fresh),
+      };
+      continue;
+    }
+    const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
+    const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), checked.tree, '-p', head], { input: message, encoding: 'utf8' }).trim();
+    try {
+      git.git(['update-ref', ref, commit, head]);
+      return outcome(commit);
+    } catch (error) {
+      if (git.gitText(['rev-parse', 'HEAD']).trim() === head) throw error;
+      // Another writer won CAS. Its commits are examined by the same owner on the next pass.
+    }
   }
 }
 
@@ -467,6 +584,9 @@ function main(argv) {
   const option = (name) =>
     argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   const targets = [];
+  const messageFile = option('message-file');
+  if (messageFile && (!option('tree') || !option('base') || argv.some(arg => !arg.startsWith('--'))))
+    throw new Error('--message-file requires one explicit --base and --tree packet');
   if (option('tree'))
     targets.push({
       label: option('tree'),
@@ -504,6 +624,17 @@ function main(argv) {
       );
     for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
     if (result.fresh.length || result.unowned.length) incoherent += 1;
+    if (messageFile) {
+      const finalized = finalizeCommitTypeCoherence({ repo, checked: result, message: readFileSync(messageFile, 'utf8'), ref: option('ref') });
+      if (!finalized.commit) {
+        for (const row of finalized.checked.fresh)
+          console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
+        for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
+        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length}`);
+        return 1;
+      }
+      console.log(`committed ${finalized.commit}: parent=${finalized.checked.base} reused=${finalized.reusedGroups.join(',')} rechecked=${finalized.recheckedGroups.join(',')}`);
+    }
   }
   return incoherent ? 1 : 0;
 }
