@@ -287,7 +287,7 @@ jobs:
     name: Build (android)
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
