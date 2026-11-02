@@ -21,6 +21,7 @@ import { assertContainedRegularGenerationFile, readCurrentCommittedPluginGenerat
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 type RuntimeOptions = Omit<
     NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>,
@@ -49,6 +50,8 @@ export async function retireAdmittedPluginRuntimeRegistry(params: Readonly<{
             happyHomeDir: params.happyHomeDir,
             pluginIds: [],
             contributes: createResolvedContributionRegistry({}),
+            // The empty retirement view has no Account work of its own.
+            scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() },
             currentGlobalExternalSessionsRouter: params.controller.currentGlobalExternalSessions,
             targetedContributions: params.controller.getTargetedContributionsOwner(),
         }),
