@@ -11,6 +11,7 @@
 -->
 
 - CLI 0.2.19 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
+- Server and stack 0.2.19 ship together with CLI 0.2.19.
 
 ## Release 2026-11-01.1 - 2026-11-01
 
