@@ -618,6 +618,7 @@ export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
   getPermissionContext?: () => AcpPermissionCallContext | undefined;
+  captureRequestGuard?: (sessionId: string) => (() => void) | undefined;
 }): Required<Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
@@ -689,9 +690,12 @@ export function createAcpClientFsMethods(params: {
   };
 
   const readTextFile: NonNullable<AcpClientConnectionHandlers['readTextFile']> = async (req) => {
+    const assertRequestCurrent = params.captureRequestGuard?.(req.sessionId);
     const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
     await assertWithinCwd(targetPath, { kind: 'read' });
+    assertRequestCurrent?.();
     const full = await fs.readFile(targetPath, 'utf8');
+    assertRequestCurrent?.();
     const line = typeof req.line === 'number' ? req.line : null;
     const limit = typeof req.limit === 'number' ? req.limit : null;
 
@@ -709,9 +713,11 @@ export function createAcpClientFsMethods(params: {
   };
 
   const writeTextFile: NonNullable<AcpClientConnectionHandlers['writeTextFile']> = async (req) => {
+    const assertRequestCurrent = params.captureRequestGuard?.(req.sessionId);
     const permissionContext = params.getPermissionContext?.();
     const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
     await assertWithinCwd(targetPath, { kind: 'write' });
+    assertRequestCurrent?.();
     const reqRecord = asRecord(req) ?? {};
     const meta = asRecord(reqRecord._meta) ?? {};
     const toolCallId = typeof meta.toolCallId === 'string' ? meta.toolCallId : `acp-fs-write:${randomUUID()}`;
@@ -732,7 +738,9 @@ export function createAcpClientFsMethods(params: {
       }
     }
 
+    assertRequestCurrent?.();
     await fs.mkdir(dirname(targetPath), { recursive: true });
+    assertRequestCurrent?.();
     await fs.writeFile(targetPath, req.content, 'utf8');
     return {};
   };
@@ -1071,13 +1079,17 @@ export class AcpBackend implements AgentBackend {
 
   private async catchUpProviderTurns(permissionToolCallId?: string): Promise<void> {
     const source = this.providerSource;
+    const lifetime = this.providerSourceLifetime;
     if (!source) return;
     await source.catchUp({
       ...(permissionToolCallId ? { permissionToolCallId } : {}),
       foregroundActive: this.dispatchedPromptTurnGeneration === this.turnGeneration
         && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
-      signal: this.providerSourceLifetime?.signal,
+      signal: lifetime?.signal,
     });
+    if (source !== this.providerSource || lifetime !== this.providerSourceLifetime || lifetime?.signal.aborted) {
+      throw makeAbortError('Provider source changed during journal catch-up');
+    }
   }
 
   private assertClientFsRequestOwnership(sessionId: string): void {
@@ -1089,6 +1101,19 @@ export class AcpBackend implements AgentBackend {
     ) {
       throw new Error('ACP filesystem request has no active turn ownership');
     }
+  }
+
+  private captureClientFsRequestOwnership(sessionId: string): (() => void) | undefined {
+    if (!this.options.providerTurnSource) return;
+    this.assertClientFsRequestOwnership(sessionId);
+    const generation = this.turnGeneration;
+    const lifetime = this.providerSourceLifetime;
+    return () => {
+      if (generation !== this.turnGeneration || lifetime !== this.providerSourceLifetime) {
+        throw makeAbortError('ACP filesystem request lost its originating turn');
+      }
+      this.assertClientFsRequestOwnership(sessionId);
+    };
   }
 
   private captureProviderToolContext(toolCallId: string): void {
@@ -1969,18 +1994,17 @@ export class AcpBackend implements AgentBackend {
         cwd: this.options.cwd,
         permissionHandler: this.options.permissionHandler,
         getPermissionContext: () => this.activePermissionContext,
+        captureRequestGuard: sessionId => this.captureClientFsRequestOwnership(sessionId),
       });
       Object.assign(clientHandlers, {
         readTextFile: async (request: ReadTextFileRequest) => {
           if (request.sessionId === this.acpSessionId) await this.catchUpProviderTurns();
-          this.assertClientFsRequestOwnership(request.sessionId);
           const result = clientFs.readTextFile(request);
           this.observeProviderTurnEvent(request.sessionId);
           return result;
         },
         writeTextFile: async (request: WriteTextFileRequest) => {
           if (request.sessionId === this.acpSessionId) await this.catchUpProviderTurns();
-          this.assertClientFsRequestOwnership(request.sessionId);
           const result = clientFs.writeTextFile(request);
           this.observeProviderTurnEvent(request.sessionId);
           return result;

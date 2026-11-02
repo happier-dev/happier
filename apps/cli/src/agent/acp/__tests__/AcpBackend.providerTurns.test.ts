@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -333,5 +334,108 @@ describe('ACP provider continuation ownership', () => {
             expect(events.some(event => event.type === 'model-output' && event.textDelta === 'stale')).toBe(false);
             expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'FOREGROUND' }));
         });
+    });
+});
+
+
+it.each(['realpath', 'mkdir'] as const)('does not let a cancelled filesystem write cross the %s boundary', async boundary => {
+    await fixture(async ({ backend, host, directory, setPermissionMode, permissionHandler }) => {
+        setPermissionMode('yolo');
+        const path = join(directory, 'protected.txt');
+        await writeFile(path, 'ORIGINAL');
+        await backend.sendPrompt('owned', 'parent');
+        await backend.waitForResponseComplete();
+        expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+        expect(host().beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
+        const reached = createDeferred();
+        const gate = createDeferred();
+        let held = false;
+        const realpath = fs.realpath.bind(fs);
+        const mkdir = fs.mkdir.bind(fs);
+        const spy = boundary === 'realpath'
+            ? vi.spyOn(fs, 'realpath').mockImplementation(async (...args: Parameters<typeof fs.realpath>) => {
+                if (!held && String(args[0]) === path) { held = true; reached.resolve(); await gate.promise; }
+                return realpath(...args);
+            })
+            : vi.spyOn(fs, 'mkdir').mockImplementation(async (...args: Parameters<typeof fs.mkdir>) => {
+                if (!held && String(args[0]) === directory) { held = true; reached.resolve(); await gate.promise; }
+                return mkdir(...args);
+            });
+        try {
+            const writing = backend.requestExtension('test/write', { path });
+            await reached.promise;
+            await backend.cancel('owned');
+            await backend.sendPrompt('owned', 'successor');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'successor', parentToolCallId: '1:background' })).toBe(true);
+            expect(host().beginContinuation({ id: 'successor', turnId: '3' })).not.toBeNull();
+            const permissionCount = vi.mocked(permissionHandler.handleToolCall).mock.calls.length;
+            gate.resolve();
+            expect(await writing).toHaveProperty('error');
+            expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(permissionCount);
+            expect(await readFile(path, 'utf8')).toBe('ORIGINAL');
+        } finally { gate.resolve(); spy.mockRestore(); }
+    });
+});
+
+it('does not let a filesystem request borrow a new source after its old journal catch-up', async () => {
+    await fixture(async ({ backend, host, directory, setPermissionMode, permissionHandler, setCatchUp }) => {
+        setPermissionMode('yolo');
+        const path = join(directory, 'protected.txt');
+        await writeFile(path, 'ORIGINAL');
+        await backend.sendPrompt('owned', 'parent');
+        await backend.waitForResponseComplete();
+        expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+        expect(host().beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
+        const reached = createDeferred();
+        const gate = createDeferred();
+        let held = false;
+        setCatchUp(async () => {
+            if (held) return;
+            held = true;
+            reached.resolve();
+            await gate.promise;
+        });
+        try {
+            const writing = backend.requestExtension('test/write', { path });
+            await reached.promise;
+            await backend.cancel('owned');
+            await backend.sendPrompt('owned', 'successor');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'successor', parentToolCallId: '1:background' })).toBe(true);
+            expect(host().beginContinuation({ id: 'successor', turnId: '3' })).not.toBeNull();
+            gate.resolve();
+            expect(await writing).toHaveProperty('error');
+            expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
+            expect(await readFile(path, 'utf8')).toBe('ORIGINAL');
+        } finally { gate.resolve(); }
+    });
+});
+
+
+it('withdraws an old filesystem read that settles after cancellation', async () => {
+    await fixture(async ({ backend, host, directory }) => {
+        const path = join(directory, 'protected.txt');
+        await writeFile(path, 'ORIGINAL');
+        await backend.sendPrompt('owned', 'parent');
+        await backend.waitForResponseComplete();
+        expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+        expect(host().beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
+        const reached = createDeferred();
+        const gate = createDeferred();
+        const read = fs.readFile.bind(fs);
+        let held = false;
+        const spy = vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+            const result = await read(...args);
+            if (!held && String(args[0]) === path) { held = true; reached.resolve(); await gate.promise; }
+            return result;
+        });
+        try {
+            const reading = backend.requestExtension('test/read', { path });
+            await reached.promise;
+            await backend.cancel('owned');
+            gate.resolve();
+            expect(await reading).toHaveProperty('error');
+        } finally { gate.resolve(); spy.mockRestore(); }
     });
 });
