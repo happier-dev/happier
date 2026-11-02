@@ -685,7 +685,7 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
 
         expect(profiles.getActiveServerUrl()).toBe('');
-        expect(profiles.getResetToDefaultServerId()).toBe('');
+        expect(profiles.getResetToDefaultServerId()).toBeNull();
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
@@ -735,7 +735,7 @@ describe('serverProfiles', () => {
         const resetId = profiles.getResetToDefaultServerId();
         expect(resetId).toBeTruthy();
 
-        profiles.setActiveServerId(resetId, { scope: 'device' });
+        profiles.setActiveServerId(resetId!, { scope: 'device' });
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
     });
 

@@ -947,11 +947,11 @@ export function setActiveServerId(
     emitActiveServerChanged(previousSnapshot);
 }
 
-export function getResetToDefaultServerId(): string {
+export function getResetToDefaultServerId(): string | null {
     const state = readPersistedState();
     const preconfiguredId = getPrimaryPreconfiguredServerId(state.servers);
     if (preconfiguredId) return preconfiguredId;
-    return Object.keys(state.servers)[0] ?? '';
+    return Object.keys(state.servers)[0] ?? null;
 }
 
 export function getTabActiveServerId(): string | null {

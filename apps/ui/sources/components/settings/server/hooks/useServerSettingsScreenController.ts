@@ -90,6 +90,7 @@ export type ServerSettingsController = Readonly<{
     inputName: string;
     error: string | null;
     isValidating: boolean;
+    canResetServer: boolean;
     addServerPrefillHint: string | null;
     addServerDefaultExpanded: 'server' | 'group' | null;
     onChangeUrl: (value: string) => void;
@@ -240,6 +241,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     }, [revision]);
 
     const validServerIds = React.useMemo(() => new Set(listServerProfileScopeIds(servers)), [servers]);
+    const canResetServer = React.useMemo(() => getResetToDefaultServerId() !== null, [revision]);
 
     const storedGroupProfiles = React.useMemo(() => {
         const scopedSettings = normalizeServerSelectionSettingsForProfileScopeIds({
@@ -255,7 +257,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         try {
             return getActiveServerId();
         } catch {
-            return getResetToDefaultServerId();
+            return getResetToDefaultServerId() ?? '';
         }
     }, [revision]);
 
@@ -263,7 +265,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         try {
             return getDeviceDefaultServerId();
         } catch {
-            return getResetToDefaultServerId();
+            return getResetToDefaultServerId() ?? '';
         }
     }, [revision]);
 
@@ -465,6 +467,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     }, [inputName, inputUrl, route.source, route.url, router, selectServerDirectly, validateServerReachable]);
 
     const onResetServer = React.useCallback(async () => {
+        if (getResetToDefaultServerId() === null) return;
         const confirmed = await Modal.confirm(
             t('server.resetToDefault'),
             t('server.resetServerDefault'),
@@ -472,8 +475,10 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         );
 
         if (confirmed) {
+            const serverId = getResetToDefaultServerId();
+            if (serverId === null) return;
             // A confirmed reset is the person choosing the default relay for this device.
-            await selectServerDirectly(getResetToDefaultServerId());
+            await selectServerDirectly(serverId);
             setInputUrl('');
             setInputName('');
             setRevision((r) => r + 1);
@@ -493,6 +498,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         inputName,
         error,
         isValidating,
+        canResetServer,
         addServerPrefillHint,
         addServerDefaultExpanded,
         onChangeUrl: (value) => {

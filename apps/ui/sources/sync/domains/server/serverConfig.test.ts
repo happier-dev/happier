@@ -226,6 +226,24 @@ describe('getServerUrl', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
     });
 
+    it('keeps an empty server selection when resetting after the last profile was removed', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = JSON.stringify([
+            { name: 'Cloud', url: 'https://api.happier.dev' },
+        ]);
+        stubWebRuntime('null');
+
+        const { getServerUrl, setServerUrl } = await importFreshServerConfig();
+        const profiles = await import('./serverProfiles');
+        for (const profile of profiles.listServerProfiles()) {
+            profiles.removeServerProfile(profile.id);
+        }
+
+        expect(() => setServerUrl(null)).not.toThrow();
+        expect(getServerUrl()).toBe('');
+        expect(profiles.listServerProfiles()).toEqual([]);
+    });
+
     it('rewrites stack-scoped private IP server URL to a loopback hostname on web', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';

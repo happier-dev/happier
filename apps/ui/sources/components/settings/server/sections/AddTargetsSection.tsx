@@ -20,6 +20,7 @@ type AddTargetsSectionProps = Readonly<{
     inputName: string;
     error: string | null;
     isValidating: boolean;
+    canResetServer: boolean;
     onChangeUrl: (value: string) => void;
     onChangeName: (value: string) => void;
     onResetServer: () => Promise<void> | void;
@@ -259,6 +260,7 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                                 title={t('server.resetToDefault')}
                                 size="normal"
                                 display="inverted"
+                                disabled={!props.canResetServer}
                                 onPress={props.onResetServer}
                             />
                         </View>
