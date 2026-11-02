@@ -294,6 +294,23 @@ separate from dependency freshness, while missing patches/assets and stale insta
 canonical writer. Already-loaded untyped lock owners remain conservatively
 treated as possible writers by read-only verification.
 
+Refresh reports `stacksNeedingRestart` for running Stacks; their owners restart
+them at the next boundary. Development Expo retains its Metro process and
+observes dependency writes through Metro's watcher. Package metadata and link
+changes recheck existing graph resolutions; they do not invalidate every
+transform. Changed source files still use normal incremental transformation.
+Metro's file-map batches, graph construction, dependency queries and HMR
+updates share the refresh owner's finite dependency reader boundary, so they
+wait while an installer changes packages. The file map reconciles each changed
+path from the completed tree and keeps unchanged contents out of graph updates.
+The Node fallback watcher renews directory handles when installation replaces
+their filesystem identities, preserving later package-file notifications.
+The watcher and `/status` remain available during that wait. A failed installation
+leaves its generation unpublished; new readers report the refresh owner's typed
+installation or readiness failure until a successful repair. Already
+admitted readers and the installer's own prerequisite work reuse their existing
+admission. Pending starts and foreign Expo processes do not veto installation.
+
 JSON lock holders and waiters publish complete owner records atomically.
 Wait observation ignores unrelated directory writes and existing-ticket
 heartbeats; ticket joins/removals, holder changes and the existing catch-up

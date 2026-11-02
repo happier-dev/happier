@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const { protectMetroDependencyConsumption, processMetroDependencyChanges } = require('./scripts/metroDependencyConsumption.cjs');
 const { builtinModules } = require("node:module");
 const {
   getSentryExpoConfig
@@ -1186,8 +1187,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
 
 // A source Expo owns its inventory for its entire serving lifetime. Reuse
 // Metro's change feed and the startup producer for managed and standalone dev.
+config.watcher.unstable_processFileChanges = (processChanges, signal) =>
+  processMetroDependencyChanges(config.projectRoot, processChanges, signal);
+
 const enhanceMiddleware = config.server.enhanceMiddleware;
 config.server.enhanceMiddleware = (middleware, metroServer) => {
+  protectMetroDependencyConsumption(metroServer, config.projectRoot);
   const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
   if (privatePluginUiInventory) {
     const refresh = import(require('node:url').pathToFileURL(path.join(__dirname, 'scripts/ensureWorkspacePackagesBuilt.mjs')).href)
