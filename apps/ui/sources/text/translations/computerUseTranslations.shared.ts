@@ -192,6 +192,8 @@ export type ComputerUseTranslations = Readonly<{
         pressKey: (params: Readonly<{ key: string }>) => string;
         press: string;
         pressRunning: string;
+        drag: string;
+        wheel: string;
         mayHaveLanded: string;
         failed: string;
     }>;
@@ -383,6 +385,8 @@ export const computerUseTranslationsEnglish = { en: {
             pressKey: ({ key }) => `Pressed ${key}`,
             press: 'Pressed a key',
             pressRunning: 'Pressing a key',
+            drag: 'Dragged',
+            wheel: 'Scrolled',
             mayHaveLanded: 'may have landed',
             failed: 'Didn’t go through',
         },

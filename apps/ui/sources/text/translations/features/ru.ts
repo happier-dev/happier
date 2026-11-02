@@ -1857,6 +1857,8 @@ const computerUseTranslations = { ru: {
             pressKey: ({ key }) => `Нажал ${key}`,
             press: 'Нажал клавишу',
             pressRunning: 'Нажимает клавишу',
+            drag: 'Перетащил',
+            wheel: 'Прокрутил',
             mayHaveLanded: 'возможно, сработало',
             failed: 'Не выполнено',
         },

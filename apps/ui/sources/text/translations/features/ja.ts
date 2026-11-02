@@ -1835,6 +1835,8 @@ const computerUseTranslations = { ja: {
             pressKey: ({ key }) => `${key} を押しました`,
             press: 'キーを押しました',
             pressRunning: 'キーを押しています',
+            drag: 'ドラッグしました',
+            wheel: 'スクロールしました',
             mayHaveLanded: '反映された可能性があります',
             failed: '完了しませんでした',
         },

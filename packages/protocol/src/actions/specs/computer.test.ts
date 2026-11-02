@@ -17,6 +17,30 @@ function nativeSpec(id: string) {
 }
 
 describe('native computer Action contracts', () => {
+  it('admits provider-bound input through the existing computer.input Action', () => {
+    const schema = nativeSpec('computer.input').inputSchema;
+    const input = { machineId: 'machine_1', target, captureId: 'capture_1', provider: 'agent-desktop' };
+    for (const operation of [
+      { kind: 'element', elementId: 'element_1', action: 'click' },
+      { kind: 'element', elementId: 'element_1', action: 'set_value', value: '' },
+      { kind: 'drag', fromX: 1, fromY: 2, toX: 3, toY: 4 },
+      { kind: 'wheel', x: 1, y: 2, deltaX: 0, deltaY: -20 },
+    ]) expect(schema.safeParse({ ...input, operation }).success).toBe(true);
+    expect(schema.safeParse({ ...input, operation: { kind: 'element', elementId: 'element_1', action: 'set_value' } }).success).toBe(false);
+    expect(schema.safeParse({ ...input, operation: { kind: 'element', elementId: 'element_1', action: 'click', value: 'unexpected' } }).success).toBe(false);
+    expect(schema.safeParse({ ...input, provider: 'unknown', operation: { kind: 'type', text: 'hello' } }).success).toBe(false);
+  });
+
+  it('preserves opaque native window ids and the producing provider on observations', () => {
+    const opaqueTarget = { ...target, windowId: 'atspi::bus:/window/1' };
+    expect(nativeSpec('computer.capture').inputSchema.safeParse({ machineId: 'machine_1', target: opaqueTarget, provider: 'agent-desktop' }).success).toBe(true);
+    const query = { status: 'queried', target: opaqueTarget, sourceId: 'source_1', provider: 'agent-desktop', captureId: 'capture_1',
+      accessibility: { status: 'complete', nodes: [{ id: 'element_1', role: 'button' }] } };
+    expect(nativeSpec('computer.query').outputSchema.safeParse(query).success).toBe(true);
+    const { provider: _provider, ...oldObservation } = query;
+    expect(nativeSpec('computer.query').outputSchema.safeParse(oldObservation).success).toBe(true);
+  });
+
   it('resolves omitted selection access to use while preserving explicit see and use', () => {
     const request = { machineId: 'machine_1', target };
     expect(resolveComputerAccess(ComputerTargetSelectRequestV1Schema.parse(request).access)).toBe('use');

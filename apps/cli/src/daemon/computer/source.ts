@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
+import type { ComputerProviderIdV1 } from '@happier-dev/protocol/computer/v1';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';
 import { createSurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
@@ -11,22 +12,24 @@ export const computerTargetKey = computerTargetKeyV1;
 
 export type ComputerCaptureSource = ReturnType<typeof createComputerCaptureSource>;
 
-/** One native producer per exact Session/target, retained by the existing capture registry. */
+/** One native producer per exact Session/provider/target, retained by the existing capture registry. */
 export function createComputerCaptureSource(input: Readonly<{
   sessionId: string;
   target: ComputerTargetV1;
   title?: string;
   appName?: string;
   access?: ComputerAccessV1;
+  provider?: ComputerProviderIdV1;
   executablePath?: string;
   environment?: Readonly<Record<string, string>>;
 }>) {
   // A stream source is one selection lifetime; revoked approvals cannot bind a later reselection.
   const sourceId = `computer:${randomUUID()}`;
+  const provider = input.provider ?? 'cua';
   const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus });
   let driver: ReturnType<typeof createManagedComputerDriver> | null = null;
-  const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment });
-  type Capture = Awaited<ReturnType<Awaited<ReturnType<typeof createManagedComputerDriver>>['capture']>>;
+  const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment, provider });
+  type Capture = Awaited<ReturnType<Awaited<ReturnType<typeof createManagedComputerDriver>>['capture']>> & Readonly<{ provider: ComputerProviderIdV1 }>;
   let latest: Pick<Capture, 'png' | 'geometry'> | null = null;
   let modelCaptureId: string | null = null;
   let modelCapture: Pick<Capture, 'geometry' | 'accessibility'> | null = null;
@@ -47,7 +50,7 @@ export function createComputerCaptureSource(input: Readonly<{
   let lastPublishedStatus: string | undefined;
 
   function status(): ComputerControlStatusResponseV1 {
-    return { target: input.target, sourceId, ...control.getStatus(),
+    return { target: input.target, sourceId, provider, ...control.getStatus(),
       ...(inputActivity ? { activity: inputActivity } : agentCaptures ? { activity: { kind: 'capture' as const } } : {}),
       ...(activeTarget ? { activeTarget } : {}) };
   }
@@ -68,7 +71,7 @@ export function createComputerCaptureSource(input: Readonly<{
     try {
       const epoch = control.getStatus().controlEpoch;
       const native = await getDriver();
-      const capture = await native.capture(input.target);
+      const capture = { ...await native.capture(input.target), provider };
       if (closed) throw new Error('capture_source_unavailable');
       modelCaptureId = capture.captureId;
       modelCapture = { geometry: capture.geometry, accessibility: capture.accessibility };
@@ -103,9 +106,11 @@ export function createComputerCaptureSource(input: Readonly<{
   }
 
   async function execute(captureId: string | null, operation: ComputerInputOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal): Promise<ComputerActionResultV1> {
-    const identity = { target: input.target, sourceId };
+    const identity = { target: input.target, sourceId, provider };
     if (requestedBy === 'agent' && access === 'see') return { ...identity, status: 'failed', code: 'computer_access_read_only' };
-    if (requestedBy === 'agent' && captureId !== modelCaptureId) return { ...identity, status: 'failed', code: 'stale_capture' };
+    if ((requestedBy === 'agent' || operation.kind === 'element') && captureId !== modelCaptureId) {
+      return { ...identity, status: 'failed', code: operation.kind === 'element' ? 'computer_element_stale' : 'stale_capture' };
+    }
     const clicked = requestedBy === 'agent' && operation.kind === 'click' && modelCapture
       ? clickedTarget(modelCapture, operation) : undefined;
     const targetLabel = clicked?.label;
@@ -211,7 +216,7 @@ export function createComputerCaptureSource(input: Readonly<{
       } };
     },
   };
-  return { sessionId: input.sessionId, target: input.target, sourceId, adapter, access,
+  return { sessionId: input.sessionId, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
     isClosed: () => closed,
     get title() { return title; },
     get appName() { return appName; },

@@ -12,6 +12,8 @@ const resultSchema = z.object({
 export type NativeToolResult = z.infer<typeof resultSchema>;
 
 export function nativeRefusalCode(result: NativeToolResult): string {
+  const refusal = z.object({ code: z.string().check(z.minLength(1)) }).safeParse(result.structuredContent?.refusal);
+  if (refusal.success) return refusal.data.code;
   const error = z.object({ code: z.string().check(z.minLength(1)) }).safeParse(result.structuredContent?.error);
   if (error.success) return error.data.code;
   const code = result.structuredContent?.code;

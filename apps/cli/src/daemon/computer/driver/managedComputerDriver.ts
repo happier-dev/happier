@@ -3,10 +3,9 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod/mini';
 
 import { ComputerAccessibilityNodeV1Schema, ComputerCaptureGeometryV1Schema, computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
-import type { ComputerAccessibilityNodeV1, ComputerCaptureGeometryV1, ComputerTargetV1, ComputerInputOperationV1, ComputerTargetsListResponseV1 } from '@happier-dev/protocol';
-
-import { getArchiveDownloadInstallableAdapter } from '../../../packagedRuntime/installables/registry';
-import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY } from '../../../packagedRuntime/installables/sourceAdapters/computerCuaDriver';
+import type { ComputerAccessibilityNodeV1, ComputerCaptureGeometryV1, ComputerTargetV1, ComputerInputOperationV1, ComputerTargetsListResponseV1, ComputerProviderIdV1, ComputerUseSettingsV1 } from '@happier-dev/protocol';
+import { createAgentDesktopComputerDriver } from './agentDesktopDriver';
+import { resolveComputerProvider, resolveComputerProviderId } from './provider';
 
 import { ComputerDriverError, nativeRefusalCode, openNativeComputerTransport, type NativeToolResult } from './nativeTransport';
 
@@ -34,6 +33,7 @@ const nativeStateSchema = z.object({ pid: z.number().check(z.int(), z.positive()
   window_bounds: z.object({ x: finite, y: finite, width: finite.check(z.positive()), height: finite.check(z.positive()) }),
   elements_complete: z.optional(z.boolean()), degraded_reason: z.optional(z.string()), truncated: z.optional(z.boolean()), truncation_reason: z.optional(z.string()),
   elements: z.optional(z.array(z.object({ element_index: z.number().check(z.int(), z.nonnegative()), role: z.string().check(z.minLength(1)),
+    element_token: z.optional(z.string().check(z.regex(/^s[0-9a-f]{8}:[0-9]+$/))),
     label: z.optional(z.string()), value: z.optional(z.string()), frame: z.optional(z.object({ x: finite, y: finite, w: finite, h: finite })) }))),
 });
 type WindowTarget = Extract<ComputerTargetV1, { kind: 'window' }>;
@@ -62,20 +62,21 @@ function capturePng(result: NativeToolResult, width: number, height: number): Bu
 
 /** One installed-native executor for the selected native desktop connection. */
 export async function createManagedComputerDriver(params: Readonly<{ displayId: string; executablePath?: string;
+  environment?: Readonly<Record<string, string>>; provider?: ComputerProviderIdV1; settings?: ComputerUseSettingsV1 }>): Promise<ManagedComputerDriver> {
+  // An explicit executable is the internal/test seam after admission, not another install decision.
+  const resolved = params.executablePath ? { provider: resolveComputerProviderId(params), executablePath: params.executablePath }
+    : await resolveComputerProvider(params);
+  const factories = { cua: createCuaComputerDriver, 'agent-desktop': createAgentDesktopComputerDriver };
+  return factories[resolved.provider]({ ...params, executablePath: resolved.executablePath });
+}
+
+async function createCuaComputerDriver(params: Readonly<{ displayId: string; executablePath: string;
   environment?: Readonly<Record<string, string>> }>): Promise<ManagedComputerDriver> {
   const wayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY?.trim())
     && params.displayId === process.env.WAYLAND_DISPLAY?.trim();
   if (!(process.platform === 'linux' && /^:\d+(?:\.\d+)?$/.test(params.displayId))
     && !wayland && !((process.platform === 'darwin' || process.platform === 'win32') && params.displayId === 'primary')) throw new ComputerDriverError('target_unsupported');
-  let executablePath = params.executablePath;
-  if (!executablePath) {
-    const adapter = getArchiveDownloadInstallableAdapter(COMPUTER_CUA_DRIVER_INSTALLABLE_KEY);
-    if (!adapter) throw new ComputerDriverError('driver_unavailable');
-    executablePath = await adapter.resolveInstalledExecutable() ?? undefined;
-    // Installation belongs to the admitted capability Action, including the
-    // descriptor's required consent; discovery may only resolve existing bytes.
-    if (!executablePath) throw new ComputerDriverError('driver_unavailable');
-  }
+  const executablePath = params.executablePath;
   if (!executablePath || !isAbsolute(executablePath)) throw new ComputerDriverError('driver_executable_invalid');
   const resolvedExecutablePath = executablePath;
   const native = await openNativeComputerTransport(resolvedExecutablePath, params.displayId, { environment: params.environment });
@@ -85,9 +86,11 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
   let closePromise: Promise<void> | undefined;
   const inputs = new Set<Promise<ComputerDriverInputResult>>();
   // Retain only action-binding facts, never duplicate the native PNG store.
-  let captureBinding: Readonly<{ captureId: string; target: ComputerTargetV1; geometry: ComputerCaptureGeometryV1; nativeScale?: number }> | undefined;
+  let captureBinding: Readonly<{ captureId: string; target: ComputerTargetV1; geometry: ComputerCaptureGeometryV1;
+    elementTokens: ReadonlyMap<string, string>; nativeScale?: number }> | undefined;
   const assertTarget = (target: ComputerTargetV1): ComputerTargetV1 => {
     if (target.displayId !== params.displayId) throw new ComputerDriverError('target_mismatch');
+    if (target.kind === 'window' && typeof target.windowId !== 'number') throw new ComputerDriverError('target_unsupported');
     if (native.unavailable() || closing) throw new ComputerDriverError('driver_unavailable');
     return target;
   };
@@ -123,7 +126,8 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
     if (grant !== 'granted') throw new ComputerDriverError(grant === 'denied' ? 'capture_permission_denied' : 'capture_permission_unknown');
     return grants;
   };
-  const decodeCapture = (result: NativeToolResult, window: WindowTarget): ComputerDriverCapture => {
+  type NativeCapture = ComputerDriverCapture & Readonly<{ elementTokens: ReadonlyMap<string, string>; nativeScale?: number }>;
+  const decodeCapture = (result: NativeToolResult, window: WindowTarget): NativeCapture => {
     if (result.isError) throw new ComputerDriverError(nativeRefusalCode(result));
     const state = nativeStateSchema.safeParse(result.structuredContent);
     if (!state.success) throw new ComputerDriverError('driver_result_invalid');
@@ -137,10 +141,12 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
     const nodes = (state.data.elements ?? []).map(element => ComputerAccessibilityNodeV1Schema.parse({ id: String(element.element_index), role: element.role,
       ...(element.label !== undefined ? { name: element.label } : {}), ...(element.value !== undefined ? { value: element.value } : {}),
       ...(element.frame && element.frame.w > 0 && element.frame.h > 0 ? { bounds: { x: element.frame.x, y: element.frame.y, width: element.frame.w, height: element.frame.h } } : {}) }));
-    return { png, captureId, geometry, accessibility: { nodes, complete: state.data.elements_complete === true && state.data.truncated !== true,
+    const elementTokens = new Map((state.data.elements ?? []).flatMap(element => element.element_token
+      ? [[String(element.element_index), element.element_token] as const] : []));
+    return { png, captureId, geometry, elementTokens, accessibility: { nodes, complete: state.data.elements_complete === true && state.data.truncated !== true,
       ...(state.data.degraded_reason || state.data.truncation_reason ? { degradedReason: state.data.degraded_reason ?? state.data.truncation_reason } : {}) } };
   };
-  const decodeDesktopCapture = (result: NativeToolResult): ComputerDriverCapture => {
+  const decodeDesktopCapture = (result: NativeToolResult): NativeCapture => {
     if (result.isError) throw new ComputerDriverError(nativeRefusalCode(result));
     const parsed = desktopStateSchema.safeParse(result.structuredContent);
     if (!parsed.success || (process.platform === 'darwin' && parsed.data.scale_factor === undefined)) throw new ComputerDriverError('driver_result_invalid');
@@ -150,6 +156,7 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
       scaleX: state.screen_width / state.screenshot_width, scaleY: state.screen_height / state.screenshot_height,
       crop: { x: 0, y: 0, width: state.screen_width, height: state.screen_height } });
     return { png: capturePng(result, state.screenshot_width, state.screenshot_height), captureId: state.capture_id, geometry,
+      elementTokens: new Map(), nativeScale: state.scale_factor ?? 1,
       accessibility: { nodes: [], complete: false, degradedReason: 'desktop_vision_only' } };
   };
   const capture = async (target: ComputerTargetV1): Promise<ComputerDriverCapture> => {
@@ -161,9 +168,9 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
       : await native.call('get_window_state', { pid: target.pid, window_id: target.windowId,
         include_screenshot: true, include_accessibility_tree: process.platform !== 'darwin' || grants?.input === 'granted', max_image_dimension: 0,
         full_output: true });
-    const observation = target.kind === 'display' ? decodeDesktopCapture(result) : decodeCapture(result, target);
-    captureBinding = { captureId: observation.captureId, target, geometry: observation.geometry,
-      ...(target.kind === 'display' ? { nativeScale: desktopStateSchema.parse(result.structuredContent).scale_factor ?? 1 } : {}) };
+    const { elementTokens, nativeScale, ...observation } = target.kind === 'display' ? decodeDesktopCapture(result) : decodeCapture(result, target);
+    captureBinding = { captureId: observation.captureId, target, geometry: observation.geometry, elementTokens,
+      ...(nativeScale !== undefined ? { nativeScale } : {}) };
     return observation;
   };
   const performInput = async (target: ComputerTargetV1, captureId: string | null, operation: ComputerInputOperationV1,
@@ -171,10 +178,17 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
     if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
     try { assertTarget(target); } catch (error) { return { status: 'failed', code: error instanceof ComputerDriverError ? error.code : 'driver_unavailable' }; }
     const observation = captureId === null ? undefined : captureBinding;
-    if ((captureId !== null || operation.kind === 'click') && (!observation || observation.captureId !== captureId
-      || computerTargetKeyV1(observation.target) !== computerTargetKeyV1(target))) return { status: 'failed', code: 'stale_capture' };
+    if ((captureId !== null || !['press', 'type'].includes(operation.kind)) && (!observation || observation.captureId !== captureId
+      || computerTargetKeyV1(observation.target) !== computerTargetKeyV1(target))) return { status: 'failed', code: operation.kind === 'element' ? 'computer_element_stale' : 'stale_capture' };
+    const elementToken = operation.kind === 'element' ? observation?.elementTokens.get(operation.elementId) : undefined;
+    if (operation.kind === 'element' && !elementToken) return { status: 'failed', code: 'computer_element_stale' };
     if (operation.kind === 'click' && (!observation || !Number.isFinite(operation.x) || !Number.isFinite(operation.y) || operation.x < 0 || operation.y < 0
       || operation.x >= observation.geometry.captureWidth || operation.y >= observation.geometry.captureHeight)) return { status: 'failed', code: 'point_outside_capture' };
+    const point = (x: number, y: number) => {
+      if (!observation || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0
+        || x >= observation.geometry.captureWidth || y >= observation.geometry.captureHeight) throw new ComputerDriverError('point_outside_capture');
+      return { x: x * observation.geometry.scaleX, y: y * observation.geometry.scaleY };
+    };
     if (observation) captureBinding = undefined;
     const nativeTarget = target.kind === 'display' ? { target: { kind: 'desktop', display_id: 'primary' } }
       : { pid: target.pid, window_id: target.windowId };
@@ -188,7 +202,7 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
         if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
         if (grant !== 'granted') return { status: 'failed', code: grant === 'denied' ? 'input_permission_denied' : 'input_permission_unknown' };
       }
-      if (observation && target.kind === 'display') {
+      if (observation && target.kind === 'display' && operation.kind !== 'element') {
         const current = await native.call('get_screen_size', {});
         if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
         if (current.isError) return { status: 'failed', code: nativeRefusalCode(current) };
@@ -196,7 +210,7 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
         if (!size.success) return { status: 'failed', code: 'driver_result_invalid' };
         if (size.data.width !== observation.geometry.nativeWidth || size.data.height !== observation.geometry.nativeHeight
           || size.data.scale_factor !== observation.nativeScale) return { status: 'failed', code: 'stale_capture' };
-      } else if (observation && target.kind === 'window') {
+      } else if (observation && target.kind === 'window' && operation.kind !== 'element') {
         const current = await native.call('get_window_state', { ...nativeTarget, include_screenshot: false, include_accessibility_tree: true, full_output: true });
         if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
         if (current.isError) return { status: 'failed', code: nativeRefusalCode(current) };
@@ -213,13 +227,39 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
       // primitive is exposed, and failed native settlement remains unknown.
       if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
       if (closing || native.unavailable()) return { status: 'failed', code: 'driver_unavailable' };
-      admitted = true;
-      const result = operation.kind === 'click'
-        ? await native.call('click', { ...nativeTarget, capture_id: captureId, x: operation.x, y: operation.y, delivery_mode: deliveryMode, button: operation.button ?? 'left' })
-        : operation.kind === 'type' ? await native.call('type_text', { ...nativeTarget, text: operation.text, delivery_mode: deliveryMode })
-          : await native.call('press_key', { ...nativeTarget, key: operation.key, delivery_mode: deliveryMode });
+      const calls: Array<Readonly<{ name: string; args: Record<string, unknown> }>> = [];
+      const frame = { scope: target.kind === 'display' ? 'desktop' : 'window', coordinate_frame: target.kind === 'display' ? 'desktop' : 'window' };
+      switch (operation.kind) {
+        case 'element': calls.push({ name: operation.action === 'click' ? 'click' : 'set_value', args: {
+          element_token: elementToken, ...(operation.action === 'set_value' ? { value: operation.value } : {}),
+        } }); break;
+        case 'click': calls.push({ name: 'click', args: { capture_id: captureId, x: operation.x, y: operation.y, button: operation.button ?? 'left' } }); break;
+        case 'type': calls.push({ name: 'type_text', args: { text: operation.text } }); break;
+        case 'press': calls.push({ name: 'press_key', args: { key: operation.key } }); break;
+        case 'drag': {
+          const from = point(operation.fromX, operation.fromY); const to = point(operation.toX, operation.toY);
+          calls.push({ name: 'drag', args: { ...frame, from_x: from.x, from_y: from.y, to_x: to.x, to_y: to.y } }); break;
+        }
+        case 'wheel': {
+          const p = point(operation.x, operation.y);
+          for (const [delta, positive, negative] of [[operation.deltaX, 'right', 'left'], [operation.deltaY, 'up', 'down']] as const) {
+            if (delta !== 0) calls.push({ name: 'scroll', args: { ...frame, ...p, direction: delta > 0 ? positive : negative, amount: Math.abs(delta), by: 'line' } });
+          }
+          break;
+        }
+      }
+      let result: NativeToolResult = { structuredContent: { effect: 'unverifiable' } };
+      for (const call of calls) {
+        admitted = true;
+        result = await native.call(call.name, { ...nativeTarget, ...call.args, delivery_mode: deliveryMode });
+        if (result.isError || result.structuredContent?.effect === 'refused') break;
+      }
       if (result.isError || result.structuredContent?.effect === 'refused') {
         const code = nativeRefusalCode(result);
+        // Pinned Cua rejects an unknown/expired native snapshot token before delivery.
+        if (operation.kind === 'element' && result.structuredContent?.status === 'refused' && code === 'stale_element_token') {
+          return { status: 'failed', code: 'computer_element_stale' };
+        }
         // Cua 0.37.0's Windows class detector refuses before injection. The
         // same code after a UIA timeout or actuator attempt does NOT prove that.
         const refusedBackgroundClass = process.platform === 'win32' && target.kind === 'window' && code === 'background_unavailable'
@@ -236,10 +276,11 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
         return { status: 'interrupted', completion: 'unknown' };
       }
       const effect = result.structuredContent?.effect;
-      if (effect === 'confirmed') {
+      if (effect === 'confirmed' && calls.length === 1) {
         const evidence = z.array(z.object({ kind: z.enum(['value_readback', 'window_change']) })).safeParse(result.structuredContent?.evidence);
         if (evidence.success && evidence.data[0]) return { status: 'verified', property: evidence.data[0].kind };
       }
+      if (effect === 'confirmed' && calls.length > 1) return { status: 'dispatched' };
       if (effect === 'unverifiable' || effect === 'suspected_noop') return { status: 'dispatched' };
       native.quarantine();
       return { status: 'interrupted', completion: 'unknown' };

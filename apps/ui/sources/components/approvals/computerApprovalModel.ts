@@ -11,7 +11,7 @@ import {
 /** Frozen owner-provided display facts, kept apart from the person's subsequent choice. */
 export type ComputerActionApproval = Readonly<{
     access: 'see' | 'use';
-    act: 'see' | 'read' | 'click' | 'press' | 'type' | 'share' | 'fill';
+    act: 'see' | 'read' | 'click' | 'press' | 'type' | 'share' | 'fill' | 'drag' | 'wheel';
     machineId: string;
     machineName: string;
     appName?: string;
@@ -59,8 +59,10 @@ export function describeComputerActionApproval(input: Readonly<{ actionId: strin
         const parsed = ComputerInputRequestV1Schema.safeParse(input.actionArgs);
         if (!parsed.success) return null;
         const operation = parsed.data.operation;
-        return { access: 'use', act: operation.kind, machineId: parsed.data.machineId, ...facts,
+        const act = operation.kind === 'element' ? operation.action === 'click' ? 'click' : 'type' : operation.kind;
+        return { access: 'use', act, machineId: parsed.data.machineId, ...facts,
             sent: operation.kind === 'type' ? { kind: 'text', value: operation.text }
+                : operation.kind === 'element' && operation.action === 'set_value' ? { kind: 'text', value: operation.value }
                 : operation.kind === 'press' ? { kind: 'key', value: operation.key } : null };
     }
     const parsed = ComputerTargetRequestV1Schema.safeParse(input.actionArgs);

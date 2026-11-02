@@ -379,13 +379,30 @@ installer, checksum/version validation and executable resolution.
 Explicit repair uses the admitted `machines.capabilities.install`
 Action with `dep.computer-cua-driver`, sharing the native launch installer's
 retained `tools/computer-cua-driver/current` directory and executable validation.
-Discovery refuses a missing driver with `driver_unavailable`; opening the picker
+Discovery refuses a missing provider with `computer_provider_unavailable`; opening the picker
 does not install software. Installation remains with the admitted capability
 Action and the installable descriptor's required consent.
 The Computer picker and viewer re-read native grants and source/control facts
 after repair; successful installation alone never grants permission or input.
 `daemon/computer/driver/nativeTransport.ts` launches that installed absolute executable
 directly in embedded MCP mode; no system Node, package manager or second launcher is involved.
+The contained Agent Desktop trial adds `computer-agent-desktop` v1.0.2 through
+the same pinned-archive owner, with checksummed Linux, macOS and Windows archives
+for x64 and arm64. Its installed absolute executable speaks CLI JSON envelope
+2.5; it is never launched through npm. Sibling native helpers remain in the
+retained archive. Each selected source has a private temporary ref namespace,
+removed on close. Agent Desktop retains qualified snapshot refs for semantic
+element click/set-value; frame-only screenshots do not replace those refs.
+
+Machine-keyed Account preferences `computerUseByMachineId` enable providers and
+select a default (Cua when absent). The provider resolver admits each Computer
+Action once: explicit provider when supplied, otherwise the default, requiring
+it to be enabled and installed. Enabling installs through the capability Action
+before saving the preference. A missing/disabled explicit provider returns
+`computer_provider_unavailable` with its install hint. The existing driver
+factory consumes that decision; capture sources stamp the producing provider.
+An element action bound to another provider or an obsolete observation returns
+`computer_element_stale`; the agent captures again. Input approval is unchanged.
 Desktop connection/authentication/session variables are forwarded only on Linux.
 An explicit X11 connection receives `DISPLAY`; a selected Wayland connection
 receives its inherited `WAYLAND_DISPLAY`, runtime/session-bus environment and
@@ -398,10 +415,15 @@ raised by that line, and embedded status reflects the host process's Screen Reco
 Accessibility grants). The transport requires `initialize` to report exactly the pinned version. Accessibility-tree reads
 send `full_output: true`; since 0.37.0 the driver's default response omits the structured
 `elements` array and uses lower walk limits.
-On Linux, run the daemon in the intended X11 desktop session, with its `DISPLAY`
-and any required `XAUTHORITY` already set. A headless host needs an explicitly
-started X11 desktop, such as an operator-owned Xvfb fixture; installing the driver
-does not create one. The daemon captures its default display when constructing
+On Linux, run the daemon in the intended desktop session, with its `DISPLAY`
+and any required `XAUTHORITY` already set. When no display resolves, the existing
+Computer desktop owner lazily starts its managed Xvfb/D-Bus/accessibility desktop
+using the installed `virtual-display` recipe prerequisites. Both providers consume
+that same owner and environment; installing a provider does not install the recipe.
+The owner starts installed Openbox, or installed Fluxbox when Openbox is absent,
+with private window-manager configuration. Agent Desktop's native window proof
+requires a running window manager; bare Xvfb is insufficient for its window picker.
+The daemon captures its inherited default display when constructing
 the Computer routes, so exporting `DISPLAY` in a later CLI does not update an
 already-running daemon. The operator must reload that daemon with the intended
 desktop environment. Callers that supply `computer.targets.list.displayId` can

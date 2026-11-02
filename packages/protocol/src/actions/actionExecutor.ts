@@ -2566,18 +2566,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!selection.ok) return selection;
       computerSelection = selection.selection;
       if (actionId !== 'computer.target.select') {
+        const selectionChangedCode = actionId === 'computer.input' && readRecord(readRecord(admittedInput).operation).kind === 'element'
+          ? 'computer_element_stale' : 'computer_target_selection_changed';
         const requested = readRecord(admittedInput).target;
         if (requested && computerSelection.selectedTarget && JSON.stringify(requested) !== JSON.stringify(computerSelection.selectedTarget)) {
-          return { ok: false, errorCode: 'computer_target_selection_changed', error: 'computer_target_selection_changed' };
+          return { ok: false, errorCode: selectionChangedCode, error: selectionChangedCode };
         }
         if (ctx.bypassApprovals && !computerSelection.selectedTarget) {
           return { ok: true, result: { status: 'target_selection_required', approvalDisplay: computerSelection.approvalDisplay } };
         }
         const requestedSourceId = readRecord(admittedInput).sourceId;
         if (requestedSourceId && requestedSourceId !== computerSelection.sourceId) {
-          return { ok: false, errorCode: 'computer_target_selection_changed', error: 'computer_target_selection_changed' };
+          return { ok: false, errorCode: selectionChangedCode, error: selectionChangedCode };
         }
-        if (computerSelection.selectedTarget) admittedInput = { ...readRecord(admittedInput), target: computerSelection.selectedTarget, sourceId: computerSelection.sourceId };
+        if (computerSelection.selectedTarget) admittedInput = { ...readRecord(admittedInput), target: computerSelection.selectedTarget, sourceId: computerSelection.sourceId,
+          ...(computerSelection.provider === undefined ? {} : { provider: computerSelection.provider }) };
         else {
           const { target: _target, sourceId: _sourceId, ...unselected } = readRecord(admittedInput);
           admittedInput = unselected;

@@ -23,6 +23,27 @@ const unchosen = { machineDisplayName: 'Studio laptop', requiresTargetSelection:
 const typeInput = { machineId: 'machine_1', captureId: 'capture_1', operation: { kind: 'type', text: 'ana@lumen.dev' } };
 
 describe('describeComputerActionApproval', () => {
+    it.each([
+        { operation: { kind: 'element', elementId: 'button', action: 'click' }, act: 'click', sent: null },
+        { operation: { kind: 'element', elementId: 'field', action: 'set_value', value: 'new value' },
+            act: 'type', sent: { kind: 'text', value: 'new value' } },
+    ])('describes native element input as the action the person approves: $act', ({ operation, act, sent }) => {
+        expect(describeComputerActionApproval({ actionId: 'computer.input',
+            actionArgs: { machineId: 'machine_1', captureId: 'capture_1', operation },
+            preview: { computerApprovalDisplay: shared } })).toMatchObject({ act, sent });
+    });
+
+    it.each([
+        { operation: { kind: 'drag', fromX: 1, fromY: 2, toX: 3, toY: 4 }, label: 'browserPresence.doing.drag' },
+        { operation: { kind: 'wheel', x: 1, y: 2, deltaX: 0, deltaY: 20 }, label: 'browserPresence.doing.scroll' },
+    ])('renders a localized pointer-action description: $operation.kind', async ({ operation, label }) => {
+        const presentation = describeComputerActionApproval({ actionId: 'computer.input',
+            actionArgs: { machineId: 'machine_1', captureId: 'capture_1', operation },
+            preview: { computerApprovalDisplay: shared } });
+        const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} />);
+        expect(screen.getTextContent()).toContain(label);
+    });
+
     it('describes omitted selection access by the request default rather than the previous share', () => {
         expect(describeComputerActionApproval({
             actionId: 'computer.target.select',

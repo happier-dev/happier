@@ -54,6 +54,8 @@ import { settingsDefaults, applySettings, settingsParse, type Settings } from '@
 import { localSettingsDefaults, applyLocalSettings } from '@/sync/domains/settings/localSettings';
 import * as desktopHostBoundary from '@/utils/platform/desktopHost';
 import { createSettingsDeclarationAction, resolveSettingsDeclarationOperationApprovalPolicy } from './settingsDeclarationAction';
+import { changeComputerUseSettings } from '@/sync/domains/computer/computerProviderSettings';
+import { readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
 import { ActionsSettingsV1Schema, createActionExecutor, FeaturesResponseSchema, getModelPackCatalogEntry, isApprovalRequiredByActionsSettings, VoiceProviderContributionSchema, type ActionsSettingsV1, type AutomationV3Settings } from '@happier-dev/protocol';
@@ -570,7 +572,7 @@ const { prepareSpeechEndpointSettingChange } = await import('@/voice/settings/pa
 
 function throughActionExecutor(settingsDeclarationAction: ReturnType<typeof createSettingsDeclarationAction>,
     readActionsSettings?: () => ActionsSettingsV1,
-    approvalTransport?: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'approvalsWaitForDecision' | 'isApprovalExecutionOriginCurrent'>) {
+    approvalTransport?: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'approvalsWaitForDecision' | 'isApprovalExecutionOriginCurrent' | 'machinePageAction'>) {
     const approvalPolicy: Pick<Parameters<typeof createActionExecutor>[0], 'isActionApprovalRequired'> = readActionsSettings
         ? { isActionApprovalRequired: (actionId, context, input) => {
             const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
@@ -1193,6 +1195,56 @@ describe('navigation placement Settings Actions', () => {
         const map = owner.account().sessionTmuxByMachineId;
         expect(Object.hasOwn(map, '__proto__')).toBe(false);
         expect(Object.getPrototypeOf(map)).toBe(initialPrototype);
+    });
+    it.each([true, false])('installs a newly enabled computer provider before saving its preference: %s', async installed => {
+        const owner = createOwner(undefined, true, true);
+        const installations: unknown[] = [];
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
+            // Machine installation transport is outside the UI process. Action admission and settings remain real.
+            machinePageAction: async args => {
+                expect(owner.account().computerUseByMachineId).toEqual({});
+                installations.push(args);
+                return { supported: true, response: installed ? { ok: true } : { ok: false, error: { code: 'install_failed', message: 'Install failed' } } };
+            },
+        });
+        const context = { surface: 'ui', authority: 'present_user', serverId: 'home', bypassApprovals: true } as const;
+        const next = { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'agent-desktop' } as const;
+        const result = await changeComputerUseSettings({
+            execute: (id, input) => executor.execute(id, input, context), machineId: 'machine', serverId: 'home',
+            current: readComputerUseSettingsForMachine(owner.account(), 'machine'), next,
+        });
+        expect(installations).toEqual([expect.objectContaining({ actionId: 'machines.capabilities.install', input: {
+            machineId: 'machine', serverId: 'home', capabilityId: 'dep.computer-agent-desktop', method: 'install',
+        } })]);
+        expect(result.ok).toBe(installed);
+        expect(owner.account().computerUseByMachineId).toEqual(installed ? { machine: next } : {});
+    });
+    it('changes the default among enabled providers without installing again', async () => {
+        const current = { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'cua' } as const;
+        const owner = createOwner(undefined, true, true, settingsParse({ computerUseByMachineId: { machine: current } }));
+        const executor = throughActionExecutor(owner.action);
+        const next = { ...current, defaultProvider: 'agent-desktop' } as const;
+        const result = await changeComputerUseSettings({
+            execute: (id, input) => executor.execute(id, input, { surface: 'ui', authority: 'present_user', serverId: 'home', bypassApprovals: true }),
+            machineId: 'machine', serverId: 'home', current, next,
+        });
+        expect(result.ok).toBe(true);
+        expect(owner.account().computerUseByMachineId.machine).toEqual(next);
+    });
+    it('changes computer-use providers for one Machine through the settings Action owner', async () => {
+        const owner = createOwner(undefined, true, true, settingsParse({ computerUseByMachineId: {
+            peer: { enabledProviders: ['cua'], defaultProvider: 'cua' },
+        } }));
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'ui', authority: 'present_user', bypassApprovals: true } as const;
+        const anchor = 'machines.computerUse.providers';
+        const value = { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'agent-desktop' };
+        expect(await executor.execute('settings.set', { anchor, key: 'machine', value }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('settings.get', { anchor, key: 'machine' }, context)).toMatchObject({ ok: true, result: { value } });
+        expect(owner.account().computerUseByMachineId.peer).toEqual({ enabledProviders: ['cua'], defaultProvider: 'cua' });
+        expect(await executor.execute('settings.set', { anchor, key: 'machine', value: {
+            enabledProviders: ['cua'], defaultProvider: 'agent-desktop',
+        } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
     });
     it('changes one installable policy through a keyed Account setting without replacing siblings', async () => {
         const owner = createOwner(undefined, true, true, settingsParse({ ...settingsDefaults,

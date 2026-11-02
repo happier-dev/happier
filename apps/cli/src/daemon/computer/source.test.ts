@@ -18,6 +18,21 @@ function deferred<T>() {
 }
 
 describe.skipIf(process.platform !== 'linux')('computer source status projection', () => {
+  it('binds an element snapshot to its immutable provider and refuses another snapshot before native input', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation()
+      : { structuredContent: { x11: true, xsend_event: true } });
+    const source = createComputerCaptureSource({ sessionId: 'provider-snapshot', target, provider: 'cua', executablePath: '/managed/cua-driver' });
+    try {
+      const capture = await source.observe();
+      expect(source.provider).toBe('cua');
+      expect(capture).toMatchObject({ provider: 'cua' });
+      const workBefore = native.tools.length;
+      expect(await source.input('another-provider-capture', { kind: 'element', elementId: '0', action: 'click' }, 'agent'))
+        .toMatchObject({ status: 'failed', code: 'computer_element_stale', provider: 'cua' });
+      expect(native.tools.slice(workBefore)).toEqual([]);
+    } finally { await source.close(); }
+  });
+
   it('keeps retired status readable without starting a native process or claiming fresh grants', async () => {
     native.call.mockResolvedValue({ structuredContent: { x11: true, xsend_event: true } });
     const source = createComputerCaptureSource({ sessionId: 'retired-status', target, executablePath: '/managed/cua-driver' });

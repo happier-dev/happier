@@ -36,6 +36,7 @@ import { MachineInstallablePolicyKeySchema, MachineInstallablePolicyChangeSchema
     readMachineInstallablePolicySetting, buildMachineInstallablePolicySettingMutation } from '@happier-dev/protocol/actions/settings/machineInstallablePolicySetting';
 import { MachineOfflineAlertSettingKeySchema, MachineOfflineAlertSettingChangeSchema,
     readMachineOfflineAlertSetting, buildMachineOfflineAlertSettingMutation } from '@happier-dev/protocol/actions/settings/machineOfflineAlertSetting';
+import { ComputerUseSettingsV1Schema, readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 import { machineDirectConnectionStorage, readPortableAccountSettingBindingV1 } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, resolveBuiltInAccountSettingResetValueV1, resolveSettingsDeclarationOperationApprovalPolicyV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -337,6 +338,35 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                     const patch = buildMachineTerminalHostSettingMutation(settingsParse(raw), key.data, change.data);
                     if (!patch) throw new RejectedSettingMutation();
                     return { ...raw, ...patch };
+                });
+            } catch (error) {
+                if (error instanceof RejectedSettingMutation) return refuse('invalid_setting_value');
+                throw error;
+            }
+            return { anchor: parsed.anchor, value: change.data };
+        }
+        if (parsed.anchor === 'machines.computerUse.providers') {
+            if (actionId !== 'settings.get' && actionId !== 'settings.set') return refuse('setting_reset_unsupported');
+            if (!currentOwner()) return refuse('setting_not_bound');
+            if ('target' in parsed && parsed.target) return refuse('setting_target_mismatch');
+            const key = 'key' in parsed ? parsed.key : undefined;
+            if (!key) return refuse('setting_key_required');
+            if (actionId === 'settings.get') {
+                return { anchor: parsed.anchor, value: readComputerUseSettingsForMachine(await owner.readAccountSettings(), key) };
+            }
+            const requested = SettingsDeclarationActionInputSchemasV1['settings.set'].parse(input);
+            const change = ComputerUseSettingsV1Schema.safeParse(requested.value);
+            if (!change.success) return refuse('invalid_setting_value');
+            try {
+                await owner.mutateAccountSettings(raw => {
+                    throwIfAborted(context?.signal);
+                    if (!currentOwner()) throw new RejectedSettingMutation();
+                    const current = settingsParse(raw).computerUseByMachineId;
+                    const next = ACCOUNT_SETTING_DEFINITIONS.computerUseByMachineId.parseMutationValue({ ...current, [key]: change.data });
+                    if (!next.success) throw new RejectedSettingMutation();
+                    const admitted = ACCOUNT_SETTING_DEFINITIONS.computerUseByMachineId.schema.parse(next.data);
+                    if (!Object.hasOwn(admitted, key)) throw new RejectedSettingMutation();
+                    return { ...raw, computerUseByMachineId: admitted };
                 });
             } catch (error) {
                 if (error instanceof RejectedSettingMutation) return refuse('invalid_setting_value');

@@ -1835,6 +1835,8 @@ const computerUseTranslations = { es: {
             pressKey: ({ key }) => `Pulsó ${key}`,
             press: 'Pulsó una tecla',
             pressRunning: 'Pulsando una tecla',
+            drag: 'Arrastró',
+            wheel: 'Desplazó',
             mayHaveLanded: 'puede que se aplicara',
             failed: 'No se completó',
         },

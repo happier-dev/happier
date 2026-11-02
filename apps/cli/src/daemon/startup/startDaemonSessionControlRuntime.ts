@@ -375,6 +375,7 @@ import { type BrowserDiagnosticsActionRoutes } from '../browser/diagnostics/acti
 import { type BrowserDaemonControlRoutes } from '../browser/control/routes';
 import { type BrowserContextRoutes } from '../browser/context/routes';
 import { createComputerRoutes, type ComputerRoutes } from '../computer/routes';
+import { DEFAULT_COMPUTER_USE_SETTINGS_V1, readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 import { type BrowserContextSource } from '../browser/context/source';
 
 
@@ -9176,6 +9177,10 @@ daemonWorkSignal: AbortSignal;
         machineDisplayName: params.currentMachineHost ?? undefined,
         registry: params.liveStreamCaptureRegistry,
         defaultDisplayId: process.env.DISPLAY,
+        resolveProviderSettings: () => {
+          const settings = getActiveAccountSettingsSnapshot()?.settings;
+          return settings ? readComputerUseSettingsForMachine(settings, params.machineId) : DEFAULT_COMPUTER_USE_SETTINGS_V1;
+        },
       })
     : null;
   runtimeActionRouteProviderTarget.setComputerRoutesProvider?.(

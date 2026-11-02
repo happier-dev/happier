@@ -3,11 +3,40 @@ import { z } from 'zod/mini';
 
 import { SessionImageMediaReferenceV1Schema } from '../sessions/media/imageReferenceV1.js';
 import { BrowserActiveTargetV1Schema } from '../browser/events/activeTarget.js';
+import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY } from '../installables/definitions/computerCuaDriver.js';
+import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY } from '../installables/definitions/computerAgentDesktop.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PositiveSafeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 const CoordinateSchema = lazyZodSchema(() => z.number());
 const DimensionSchema = lazyZodSchema(() => z.number().check(z.positive()));
+export const ComputerProviderIdV1Schema = lazyZodSchema(() => z.enum(['cua', 'agent-desktop']));
+export type ComputerProviderIdV1 = z.infer<typeof ComputerProviderIdV1Schema>;
+export const COMPUTER_PROVIDER_INSTALLABLE_KEYS = Object.freeze({
+  cua: COMPUTER_CUA_DRIVER_INSTALLABLE_KEY,
+  'agent-desktop': COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY,
+} satisfies Record<ComputerProviderIdV1, string>);
+export const ComputerUseSettingsV1Schema = lazyZodSchema(() => z.strictObject({
+  enabledProviders: z.array(ComputerProviderIdV1Schema).check(z.minLength(1)),
+  defaultProvider: ComputerProviderIdV1Schema,
+}).check(z.refine(value => value.enabledProviders.includes(value.defaultProvider), {
+  message: 'The default computer-use provider must be enabled',
+})));
+export type ComputerUseSettingsV1 = Readonly<{
+  enabledProviders: readonly ComputerProviderIdV1[];
+  defaultProvider: ComputerProviderIdV1;
+}>;
+export const ComputerUseByMachineIdV1Schema = lazyZodSchema(() => z.record(IdSchema, ComputerUseSettingsV1Schema));
+export const DEFAULT_COMPUTER_USE_SETTINGS_V1: Readonly<ComputerUseSettingsV1> = Object.freeze({
+  enabledProviders: Object.freeze(['cua'] as const), defaultProvider: 'cua',
+});
+/** Machine preferences are Account-owned; installability is decided by the installable owner. */
+export function readComputerUseSettingsForMachine(
+  settings: Readonly<{ computerUseByMachineId: Readonly<Record<string, ComputerUseSettingsV1>> }>, machineId: string,
+): Readonly<ComputerUseSettingsV1> {
+  return Object.hasOwn(settings.computerUseByMachineId, machineId)
+    ? settings.computerUseByMachineId[machineId] ?? DEFAULT_COMPUTER_USE_SETTINGS_V1 : DEFAULT_COMPUTER_USE_SETTINGS_V1;
+}
 export const ComputerAccessV1Schema = lazyZodSchema(() => z.enum(['see', 'use']));
 export type ComputerAccessV1 = z.infer<typeof ComputerAccessV1Schema>;
 /** Omitted selection access requests use; a human picker's initial choice is separate. */
@@ -18,7 +47,7 @@ const TargetLabelSchema = BrowserActiveTargetV1Schema.shape.label;
 
 /** Placement is a Machine Action fact; target identity does not confer Session authority. */
 export const ComputerTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('window'), displayId: IdSchema, pid: PositiveSafeIntSchema, windowId: PositiveSafeIntSchema }),
+  z.strictObject({ kind: z.literal('window'), displayId: IdSchema, pid: PositiveSafeIntSchema, windowId: z.union([PositiveSafeIntSchema, IdSchema]) }),
   z.strictObject({ kind: z.literal('display'), displayId: IdSchema }),
 ]));
 export type ComputerTargetV1 = z.infer<typeof ComputerTargetV1Schema>;
@@ -45,10 +74,16 @@ export const ComputerInputOperationV1Schema = lazyZodSchema(() => z.discriminate
   z.strictObject({ kind: z.literal('click'), x: CoordinateSchema, y: CoordinateSchema, button: z.optional(z.enum(['left', 'right', 'middle'])) }),
   z.strictObject({ kind: z.literal('press'), key: IdSchema }),
   z.strictObject({ kind: z.literal('type'), text: z.string() }),
+  z.strictObject({ kind: z.literal('drag'), fromX: CoordinateSchema, fromY: CoordinateSchema, toX: CoordinateSchema, toY: CoordinateSchema }),
+  z.strictObject({ kind: z.literal('wheel'), x: CoordinateSchema, y: CoordinateSchema, deltaX: CoordinateSchema, deltaY: CoordinateSchema }),
+  z.discriminatedUnion('action', [
+    z.strictObject({ kind: z.literal('element'), elementId: IdSchema, action: z.literal('click') }),
+    z.strictObject({ kind: z.literal('element'), elementId: IdSchema, action: z.literal('set_value'), value: z.string() }),
+  ]),
 ]));
 export type ComputerInputOperationV1 = z.infer<typeof ComputerInputOperationV1Schema>;
 
-export const ComputerMachineRequestV1Schema = lazyZodSchema(() => z.strictObject({ machineId: IdSchema }));
+export const ComputerMachineRequestV1Schema = lazyZodSchema(() => z.strictObject({ machineId: IdSchema, provider: z.optional(ComputerProviderIdV1Schema) }));
 export const ComputerTargetRequestV1Schema = lazyZodSchema(() => z.extend(ComputerMachineRequestV1Schema, { target: z.optional(ComputerTargetV1Schema), sourceId: z.optional(IdSchema) }));
 export type ComputerTargetRequestV1 = z.infer<typeof ComputerTargetRequestV1Schema>;
 export const ComputerTargetSelectRequestV1Schema = lazyZodSchema(() => z.extend(ComputerMachineRequestV1Schema, {
@@ -61,7 +96,7 @@ export const ComputerTargetSelectRequestV1Schema = lazyZodSchema(() => z.extend(
 })));
 export type ComputerTargetSelectRequestV1 = z.infer<typeof ComputerTargetSelectRequestV1Schema>;
 /** Without a display the machine lists its own (the daemon's desktop display); none means no screen to share. */
-export const ComputerTargetsListRequestV1Schema = lazyZodSchema(() => z.strictObject({ machineId: IdSchema, displayId: z.optional(IdSchema) }));
+export const ComputerTargetsListRequestV1Schema = lazyZodSchema(() => z.extend(ComputerMachineRequestV1Schema, { displayId: z.optional(IdSchema) }));
 export type ComputerTargetsListRequestV1 = z.infer<typeof ComputerTargetsListRequestV1Schema>;
 export const ComputerInputRequestV1Schema = lazyZodSchema(() => z.extend(ComputerTargetRequestV1Schema, {
   captureId: IdSchema,
@@ -78,6 +113,7 @@ export const SecretFillScopeV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const ComputerSecretFillRequestV1Schema = lazyZodSchema(() => z.extend(SecretFillScopeV1Schema, {
+  provider: z.optional(ComputerProviderIdV1Schema),
   sourceId: IdSchema,
   target: ComputerTargetV1Schema,
   captureId: IdSchema,
@@ -119,6 +155,7 @@ export const ComputerApprovalDisplayV1Schema = lazyZodSchema(() => z.strictObjec
 export type ComputerApprovalDisplayV1 = z.infer<typeof ComputerApprovalDisplayV1Schema>;
 
 export const ComputerSelectedTargetResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  provider: z.optional(ComputerProviderIdV1Schema),
   approvalDisplay: ComputerApprovalDisplayV1Schema,
   consentGranted: z.boolean(),
   access: z.optional(ComputerAccessV1Schema),
@@ -133,7 +170,7 @@ export const ComputerOpenSettingsResponseV1Schema = lazyZodSchema(() => z.discri
   z.strictObject({ status: z.literal('failed'), code: IdSchema }),
 ]));
 
-const IdentityShape = { target: ComputerTargetV1Schema, sourceId: IdSchema };
+const IdentityShape = { target: ComputerTargetV1Schema, sourceId: IdSchema, provider: z.optional(ComputerProviderIdV1Schema) };
 const InputPresentationShape = { ...IdentityShape, targetLabel: TargetLabelSchema };
 const FailedResultSchema = lazyZodSchema(() => z.strictObject({ ...IdentityShape, status: z.literal('failed'), code: IdSchema }));
 const TargetSelectionRequiredResultSchema = lazyZodSchema(() => z.strictObject({ status: z.literal('target_selection_required'),
@@ -169,7 +206,7 @@ export const ComputerAccessibilityNodeV1Schema = lazyZodSchema(() => z.strictObj
 export type ComputerAccessibilityNodeV1 = z.infer<typeof ComputerAccessibilityNodeV1Schema>;
 export const ComputerQueryResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   TargetSelectionRequiredResultSchema,
-  z.strictObject({ ...IdentityShape, status: z.literal('queried'), accessibility: z.strictObject({
+  z.strictObject({ ...IdentityShape, status: z.literal('queried'), captureId: z.optional(IdSchema), accessibility: z.strictObject({
     status: z.enum(['complete', 'partial', 'unavailable']),
     reason: z.optional(IdSchema),
     nodes: z.array(ComputerAccessibilityNodeV1Schema),
@@ -185,6 +222,7 @@ export const ComputerGrantStatusV1Schema = lazyZodSchema(() => z.strictObject({
 export type ComputerGrantStatusV1 = z.infer<typeof ComputerGrantStatusV1Schema>;
 
 export const ComputerTargetsListResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  provider: z.optional(ComputerProviderIdV1Schema),
   targets: z.array(z.strictObject({ target: ComputerTargetV1Schema, title: z.optional(z.string()), appName: z.optional(IdSchema),
     label: z.optional(IdSchema), width: z.optional(PositiveSafeIntSchema), height: z.optional(PositiveSafeIntSchema),
     thumbnail: z.optional(z.strictObject({ mimeType: z.literal('image/png'), base64: IdSchema,
@@ -207,7 +245,7 @@ export const ComputerControlStatusResponseV1Schema = lazyZodSchema(() => z.stric
   uncertain: z.boolean(),
   /** A current native read, omitted by stream metadata and quarantined sources. */
   grants: z.optional(ComputerGrantStatusV1Schema),
-  activity: z.optional(z.strictObject({ kind: z.enum(['capture', 'click', 'type', 'press']), targetLabel: TargetLabelSchema })),
+  activity: z.optional(z.strictObject({ kind: z.enum(['capture', 'click', 'type', 'press', 'drag', 'wheel', 'element']), targetLabel: TargetLabelSchema })),
   activeTarget: z.optional(BrowserActiveTargetV1Schema),
 }));
 export type ComputerControlStatusResponseV1 = z.infer<typeof ComputerControlStatusResponseV1Schema>;

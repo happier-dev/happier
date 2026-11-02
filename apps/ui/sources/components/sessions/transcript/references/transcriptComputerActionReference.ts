@@ -20,7 +20,7 @@ const isComputerAgentActionId = (actionId: string): actionId is ComputerAgentAct
 
 const SelectionRequiredSchema = z.object({ status: z.literal('target_selection_required'), approvalDisplay: ComputerApprovalDisplayV1Schema });
 
-export type TranscriptComputerVerb = 'capture' | 'query' | 'click' | 'type' | 'press';
+export type TranscriptComputerVerb = 'capture' | 'query' | 'click' | 'type' | 'press' | 'drag' | 'wheel';
 type CapturedMedia = Extract<ComputerCaptureResponseV1, { status: 'captured' }>['media'];
 
 /**
@@ -61,6 +61,7 @@ function readVerb(actionId: ComputerAgentActionId, actionInput: unknown): Readon
     const parsed = ComputerInputRequestV1Schema.safeParse(actionInput);
     if (!parsed.success) return null;
     const operation = parsed.data.operation;
+    if (operation.kind === 'element') return { verb: operation.action === 'click' ? 'click' : 'type', key: null };
     if (operation.kind !== 'press') return { verb: operation.kind, key: null };
     const key = operation.key.trim();
     return { verb: 'press', key: key.length > 1 ? key : null };

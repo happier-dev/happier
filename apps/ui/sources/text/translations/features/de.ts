@@ -1829,6 +1829,8 @@ const computerUseTranslations = { de: {
             pressKey: ({ key }) => `${key} gedrückt`,
             press: 'Eine Taste gedrückt',
             pressRunning: 'Drückt eine Taste',
+            drag: 'Hat gezogen',
+            wheel: 'Hat gescrollt',
             mayHaveLanded: 'wurde eventuell ausgeführt',
             failed: 'Nicht ausgeführt',
         },

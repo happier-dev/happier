@@ -51,6 +51,7 @@ import {
 } from '../../backends/targets/backendTargetRefV2.js';
 import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import { InstallableAutoUpdateModeSchema } from '../../installables/descriptor.js';
+import { ComputerUseByMachineIdV1Schema } from '../../computer/v1.js';
 import {
   SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
@@ -1335,6 +1336,10 @@ const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
     sessionTmuxIsolated: accountPreference(z.boolean(), true, 'session terminal defaults'),
     sessionTmuxTmpDir: accountPreference(z.nullable(accountBoundedString(16 * 1024)), null, 'session terminal defaults', 16 * 1024),
     installablesPolicyByMachineId: accountPolicy(AccountInstallablePoliciesByMachineIdSchema, {}, 'installable policy', 64 * 1024),
+    computerUseByMachineId: accountCatalogDefinition(ComputerUseByMachineIdV1Schema, {}, {
+        semanticDomain: 'machine computer-use providers', classification: 'preference',
+        maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
+    }),
 } as const;
 export const accountDeploymentSettingDefinitions = {
     deploymentDefaultsV1: accountCatalogDefinition(DeploymentCreationDefaultsV1Schema, {}, {

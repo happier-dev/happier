@@ -156,22 +156,45 @@ describe('createActionExecutor (runtime-unification actions)', () => {
   it('dispatches native input and policy-admitted interruption without substituting human authority', async () => {
     const target = { kind: 'window', displayId: ':77', pid: 123, windowId: 456 } as const;
     const runtimeActionExecute = vi.fn<NonNullable<ActionExecutorDeps['runtimeActionExecute']>>(async ({ actionId }) => actionId === 'computer.target.get'
-      ? { consentGranted: true, selectedTarget: target, sourceId: 'source_1',
+      ? { consentGranted: true, selectedTarget: target, sourceId: 'source_1', provider: 'agent-desktop',
         approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: false, target: { kind: 'window', title: 'Editor' } } }
       : { status: 'dispatched' as const, target, sourceId: 'source_1' });
     const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
-    const input = { machineId: 'machine_1', target, captureId: 'capture_1', operation: { kind: 'click', x: 30, y: 20 } };
+    const input = { machineId: 'machine_1', target, provider: 'agent-desktop', captureId: 'capture_1',
+      operation: { kind: 'element', elementId: 'element_1', action: 'set_value', value: 'hello' } };
     const result = await executor.execute('computer.input', input,
       { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1' });
     expect(result).toEqual({ ok: true, result: { status: 'dispatched', target, sourceId: 'source_1' } });
+    expect(runtimeActionExecute).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'computer.target.get',
+      input: { machineId: 'machine_1', provider: 'agent-desktop' } }));
     expect(runtimeActionExecute).toHaveBeenCalledWith({ actionId: 'computer.input', input: { ...input, sourceId: 'source_1' },
       context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', bypassApprovals: true } });
+    const { provider: _provider, ...defaultInput } = input;
+    await executor.execute('computer.input', defaultInput,
+      { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1' });
+    expect(runtimeActionExecute).toHaveBeenLastCalledWith(expect.objectContaining({ actionId: 'computer.input',
+      input: { ...input, sourceId: 'source_1' } }));
     const admitted = await executor.execute('computer.control.interrupt', { machineId: 'machine_1', target },
       { surface: 'ui', authority: 'account_automation' });
     expect(admitted).toEqual({ ok: true, result: { status: 'dispatched', target, sourceId: 'source_1' } });
     const interrupted = await executor.execute('computer.control.interrupt', { machineId: 'machine_1', target },
       { surface: 'ui', authority: 'present_user' });
     expect(interrupted).toEqual({ ok: true, result: { status: 'dispatched', target, sourceId: 'source_1' } });
+  });
+
+  it.each(['source', 'target'] as const)('refuses an element from a replaced %s before native input', async changed => {
+    const target = { kind: 'window', displayId: ':77', pid: 123, windowId: 456 } as const;
+    const runtimeActionExecute = vi.fn<NonNullable<ActionExecutorDeps['runtimeActionExecute']>>(async () => ({
+      consentGranted: true, selectedTarget: changed === 'target' ? { ...target, windowId: 789 } : target,
+      sourceId: changed === 'source' ? 'replacement' : 'old_source', provider: 'agent-desktop',
+      approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: false },
+    }));
+    const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
+    const result = await executor.execute('computer.input', { machineId: 'machine_1', provider: 'agent-desktop', target,
+      sourceId: 'old_source', captureId: 'capture_1', operation: { kind: 'element', elementId: 'element_1', action: 'click' } },
+    { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'computer_element_stale' });
+    expect(runtimeActionExecute.mock.calls.map(([call]) => call.actionId)).toEqual(['computer.target.get']);
   });
 
   it('returns unsupported_action until the runtime action executor is wired', async () => {

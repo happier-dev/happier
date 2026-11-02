@@ -114,8 +114,9 @@ export async function resolveComputerActionSelection(
   context: ActionExecutorContext,
 ) {
   if (!deps.runtimeActionExecute) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
+  const requested = readRecord(input);
   const rawSelection = await deps.runtimeActionExecute({ actionId: 'computer.target.get',
-    input: { machineId: readRecord(input).machineId }, context });
+    input: { machineId: requested.machineId, ...(requested.provider === undefined ? {} : { provider: requested.provider }) }, context });
   const failure = readActionFailureEnvelope(rawSelection);
   if (failure) return failure;
   const selection = ComputerSelectedTargetResponseV1Schema.safeParse(rawSelection);

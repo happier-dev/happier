@@ -53,6 +53,8 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
             <View style={styles.what}>
                 <Text style={styles.act}>{presentation.act === 'fill' ? t('approvals.confidential.title') : presentation.act === 'share' && presentation.appName
                     ? t('computerUse.picker.shareApp', { app: presentation.appName })
+                    : presentation.act === 'drag' ? t('browserPresence.doing.drag')
+                    : presentation.act === 'wheel' ? t('browserPresence.doing.scroll')
                     : t(`computerUse.approval.act.${presentation.act}`)}</Text>
                 <Text style={styles.where}>{where}</Text>
             </View>

@@ -1830,6 +1830,8 @@ const computerUseTranslations = { 'zh-Hans': {
             pressKey: ({ key }) => `已按下 ${key}`,
             press: '已按下一个键',
             pressRunning: '正在按键',
+            drag: '已拖动',
+            wheel: '已滚动',
             mayHaveLanded: '可能已生效',
             failed: '未完成',
         },

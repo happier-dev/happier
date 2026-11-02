@@ -1835,6 +1835,8 @@ const computerUseTranslations = { it: {
             pressKey: ({ key }) => `Ha premuto ${key}`,
             press: 'Ha premuto un tasto',
             pressRunning: 'Sta premendo un tasto',
+            drag: 'Ha trascinato',
+            wheel: 'Ha scorso',
             mayHaveLanded: 'potrebbe essere andato a segno',
             failed: 'Non è andato a buon fine',
         },

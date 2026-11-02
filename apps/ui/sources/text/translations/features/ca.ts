@@ -1835,6 +1835,8 @@ const computerUseTranslations = { ca: {
             pressKey: ({ key }) => `Ha premut ${key}`,
             press: 'Ha premut una tecla',
             pressRunning: 'Prement una tecla',
+            drag: 'Ha arrossegat',
+            wheel: 'Ha desplaçat',
             mayHaveLanded: 'pot haver-se aplicat',
             failed: 'No s’ha completat',
         },

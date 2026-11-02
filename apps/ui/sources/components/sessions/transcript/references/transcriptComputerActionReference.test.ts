@@ -18,6 +18,16 @@ function call(actionId: string, input: unknown, result: unknown, state = 'comple
 }
 
 describe('resolveTranscriptComputerActionReference', () => {
+    it.each([
+        { operation: { kind: 'element', elementId: 'button', action: 'click' }, verb: 'click' },
+        { operation: { kind: 'element', elementId: 'field', action: 'set_value', value: 'private-value' }, verb: 'type' },
+    ])('narrates native element input as $verb without carrying its value', ({ operation, verb }) => {
+        const reference = call('computer.input', { machineId: 'machine_1', captureId: 'c', operation },
+            { status: 'dispatched', target, sourceId: 's', targetLabel: 'Native control' });
+        expect(reference).toMatchObject({ verb, targetLabel: 'Native control', outcome: 'done' });
+        expect(JSON.stringify(reference)).not.toContain('private-value');
+    });
+
     it('uses the native owner’s clicked or focused label, excluding typed values from narration', () => {
         const clicked = call('computer.input', { machineId: 'machine_1', captureId: 'c', operation: { kind: 'click', x: 1, y: 1 } },
             { status: 'dispatched', target, sourceId: 's', targetLabel: 'Sign in' });

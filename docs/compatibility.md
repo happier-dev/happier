@@ -4798,3 +4798,17 @@ native build before publishing an OTA update for this train.
 React Native's CocoaPods post-install owner marks glog's namespace-fragment
 headers textual, so Swift can import Nitro's public Fabric headers without
 Clang attempting a submodule import inside `namespace google`.
+
+## Computer provider trial (unreleased 0.3)
+
+Computer Actions add optional `provider` inputs; omission retains the enabled
+Machine default, initially Cua. Account Settings adds `computerUseByMachineId`
+through the existing Settings reader/writer. Capture/query responses add optional
+provider identity and query capture binding; older responses remain readable.
+The mutation input union adds element click/set-value (and native drag/wheel).
+These closed operation envelopes never reinterpret an unknown kind as pointer
+input: an older Computer daemon rejects it as typed `invalid_parameters`.
+A mismatched provider or obsolete element binding returns
+`computer_element_stale`, requiring another observation. An explicit disabled or
+missing provider returns `computer_provider_unavailable` with an install hint.
+This is a contained development-source trial, not a released availability claim.

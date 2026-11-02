@@ -1830,6 +1830,8 @@ const computerUseTranslations = { 'zh-Hant': {
             pressKey: ({ key }) => `已按下 ${key}`,
             press: '已按下一個鍵',
             pressRunning: '正在按鍵',
+            drag: '已拖曳',
+            wheel: '已捲動',
             mayHaveLanded: '可能已生效',
             failed: '未完成',
         },
