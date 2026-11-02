@@ -1,3 +1,17 @@
+export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
+  'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
+] as const;
+export const BROWSER_EXTENSION_ACTION_IDS = [
+  'browser.extensions.list', ...BROWSER_EXTENSION_MUTATION_ACTION_IDS,
+  'browser.extensions.openActionPopup', 'browser.extensions.openOptions',
+] as const;
+export type BrowserExtensionActionIdV1 = typeof BROWSER_EXTENSION_ACTION_IDS[number];
+export function isBrowserExtensionActionIdV1(actionId: string): actionId is BrowserExtensionActionIdV1 {
+  return (BROWSER_EXTENSION_ACTION_IDS as readonly string[]).includes(actionId);
+}
+export function isBrowserExtensionMutationActionIdV1(actionId: string): boolean {
+  return (BROWSER_EXTENSION_MUTATION_ACTION_IDS as readonly string[]).includes(actionId);
+}
 import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '../machines/adminAccessActionIdsV1.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';

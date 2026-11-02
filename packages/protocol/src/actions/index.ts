@@ -1,4 +1,7 @@
 export * from './invocationAuthority.js';
+export { requiredMachineRoleForBrowserAction } from './browserMachineRole.js';
+export { BROWSER_EXTENSION_ACTION_IDS, BROWSER_EXTENSION_MUTATION_ACTION_IDS, isBrowserExtensionActionIdV1,
+  isBrowserExtensionMutationActionIdV1, type BrowserExtensionActionIdV1 } from './actionIds.js';
 export { FILESYSTEM_WRITE_GUARD_ERROR_CODES, isFilesystemWriteGuardErrorCode, type FilesystemWriteGuardErrorCode } from './filesystemActionFamily.js';
 export * from './actionRequestAttributionV1.js';
 export * from './specs/machineResources.js';
