@@ -173,8 +173,9 @@ function createBaseCliRuntimeSmokeSource({ root, scratch, targetOs }) {
 
     const nodePty = runtimeRequire('node-pty');
     const command = targetOs === 'windows' ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh';
+    // cmd's set /p prints its prompt but exits 1 at EOF; echo succeeds without input.
     const args = targetOs === 'windows'
-      ? ['/d', '/s', '/c', '<nul set /p "=pty-ok"']
+      ? ['/d', '/s', '/c', 'echo pty-ok']
       : ['-c', 'printf pty-ok'];
     const ptyOutput = await new Promise((resolvePromise, rejectPromise) => {
       let output = '';
