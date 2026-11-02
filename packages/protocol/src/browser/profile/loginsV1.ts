@@ -27,6 +27,8 @@ export const BrowserLoginImportFailureCodeV1Schema = lazyZodSchema(() => z.enum(
   'source_unavailable', 'source_locked', 'permission_denied', 'source_format_unsupported',
   'partition_unsupported', 'expired', 'destination_unavailable', 'profile_mismatch',
   'engine_unsupported', 'import_failed', 'import_unknown', 'passkey_import_unavailable', 'canceled',
+  // Windows Chrome 127+ binds cookie keys to Chrome itself; Happier does not circumvent it.
+  'app_bound_encryption',
 ]));
 export type BrowserLoginImportFailureCodeV1 = z.infer<typeof BrowserLoginImportFailureCodeV1Schema>;
 export const BrowserLoginImportRecordV1Schema = lazyZodSchema(() => z.strictObject({

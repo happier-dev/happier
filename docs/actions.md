@@ -7473,8 +7473,19 @@ The Session agent and anyone able to drive that browser can use imported logins.
 Native cookie discovery runs only when the import confirmation opens. Source
 discovery, source reads and destination insertion require Machine Manage through
 the canonical RPC route policy. The standard Firefox profile locations on
-Windows, macOS and Linux are supported for SQLite schemas 10–17; unknown formats,
-Chromium and Safari source stores return typed unsupported results.
+Windows, macOS and Linux are supported for SQLite schemas 10–17. Chrome,
+Chromium, Edge and Brave profiles are listed from each vendor's standard root and
+`Local State`; the chosen profile's `Cookies` database is read from a private
+temporary copy because the running browser locks it. Decryption uses only the
+person's own OS authorization, acquired once per read and only when a selected
+record needs it: macOS Keychain Safe Storage (v10, the OS shows its own
+prompt), Linux `peanuts` (v10) or the secret-service/KWallet key (v11), and the
+Windows DPAPI-protected `Local State` key (v10). Windows app-bound v20 records
+are skipped with `app_bound_encryption`; Happier does not elevate, call Chrome's
+elevation service or inject into Chrome. A refused or locked key settles as
+`source_locked`. `chromiumCookieSource.ts` owns this adapter; OS tools run
+through `execFileWithDeadline` with argument arrays. Unknown formats and Safari
+source stores return typed unsupported results.
 Partition/container cookies are skipped explicitly. Source stores are opened
 read-only and only the chosen profile and sites are queried. The destination is
 managed Chromium through CDP; a system WebView is unsupported. Imported data

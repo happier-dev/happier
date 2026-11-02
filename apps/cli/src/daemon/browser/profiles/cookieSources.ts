@@ -4,10 +4,11 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { BrowserCookieV1Schema, type BrowserCookieV1, type BrowserCookieSourceResultV1, type BrowserLoginImportRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
+import { chromiumProfiles, readChromiumCookieSource, type ChromiumSourceEnvironment } from './chromiumCookieSource';
 
-type SourceEnvironment = Readonly<{
-  homeDirectory?: string;
-  platform?: NodeJS.Platform;
+export type { ChromiumKeyStore } from './chromiumCookieSource';
+
+type SourceEnvironment = ChromiumSourceEnvironment & Readonly<{
   appDataDirectory?: string;
 }>;
 
@@ -45,19 +46,30 @@ async function firefoxProfiles(input: SourceEnvironment) {
 
 /** Called only by an opened import confirmation, never by an Action/catalog mount. */
 export async function listBrowserCookieSources(input: SourceEnvironment = {}) {
-  try {
-    return { sources: (await firefoxProfiles(input)).map(({ directory: _directory, ...source }) => source),
-      unsupported: [
-        { browser: 'chromium' as const, code: 'source_format_unsupported' as const },
-        { browser: 'safari' as const, code: 'source_format_unsupported' as const },
-      ] };
-  } catch {
-    return { sources: [], unsupported: [
-      { browser: 'firefox' as const, code: 'source_unavailable' as const },
-      { browser: 'chromium' as const, code: 'source_format_unsupported' as const },
+  const firefox = await firefoxProfiles(input).catch(() => null);
+  const chromium = await chromiumProfiles(input).catch(() => []);
+  return {
+    sources: [...(firefox ?? []), ...chromium].map(({ browser, profileId, label }) => ({ browser, profileId, label })),
+    unsupported: [
+      ...(firefox === null ? [{ browser: 'firefox' as const, code: 'source_unavailable' as const }] : []),
+      ...(chromium.length === 0 ? [{ browser: 'chromium' as const, code: 'source_unavailable' as const }] : []),
       { browser: 'safari' as const, code: 'source_format_unsupported' as const },
-    ] };
+    ],
+  };
+}
+
+/** The chosen sites' hosts and every parent domain, as both browsers key cookies. Null for a non-web site. */
+function selectedCookieDomains(sites: readonly string[]): Set<string> | null {
+  const domains = new Set<string>();
+  for (const site of sites) {
+    const url = new URL(site);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const host = url.hostname;
+    domains.add(host);
+    const labels = host.split('.');
+    for (let index = 0; index < labels.length; index++) domains.add(`.${labels.slice(index).join('.')}`);
   }
+  return domains;
 }
 
 export async function readBrowserCookieSource(input: SourceEnvironment & Readonly<{
@@ -67,20 +79,14 @@ export async function readBrowserCookieSource(input: SourceEnvironment & Readonl
   signal?: AbortSignal;
 }>): Promise<BrowserCookieSourceResultV1> {
   if (input.signal?.aborted) return { status: 'unavailable', code: 'canceled' };
-  if (input.browser && input.browser !== 'firefox') return { status: 'unavailable', code: 'source_format_unsupported' };
+  if (input.browser === 'safari') return { status: 'unavailable', code: 'source_format_unsupported' };
   let database: ReturnType<typeof openSqliteDatabaseSync> | undefined;
   try {
+    const domains = selectedCookieDomains(input.sites);
+    if (!domains) return { status: 'unavailable', code: 'source_format_unsupported' };
+    if (input.browser === 'chromium') return await readChromiumCookieSource({ ...input, domains });
     const profile = (await firefoxProfiles(input)).find(candidate => candidate.profileId === input.profileId);
     if (!profile) return { status: 'unavailable', code: 'source_unavailable' };
-    const domains = new Set<string>();
-    for (const site of input.sites) {
-      const url = new URL(site);
-      if (url.protocol !== 'https:' && url.protocol !== 'http:') return { status: 'unavailable', code: 'source_format_unsupported' };
-      const host = url.hostname;
-      domains.add(host);
-      const labels = host.split('.');
-      for (let index = 0; index < labels.length; index++) domains.add(`.${labels.slice(index).join('.')}`);
-    }
     if (domains.size === 0) return { status: 'ready', cookies: [], skipped: [] };
     input.signal?.throwIfAborted();
     database = openSqliteDatabaseSync(join(profile.directory, 'cookies.sqlite'), { readOnly: true });
@@ -128,7 +134,7 @@ export async function readBrowserCookieSource(input: SourceEnvironment & Readonl
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
     return { status: 'unavailable', code: input.signal?.aborted ? 'canceled'
       : code === 'EACCES' || code === 'EPERM' ? 'permission_denied'
-        : code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' ? 'source_locked' : 'source_unavailable' };
+        : code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' || code === 'EBUSY' ? 'source_locked' : 'source_unavailable' };
   } finally {
     // A close failure must not replace the value-free native outcome with OS text.
     try { database?.close(); } catch { /* The reader never mutates the source. */ }
