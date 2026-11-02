@@ -113,6 +113,7 @@ import {
 import { resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 import { destroyUnclaimedHttpUpgrades } from './utils/httpUpgradeOwnership';
 import { registerEngineHeartbeatDiagnostics } from './socket/engineHeartbeatDiagnostics';
+import { dispatchSocketPacket } from './socket/dispatchSocketPacket';
 export { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE, resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
 // serialized command. Keep that reserve beside the one live transport ceiling.
@@ -777,13 +778,13 @@ export function startSocket(app: Fastify) {
         // Socket.IO exposes `connect` before this async callback finishes. Hold
         // packets in its native dispatch middleware until currentness, rooms,
         // and all handlers are ready; otherwise the first RPC can be lost.
-        socket.use((_packet, next) => {
+        socket.use((packet, next) => {
             if (connectReady && socket.connected) {
-                next();
+                dispatchSocketPacket(socket, packet, next);
                 return;
             }
             void packetAdmission.then((admitted) => {
-                if (admitted && socket.connected) next();
+                if (admitted && socket.connected) dispatchSocketPacket(socket, packet, next);
             });
         });
 

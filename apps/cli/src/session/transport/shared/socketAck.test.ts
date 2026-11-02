@@ -1,10 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Manager } from 'socket.io-client';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 
-import { emitSocketWithAck } from './socketAck';
+import { emitSocketCallbackAck, emitSocketWithAck } from './socketAck';
 
 describe('Socket ACK transport', () => {
   afterEach(() => vi.useRealTimers());
+
+  it('preserves missing-method refusals on callback ACKs without interpreting ordinary domain rejections', async () => {
+    vi.useFakeTimers();
+    const refusal = { ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, method: 'probe' };
+    const emit = vi.fn((_event: string, _payload: unknown, ack: (value: unknown) => void) => ack(refusal));
+    await expect(emitSocketCallbackAck({ socket: { connected: true, emit }, event: 'probe', payload: {} }))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, method: 'probe', retryable: false });
+    const domainRejection = { status: 'rejected', reason: 'session_not_found' };
+    await expect(emitSocketWithAck({ socket: { connected: true, emitWithAck: async () => domainRejection },
+      event: 'probe', payload: {} })).resolves.toBe(domainRejection);
+  });
 
   it('classifies the native Socket.IO ACK deadline without claiming a disconnect', async () => {
     vi.useFakeTimers();

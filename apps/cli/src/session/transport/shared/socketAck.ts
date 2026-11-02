@@ -1,4 +1,5 @@
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 
 import { resolveSessionControlSocketAckTimeoutMs } from './sessionTimeouts';
 
@@ -57,6 +58,15 @@ function ensureSocketConnected(socket: Pick<AckableSocket, 'connected'>, event: 
   }
 }
 
+function throwIfSocketMethodUnavailable(value: unknown, event: string): void {
+  if (!value || typeof value !== 'object' || !('ok' in value) || value.ok !== false
+    || !('errorCode' in value) || value.errorCode !== RPC_ERROR_CODES.METHOD_NOT_FOUND
+    || !('method' in value) || value.method !== event) return;
+  throw Object.assign(new RpcError(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_FOUND), {
+    method: event, retryable: false,
+  });
+}
+
 function createAckTimeoutPromise(event: string, timeoutMs: number): Promise<never> {
   return new Promise((_, reject) => {
     setTimeout(
@@ -89,7 +99,7 @@ export async function emitSocketWithAck<
   }
 
   const ackPromise = Promise.resolve(socketWithTimeout.emitWithAck(params.event, params.payload));
-  return await new Promise<T>((resolve, reject) => {
+  const value = await new Promise<T>((resolve, reject) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let onAbort = () => {};
@@ -118,6 +128,8 @@ export async function emitSocketWithAck<
         : error)),
     );
   });
+  throwIfSocketMethodUnavailable(value, params.event);
+  return value;
 }
 
 export async function emitSocketCallbackAck<
@@ -139,5 +151,7 @@ export async function emitSocketCallbackAck<
   const ackPromise = new Promise<unknown>((resolve) => {
     params.socket.emit?.(params.event, params.payload, (answer: unknown) => resolve(answer));
   });
-  return await Promise.race([ackPromise, createAckTimeoutPromise(params.event, timeoutMs)]) as T;
+  const value = await Promise.race([ackPromise, createAckTimeoutPromise(params.event, timeoutMs)]);
+  throwIfSocketMethodUnavailable(value, params.event);
+  return value as T;
 }

@@ -3,7 +3,7 @@ import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
 // Only persistence is substituted: real tokens, admission, handlers, and sockets
 // exercise connect-time delivery without writing any database.
@@ -13,6 +13,9 @@ const persistence = vi.hoisted(() => {
     const database = {
         account: { findUnique: readAccount },
         simpleCache: { findUnique: async () => ({ value: 'srv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }) },
+        $executeRaw: async () => 0,
+        $queryRaw: async () => [{ statement_timeout: '0' }],
+        $executeRawUnsafe: async () => 0,
         $transaction: async <T>(run: (tx: unknown) => Promise<T>): Promise<T> => run(database),
     };
     return { database, readAccount, account };
@@ -28,6 +31,40 @@ import type { Fastify as AppFastify } from './types';
 
 describe('connect-time RPC delivery', () => {
     afterEach(() => { vi.unstubAllEnvs(); });
+
+    it('refuses an unregistered acknowledged event while keeping registered events usable', async () => {
+        persistence.account.status = 'active';
+        vi.stubEnv('HANDY_MASTER_SECRET', 'connect-rpc-test-only-master-secret');
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+        await auth.init();
+        const token = await auth.createToken(persistence.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected bound server');
+        const caller = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates/', transports: ['websocket'], autoConnect: false, reconnection: false,
+            auth: { token, clientType: 'user-scoped', clientPurpose: 'scoped-rpc' },
+        });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                caller.once('connect', resolve);
+                caller.once('connect_error', reject);
+                caller.connect();
+            });
+            // Test-only deadline detects a lost ACK; production adds no deadline.
+            await expect(caller.timeout(1_000).emitWithAck('missing-machine-method', { v: 1 }))
+                .resolves.toEqual({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
+                    errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, method: 'missing-machine-method' });
+            expect(caller.connected).toBe(true);
+            await expect(caller.timeout(1_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, { method: 'neutral.missing', params: {} }))
+                .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+        } finally {
+            caller.close();
+            await app.close();
+        }
+    });
 
     it.each(['admitted', 'revoked', 'disconnected'] as const)('settles a connect-time scoped RPC after delayed admission (%s)', async (outcome) => {
         persistence.account.status = 'active';

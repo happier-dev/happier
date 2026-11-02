@@ -4075,6 +4075,15 @@ owns the rule (`selectPinnedServicesServingServer`, `resolveDefaultFollowingStan
 
 ## API client architecture
 
+In 0.3 development, Home's packet dispatcher acknowledges an unregistered event
+with `RPC_METHOD_NOT_FOUND` and the event's method name after connection admission
+has installed all handlers. This includes direct Machine events such as terminal
+capture/finalize. The CLI ACK owner preserves the refusal as a non-retryable
+`RpcError` before a domain response schema reads it; it adds no timeout or retry.
+Registered handlers retain their own operation lifetimes and response contracts.
+An older Home without this dispatcher cannot produce that refusal and must be
+upgraded.
+
 ```mermaid
 graph TB
     subgraph "API Clients"
