@@ -142,17 +142,19 @@ export async function requestLiveStreamRelayAuthorization(input: Readonly<{
                 }),
             },
         });
-        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
         const body = response.body as { ok?: unknown; reasonCode?: unknown; relayAuthorization?: unknown } | null;
-        if (body?.ok !== true) {
+        if (!response.ok || body?.ok !== true) {
             return {
                 ok: false,
-                reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing',
+                reasonCode: typeof body?.reasonCode === 'string'
+                    ? body.reasonCode
+                    : !response.ok ? `http_${Math.floor(response.status / 100)}xx` : 'grant_missing',
             };
         }
         const parsed = MachineLiveStreamRelayAuthorizationV1Schema.safeParse(body.relayAuthorization);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
-    } catch {
-        return { ok: false, reasonCode: 'grant_missing' };
+    } catch (error) {
+        // Keep exception messages private; their class still distinguishes setup/transport failures.
+        return { ok: false, reasonCode: error instanceof Error ? error.name : 'grant_missing' };
     }
 }
