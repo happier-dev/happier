@@ -5,6 +5,8 @@ import * as strictJson from './strictJsonValue.js';
 import * as equality from './jsonSchemaValues.js';
 import * as provisioners from './machineProvisioners.js';
 import { PluginManifestV2Schema } from '../manifest/v2.js';
+import { admitDecodedPluginManifestV2 } from '../manifest/ingest.js';
+import * as admittedJson from '../../json/strictJsonValue.js';
 
 function provisionerManifest() {
   const native = documents.defineProtocolObject({ name: documents.defineProtocolString() }, { policy: 'closed' });
@@ -78,5 +80,46 @@ it('admits provisioner definitions without re-normalizing projected schemas or w
     comparisons.mockRestore();
     normalizations.mockRestore();
     clones.mockRestore();
+  }
+});
+
+
+it('normalizes each declared document once when serialized provisioners reuse role actions', () => {
+  const base = provisionerManifest();
+  const descriptor = base.contributes.machineProvisioners[0]!;
+  const manifest = { ...base, contributes: { ...base.contributes,
+    machineProvisioners: [descriptor, { ...descriptor, id: 'second-guest' }],
+  } };
+  // Production locators decode file JSON before reaching this exact admission owner.
+  const serialized = JSON.stringify(manifest);
+  expect(admitDecodedPluginManifestV2(JSON.parse(serialized), { mode: 'load' }).ok).toBe(true);
+  const normalizations = vi.spyOn(documents, 'normalizePluginJsonSchema');
+  const validatingComparisons = vi.spyOn(equality, 'pluginJsonValuesEqual');
+  const comparisons = vi.spyOn(admittedJson, 'sameStrictJsonValue');
+  try {
+    const admissions = 40;
+    for (let index = 0; index < admissions; index++) {
+      const result = admitDecodedPluginManifestV2(JSON.parse(serialized), { mode: 'load' });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.manifest.contributes.machineProvisioners).toHaveLength(2);
+        expect(result.diagnostics ?? []).toEqual([]);
+      }
+    }
+    const declaredDocuments = manifest.contributes.actions.length * 2
+      + manifest.contributes.machineProvisioners.length * 2;
+    const roleBindings = manifest.contributes.machineProvisioners
+      .flatMap(provisioners.readMachineProvisionerActionRolesV1).length;
+    console.info('serialized-provisioner-admission-cost', JSON.stringify({ admissions, declaredDocuments,
+      roleBindings, normalizations: normalizations.mock.calls.length,
+      validatingComparisons: validatingComparisons.mock.calls.length,
+      comparisons: comparisons.mock.calls.length }));
+    expect(normalizations.mock.calls.length).toBeLessThanOrEqual(admissions * declaredDocuments);
+    expect(validatingComparisons.mock.calls.length).toBe(0);
+    expect(comparisons.mock.calls.length).toBeLessThanOrEqual(admissions * roleBindings * 2);
+  } finally {
+    comparisons.mockRestore();
+    validatingComparisons.mockRestore();
+    normalizations.mockRestore();
   }
 });

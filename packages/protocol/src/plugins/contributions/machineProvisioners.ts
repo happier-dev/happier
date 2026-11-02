@@ -186,20 +186,21 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
         continue;
       }
       const input = machineProvisionerRoleInputProjection(descriptor, binding.role);
-      if (input) {
-        const declaredInput = isNormalizedPluginJsonSchema(action.inputSchema)
-          ? action.inputSchema : normalizePluginJsonSchema(action.inputSchema);
-        if (declaredInput !== input && !sameStrictJsonValue(nestedProjection(declaredInput), nestedProjection(input))) {
-          context.addIssue({ code: 'custom', path, message: 'Provisioner role input must use its canonical contract and declared launch/resource schema.' });
-        }
+      // Structural admission has already parsed these documents. Matching the
+      // canonical role shape proves their semantics without cloning file JSON
+      // to manufacture an admitted identity. Native children were validated by
+      // strictPortableSchema; mismatches retain strict malformed-schema errors.
+      if (input && action.inputSchema !== input
+        && !sameStrictJsonValue(nestedProjection(action.inputSchema), nestedProjection(input))) {
+        if (!isNormalizedPluginJsonSchema(action.inputSchema)) normalizePluginJsonSchema(action.inputSchema);
+        context.addIssue({ code: 'custom', path, message: 'Provisioner role input must use its canonical contract and declared launch/resource schema.' });
       }
       const result = machineProvisionerRoleResultProjection(descriptor, binding.role);
-      const declaredResult = isNormalizedPluginJsonSchema(action.resultSchema)
-        ? action.resultSchema : normalizePluginJsonSchema(action.resultSchema);
-      const resultMatches = machineProvisionerResultMatches(declaredResult, result)
+      const resultMatches = machineProvisionerResultMatches(action.resultSchema, result)
         || binding.role === 'destroy' && machineProvisionerResultMatches(
-          declaredResult, MachineProvisionerPowerResultV1Schema.jsonSchema);
+          action.resultSchema, MachineProvisionerPowerResultV1Schema.jsonSchema);
       if (!resultMatches) {
+        if (!isNormalizedPluginJsonSchema(action.resultSchema)) normalizePluginJsonSchema(action.resultSchema);
         context.addIssue({ code: 'custom', path, message: 'Provisioner role results must use their canonical declared contract.' });
       }
       if (!isClosedSchema(action.inputSchema)) context.addIssue({ code: 'custom', path, message: 'Provisioner role input schemas must be closed.' });
