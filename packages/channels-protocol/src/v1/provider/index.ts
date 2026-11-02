@@ -162,6 +162,7 @@ export {
     ConversationProviderDescriptorV1JsonSchema,
 } from './descriptor.js';
 export type { ConversationProviderDescriptorV1 } from './descriptor.js';
+export { formatConversationPullRequestUrlV1 } from './pullRequestUrls.js';
 export type {
     ConversationOutboundTextLimitV1,
     ConversationProviderSetupOutcomeV1,
