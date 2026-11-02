@@ -116,6 +116,8 @@ export const ManagedBootstrapSshCarrierV1Schema = lazyDefinition(() => z.strictO
   kind: z.literal('ssh'), address: id(), user: id(),
   port: z.optional(z.int().check(z.gte(1), z.lte(65535))),
   hostKeyEvidence: ManagedSshHostKeyEvidenceV1Schema,
+  /** The provider installed the host identity from this resource's retained credential. */
+  hostKeySource: z.optional(z.literal('retained-credential')),
   credentialRef: SharedSavedSecretRefV1Schema,
 }));
 export const ManagedBootstrapCarrierV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [ManagedBootstrapNativeCarrierV1Schema, ManagedBootstrapSshCarrierV1Schema]));

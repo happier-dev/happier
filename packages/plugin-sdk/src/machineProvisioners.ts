@@ -8,6 +8,7 @@ import type { PluginProcessResult } from './services/io.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
 import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginContributionRef } from './identity.js';
+import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 export type MachineProvisionerContributionV1 = Readonly<{
   id: string;
@@ -66,8 +67,7 @@ export type MachineProvisionerResourceV1<TValue = ProtocolJsonValue> = Readonly<
   devcontainerObservation?: DevcontainerNativeObservationV1 }>;
 export type MachineProvisionerRefusalCodeV1 = 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
 export type MachineProvisionerAcquireResultV1<TResource = ProtocolJsonValue, TNativeOperation = ProtocolJsonValue> = Readonly<{ kind: 'bound'; resource: MachineProvisionerResourceV1<TResource> }> | Readonly<{ kind: 'pending'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation> }> | Readonly<{ kind: 'unknown'; recovery: Readonly<{ reference: string; reason: string; consoleUrl?: string }> }> | Readonly<{ kind: 'rejected'; code: MachineProvisionerRefusalCodeV1 }>;
-export type MachineProvisionerBootstrapCarrierV1 = Readonly<{ kind: 'native'; transport: Readonly<{ contributionRef: PluginContributionRef; schemaVersion: number }>;
-  guestHome?: Readonly<{ homeDir: string; happyHomeDir: string; daemonStartup: 'native-process' }> }> | Readonly<{ kind: 'ssh'; address: string; user: string; port?: number; hostKeyEvidence: Readonly<{ hostKey: string; fingerprint: string }>; credentialRef: Readonly<{ kind: 'shared_resource'; resourceId: string }> }>;
+export type MachineProvisionerBootstrapCarrierV1 = ManagedBootstrapCarrierV1;
 export type MachineProvisionerObservationV1 = Readonly<{ observedAt: number; availability: 'present' | 'absent' | 'unavailable'; power?: 'running' | 'stopped' | 'suspended' | 'unknown'; storage?: 'retained' | 'lost' | 'unknown'; daemon?: 'connected' | 'disconnected' | 'unknown'; billing?: MachineProvisionerContributionV1['billing']; prices?: readonly MachineProvisionerPriceV1[]; nativeExpiry?: number; reason?: string }>;
 export type MachineProvisionerPowerResultV1 = Readonly<{ kind: 'confirmed' }> | Readonly<{ kind: 'unknown'; code?: string }> | Readonly<{ kind: 'refused'; code: string }>;
 export type MachineProvisionerDestroyResultV1<TNativeOperation = ProtocolJsonValue> = MachineProvisionerPowerResultV1
