@@ -420,9 +420,12 @@ vi.mock('@/components/ui/icons/Icon', () => ({
 // runtime — without this, every component rendering a real icon fails to construct. Host-element
 // stand-ins keep the icon component in the tree while the leaf drawing primitives become
 // inspectable placeholders. A test needing different behaviour can still mock it locally.
-vi.mock('react-native-svg', () => {
+vi.mock('react-native-svg', async (importOriginal) => {
+    // Keep parsing and AST construction real; only native drawing views are SDK stand-ins.
+    const actual = await importOriginal<typeof import('react-native-svg')>();
     const host = (name: string) => name;
     return {
+        ...actual,
         default: host('Svg'), Svg: host('Svg'), SvgXml: host('SvgXml'),
         Path: host('Path'), G: host('G'), Circle: host('Circle'), Ellipse: host('Ellipse'),
         Rect: host('Rect'), Line: host('Line'), Polyline: host('Polyline'), Polygon: host('Polygon'),

@@ -32,20 +32,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('react-native-svg', () => ({
-    SvgXml: (props: any) => React.createElement('SvgXml', props),
-    SvgAst: (props: any) => React.createElement('SvgAst', props),
-    parse: (_xml: string, middleware?: (root: {
-        tag: string;
-        props: Record<string, unknown>;
-        children: [];
-        parent: null;
-        Tag: () => null;
-    }) => unknown) => {
-        const root = { tag: 'svg', props: {}, children: [] as [], parent: null, Tag: () => null };
-        middleware?.(root);
-        return root;
-    },
+vi.mock('react-native-svg', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('react-native-svg')>()),
+    SvgXml: (props: Record<string, unknown>) => React.createElement('SvgXml', props),
+    SvgAst: (props: Record<string, unknown>) => React.createElement('SvgAst', props),
 }));
 
 describe('FileBinaryState (svg previews)', () => {
