@@ -9158,6 +9158,7 @@ localTailscale: {
   },
 
   voiceSurface: {
+    approvalTapRequired: 'このリクエストは Happier でのタップが必要です。開いて承認または拒否してください。',
     reviewCredentials: '認証情報を確認',
     connectAgent: '接続',
     setUpAgent: ({ agent }: { agent: string }) => `${agent} を設定`,

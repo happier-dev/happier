@@ -55,6 +55,7 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
 export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
   {
     id: 'approval.request.list', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'required'},
+    prompting: { voiceHotPath: true },
     title: 'List approval requests',
     description: 'List approval queue entries from targeted approval artifact headers.',
     safety: 'safe',

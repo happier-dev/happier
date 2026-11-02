@@ -10478,6 +10478,7 @@ const enVoiceAssistant = {
 };
 
 const enVoiceSurface = {
+  approvalTapRequired: 'This request needs a tap in Happier. Open it to approve or reject.',
   reviewCredentials: 'Review credentials',
   connectAgent: 'Connect',
   setUpAgent: ({ agent }: { agent: string }) => `Set up ${agent}`,

@@ -178,7 +178,7 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     requiresActionIds: ['approval.request.list', 'approval.request.get'],
   }],
   'approval.request.decide': [{
-    text: 'Use approval_request_decide with the discovered artifactId for an Account request. For a native Session permission request, use session_permission_respond with its sessionId and requestId. Read the request and ask the person before deciding; the Voice delegation preference and canonical permission policy still apply',
+    text: 'Use approval_request_decide with the discovered artifactId for an Account request. For a native Session permission request, use session_permission_respond with its sessionId and requestId. The person’s spoken request confirms the decision when Voice approvals are enabled; read back the request before deciding. When disabled, explain that a tap in the request UI is required. The canonical permission policy still applies',
     requiresActionIds: ['approval.request.list', 'approval.request.get', 'approval.request.decide', 'session.permission.respond'],
   }],
   'review.start': [{ text: 'Use listReviewEngines before guessing engineIds from engine names', requiresActionIds: ['review.engines.list'] }],

@@ -8862,6 +8862,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   voiceSurface: {
+    approvalTapRequired: 'Esta solicitud requiere un toque en Happier. Ábrela para aprobarla o rechazarla.',
     reviewCredentials: 'Revisar credenciales',
     connectAgent: 'Conectar',
     setUpAgent: ({ agent }: { agent: string }) => `Configurar ${agent}`,

@@ -4892,7 +4892,8 @@ In 0.3 development, **Voice agent can approve requests** (`voice.canApproveReque
 defaults on for Local Voice and realtime modes exposing host decision tools. The
 Voice agent may approve or deny any pending request on the person's behalf through
 the existing decision owners, including requests surfaced in a brief.
-Prompt guidance tells it to read the request, ask, and follow the person's answer.
+The person's spoken request is the confirmation; prompt guidance tells the agent
+to read back the request and follow that decision.
 Decisions are attributed to the Voice agent acting for the person. Turning the
 setting off requires a tap in the request UI. The captured Account's current
 preference is checked again when a prepared decision resumes and immediately
@@ -5838,6 +5839,16 @@ capability through the existing approval owners, not direct execution authority 
 other effects. The original Account and request entitlements still apply. Turning
 the setting off restores the tap requirement; Agent, MCP, API-token and other
 non-Voice callers keep the authority rules below.
+
+The shared Action catalog documents the approval-list tool alongside request
+reads and decisions. Settings discovery publishes page ids derived from the
+canonical setting declarations; omit `pageId` to find all displayed settings
+instead of guessing a page id from its title. Local Voice consumes this same
+catalog and executes the returned anchors through `settings.set`. A decision
+refused with `present_user_required` is spoken as a tap requirement, preserving
+the owner’s refusal rather than reporting a failed lookup.
+The provider privacy projection retains catalog operand names and declaration
+labels while continuing to redact actual file paths and private Session titles.
 
 `resolveCredentialActionAdmissionV1` admits `approval.request.decide` and
 `session.permission.respond` for a present user or an API token with opt-in

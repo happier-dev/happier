@@ -9243,6 +9243,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     },
 
         voiceSurface: {
+          approvalTapRequired: 'Этот запрос требует нажатия в Happier. Откройте его, чтобы одобрить или отклонить.',
             reviewCredentials: 'Проверить учётные данные',
             connectAgent: 'Подключить',
             setUpAgent: ({ agent }: { agent: string }) => `Настроить ${agent}`,

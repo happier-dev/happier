@@ -27,6 +27,9 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   if (!owner) return null;
   const envelope = record(entry.result);
   const unknown = t('entityDragDrop.preview.unknownDetail');
+  if (envelope?.ok === false && (envelope.errorCode ?? envelope.code) === 'present_user_required') {
+    return t('voiceSurface.approvalTapRequired');
+  }
   if (envelope?.ok !== true) return resolveActionExecutionFailureMessage(entry.result, unknown) ?? unknown;
   // Direct tools flatten the envelope; action_execute retains it. Neither
   // transport metadata nor a previous presentation belongs to owner output.

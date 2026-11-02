@@ -40,13 +40,19 @@ const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'na
  * the unrelated session-summary preference. Keep this classification at the
  * one result-redaction owner. Admitted inventory labels name Agents/models,
  * rather than Sessions, and follow the independent inventory permission.
- * Other tools still treat these keys as session-summary aliases.
+ * Settings and Action declarations also carry catalog labels, never Session
+ * summaries. Other tools still treat these keys as session-summary aliases.
  */
 const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
-const AGENT_CATALOG_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
-  (['agents.backends.list', 'agents.models.list'] as const).flatMap(id => [
+const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
+  (['agents.backends.list', 'agents.models.list', 'settings.list'] as const).flatMap(id => [
+    id, getActionSpec(id).bindings?.voiceClientToolName ?? '',
+  ]).filter(Boolean),
+);
+const ACTION_CATALOG_TOOL_NAMES: ReadonlySet<string> = new Set(
+  (['action.spec.search', 'action.spec.get'] as const).flatMap(id => [
     id, getActionSpec(id).bindings?.voiceClientToolName ?? '',
   ]).filter(Boolean),
 );
@@ -200,6 +206,7 @@ function redactVoiceToolResultValueWithClassification(
   value: unknown,
   prefs: VoiceToolResultRedactionPrefs,
   preservePresentationLabels: boolean,
+  preserveSchemaFieldPaths = false,
 ): unknown {
   const resolvedPrefs: VoiceToolResultRedactionPrefs = {
     shareFilePaths: prefs?.shareFilePaths === true,
@@ -207,7 +214,7 @@ function redactVoiceToolResultValueWithClassification(
     sharePermissionRequests: prefs?.sharePermissionRequests === true,
   };
   const stripped = stripGatedKeys(value, resolvedPrefs, 0, preservePresentationLabels);
-  return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped);
+  return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped, { preserveSchemaFieldPaths });
 }
 
 function projectActionResultForProvider(value: unknown): Readonly<{
@@ -280,7 +287,9 @@ export function redactVoiceToolResultForProvider(
   return redactVoiceToolResultValueWithClassification(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : value,
     prefs,
-    toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || AGENT_CATALOG_LABEL_TOOL_NAMES.has(toolName),
+    toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
+      || ACTION_CATALOG_TOOL_NAMES.has(toolName),
+    ACTION_CATALOG_TOOL_NAMES.has(toolName),
   );
 }
 

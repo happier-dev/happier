@@ -1,6 +1,6 @@
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1 } from '../settingsDeclarationActionFamily.js';
 import { ACTION_POLICY_ACTION_IDS, ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from '../actionPolicyActionFamily.js';
-import { describeSettingsDeclarationApprovalSummaryV1, projectSettingsDeclarationApprovalInputV1, readBuiltInSettingDeclarationV1, readBuiltInSettingsOperationApprovalPolicyV1, readBuiltInSettingsWriteSafetyV1, readBuiltInSettingsPermissionChangingV1 } from '../settings/settingsDeclarations.js';
+import { BUILT_IN_SETTINGS_DECLARATIONS_V1, describeSettingsDeclarationApprovalSummaryV1, projectSettingsDeclarationApprovalInputV1, readBuiltInSettingDeclarationV1, readBuiltInSettingsOperationApprovalPolicyV1, readBuiltInSettingsWriteSafetyV1, readBuiltInSettingsPermissionChangingV1 } from '../settings/settingsDeclarations.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
@@ -67,7 +67,10 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS = Object.freeze([
     approvalPresentation: { summary: (input: unknown) => describeSettingsDeclarationApprovalSummaryV1(id, input),
       projectInput: (input: unknown) => projectSettingsDeclarationApprovalInputV1(id, input) },
     inputHints: { fields: id === 'settings.list'
-      ? [{ path: 'pageId', title: 'Settings page', widget: 'text' }]
+      ? [{ path: 'pageId', title: 'Settings page', widget: 'text',
+        description: 'Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: '
+          + [...new Set(BUILT_IN_SETTINGS_DECLARATIONS_V1.map(setting => setting.pageId))].join(', '),
+      }]
       : [
         { path: 'anchor', title: 'Setting', widget: 'text', required: true },
         { path: 'target', title: 'Settings target', widget: 'json',

@@ -31,7 +31,11 @@ describe('voiceAgentPrompt', () => {
     const prompt = buildVoiceClientToolAgentPrompt({ actionSpecs: specs,
       availableToolNames: [...specs.map(spec => spec.bindings!.voiceClientToolName!), 'action_execute'] });
     const documented = [...prompt.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]);
-    expect(documented).toEqual(expect.arrayContaining(tools.filter(name => name !== 'settings_invoke' && name !== 'approval_request_list')));
+    expect(documented).toEqual(expect.arrayContaining(tools.filter(name => name !== 'settings_invoke')));
+    const local = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
+    expect([...local.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]))
+      .toEqual(expect.arrayContaining(tools));
+    expect(local).toContain('voiceConversations');
     for (const name of tools) expect(prompt).toContain(name);
     expect(prompt).toContain('action_execute');
     const disabled = buildVoiceClientToolAgentPrompt({ actionSpecs: specs,

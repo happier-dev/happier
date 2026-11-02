@@ -2,8 +2,9 @@ import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEff
 import { formatVoiceToolResultsFollowUp, VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
-import { isVoiceToolResultBlockedByPrivacy, redactVoiceToolResultForProvider, redactVoiceToolResultValue,
+import { isVoiceToolResultBlockedByPrivacy, redactVoiceActionExecutionResultForProvider, redactVoiceToolResultForProvider, redactVoiceToolResultValue,
   type VoiceToolResultRedactionPrefs } from './redactVoiceToolResult';
+import { resolveVoiceExecutionToolName, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 
 const PROVIDER_RESULT_ARGUMENT_OMITTED_TOOL_NAMES = new Set([
   getActionSpec('action.invoke').bindings?.voiceClientToolName,
@@ -16,12 +17,15 @@ export function projectVoiceToolResultsForFollowUp(
   prefs: VoiceToolResultRedactionPrefs,
 ): ReadonlyArray<LocalVoiceAgentToolResultEntry> {
   return toolResults.map(entry => {
-    if (isVoiceToolResultBlockedByPrivacy(entry.t, prefs)) {
+    const resultOwner = resolveVoiceExecutionToolName(entry.t, entry.args);
+    if (isVoiceToolResultBlockedByPrivacy(resultOwner, prefs)) {
       return { t: entry.t, args: null, result: { ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled' } };
     }
     const summary = resolveVoiceToolResultHumanSummary({ toolName: entry.t, toolInput: entry.args,
       toolResult: entry.result, shareFilePaths: prefs.shareFilePaths, shareSessionSummary: prefs.shareSessionSummary });
-    const result = redactVoiceToolResultForProvider(entry.t, entry.result, prefs);
+    const result = entry.t === VOICE_ACTION_EXECUTE_TOOL_NAME
+      ? redactVoiceActionExecutionResultForProvider(resultOwner, entry.result, prefs)
+      : redactVoiceToolResultForProvider(resultOwner, entry.result, prefs);
     return {
       t: entry.t,
       // The provider already owns this call. Repeating input would disclose Action

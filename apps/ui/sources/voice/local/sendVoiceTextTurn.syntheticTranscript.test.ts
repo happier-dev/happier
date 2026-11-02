@@ -3,6 +3,8 @@ import { createDeferred, createMachineFixture, createSessionFixture, createSessi
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { t } from '@/text';
+import { z } from 'zod/mini';
+import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
@@ -82,7 +84,7 @@ const events: string[] = [];
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let directPendingEntered = createDeferred<void>();
 type TurnReply = { assistantText: string; actions: VoiceAssistantAction[] };
-let turnReplies: (index: number) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
+let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
 let turnIndex = 0;
 let rejectStart = false;
 const repliesByStream = new Map<string, TurnReply>();
@@ -103,7 +105,7 @@ async function answerVoiceAgentRpc(method: string, input: unknown): Promise<unkn
       expect(admitted?.content.type).toBe('text');
       if (admitted?.content.type === 'text') expect(request.displayMessage ?? request.message).toBe(admitted.content.text);
     }
-    repliesByStream.set(streamId, turnReplies(turnIndex++));
+    repliesByStream.set(streamId, turnReplies(turnIndex++, request.message));
     return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId });
   }
   if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
@@ -286,7 +288,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
 
   afterEach(async () => { await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID); await disconnect?.(); disconnect = undefined; await account?.dispose(); });
 
-  it.each(['setting', 'existing-request', 'refused-setting'] as const)(
+  it.each(['setting', 'existing-request', 'approvals-off', 'refused-setting'] as const)(
     'executes the spoken %s without a model confirmation round and speaks only the owner outcome', async path => {
       const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
       const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
@@ -297,7 +299,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       const controller = new AbortController();
       let pending: Promise<string> | undefined;
       let artifactId: string | undefined;
-      if (path === 'existing-request') {
+      if (path === 'existing-request' || path === 'approvals-off') {
         const created = createDeferred<void>();
         approvalArtifacts.afterNextCreate(async () => { created.resolve(); });
         pending = handlers.settings_set!(input, { effectId: 'existing-settings-request', signal: controller.signal });
@@ -308,34 +310,85 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       }
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         status: 'connected', mode: 'listening', canStop: true });
-      const action = path !== 'existing-request'
-        ? { t: 'settings_set', args: input }
-        : { t: 'approval_request_decide', args: { artifactId: artifactId!, decision: 'approve' } };
-      // The provider claims success and NEVER repeats an Action with a binding.
-      // Completion must depend on the real owner, not on this provider prose.
-      turnReplies = index => index === 0
-        ? { assistantText: 'Replies is now set to Balanced.', actions: [action] }
-        : { assistantText: 'Unverified provider success claim.', actions: [] };
+      // Only the daemon/model transport is scripted. Each next operand comes from
+      // the real provider-bound discovery result, not from a fixture catalog.
+      let discoveredArtifactId: string | undefined;
+      const resultBody = (message: string) => z.object({ toolResults: z.array(z.object({ result: z.unknown() })) })
+        .parse(parseVoiceToolResultsFollowUp(message)).toolResults[0]!.result;
+      const catalog = z.object({ actionSpecs: z.array(z.object({ id: z.string(), bindings: z.optional(z.object({ voiceClientToolName: z.optional(z.string()) })),
+        inputHints: z.optional(z.object({ fields: z.array(z.object({ path: z.string(), description: z.optional(z.string()) })) })) })) });
+      let settingsListName = '';
+      let settingsSetName = '';
+      let discoveredAnchor = '';
+      turnReplies = (index, message) => {
+        if (index === 0) return { assistantText: 'Looking up the requested action.', actions: [
+          { t: 'searchActionSpecs', args: { query: artifactId ? 'list approval requests' : 'voice settings', limit: 5 } },
+        ] };
+        if (index === 1) {
+          expect(resultBody(message), JSON.stringify(resultBody(message))).toMatchObject({ ok: true });
+          const specs = catalog.parse(resultBody(message)).actionSpecs;
+          const spec = specs.find(spec => spec.id === (artifactId ? 'approval.request.list' : 'settings.list'));
+          expect(spec).toBeDefined();
+          expect(spec?.bindings?.voiceClientToolName).toEqual(expect.any(String));
+          if (artifactId) return { assistantText: '', actions: [{ t: spec!.bindings!.voiceClientToolName!, args: { status: 'open' } }] };
+          settingsListName = spec!.bindings!.voiceClientToolName!;
+          const page = spec!.inputHints?.fields.find(field => field.path === 'pageId')?.description
+            ?.match(/\bvoiceConversations\b/)?.[0];
+          expect(page).toBe('voiceConversations');
+          return { assistantText: '', actions: [{ t: settingsListName, args: { pageId: page } }] };
+        }
+        if (index === 2 && !artifactId) {
+          const settings = z.object({ items: z.array(z.object({ anchor: z.string(), title: z.string() })) }).parse(resultBody(message)).items;
+          const replies = settings.find(setting => setting.title === 'Replies');
+          expect(replies?.anchor).toBe(input.anchor);
+          discoveredAnchor = replies!.anchor;
+          return { assistantText: '', actions: [{ t: 'getActionSpec', args: { id: 'settings.set' } }] };
+        }
+        if (index === 3 && !artifactId) {
+          const spec = z.object({ actionSpec: z.object({ bindings: z.object({ voiceClientToolName: z.string() }) }) }).parse(resultBody(message)).actionSpec;
+          settingsSetName = spec.bindings.voiceClientToolName;
+          return { assistantText: 'Replies is now set to Balanced.', actions: [{ t: settingsSetName, args: { ...input, anchor: discoveredAnchor } }] };
+        }
+        if (index === 2 && artifactId) {
+          const requests = z.object({ items: z.array(z.object({ artifactId: z.string() })) }).parse(resultBody(message)).items;
+          discoveredArtifactId = requests.find(request => request.artifactId === artifactId)?.artifactId;
+          expect(discoveredArtifactId).toBe(artifactId);
+          return { assistantText: '', actions: [{ t: 'approval_request_get', args: { artifactId: discoveredArtifactId } }] };
+        }
+        if (index === 3 && artifactId) {
+          expect(resultBody(message)).toMatchObject({ ok: true, request: { status: 'open', actionId: 'settings.set' } });
+          return { assistantText: 'Approved.', actions: [{ t: 'approval_request_decide', args: { artifactId: discoveredArtifactId, decision: 'approve' } }] };
+        }
+        const result = resultBody(message);
+        expect(result).toMatchObject(path === 'approvals-off' ? { ok: false, errorCode: 'present_user_required' }
+          : path === 'refused-setting' ? { ok: false } : { ok: true });
+        return { assistantText: 'Unverified provider success claim.', actions: [] };
+      };
       const base = buildAccountSettings();
       const local = readLocalConversationVoiceSettings(base.voice);
       const settings = settingsParse({ ...base, ...normalizeVoiceSettingsLocalDelta({ voice: { ...base.voice,
-        canApproveRequests: true, providers: { ...base.voice.providers, local_conversation: { schemaVersion: 1,
+        canApproveRequests: path !== 'approvals-off', providers: { ...base.voice.providers, local_conversation: { schemaVersion: 1,
           config: { ...local, tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
             streaming: { ...local.streaming, enabled: true, ttsEnabled: true } } } } } }) });
+      storage.setState({ settings });
+      account.replaceAccountSettings('voice', { settings, version: 10 });
       const spoken: string[] = [];
       await speech.speak.withImplementation((text, options) => {
         spoken.push(text); options.onStart?.(); options.onDone?.();
       }, async () => {
         try {
           await sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
-            userText: path !== 'existing-request' ? 'In Voice settings change Replies from Short to Balanced.' : 'Approve this exact request.',
+            userText: artifactId ? 'Approve this exact request.' : 'In Voice settings change Replies from Short to Balanced.',
             playbackController: createVoicePlaybackController(), voiceAgentSessions, signal: controller.signal });
-          expect(JSON.parse(await handlers.settings_get!({ anchor: input.anchor }))).toMatchObject({ ok: true, value: path === 'refused-setting' ? 'short' : 'balanced' });
+          expect(JSON.parse(await handlers.settings_get!({ anchor: input.anchor }))).toMatchObject({ ok: true, value: path === 'refused-setting' || path === 'approvals-off' ? 'short' : 'balanced' });
           expect(spoken).not.toContain('Replies is now set to Balanced.');
           expect(spoken).not.toContain('Unverified provider success claim.');
-          if (path === 'refused-setting') expect(spoken).not.toContain(t('common.done'));
+          if (path === 'approvals-off') expect(spoken).toContain(t('voiceSurface.approvalTapRequired'));
+          else if (path === 'refused-setting') expect(spoken).not.toContain(t('common.done'));
           else expect(spoken).toContain(path === 'setting' ? t('common.done') : t('approvals.status.executed'));
-          if (artifactId) {
+          if (artifactId && path === 'approvals-off') {
+            expect(ApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(artifactId)!)).status).toBe('open');
+          } else if (artifactId) {
             expect(ApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(artifactId)!)))
               .toMatchObject({ status: 'executed', decision: { decidedVia: 'voice' }, execution: { ok: true } });
             await pending;

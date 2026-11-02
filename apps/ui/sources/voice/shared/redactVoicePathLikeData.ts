@@ -76,7 +76,7 @@ export function redactVoicePathLikeString(value: string): string {
     return redactPathLikeTokens(replaceAbsolutePathPatterns(value));
 }
 
-export function redactVoicePathLikeData(input: unknown): unknown {
+export function redactVoicePathLikeData(input: unknown, options?: Readonly<{ preserveSchemaFieldPaths?: boolean }>): unknown {
     const seen = new Set<object>();
 
     const walk = (value: unknown, depth: number, parentKey: string | null): unknown => {
@@ -84,7 +84,10 @@ export function redactVoicePathLikeData(input: unknown): unknown {
         // untouched deep subtree could otherwise carry paths beyond the limit.
         if (depth > 20) return null;
         if (typeof value === 'string') {
-            if (isPathBearingFieldKey(parentKey) && value.trim()) {
+            // Catalog `path` values name schema operands (pageId, anchor, ...).
+            // Actual filesystem strings still pass through content redaction below.
+            if (isPathBearingFieldKey(parentKey) && value.trim()
+                && !(options?.preserveSchemaFieldPaths && parentKey === 'path')) {
                 return REDACTED_PATH_TOKEN;
             }
             return redactVoicePathLikeString(value);

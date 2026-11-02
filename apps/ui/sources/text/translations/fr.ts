@@ -8702,6 +8702,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   voiceSurface: {
+    approvalTapRequired: 'Cette demande nécessite un appui dans Happier. Ouvrez-la pour l’approuver ou la refuser.',
     reviewCredentials: 'Vérifier les identifiants',
     connectAgent: 'Connecter',
     setUpAgent: ({ agent }: { agent: string }) => `Configurer ${agent}`,

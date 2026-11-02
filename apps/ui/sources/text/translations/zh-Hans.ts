@@ -8526,6 +8526,7 @@ export const zhHans: TranslationStructure = {
   },
 
   voiceSurface: {
+    approvalTapRequired: '此请求需要在 Happier 中点击确认。打开请求以批准或拒绝。',
     reviewCredentials: '检查凭据',
     connectAgent: '连接',
     setUpAgent: ({ agent }: { agent: string }) => `设置 ${agent}`,
