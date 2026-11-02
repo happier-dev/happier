@@ -734,6 +734,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   sessionStop?: ActionExecutorDeps['sessionStop'];
   hostActionApprovalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'];
   runActionOperation?: ActionExecutorDeps['runActionOperation'];
+  prepareHostReviewedChildren?: ActionExecutorDeps['prepareHostReviewedChildren'];
+  machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
   projectAction?: ActionExecutorDeps['projectAction'];
   machineGuardAction?: ActionExecutorDeps['machineGuardAction'];
   projectWorkerAction?: ActionExecutorDeps['projectWorkerAction'];
@@ -1029,6 +1031,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...((approvalLifetime ?? params.hostActionApprovalLifetime) ? { hostActionApprovalLifetime: approvalLifetime ?? params.hostActionApprovalLifetime } : {}),
       ...(params.runActionOperation ? { runActionOperation: params.runActionOperation } : {}),
+      ...(params.prepareHostReviewedChildren ? { prepareHostReviewedChildren: params.prepareHostReviewedChildren } : {}),
+      ...(params.machineReachabilityAction ? { machineReachabilityAction: params.machineReachabilityAction } : {}),
       ...(params.projectAction ? { projectAction: params.projectAction } : {}),
       ...(params.projectWorkerAction ? { projectWorkerAction: params.projectWorkerAction } : {}),
       ...(params.projectDefinitionAction ? { projectDefinitionAction: params.projectDefinitionAction } : {}),

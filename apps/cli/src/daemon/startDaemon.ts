@@ -1,3 +1,4 @@
+import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
@@ -2372,6 +2373,9 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       isShuttingDown: isDaemonQuiescing,
       processEnv: process.env,
     });
+    machineRpcRouteAttachments.attachMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({
+      getMachineClient: () => apiMachine, target: machineResourceTarget, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
+    }));
     hasPendingRunnerRestarts = readPendingRunnerRestarts;
     processLeftBehindPass = sessionControlLeftBehindPass;
     await processLeftBehindPass.firstPass();

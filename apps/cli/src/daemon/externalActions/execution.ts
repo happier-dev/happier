@@ -180,16 +180,14 @@ resolveServerFeaturesSnapshot?: () =>
     sessionStopEffect?: ActionExecutorDeps['sessionStop'],
     postAgentDiscussionMessage?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['postAgentDiscussionMessage'],
     accountPluginActions?: Readonly<{ accountPluginActions: true }>,
-  ): Pick<
-    ReturnType<typeof createCliActionExecutorFromCredentials>,
-    'execute' | 'replayApprovedApprovalRequest' | 'continueConfidentialApprovalRequest'
-  > => {
+  ): DaemonExternalActionExecutor => {
     const invoke = async (
       actionId: Parameters<ReturnType<typeof createCliActionExecutorFromCredentials>['execute']>[0],
       input: unknown,
       context?: RpcActionExecutorContext,
       replay?: Parameters<ReturnType<typeof createCliActionExecutorFromCredentials>['replayApprovedApprovalRequest']>[0],
       confidential?: Readonly<{ input: unknown }>,
+      replayIngress?: Parameters<ExternalActionApprovalReplay>[1],
     ): Promise<ActionExecuteResult> => withApprovalActionTrace(actionId, () => timeApprovalPhase<ActionExecuteResult>('approval.daemon.invoke', async () => {
       context?.recordActionStartDiagnostic?.({ phase: 'credentialed_factory', requesterRuntimeBound: Boolean(requesterRuntime) });
       const trace = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
@@ -432,6 +430,15 @@ resolveServerFeaturesSnapshot?: () =>
         if (!requester) {
           if (context?.machineAdmission && context.verifyMachineAdmissionCurrent)
             return { ...context, signal: context.signal ?? new AbortController().signal };
+          if (replayIngress !== undefined) {
+            const receivingAdmission = replayIngress.machineAdmission;
+            const receivingCurrentness = replayIngress.verifyMachineAdmissionCurrent;
+            if (!receivingAdmission || typeof receivingCurrentness !== 'function' || !replay?.signal) return undefined;
+            // The registered replay owner already selected the admitted Account;
+            // retain only its receiving pair, never the deciding Action's root.
+            return { ...context, signal: context?.signal ?? replay.signal,
+              machineAdmission: receivingAdmission, verifyMachineAdmissionCurrent: receivingCurrentness };
+          }
           const binding = authorization?.binding;
           const http = authorization?.requesterHttpProjection;
           const installation = externalActionInstallationIdentity;
@@ -643,6 +650,23 @@ resolveServerFeaturesSnapshot?: () =>
         custodianAccountId: requesterRuntime.bootstrap.savedSecretOperationContext.machineAdmission?.custodianAccountId,
         isCurrent: () => requesterRuntime.isCurrent(),
       } : null;
+      const ordinaryReachabilityTransport = (actionId === 'machines.reachability.inspect'
+        || actionId === 'machines.reachability.configure')
+        && sameStoredCredentials(credentials, params.credentials)
+        && replay === undefined && replayIngress === undefined
+        && requesterAccountContext === undefined && requesterRuntime == null
+        && executionContext?.machineAdmission === undefined
+        && executionContext?.verifyMachineAdmissionCurrent === undefined
+        && executionContext?.callerInputAuthorization === undefined
+        && executionContext?.externalActionExecutionAuthorization === undefined
+        && executionContext?.externalActionCredential === undefined
+        && executionContext?.sessionActionOrigin === undefined
+        && executionContext?.rpcSessionAuthorization === undefined
+        && executionContext?.requesterSessionBootstrap === undefined;
+      const reachabilityHost = !ordinaryReachabilityTransport && apiMachineForSessions
+        && (!['machines.reachability.inspect', 'machines.reachability.configure'].includes(actionId)
+          || input && typeof input === 'object' && 'machineId' in input && input.machineId === params.machineId)
+        ? apiMachineForSessions : null;
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
@@ -716,6 +740,28 @@ resolveServerFeaturesSnapshot?: () =>
             ...(ingress?.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
           }, ...(moveExecutor ? { execute: operation => moveExecutor.execute('projects.service.relocate', request.input, operation) } : {}) });
         } } : {}),
+        ...(reachabilityHost ? {
+          prepareHostReviewedChildren: async request => {
+            if (!reachabilityHost || request.actionId !== 'machines.reachability.inspect'
+              && request.actionId !== 'machines.reachability.configure') return null;
+            const ingress = resolveRequesterIngress(request.context,
+              request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
+            if (!ingress) return {
+              ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+            };
+            return reachabilityHost.prepareMachineReachabilityReviewedChildren(request, ingress);
+          },
+        } : {}),
+        ...(reachabilityHost ? {
+          machineReachabilityAction: async request => {
+            const ingress = resolveRequesterIngress(request.context,
+              request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
+            if (!ingress || request.input.machineId !== params.machineId) return {
+              ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+            };
+            return reachabilityHost.executeMachineReachabilityAction(request, ingress);
+          },
+        } : {}),
         ...(apiMachineForSessions && actionId === 'machines.setup.plan' && input && typeof input === 'object'
           && !('targets' in input) && 'machineId' in input && input.machineId === params.machineId ? {
           machineSetupPlan: async request => {
@@ -1256,9 +1302,9 @@ resolveServerFeaturesSnapshot?: () =>
         context, undefined, { input }),
       // The existing replay owner loads and rechecks the immutable native origin;
       // the fresh reviewer context supplies custody, not a replacement native root.
-      replayApprovedApprovalRequest: args => invoke('approval.request.decide', undefined,
+      replayApprovedApprovalRequest: (args, machineIngress) => invoke('approval.request.decide', undefined,
         { ...(args.signal ? { signal: args.signal } : {}),
-          ...(args.callerAuthority ? { authority: args.callerAuthority } : {}) }, args),
+          ...(args.callerAuthority ? { authority: args.callerAuthority } : {}) }, args, undefined, machineIngress),
     };
   };
   return createExternalActionExecutor;

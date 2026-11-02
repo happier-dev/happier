@@ -29,6 +29,7 @@ import type {
 import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDtos.generated.js';
 import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 import type { MachineProvisionerContributionV1 } from './machineProvisioners.js';
+import type { AccessProviderContributionV1 } from './accessProviders.js';
 import type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
@@ -590,6 +591,7 @@ export interface PluginManifest {
     }>[];
   } & {
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
+    accessProviders?: readonly AccessProviderContributionV1[];
     deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
@@ -735,6 +737,7 @@ export interface PluginManifest {
 /** Canonical readonly contribution collection returned by public structural parsing. */
 export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
+  accessProviders: readonly AccessProviderContributionV1[];
   deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];

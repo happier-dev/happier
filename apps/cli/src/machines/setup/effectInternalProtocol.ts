@@ -1,4 +1,10 @@
-
-
 export {
-  MachineEffectInternalRequestSchema, MachineEffectInternalRecordSchema, type MachineEffectInternalRequest } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+  MachineAdministratorEstablishFrameSchema,
+  MachineEffectInternalRequestSchema,
+  MachineEffectInternalFirewallControlSchema,
+  MachineEffectInternalRecordSchema,
+  type MachineAdministratorEstablishFrame,
+  type MachineEffectInternalRequest,
+  type MachineEffectInternalResult,
+  type MachineEffectInternalRecord,
+} from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';

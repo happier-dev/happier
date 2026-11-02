@@ -200,10 +200,15 @@ export async function runElevatedMachineReboot(input: Pick<RunElevatedEffectInpu
 export async function checkElevatedMachineSetupPlan(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal'> & Readonly<{
     basis: MachineSetupEffectPlanV1['basis']; steps: MachineRecipeStepV1[]; checks?: MachineRecipeCheckV1[];
 }>, dependencies: MachineElevationDependencies): Promise<MachineSetupEffectPlanV1 | null> {
-    if ((await dependencies.readPolicy()).mode !== 'preauthorized') return null;
-    const result = await runElevatedProcess(input, dependencies, { kind: 'check', basis: input.basis, steps: input.steps,
-        ...(input.checks !== undefined ? { checks: input.checks } : {}) });
+    const result = await checkElevatedMachineSetupPlanResult(input, dependencies);
     return result.outcome === 'checked' ? result.plan : null;
+}
+
+/** Inspect retains the existing elevation owner's typed refusal and recovery. */
+export async function checkElevatedMachineSetupPlanResult(input: Parameters<typeof checkElevatedMachineSetupPlan>[0],
+    dependencies: MachineElevationDependencies): Promise<ElevatedProcessResult> {
+    return runElevatedProcess(input, dependencies, { kind: 'check', basis: input.basis, steps: input.steps,
+        ...(input.checks !== undefined ? { checks: input.checks } : {}) });
 }
 
 /** Only this exact admitted policy transition may use its previous authority. */

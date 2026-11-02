@@ -25,6 +25,11 @@
       },
       "default": "./dist/index.js"
     },
+    "./access-providers": {
+      "happier-source": "./src/access-providers/index.ts",
+      "types": "./dist/access-providers/index.d.ts",
+      "default": "./dist/access-providers/index.js"
+    },
     "./actions": {
       "happier-source": "./src/actions/index.ts",
       "types": "./dist/actions/index.d.ts",

@@ -53,6 +53,7 @@ import type { BackgroundServiceDefinition } from './backgroundServices.js';
 import type { PluginCaptureSourceRuntime, PluginCaptureSourceDeclaration } from './captureSources.js';
 import type { PluginProjectNativeAdapterDefinitionV1 } from './projectNativeAdapters.js';
 import type { MachineProvisionerAuthorDefinitionV1 } from './machineProvisioners.js';
+import type { AccessProviderAuthorDefinitionV1 } from './accessProviders.js';
 import type { EventContribution } from './events.js';
 import type { HookContribution } from './hooks.js';
 import type {
@@ -914,6 +915,7 @@ export type DefinePluginInput<
             Omit<PluginLanguageServerContributionV1, 'id'>
         >>;
         machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
+        accessProviders?: Readonly<Record<PluginContributionLocalId, AccessProviderAuthorDefinitionV1>>;
         deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
         healthCheckKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./healthCheckKinds.js').HealthCheckKindContributionV1, 'id'>>>;
         machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
@@ -2462,6 +2464,7 @@ const NOTIFICATIONS_ADAPTER = descriptorFamilyAdapter('notifications');
 const MANAGED_DEPENDENCIES_ADAPTER = descriptorFamilyAdapter('managedDependencies');
 const LANGUAGE_SERVERS_ADAPTER = descriptorFamilyAdapter('languageServers');
 const MACHINE_PROVISIONERS_ADAPTER = descriptorFamilyAdapter('machineProvisioners');
+const ACCESS_PROVIDERS_ADAPTER = descriptorFamilyAdapter('accessProviders');
 const SYSTEM_TOOLS_ADAPTER = descriptorFamilyAdapter('systemTools');
 const VOICE_MODEL_PACKS_ADAPTER = descriptorFamilyAdapter('voiceModelPacks');
 const OPENABLE_CONTENT_VIEWERS_ADAPTER = descriptorFamilyAdapter('openableContentViewers');
@@ -2668,6 +2671,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     managedDependencies: { classification: 'descriptor-only', authorKey: 'managedDependencies', inputShape: 'descriptor', adapter: MANAGED_DEPENDENCIES_ADAPTER },
     languageServers: { classification: 'descriptor-only', authorKey: 'languageServers', inputShape: 'descriptor', adapter: LANGUAGE_SERVERS_ADAPTER },
     machineProvisioners: { classification: 'descriptor-only', authorKey: 'machineProvisioners', inputShape: 'descriptor', adapter: MACHINE_PROVISIONERS_ADAPTER },
+    accessProviders: { classification: 'descriptor-only', authorKey: 'accessProviders', inputShape: 'descriptor', adapter: ACCESS_PROVIDERS_ADAPTER },
     systemTools: { classification: 'descriptor-only', authorKey: 'systemTools', inputShape: 'descriptor', adapter: SYSTEM_TOOLS_ADAPTER },
     voiceModelPacks: { classification: 'descriptor-only', authorKey: 'voiceModelPacks', inputShape: 'descriptor', adapter: VOICE_MODEL_PACKS_ADAPTER },
     openableContentViewers: { classification: 'descriptor-only', authorKey: 'openableContentViewers', inputShape: 'descriptor', adapter: OPENABLE_CONTENT_VIEWERS_ADAPTER },

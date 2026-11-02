@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { MachinePublicSshV1Schema } from '../setup/machineFirewallV1.js';
+import { MachinePublicSshV1Schema, MachineFirewallTransitionFactsV1Schema } from '../setup/machineFirewallV1.js';
 import { AccessProviderRefV1Schema, AccessProviderSelectionV1Schema, AccessProviderInboundPortV1Schema, AccessProviderHttpsConstraintsV1Schema, MachinePrivateNetworkObservationV1Schema } from '../../plugins/contributions/accessProviders.js';
 export {
   AccessProviderRefV1Schema, type AccessProviderRefV1,
@@ -51,6 +51,7 @@ export const MachineReachabilityObservationV1Schema = lazyZodSchema(() => z.stri
     publicSsh: z.enum(['open', 'closed', 'unknown']),
   }),
   privateNetworks: z.array(MachinePrivateNetworkObservationV1Schema), ingress: z.array(MachineIngressCapabilityV1Schema),
+  nativeFirewall: z.optional(MachineFirewallTransitionFactsV1Schema),
   recovery: z.optional(MachineReachabilityRecoveryV1Schema),
 }));
 export type MachineReachabilityObservationV1 = z.infer<typeof MachineReachabilityObservationV1Schema>;

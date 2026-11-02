@@ -7423,3 +7423,22 @@ its own authority and binding. People/Bot readiness rendering remains in progres
 - [cli-architecture.md](cli-architecture.md) — how a spec row becomes a CLI command.
 - [peer-mediation.md](peer-mediation.md) — the Machine-RPC route classes and which methods may go direct.
 - [session-collaboration.md](session-collaboration.md) — the Session-side owners many of these Actions call.
+
+## Machine reachability inspection (0.3 development)
+
+`machines.reachability.inspect` observes a Machine even when its saved posture is
+absent. A general inspection returns nullable `posture` and protected native
+firewall facts in `observation.nativeFirewall`, using the existing root CHECK
+interpreter without APPLY or an interactive elevation prompt. Available facts
+include the actual SSH endpoints and their source ranges; unavailable native
+facts name `requiredFact`. Desired posture is never treated as observed SSH
+exposure. A provider-specific membership review reads only its selected provider.
+
+Without the required administrator access, inspection returns the elevation
+owner's typed refusal, such as `mode_none` or `not_preauthorized`. A missing
+managed executable returns `managed_cli_unavailable` with the installation
+recovery in `details.recovery: {kind: install_managed_cli, executablePath}`.
+Inspection does not save a posture or change firewall
+rules. The optional native-facts field is an unreleased 0.3 closed Protocol
+extension requiring matching development readers; there is no persisted-format
+migration or released compatibility adapter.

@@ -1,3 +1,5 @@
+import { registerDaemonMachineReachabilityRpcHandlers, executeDaemonMachineReachabilityAction,
+    prepareDaemonMachineReachabilityReviewedChildren, type DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
 import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
@@ -2566,6 +2568,60 @@ export class ApiMachineClient {
 
     registerMachineResourcesPolicyRoutes(options: DaemonMachineResourcesPolicyRoutes): void {
         registerDaemonMachineResourcesPolicyRpcHandlers(this.rpcHandlerManager, options);
+    }
+
+    private machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
+
+    private readMachineReachabilityRoutesForRequest(input: unknown, ingress: RpcHandlerContext) {
+        const routes = this.machineReachabilityRoutes;
+        const machineId = input && typeof input === 'object' && 'machineId' in input ? input.machineId : undefined;
+        const verifyMachineAdmissionCurrent = ingress.verifyMachineAdmissionCurrent;
+        if (!routes || this.projectionSchedulingClosed || !ingress.machineAdmission || !verifyMachineAdmissionCurrent
+            || machineId !== this.machine.id) return null;
+        return { routes, verifyMachineAdmissionCurrent };
+    }
+
+    async prepareMachineReachabilityReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
+        ingress: RpcHandlerContext): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+        if (request.actionId !== 'machines.reachability.inspect' && request.actionId !== 'machines.reachability.configure') return null;
+        const admitted = this.readMachineReachabilityRoutesForRequest(request.input, ingress);
+        if (!admitted) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+        return prepareDaemonMachineReachabilityReviewedChildren({ ...admitted.routes,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort() }, request, ingress);
+    }
+
+    async executeMachineReachabilityAction(request: Parameters<NonNullable<ActionExecutorDeps['machineReachabilityAction']>>[0], ingress: RpcHandlerContext): Promise<unknown> {
+        const admitted = this.readMachineReachabilityRoutesForRequest(request.input, ingress);
+        if (!admitted) {
+            return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+        }
+        return executeDaemonMachineReachabilityAction({ ...admitted.routes,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort() }, request, ingress);
+    }
+
+    registerMachineReachabilityRoutes(options: DaemonMachineReachabilityRoutes): void {
+        const routes: DaemonMachineReachabilityRoutes = { ...options,
+            target: () => {
+                const target = options.target();
+                return target?.machineId === this.machine.id && target.serverId === this.machineRuntimeServerId ? target : null;
+            },
+        };
+        this.machineReachabilityRoutes = routes;
+        registerDaemonMachineReachabilityRpcHandlers(this.rpcHandlerManager, { ...routes,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            observeExecution: this.actionOperationRuntime.observeExecution,
+            resolveActionExecutor: () => ({ execute: async (actionId, input, context) => {
+                const owner = this.externalActionIngressOwner;
+                const signed = SignedRootActionIdSchema.safeParse(actionId);
+                if (!owner || this.projectionSchedulingClosed || !signed.success
+                    || context?.serverId && context.serverId !== owner.currentServerId
+                    || !context?.runtimeAccountId) return {
+                        ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+                    };
+                return owner.executor.execute(signed.data, input, { ...context, serverId: owner.currentServerId,
+                    externalActionTarget: { kind: 'machine', machineId: this.machine.id } });
+            } }),
+        });
     }
 
     registerMachineAdminAccessRoutes(options: DaemonMachineAdminAccessRoutes): void {

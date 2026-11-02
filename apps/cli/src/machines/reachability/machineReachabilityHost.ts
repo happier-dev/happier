@@ -33,6 +33,7 @@ import { resolveMachineSetupNativeEffectKeys, type MachineSetupNativeEffectsInpu
 import { checkElevatedMachineSetupPlan, runElevatedEffect,
   type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { createReachabilityProviderHost } from './reachabilityProviderHost';
+import { inspectMachineReachabilityNativeFirewall } from './inspectMachineReachabilityNativeFirewall';
 import { withReachabilityJoinCredential } from './prepareReachabilityJoinCredential';
 import { SelectedProfileRefusal, readMachineReachabilityMetadata, observeMachineReachability,
   reachabilityPostureField, accessProviderSelectionsField } from './readMachineReachability';
@@ -117,7 +118,9 @@ function reviewedPlanDigest(basis: MachineReachabilityPlanBasisV1) {
 
 async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies,
   actionId: 'machines.reachability.inspect' | 'machines.reachability.configure') {
-  if (input.machineId !== deps.target.machineId || input.serverId && input.serverId !== deps.target.serverId) return refuse('target_mismatch');
+  // The Action executor resolves Home aliases; the receiving transport binds
+  // that Home's Machine admission. A local profile label is not a Home identity.
+  if (input.machineId !== deps.target.machineId) return refuse('target_mismatch');
   if (!await deps.isCurrent()) return refuse('approval_stale');
   const state = await readMachineReachabilityMetadata(deps.port);
   const providers = providerHost(deps, actionId);
@@ -266,6 +269,23 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
 export async function inspectMachineReachability(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies) {
   const prepared = await prepare(input, deps, 'machines.reachability.inspect');
   if ('ok' in prepared) return prepared;
+  // Network membership reviews demand only that provider. A general Machine
+  // inspection also observes SSH; desired posture is never evidence of it.
+  if (!input.change || input.change.kind === 'posture') {
+    const requestId = deps.context.actionRequestId;
+    if (!requestId) return refuse('admission_unavailable');
+    const setup = await getMachineSetupDesiredV1(deps.port);
+    if (setup.status !== 'ready') return refuse(`machine_setup_content_${setup.status}`);
+    const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
+      signal: deps.context.signal, basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
+    { ...deps.elevation, verifyCurrent: deps.isCurrent });
+    if (!native.ok) return native;
+    const facts = native.facts;
+    const publicSsh = facts.status === 'unavailable' ? 'unknown' : facts.retainedSshEndpoints.some(endpoint =>
+      facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
+    prepared.observation = { ...prepared.observation, nativeFirewall: facts,
+      management: { ...prepared.observation.management, publicSsh } };
+  }
   const observation = await deps.publish(prepared.observation);
   return { machineId: deps.target.machineId, ...prepared.state, observation,
     ...(prepared.plan ? { plan: prepared.plan } : {}) };

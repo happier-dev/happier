@@ -29,7 +29,7 @@ export function readMachineFirewallTransitionFactsV1(observation: MachineSetupSt
 
 /** CHECK-only declaration to the existing native observer. This is never an
  * effect plan and must never be returned in the materialized APPLY list. */
-export function createMachineFirewallTransitionObservationStepV1(intent: MachineFirewallTransitionIntentV1): Firewall {
+export function createMachineFirewallTransitionObservationStepV1(intent: Pick<MachineFirewallTransitionIntentV1, 'caddy'>): Firewall {
   return { id: 'reachability-native-facts', kind: 'firewall', exposures: readCaddyContainerFirewallExposures(intent.caddy),
     rules: 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n' };
 }
