@@ -274,6 +274,8 @@ import { prepareFoundSkillExport } from '../../../../../../cli/src/machines/tran
 import { registerMachineDirectTransferExportRpcHandlers } from '../../../../../../cli/src/api/machine/rpcHandlers.directTransferExports';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 
+import { machineOperationSupportForTest } from '@/testkit/machineOperationSupport.testkit';
+
 const ACTION_ID = "teams.policy.set" as const;
 function createTeamPolicyInput(teamId: string) {
     return TeamPolicySetInputV1Schema.parse({ v: 1, teamId, externalSharingPolicy: 'allowed' });
@@ -4212,14 +4214,14 @@ describe("external Action execution authorization", () => {
         const sourceCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const sourceKey = tweetnacl.sign.keyPair();
         const source = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: sourceCustodian.id,
-            active: true, metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            active: true, ...machineOperationSupportForTest(), metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(sourceKey.publicKey) } });
         await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: sourceCustodian.id, machineId: source.id,
             principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
         const controllerCustodian = controllerKind === 'hub' ? await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } }) : sourceCustodian;
         const controllerKey = controllerKind === 'hub' ? tweetnacl.sign.keyPair() : sourceKey;
         const controller = controllerKind === 'hub' ? await db.machine.create({ data: { id: crypto.randomUUID(),
-            accountId: controllerCustodian.id, active: true, metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            accountId: controllerCustodian.id, active: true, ...machineOperationSupportForTest(), metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(controllerKey.publicKey) } }) : source;
         if (controllerKind === 'hub') await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: controllerCustodian.id,
             machineId: controller.id, principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
@@ -9121,6 +9123,7 @@ describe("external Action execution authorization", () => {
             encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey',
             logger: (message, diagnostic) => { if (message === '[RPC] Request completed') rpcDiagnostics.push(diagnostic); },
             authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: fixture.machine.id,
+                resolveHomeServerIdentityId: getOrCreateServerIdentityId,
                 resolveInstallationId: () => fixture.machine.installationId,
                 resolveCustodianAccountId: async () => fixture.account.id,
                 verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: fixture.keyPair.secretKey,
