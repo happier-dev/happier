@@ -1,5 +1,6 @@
 export type { ContributionActionDangerLevel } from '../targetedContributionAuthoring.js';
 export type { ContributionActionSurface } from '../targetedContributionAuthoring.js';
+export type { ContributionAdmittedEntry } from '../targetedContributionAuthoring.js';
 export type { ContributionAuthorDefinition } from '../targetedContributionAuthoring.js';
 export type { ContributionAuthorTargets } from '../targetedContributionAuthoring.js';
 export type { ContributionContributeInput } from '../targetedContributionAuthoring.js';
@@ -35,5 +36,6 @@ export type { RequiredSurfaceRoles } from '../targetedContributionAuthoring.js';
 export type { SchemaInput } from '../targetedContributionAuthoring.js';
 export type { SchemaOutput } from '../targetedContributionAuthoring.js';
 export type { SurfaceFields } from '../targetedContributionAuthoring.js';
+export type { TargetedContributionPointRef } from '../services/targetedContributions.js';
 export { defineContributionPoint } from '../targetedContributionAuthoring.js';
 export { defineContributionProtocol } from '../targetedContributionAuthoring.js';

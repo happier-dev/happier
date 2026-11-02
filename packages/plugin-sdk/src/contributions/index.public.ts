@@ -6,6 +6,7 @@
 export type {
     ContributionActionDangerLevel,
     ContributionActionSurface,
+    ContributionAdmittedEntry,
     ContributionAuthorDefinition,
     ContributionAuthorTargets,
     ContributionContributeInput,
@@ -41,6 +42,7 @@ export type {
     SchemaOutput,
     SurfaceFields,
 } from '../targetedContributionAuthoring.js';
+export type { TargetedContributionPointRef } from '../services/targetedContributions.js';
 export {
     defineContributionPoint,
     defineContributionProtocol,
