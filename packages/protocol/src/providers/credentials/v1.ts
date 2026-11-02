@@ -5,6 +5,7 @@ import { ProviderLocalIdSchema } from '../ids.js';
 import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1, ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import { normalizeProviderCredentialHeaderName, normalizeProviderQueryParameterName } from '../safety/headers.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
+import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 
 export const ProviderCredentialFormatV1Schema = lazyZodSchema(() => z.union([
   z.literal('raw'),
@@ -51,12 +52,28 @@ export const ProviderCredentialTransportV1Schema = lazyZodSchema(() => z.strictO
   protocols: z.array(ProviderWireProtocolSchema).check(z.minLength(1), z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)),
   uses: z.array(z.enum(['probe', 'runtime', 'management'])).check(z.minLength(1), z.maxLength(3)),
   destination: ProviderCredentialDestinationV1Schema,
+  /** Required independent Saved Secret bindings, carried with this one transport. */
+  additionalCredentials: z.optional(z.array(z.strictObject({
+    slotId: ProviderLocalIdSchema,
+    label: z.optional(PluginLocalizedStringV2Schema),
+    destination: ProviderCredentialDestinationV1Schema,
+  }))),
 }).check(z.superRefine((value, ctx) => {
   if (new Set(value.protocols).size !== value.protocols.length) {
     ctx.addIssue({ code: 'custom', path: ['protocols'], message: 'Credential transport protocols must be unique' });
   }
   if (new Set(value.uses).size !== value.uses.length) {
     ctx.addIssue({ code: 'custom', path: ['uses'], message: 'Credential transport uses must be unique' });
+  }
+  const slots = new Set<string>();
+  const destinationKey = (destination: ProviderCredentialDestinationV1) => `${destination.kind}\0${destination.kind === 'httpHeader' ? destination.name.toLowerCase() : destination.name}`;
+  const destinations = new Set([destinationKey(value.destination)]);
+  for (const [index, credential] of (value.additionalCredentials ?? []).entries()) {
+    if (slots.has(credential.slotId)) ctx.addIssue({ code: 'custom', path: ['additionalCredentials', index, 'slotId'], message: 'Duplicate credential slot' });
+    slots.add(credential.slotId);
+    const key = destinationKey(credential.destination);
+    if (destinations.has(key)) ctx.addIssue({ code: 'custom', path: ['additionalCredentials', index, 'destination'], message: 'Credential destinations must be distinct' });
+    destinations.add(key);
   }
 })));
 export type ProviderCredentialTransport = z.infer<typeof ProviderCredentialTransportV1Schema>;
@@ -72,6 +89,9 @@ export function addProviderCredentialTransportIssues(
   transports.forEach((transport, index) => {
     if (ids.has(transport.id)) ctx.addIssue({ code: 'custom', path: [...pathPrefix, index, 'id'], message: 'Duplicate transport id' });
     ids.add(transport.id);
+    transport.additionalCredentials?.forEach((credential, credentialIndex) => {
+      if (credential.slotId === 'apiKey') ctx.addIssue({ code: 'custom', path: [...pathPrefix, index, 'additionalCredentials', credentialIndex, 'slotId'], message: 'Companion credential must use an independent slot' });
+    });
     for (const protocol of transport.protocols) {
       for (const use of transport.uses) {
         const format = typeof transport.destination.format === 'string' ? transport.destination.format : `template:${transport.destination.format.template}`;
