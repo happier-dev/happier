@@ -241,6 +241,8 @@ type CurrentProvider = Readonly<{
   setupRemediation: AdmittedTargetedOperationExecutionHandle | undefined;
   connectionTest: AdmittedTargetedOperationExecutionHandle;
   observationsPoll: AdmittedTargetedOperationExecutionHandle | undefined;
+  endpointResolve: AdmittedTargetedOperationExecutionHandle | undefined;
+  principalResolve: AdmittedTargetedOperationExecutionHandle | undefined;
   connectionStop: AdmittedTargetedOperationExecutionHandle | undefined;
 }>;
 type PersistedConversationConnection = Readonly<{
@@ -2315,6 +2317,8 @@ function providerFromSelectedContribution(input: Awaited<
     setupRemediation: input.operations.setupRemediation,
     connectionTest: input.operations.connectionTest,
     observationsPoll: input.operations.observationsPoll,
+    endpointResolve: input.operations.endpointResolve,
+    principalResolve: input.operations.principalResolve,
     connectionStop: input.operations.connectionStop,
   };
 }
