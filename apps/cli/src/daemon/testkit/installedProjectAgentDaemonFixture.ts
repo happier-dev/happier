@@ -50,10 +50,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation'>>
-    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'homeServerIdentityId' | 'machineRpcMethods'>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot'>>
+    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
     & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean }): Promise<InstalledProjectAgentDaemonFixture> {
   let daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
+  const serverId = requesterOptions?.serverId ?? 'session-home';
   // This Home fixture owns original admission; normal fixtures retain its
   // actual held identity rather than relying on later legacy recovery to invent birth.
   const fixtureHome = requesterOptions?.homeServerIdentityId
@@ -65,11 +66,13 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const accountActionCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
   const fixture = await createInstalledProjectAgentLaunchFixture(unassociated
-    ? { prepareProject: false, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
+    ? { prepareProject: false, serverId, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
+      accountSettings: requesterOptions?.accountSettings,
       machineRpcMethods: requesterOptions?.machineRpcMethods,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
       ...(requesterOptions?.ordinaryAccountSession ? { accountActionCredentials } : {}) }
-    : { ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
+    : { serverId, ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
+      accountSettings: requesterOptions?.accountSettings,
       machineRpcMethods: requesterOptions?.machineRpcMethods,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext });
   const { f, machine } = fixture;
@@ -78,11 +81,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const cwd = unassociated ? join(f.directory, 'fresh-unassociated') : fixture.cwd;
   if (unassociated) await mkdir(cwd);
   await writeCredentialsTokenOnly(accountActionCredentials);
-  await writeStoredCredentialsForServerId('session-home', accountActionCredentials);
-  expect((await readStoredCredentialsForServerId('session-home'))?.token === accountActionCredentials.token,
+  await writeStoredCredentialsForServerId(serverId, accountActionCredentials);
+  expect((await readStoredCredentialsForServerId(serverId))?.token === accountActionCredentials.token,
     'The Account Action fixture must retain its canonical Home credentials').toBe(true);
   if (requesterOptions?.ordinaryAccountSession) {
-    daemonCredentials = (await readStoredCredentialsForServerId('session-home'))!;
+    daemonCredentials = (await readStoredCredentialsForServerId(serverId))!;
   }
   const plugin = bundledAgentId ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
     controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`] } })
@@ -121,7 +124,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     recoverBootstrap: async ({ sessionId: id, attribution }) => {
       if (id !== sessionId) return null;
       requesterRecoveryStage = 'bootstrap';
-      const bootstrap = await resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: f.directory, serverId: 'session-home',
+      const bootstrap = await resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: f.directory, serverId,
         serverHttpBaseUrl: 'https://session-home.test', sessionId: id, legacyOwnerCredentials: f.bootstrap.credentials,
         ...(attribution ? { expectedAttribution: attribution } : {}), machineAdmissionBoundary: {
           machineId: 'machine', daemonToken: daemonCredentials.token, isHomeCurrent: f.isHomeCurrent, readInstallation: () => f.installation } });
@@ -136,11 +139,13 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     await skillStore.releaseSkillSessionDirs(sessionId);
     await skillStore.collectSkillCache({ libraryDigests: [] });
   });
-  const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId: 'session-home', serverBaseUrl: 'https://session-home.test',
+  const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId, serverBaseUrl: 'https://session-home.test',
     agentIsolation: requesterOptions?.agentIsolation,
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
+    onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
+    resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,
     externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,
     pluginRuntimeController: plugin.controller, connectedServiceRuntimeRegistry,

@@ -19,10 +19,10 @@ import { verifyMachineInstallationProof, MachineInstallationProofV1Schema, Reque
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
+import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema, ProjectAccountRowListRequestV1Schema,
   ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 
@@ -30,6 +30,8 @@ import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bund
 export async function createInstalledProjectAgentLaunchFixture(options: Readonly<{
   accountActionCredentials?: StoredCredentials;
   requesterCredentials?: StoredCredentials;
+  serverId?: string;
+  accountSettings?: Readonly<Record<string, unknown>>;
   homeServerIdentityId?: string;
   boundSessionId?: string;
   prepareProject?: boolean;
@@ -37,21 +39,23 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   machineRpcMethods?: readonly string[];
   resolveCurrentMachineExecutionOriginContext?: Parameters<typeof createInstalledProjectFiniteRuntime>[0]['resolveCurrentMachineExecutionOriginContext'];
 }> = {}) {
+  const serverId = options.serverId ?? 'session-home';
   const f = await createProjectSessionRuntimeFixture(options.accountActionCredentials
-    ? { serverId: 'session-home', homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+    ? { serverId, homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
       serverUrl: 'https://session-home.test', machineAccess: options.machineAccess,
       // Account decision ingress may proceed directly over RPC. Original
       // CLI Run ingress remains unwaived and must retain setup review.
-      accountSettings: { actionsSettingsV1: setActionApprovalOverride({ settings: { v: 1, actions: {} },
+      accountSettings: { ...options.accountSettings, actionsSettingsV1: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(options.accountSettings?.actionsSettingsV1),
         actionId: 'projects.prepare', surface: 'rpc', approvalRequired: false }) } }
-    : { serverId: 'session-home', homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
-      serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess });
+    : { serverId, homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+      serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess,
+      accountSettings: options.accountSettings });
   let accountActionCredentials: StoredCredentials | undefined;
   let accountActionSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>> | undefined;
   if (options.accountActionCredentials) {
     await writeCredentialsTokenOnly(options.accountActionCredentials);
-    await writeStoredCredentialsForServerId('session-home', options.accountActionCredentials);
-    accountActionCredentials = await readStoredCredentialsForServerId('session-home') ?? undefined;
+    await writeStoredCredentialsForServerId(serverId, options.accountActionCredentials);
+    accountActionCredentials = await readStoredCredentialsForServerId(serverId) ?? undefined;
     if (!accountActionCredentials) throw new Error('Missing canonical Account Action credentials');
     // Account decisions have their own admitted policy lifetime; retiring a
     // Session requester must not withdraw this separately authenticated ingress.
@@ -61,12 +65,14 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   const cwd = join(f.directory, 'accepted-project');
   await mkdir(join(cwd, '.happier'), { recursive: true });
   await writeFile(join(cwd, '.happier/project.json'), JSON.stringify({ version: 1,
-    environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+    toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
   await writeFile(join(cwd, 'mise.toml'), '[env]\nNATIVE = "active"\n');
   let trust: ProjectTrustContentV1 | null = null;
   let trustWrites = 0;
   const accountReads: unknown[] = [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body, requestOptions) => {
+    const promptRow = new URL(String(url)).pathname.match(/^\/v1\/account\/entity-rows\/prompt-library\/([^/]+)$/u);
+    if (promptRow) return { status: 200, data: f.mutatePromptLibraryRow(decodeURIComponent(promptRow[1]), body) };
     const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
     if (availability) return { status: 200, data: availability };
     if (String(url).endsWith('/v1/machines/machine/admission/verify')) {
@@ -110,9 +116,9 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
         && (!accountActionCredentials || requestOptions?.headers?.Authorization !== `Bearer ${accountActionCredentials.token}`)) {
         return { status: 403, data: { error: 'forbidden' } };
       }
-      const key = { kind: 'workspace-ref', serverId: 'session-home', id: 'workspace' } as const;
+      const key = { kind: 'workspace-ref', serverId, id: 'workspace' } as const;
       const row = { key, revision: 1,
-        content: { t: 'plain', v: { key, value: { id: 'workspace', serverId: 'session-home', machineId: 'machine',
+        content: { t: 'plain', v: { key, value: { id: 'workspace', serverId, machineId: 'machine',
           rootPath: cwd, projectKey: 'project', createdAtMs: 1 } } } };
       if (String(url).endsWith('/project-rows/read')) {
         const request = ProjectAccountRowReadRequestV1Schema.parse(body);
@@ -120,7 +126,10 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
           request.key.kind === key.kind && request.key.serverId === key.serverId && request.key.id === key.id
             ? { status: 'present', row } : { status: 'absent' }) };
       }
-      return { status: 200, data: ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [row] }) };
+      const request = ProjectAccountRowListRequestV1Schema.parse(body);
+      const selected = (!request.serverId || request.serverId === key.serverId)
+        && (!request.kinds || request.kinds.includes(key.kind));
+      return { status: 200, data: ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: selected ? [row] : [] }) };
     }
     throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
   });
@@ -138,11 +147,11 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   const finite = createInstalledProjectFiniteRuntime({ api: await ApiClient.create(accountActionCredentials ?? f.bootstrap.credentials),
     credentials: accountActionCredentials ?? { token: 'custodian-token', encryption: null },
     externalActionAccountId: options.accountActionCredentials ? 'requester' : 'custodian',
-    finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
+    finiteServerId: serverId, finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
     admission,
     nativeIo: { commandIo: { resolveTool }, environmentIo },
     successHomeDir: join(f.directory, 'success'), isCurrent: async () => !accountActionCredentials
-      || sameStoredCredentials(accountActionCredentials, await readStoredCredentialsForServerId('session-home')),
+      || sameStoredCredentials(accountActionCredentials, await readStoredCredentialsForServerId(serverId)),
     prepareBetween: async () => { throw new Error('No worker routing expected'); },
     resolveCurrentMachineExecutionOriginContext: options.resolveCurrentMachineExecutionOriginContext ?? (async () => null) });
   const machine = new ApiMachineClient(accountActionCredentials?.token ?? 'custodian-token', { id: 'machine', encryptionMode: 'plain',
@@ -160,7 +169,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   if (options.prepareProject !== false) {
     const runtime = await machine.resolveProjectFiniteRuntime({ signal, requesterSessionBootstrap: f.bootstrap });
     if (!runtime) throw new Error('Missing installed requester Project runtime');
-    const reviewed = await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+    const reviewed = await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId, serverHttpBaseUrl: 'https://session-home.test',
       account: projectRuntimeAccountRowsInput(runtime), nativeIo: runtime.nativeIo, successHomeDir: runtime.successHomeDir,
       platform: { os: 'linux', arch: 'x64' }, signal });
     if (reviewed.kind !== 'prepared') throw new Error(`Project review failed: ${JSON.stringify(reviewed)}`);
@@ -174,7 +183,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     async requireSetup(command = 'printf setup') {
       trust = null;
       await writeFile(join(cwd, '.happier/project.json'), JSON.stringify({ version: 1,
-        environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+        toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
         workspace: { setup: [{ kind: 'command', command }] } }));
     },
   };

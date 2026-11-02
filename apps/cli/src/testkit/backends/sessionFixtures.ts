@@ -225,7 +225,7 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
         async enqueueUserTextMessageCommitted() {
             return { persisted: true, delivered: false };
         },
-        updateMetadata(updater: (current: TMetadata | null) => TMetadata | null) {
+        async updateMetadata(updater: (current: TMetadata | null) => TMetadata | null) {
             metadata = updater(metadata);
             events.emit('metadata-updated');
         },

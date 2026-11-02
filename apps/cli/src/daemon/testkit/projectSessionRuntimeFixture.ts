@@ -16,6 +16,8 @@ import type { StoredCredentials } from '@/persistence';
 import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
+import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, type PromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+
 export type ProjectSessionRuntimeFixture = Readonly<{
   directory: string;
   readonly bootstrap: AdmittedRequesterSessionBootstrap;
@@ -24,6 +26,7 @@ export type ProjectSessionRuntimeFixture = Readonly<{
   channel: RequesterCurrentnessSocketHarness;
   isHomeCurrent(): boolean;
   retire(): void;
+  mutatePromptLibraryRow(key: string, body: unknown): unknown;
 }>;
 
 /** Real ordinary Session admission; only Home endpoints are substituted. */
@@ -49,6 +52,20 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
   onTestFinished(() => channel.close());
   onTestFinished(installAxiosRequestMethodAdapter());
   let current = true;
+  const promptRows = new Map<string, { revision: number; content: PromptLibraryContentV1 | null }>();
+  const mutatePromptLibraryRow = (rawKey: string, body: unknown) => {
+    const key = PromptLibraryCatalogKeyV1Schema.parse(rawKey);
+    const mutation = PromptLibraryRowMutationV1Schema.parse(body);
+    if (mutation.content?.t === 'plain' && mutation.content.v.key !== key) throw new Error('Prompt row key mismatch');
+    const existing = promptRows.get(key);
+    if ((existing?.revision ?? 'absent') !== mutation.expectedRevision)
+      return { status: 'conflict', revision: existing?.revision ?? -1 };
+    if (mutation.sourceSettingsVersion !== undefined && mutation.sourceSettingsVersion !== 0)
+      return { status: 'settings-conflict', revision: 0 };
+    const revision = (existing?.revision ?? 0) + 1;
+    promptRows.set(key, { revision, content: mutation.content });
+    return { status: 'updated', revision, cursor: revision };
+  };
   vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/profile') return Response.json({ id: 'requester' });
@@ -61,6 +78,8 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
     if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: options.accountSettings ?? {} }, version: 0 } };
+    if (url.endsWith('/v1/account/entity-rows/prompt-library')) return { status: 200, data: { status: 'listed',
+      rows: [...promptRows].map(([key, row]) => ({ key, ...row })) } };
     const sessionId = new URL(url).pathname.match(/^\/v2\/sessions\/([^/]+)$/u)?.[1];
     if (sessionId) return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
       encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine' }), dataEncryptionKey: null, share: null }) } };
@@ -111,5 +130,5 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
   return { directory, get bootstrap() {
     if (!currentBootstrap) throw new Error('Session admission unavailable');
     return currentBootstrap.admitted;
-  }, createBootstrap, installation, channel, isHomeCurrent: () => current, retire: () => { current = false; } };
+  }, createBootstrap, installation, channel, isHomeCurrent: () => current, retire: () => { current = false; }, mutatePromptLibraryRow };
 }
