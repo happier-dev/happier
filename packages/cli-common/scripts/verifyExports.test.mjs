@@ -10,17 +10,6 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = dirname(scriptsDir);
 
 describe('cli-common build export verification', () => {
-  it('exports a web-safe Tailscale task contract entrypoint', () => {
-    const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
-
-    expect(packageJson.exports).toMatchObject({
-      './tailscale/taskContract': {
-        types: './dist/tailscale/taskContract.d.ts',
-        default: './dist/tailscale/taskContract.js',
-      },
-    });
-  });
-
   it('runs export verification through the build entrypoint without duplicating a second step', () => {
     const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
 

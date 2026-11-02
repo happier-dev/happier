@@ -1278,7 +1278,7 @@ export function listDeclaredPluginContributionFamilies(
 
 export { AccessProviderRefV1Schema, type AccessProviderRefV1 } from './accessProviders.js';
 
-export { AccessProviderContributionV1 } from './accessProviders.js';
+export type { AccessProviderContributionV1 } from './accessProviders.js';
 
 export { AccessProviderSelectionV1Schema } from './accessProviders.js';
 

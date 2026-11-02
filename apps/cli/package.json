@@ -270,7 +270,6 @@
     "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/deployments": "0.0.0",
     "@happier-dev/connection-supervisor": "0.0.0",
-    "@happier-dev/forge-ci": "0.0.0",
     "@happier-dev/sync-client": "0.0.0",
     "@happier-dev/iroh-native": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",

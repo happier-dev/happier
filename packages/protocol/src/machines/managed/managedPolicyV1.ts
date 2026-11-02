@@ -46,7 +46,12 @@ export function createManagedPolicyCensusProofV1(input: Readonly<{ homeId: strin
     accountId: input.custodianAccountId, managedPolicyCensus: { homeId: input.homeId } }, privateKey: input.privateKey });
 }
 export const ManagedPolicyAdmissionOutputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerContextOutputV1Schema, { replayed: z.boolean() })));
-export const ManagedPolicyProofV1Schema = lazyZodSchema(() => z.strictObject({
+export const ManagedPolicyProofV1Schema: z.ZodMiniObject<{
+  payload: typeof MachineInstallationProofPayloadV1Schema;
+  purpose: typeof ManagedPolicyPurposeV1Schema;
+  proof: typeof MachineInstallationProofV1Schema;
+  actionOrigin: z.ZodMiniOptional<typeof ExternalActionExecutionAuthorizationV1Schema>;
+}, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   payload: MachineInstallationProofPayloadV1Schema, purpose: ManagedPolicyPurposeV1Schema, proof: MachineInstallationProofV1Schema,
   actionOrigin: z.optional(ExternalActionExecutionAuthorizationV1Schema),
 }));

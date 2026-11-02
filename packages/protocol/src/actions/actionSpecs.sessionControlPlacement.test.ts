@@ -10,6 +10,15 @@ try {
 }
 
 describe('Session control catalog initialization', () => {
+  it.each([
+    'session.messages.pins', 'desktop.displays.list', 'desktop.notch.set',
+    'desktop.windows.open', 'media.annotation.read', 'media.annotation.apply',
+  ] as const)('publishes the authored client placement for %s', actionId => {
+    expect(initializationError).toBeUndefined();
+    if (!catalog) throw new Error('The Action catalog did not initialize');
+    expect(catalog.getActionSpec(actionId).executionPlacement).toBe('client');
+  });
+
   it('places desired capability edits at Account metadata and preserves connected-account Session control', async () => {
     expect(initializationError).toBeUndefined();
     if (!catalog) throw new Error('The Action catalog did not initialize');
