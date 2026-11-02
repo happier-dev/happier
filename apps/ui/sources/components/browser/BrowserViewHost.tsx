@@ -296,6 +296,7 @@ function LocalPreviewView(props: Readonly<{
     serverId?: string | null;
     profileId?: string | null;
     lifecycleState?: BrowserSurfaceLifecycleState;
+    occlusionProbe?: () => boolean;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;
     navigationKey?: string;
@@ -354,6 +355,7 @@ function LocalPreviewView(props: Readonly<{
             view={view}
             profileId={props.profileId}
             lifecycleState={props.lifecycleState}
+            occlusionProbe={props.occlusionProbe}
             testID={`${testID}-frame`}
             navigationKey={props.navigationKey}
             navigationCommand={props.navigationCommand}
@@ -375,6 +377,8 @@ export function BrowserViewHost(props: Readonly<{
      */
     onViewLifecycle?: (target: BrowserViewLifecycleTarget, signal: BrowserViewLifecycleSignal) => void;
     lifecycleState?: BrowserSurfaceLifecycleState;
+    /** The app draws over the page: a native child view would otherwise paint above that drawing. */
+    occlusionProbe?: () => boolean;
     navigationEffect?: BrowserControlCommandEffect | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     localServicePreviewServerId?: string | null;
@@ -441,6 +445,7 @@ export function BrowserViewHost(props: Readonly<{
             serverId={props.localServicePreviewServerId}
             profileId={props.browserProfile?.profileId}
             lifecycleState={props.lifecycleState}
+            occlusionProbe={props.occlusionProbe}
             testID={testID}
             navigationKey={frameNavigationKey}
             navigationCommand={frameNavigationCommand}
@@ -487,6 +492,7 @@ export function BrowserViewHost(props: Readonly<{
                 navigationCommand={frameNavigationCommand}
                 onLifecycle={onViewLifecycle}
                 lifecycleState={props.lifecycleState}
+                occlusionProbe={props.occlusionProbe}
                 nowMs={props.nowMs}
                 reasonCode={resolveBrowserViewUnavailableReasonCode(view)}
             />

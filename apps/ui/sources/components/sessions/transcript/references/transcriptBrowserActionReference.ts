@@ -135,8 +135,6 @@ function resolveVerb(actionId: string): TranscriptBrowserActionVerb {
         case 'browser.goForward':
             return 'forward';
         case 'browser.context.captureScreenshot':
-        case 'browser.context.annotation.captureRegion':
-        case 'browser.context.annotation.captureElement':
             return 'screenshot';
         case 'browser.recording.start':
             return 'recordingStarted';

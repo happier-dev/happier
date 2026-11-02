@@ -32,11 +32,6 @@ import {
   BrowserHandBackCommandV1Schema,
 } from '../../browser/control/v1.js';
 import {
-  BrowserAnnotationStyleIntentV1Schema,
-  BrowserAnnotationRectV1Schema,
-  BrowserAnnotationDraftStrokeV1Schema,
-  BrowserAnnotationDraftTargetV1Schema,
-  BrowserAnnotationDraftMarkHandleV1Schema,
   BrowserContextAttachmentV1Schema,
   BrowserContextCommandV1Schema,
   BrowserContextRouteResultV1Schema,
@@ -133,8 +128,6 @@ const RuntimeBrowserContextActionInputSchema = lazyZodSchema(() => (<T extends z
   contextId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   annotationId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   command: z.optional(BrowserContextCommandV1Schema),
-  comment: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2048))),
-  styleIntent: z.optional(BrowserAnnotationStyleIntentV1Schema),
 })));
 
 const RuntimeBrowserRecordingAttachInputSchema = lazyZodSchema(() => z.looseObject({
@@ -160,16 +153,16 @@ const BrowserAnnotationDraftCommitResultSchema = lazyZodSchema(() => z.strictObj
   itemIds: z.array(RuntimeBrowserViewInputSchema.shape.viewId),
 }));
 
-export const BROWSER_ANNOTATION_DRAFT_ACTION_IDS = [
-  'browser.context.annotation.addDraftTarget', 'browser.context.annotation.addDraftRegion',
-  'browser.context.annotation.addDraftStroke', 'browser.context.annotation.removeDraftTarget',
+export const BROWSER_ANNOTATION_HOST_ACTION_IDS = [
+  'browser.context.annotation.start',
+  'browser.context.annotation.cancel',
+  'browser.context.annotation.attachDraft',
   'browser.context.annotation.setDraftComment',
 ] as const satisfies readonly RuntimeActionIdV1[];
 
-function draftUpdatedResultSchema<const T extends typeof BROWSER_ANNOTATION_DRAFT_ACTION_IDS[number]>(actionId: T) {
-  return lazyZodSchema(() => z.strictObject({ v: z.literal(1), actionId: z.literal(actionId), status: z.literal('draftUpdated'),
-    marks: z.array(BrowserAnnotationDraftMarkHandleV1Schema) }));
-}
+const BrowserAnnotationDraftCommentResultSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), actionId: z.literal('browser.context.annotation.setDraftComment'), status: z.literal('draftUpdated'),
+}));
 
 function draftHintFields(field: ActionInputFieldHint): readonly ActionInputFieldHint[] {
   return [
@@ -186,10 +179,6 @@ export const BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS: Readonly<Partial<Record<R
     { path: 'viewId', title: 'Browser view', widget: 'text', required: true },
     { path: 'commandId', title: 'Command', widget: 'text', required: true },
   ],
-  'browser.context.annotation.addDraftTarget': draftHintFields({ path: 'target', title: 'Element', widget: 'json', required: true }),
-  'browser.context.annotation.addDraftRegion': draftHintFields({ path: 'rect', title: 'Region', widget: 'json', required: true }),
-  'browser.context.annotation.addDraftStroke': draftHintFields({ path: 'stroke', title: 'Stroke', widget: 'json', required: true }),
-  'browser.context.annotation.removeDraftTarget': draftHintFields({ path: 'draftId', title: 'Mark', widget: 'text', required: true }),
   'browser.context.annotation.setDraftComment': draftHintFields({ path: 'comment', title: 'Comment (null clears)', widget: 'text', required: true }),
 };
 
@@ -226,16 +215,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.context.captureConsoleSummary': 'Capture browser console summary',
   'browser.context.annotation.start': 'Start browser annotation',
   'browser.context.annotation.cancel': 'Cancel browser annotation',
-  'browser.context.annotation.captureRegion': 'Capture browser annotation region',
-  'browser.context.annotation.captureElement': 'Capture browser annotation element',
-  'browser.context.annotation.attachComment': 'Attach browser annotation comment',
-  'browser.context.annotation.attachStroke': 'Attach browser annotation stroke',
-  'browser.context.annotation.attachStyleIntent': 'Attach browser annotation style intent',
   'browser.context.annotation.attachDraft': 'Attach browser annotation draft',
-  'browser.context.annotation.addDraftTarget': 'Add an element to the annotation draft',
-  'browser.context.annotation.addDraftRegion': 'Add a region to the annotation draft',
-  'browser.context.annotation.addDraftStroke': 'Add a stroke to the annotation draft',
-  'browser.context.annotation.removeDraftTarget': 'Remove an annotation draft mark',
   'browser.context.annotation.setDraftComment': 'Set the annotation draft comment',
   'browser.context.attachToComposer': 'Attach browser context to composer',
   'browser.context.attachToAgentTurn': 'Attach browser context to agent turn',
@@ -297,16 +277,7 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
   'browser.context.captureConsoleSummary': 'Capture a redacted summary of recent browser console output.',
   'browser.context.annotation.start': 'Start an in-page browser annotation session.',
   'browser.context.annotation.cancel': 'Cancel the active browser annotation session.',
-  'browser.context.annotation.captureRegion': 'Capture a cropped region for the active browser annotation.',
-  'browser.context.annotation.captureElement': 'Capture a selected element for the active browser annotation.',
-  'browser.context.annotation.attachComment': 'Attach a comment to the active browser annotation.',
-  'browser.context.annotation.attachStroke': 'Attach a freehand stroke to the active browser annotation.',
-  'browser.context.annotation.attachStyleIntent': 'Set the drawing style for the active browser annotation.',
   'browser.context.annotation.attachDraft': 'Capture and attach the exact mounted view\'s annotation draft to its Session composer.',
-  'browser.context.annotation.addDraftTarget': 'Add the selected element to the current mounted annotation draft.',
-  'browser.context.annotation.addDraftRegion': 'Add a region in CSS viewport coordinates to the current mounted annotation draft.',
-  'browser.context.annotation.addDraftStroke': 'Add a stroke in CSS viewport coordinates to the current mounted annotation draft.',
-  'browser.context.annotation.removeDraftTarget': 'Remove one element, region or stroke by its draft mark id.',
   'browser.context.annotation.setDraftComment': 'Set the current annotation draft comment; null or an empty string clears it.',
   'browser.automation.status': 'Read the current browser automation status.',
   'browser.automation.snapshot': 'Capture an automation snapshot of the browser view.',
@@ -390,22 +361,15 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'browser.diagnostics.elementPicker.cancel': lazyZodSchema(() => z.strictObject({ ...BrowserDiagnosticsElementPickerRequestV1Schema.shape, browserSessionId: RuntimeBrowserViewInputSchema.shape.browserSessionId, action: z.literal('cancel') })),
   'browser.context.capturePage': RuntimeBrowserContextActionInputSchema,
   'browser.context.captureScreenshot': RuntimeBrowserContextActionInputSchema,
-  'browser.context.captureSelectedElement': RuntimeBrowserContextActionInputSchema,
+  'browser.context.captureSelectedElement': lazyZodSchema(() => z.looseObject({ ...RuntimeBrowserContextActionInputSchema.shape,
+    pickerResult: z.optional(BrowserDiagnosticsElementPickerResultV1Schema),
+  })),
   'browser.context.captureNetworkSummary': RuntimeBrowserContextActionInputSchema,
   'browser.context.captureConsoleSummary': RuntimeBrowserContextActionInputSchema,
   'browser.context.annotation.start': RuntimeBrowserContextActionInputSchema,
   'browser.context.annotation.cancel': RuntimeBrowserContextActionInputSchema,
-  'browser.context.annotation.captureRegion': RuntimeBrowserContextActionInputSchema,
-  'browser.context.annotation.captureElement': RuntimeBrowserContextActionInputSchema,
-  'browser.context.annotation.attachComment': RuntimeBrowserContextActionInputSchema,
-  'browser.context.annotation.attachStroke': RuntimeBrowserContextActionInputSchema,
-  'browser.context.annotation.attachStyleIntent': RuntimeBrowserContextActionInputSchema,
   'browser.context.annotation.attachDraft': RuntimeMountedBrowserContextInputSchema,
-  'browser.context.annotation.addDraftTarget': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, target: BrowserAnnotationDraftTargetV1Schema })),
-  'browser.context.annotation.addDraftRegion': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, rect: BrowserAnnotationRectV1Schema })),
-  'browser.context.annotation.addDraftStroke': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, stroke: BrowserAnnotationDraftStrokeV1Schema })),
-  'browser.context.annotation.removeDraftTarget': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, draftId: RuntimeBrowserViewInputSchema.shape.viewId })),
-  'browser.context.annotation.setDraftComment': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, comment: z.nullable(z.string().check(z.maxLength(2048))) })),
+  'browser.context.annotation.setDraftComment': lazyZodSchema(() => z.strictObject({ ...RuntimeMountedBrowserContextInputSchema.shape, comment: z.nullable(z.string()) })),
   'browser.context.attachToComposer': RuntimeBrowserContextAttachInputSchema,
   'browser.context.attachToAgentTurn': RuntimeBrowserContextActionInputSchema,
   'browser.context.clear': RuntimeBrowserContextActionInputSchema,
@@ -477,17 +441,8 @@ const browserRuntimeOutputGeneralSchemas: Readonly<{
   'browser.context.captureConsoleSummary': typeof BrowserContextRouteResultV1Schema;
   'browser.context.annotation.start': typeof BrowserContextRouteResultV1Schema;
   'browser.context.annotation.cancel': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.captureRegion': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.captureElement': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.attachComment': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.attachStroke': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.attachStyleIntent': typeof BrowserContextRouteResultV1Schema;
   'browser.context.annotation.attachDraft': typeof BrowserAnnotationDraftCommitResultSchema;
-  'browser.context.annotation.addDraftTarget': ReturnType<typeof draftUpdatedResultSchema<'browser.context.annotation.addDraftTarget'>>;
-  'browser.context.annotation.addDraftRegion': ReturnType<typeof draftUpdatedResultSchema<'browser.context.annotation.addDraftRegion'>>;
-  'browser.context.annotation.addDraftStroke': ReturnType<typeof draftUpdatedResultSchema<'browser.context.annotation.addDraftStroke'>>;
-  'browser.context.annotation.removeDraftTarget': ReturnType<typeof draftUpdatedResultSchema<'browser.context.annotation.removeDraftTarget'>>;
-  'browser.context.annotation.setDraftComment': ReturnType<typeof draftUpdatedResultSchema<'browser.context.annotation.setDraftComment'>>;
+  'browser.context.annotation.setDraftComment': typeof BrowserAnnotationDraftCommentResultSchema;
   'browser.context.attachToComposer': typeof BrowserContextAttachmentV1Schema;
   'browser.context.attachToAgentTurn': typeof BrowserContextAttachmentV1Schema;
   'browser.context.clear': typeof BrowserContextRouteResultV1Schema;
@@ -524,17 +479,8 @@ const browserRuntimeOutputGeneralSchemas: Readonly<{
   'browser.context.captureConsoleSummary': BrowserContextRouteResultV1Schema,
   'browser.context.annotation.start': BrowserContextRouteResultV1Schema,
   'browser.context.annotation.cancel': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.captureRegion': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.captureElement': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.attachComment': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.attachStroke': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.attachStyleIntent': BrowserContextRouteResultV1Schema,
   'browser.context.annotation.attachDraft': BrowserAnnotationDraftCommitResultSchema,
-  'browser.context.annotation.addDraftTarget': draftUpdatedResultSchema('browser.context.annotation.addDraftTarget'),
-  'browser.context.annotation.addDraftRegion': draftUpdatedResultSchema('browser.context.annotation.addDraftRegion'),
-  'browser.context.annotation.addDraftStroke': draftUpdatedResultSchema('browser.context.annotation.addDraftStroke'),
-  'browser.context.annotation.removeDraftTarget': draftUpdatedResultSchema('browser.context.annotation.removeDraftTarget'),
-  'browser.context.annotation.setDraftComment': draftUpdatedResultSchema('browser.context.annotation.setDraftComment'),
+  'browser.context.annotation.setDraftComment': BrowserAnnotationDraftCommentResultSchema,
   'browser.context.attachToComposer': BrowserContextAttachmentV1Schema,
   'browser.context.attachToAgentTurn': BrowserContextAttachmentV1Schema,
   'browser.context.clear': BrowserContextRouteResultV1Schema,
@@ -628,8 +574,6 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
     'browser.context.captureSelectedElement': { agentDefault: 'egress' },
     'browser.context.captureNetworkSummary': { agentDefault: 'egress' },
     'browser.context.captureConsoleSummary': { agentDefault: 'egress' },
-    'browser.context.annotation.captureRegion': { agentDefault: 'egress' },
-    'browser.context.annotation.captureElement': { agentDefault: 'egress' },
     'browser.context.annotation.attachDraft': { agentDefault: 'egress' },
     'browser.context.attachToComposer': { agentDefault: 'egress' },
     'browser.context.attachToAgentTurn': { agentDefault: 'egress' },

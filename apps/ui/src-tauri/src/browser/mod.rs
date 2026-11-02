@@ -607,23 +607,6 @@ impl DesktopBrowserState {
                 .unavailable_capture_result(DesktopBrowserCaptureErrorCode::ViewUnavailable);
         }
 
-        // ANNO-3: crop the full-frame capture to the union-of-targets clip (device px) when the
-        // annotation editor supplies one, so the persisted media is the crop — not the whole page.
-        // The crop is engine-agnostic (operates on the returned PNG) + clamps to the buffer bounds.
-        if let Some(clip) = request.clip {
-            snapshot = match crop_snapshot_png(snapshot, clip) {
-                Ok(cropped) => cropped,
-                Err(_) => {
-                    return self
-                        .unavailable_capture_result(DesktopBrowserCaptureErrorCode::CaptureFailed);
-                }
-            };
-            if !is_valid_native_snapshot(&snapshot) {
-                return self
-                    .unavailable_capture_result(DesktopBrowserCaptureErrorCode::CaptureFailed);
-            }
-        }
-
         snapshot.browser_session_id = request.browser_session_id;
         snapshot.view_id = request.view_id;
         snapshot.navigation_generation = request.navigation_generation;
@@ -1249,99 +1232,6 @@ fn is_valid_native_snapshot(snapshot: &DesktopBrowserCapturedSnapshot) -> bool {
         && snapshot.height > 0
         && snapshot.size_bytes > 0
         && !snapshot.bytes_base64.is_empty()
-}
-
-/// ANNO-3: crop a full-frame PNG snapshot to the device-pixel clip rect. Engine-agnostic — it
-/// decodes the returned PNG (the producer always emits 8-bit RGBA), clamps the clip to the actual
-/// buffer bounds (an off-screen / oversized marquee can never read outside the surface), crops, and
-/// re-encodes. Returns an error (mapped to `CaptureFailed`) for a non-RGBA8 PNG or an empty/zero-area
-/// clamped clip rather than fabricating a partial image. Not platform-gated: it operates purely on
-/// the PNG bytes so the crop math is identical on every host and unit-testable without a real WebView.
-fn crop_snapshot_png(
-    snapshot: DesktopBrowserCapturedSnapshot,
-    clip: DesktopBrowserCaptureClipRect,
-) -> Result<DesktopBrowserCapturedSnapshot, String> {
-    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-
-    let raw = BASE64_STANDARD
-        .decode(snapshot.bytes_base64.as_bytes())
-        .map_err(|error| format!("snapshot crop base64 decode failed: {error}"))?;
-    let decoder = png::Decoder::new(raw.as_slice());
-    let mut reader = decoder
-        .read_info()
-        .map_err(|error| format!("snapshot crop PNG header read failed: {error}"))?;
-    let mut buffer = vec![0u8; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buffer)
-        .map_err(|error| format!("snapshot crop PNG decode failed: {error}"))?;
-    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
-        return Err("snapshot crop requires an 8-bit RGBA PNG".to_string());
-    }
-    let source_width = info.width;
-    let source_height = info.height;
-    if source_width == 0 || source_height == 0 {
-        return Err("snapshot crop source has zero dimensions".to_string());
-    }
-
-    // Clamp the clip to the captured buffer bounds.
-    let x = clip.x.min(source_width);
-    let y = clip.y.min(source_height);
-    let width = clip.width.min(source_width - x);
-    let height = clip.height.min(source_height - y);
-    if width == 0 || height == 0 {
-        return Err("snapshot crop clip has zero clamped area".to_string());
-    }
-
-    let source_stride = (source_width as usize)
-        .checked_mul(4)
-        .ok_or_else(|| "snapshot crop source stride overflowed".to_string())?;
-    let crop_stride = (width as usize)
-        .checked_mul(4)
-        .ok_or_else(|| "snapshot crop stride overflowed".to_string())?;
-    let crop_len = crop_stride
-        .checked_mul(height as usize)
-        .ok_or_else(|| "snapshot crop buffer size overflowed".to_string())?;
-    let mut cropped = vec![0u8; crop_len];
-    for row in 0..height as usize {
-        let src_start = (y as usize + row)
-            .checked_mul(source_stride)
-            .and_then(|offset| offset.checked_add(x as usize * 4))
-            .ok_or_else(|| "snapshot crop source offset overflowed".to_string())?;
-        let dst_start = row * crop_stride;
-        cropped[dst_start..dst_start + crop_stride]
-            .copy_from_slice(&buffer[src_start..src_start + crop_stride]);
-    }
-
-    let bytes = encode_rgba8_png(width, height, &cropped)?;
-    let size_bytes = bytes.len();
-    Ok(DesktopBrowserCapturedSnapshot {
-        width,
-        height,
-        size_bytes,
-        bytes_base64: BASE64_STANDARD.encode(&bytes),
-        ..snapshot
-    })
-}
-
-/// Encodes an 8-bit RGBA buffer as PNG bytes. Platform-agnostic (the macOS capture path has its own
-/// `encode_rgba_png` behind `cfg(target_os = "macos")`; this one is used by the host-side crop seam
-/// so cropping works and is testable on every platform).
-fn encode_rgba8_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|error| format!("snapshot crop PNG header write failed: {error}"))?;
-    writer
-        .write_image_data(rgba)
-        .map_err(|error| format!("snapshot crop PNG data write failed: {error}"))?;
-    drop(writer);
-    if bytes.is_empty() {
-        return Err("snapshot crop produced empty PNG data".to_string());
-    }
-    Ok(bytes)
 }
 
 #[derive(Clone, Debug)]
@@ -2050,6 +1940,7 @@ fn capture_wry_webview_snapshot(
                 mime_type: "image/png".to_string(),
                 width: encoded.width,
                 height: encoded.height,
+                scale_factor: encoded.width as f64 / size.width,
                 size_bytes,
                 bytes_base64: BASE64_STANDARD.encode(encoded.bytes),
             })

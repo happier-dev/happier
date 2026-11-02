@@ -2,7 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { resolveHappierInteractiveTargetFloor, useHappierTouchTargetSize } from '../../environment/interactiveTarget.js';
-import type { HappierPortableStyle } from '../portableTypes.js';
+import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
 import { happierFocusRingStyle } from './focusVisible.js';
 import { HappierPressable } from './Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from './pressFeedback.js';
@@ -27,6 +27,8 @@ export type HappierTextLinkButtonProps = Readonly<{
   note?: Readonly<{ text: string; style: HappierPortableStyle }>;
   /** The host's hit-area request; a finger's touch target applies without it. It never widens the label. */
   minimumTargetSize?: number;
+  /** A surface's way to land keyboard focus on this link. */
+  controlRef?: (instance: HappierFocusable | null) => void;
 }>;
 
 /** One inline operation owner for host links and Find notes, with host-bound text and theme. */
@@ -36,6 +38,7 @@ export function HappierTextLinkButton(props: HappierTextLinkButtonProps): ReactN
   const action = (
     <HappierPressable
       testID={props.testID}
+      controlRef={props.controlRef}
       accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       expanded={props.expanded}

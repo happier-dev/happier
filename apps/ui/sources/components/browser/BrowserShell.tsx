@@ -1,3 +1,6 @@
+
+
+const pageCoveredByApp = () => true;
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -22,7 +25,15 @@ import type {
     BrowserViewLifecycleSignal,
     BrowserViewLifecycleTarget,
 } from '@/sync/domains/browser/control';
-import { AnnotationEditorOverlay } from '@/components/browser/annotation';
+import type { ImageAnnotator } from '@/components/ui/media/annotation';
+import {
+    BrowserAnnotatorBar,
+    BrowserAnnotatorMount,
+    BrowserAnnotatorPendingGlyph,
+    BrowserAnnotatorStage,
+    useBrowserAnnotatorSession,
+    useBrowserAnnotatorStageControl,
+} from '@/components/browser/annotation/BrowserAnnotator';
 import {
     useBrowserAnnotationController,
     type BrowserShellContextState,
@@ -468,6 +479,11 @@ export function BrowserShell(props: Readonly<{
         desktopWebViewAvailability: props.desktopWebViewAvailability,
     });
 
+    const annotatorSession = useBrowserAnnotatorSession(annotation);
+    const [annotator, setAnnotator] = React.useState<ImageAnnotator | null>(null);
+    const annotatorControl = useBrowserAnnotatorStageControl({ annotator, session: annotatorSession });
+    const annotating = annotator !== null && annotatorSession !== null;
+
     const recordingModel = props.browserRecording ?? null;
     const recordingControl = React.useMemo(() => (recordingModel
         ? resolveBrowserRecordingControl({
@@ -527,15 +543,19 @@ export function BrowserShell(props: Readonly<{
     // The page tools act on the page in view. The launchpad has no page, so they are not offered there
     // (a disabled pair could only say the target cannot be opened, which is not what the launchpad is).
     const browserContextPresent = Boolean(props.browserContext) && Boolean(activeView) && !agentDrivesPage;
-    const markUpOffered = browserContextPresent && annotation.supported;
+    // Ended, Can't reach and refused pages settle the view as failed and show a card: there is no page
+    // to attach or mark up.
+    const pageShown = activeView?.loadingState !== 'failed';
+    // Like Start recording: a page that can never be captured (an embedded preview) does not offer Mark up.
+    const markUpOffered = browserContextPresent && pageShown && annotation.supported
+        && (!annotation.captureProducerUnavailable || annotation.editorActive);
     const markUpDisabledReason = annotation.contextButtonDisabled
         ? annotation.contextDisabledReason
         : annotation.captureProducerUnavailable
             ? annotation.captureDisabledReason
             : null;
     const toggleMarkUp = React.useCallback(() => {
-        if (annotation.editorActive) annotation.cancel();
-        else annotation.start();
+        if (!annotation.capturePending) annotation.start();
     }, [annotation]);
 
     // UB-6: browser chrome shortcuts, owned by the app's one keyboard-command registry. Each is
@@ -620,13 +640,13 @@ export function BrowserShell(props: Readonly<{
     const markUpButton = markUpOffered ? (
         <IconButton
             testID={`${testID}-mark-up`}
-            iconName="pencil-simple"
+            {...(annotation.capturePending ? { icon: <BrowserAnnotatorPendingGlyph /> } : { iconName: 'pencil-circle' as const })}
             variant="plain"
             iconSize={controlMetrics.iconSize}
             accessibilityLabel={t('browserContext.composer.startAnnotation')}
             tooltip={t('browserContext.composer.startAnnotation')}
-            selected={annotation.editorActive}
-            disabled={markUpDisabledReason !== null && !annotation.editorActive}
+            selected={annotation.capturePending}
+            disabled={markUpDisabledReason !== null}
             disabledReason={markUpDisabledReason ?? undefined}
             size={controlMetrics.size}
             minimumInteractiveTargetSize={controlMetrics.touchTargetFloorPx ?? undefined}
@@ -699,7 +719,15 @@ export function BrowserShell(props: Readonly<{
 
     return (
         <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
-            {inViewer ? null : phone ? (showPhoneChrome ? (
+            {annotatorSession ? <BrowserAnnotatorMount session={annotatorSession} onAnnotator={setAnnotator} /> : null}
+            {annotating ? (
+                <View
+                    testID={`${testID}-annotator-bar`}
+                    style={phone ? stylesheet.phoneTopBar : [stylesheet.toolbarRow, { height: controlMetrics.size + controlMetrics.rowPaddingVerticalPx * 2, paddingVertical: 0 }]}
+                >
+                    <BrowserAnnotatorBar annotator={annotator} phone={phone} onClose={annotatorControl.close} attach={annotatorControl.attach} escapeScope={annotatorControl.escapeScope} />
+                </View>
+            ) : inViewer ? null : phone ? (showPhoneChrome ? (
                 <View testID={`${testID}-top-bar`} style={stylesheet.phoneTopBar}>
                     <View style={stylesheet.phoneAddressSlot}>{addressField}</View>
                     {recordingCapsule}
@@ -760,6 +788,7 @@ export function BrowserShell(props: Readonly<{
                         view={activeView}
                         onViewLifecycle={props.onViewLifecycle}
                         lifecycleState={props.lifecycleState}
+                        occlusionProbe={annotating ? pageCoveredByApp : undefined}
                         localServicePreviewState={localServicePreviewState}
                         localServicePreviewServerId={props.localServicePreviewServerId}
                         pluginUiProjection={props.pluginUiProjection}
@@ -778,22 +807,8 @@ export function BrowserShell(props: Readonly<{
                         nowMs={props.nowMs}
                     />
                 )}
-                {annotation.editorActive ? (
-                    <AnnotationEditorOverlay
-                        testID={`${testID}-annotation-editor`}
-                        captureCapability={annotation.captureCapability}
-                        selectCapability={annotation.selectCapability}
-                        markCount={annotation.markCount}
-                        marks={annotation.marks}
-                        comment={annotation.commentValue}
-                        onSelectElement={annotation.selectElement}
-                        onAddRegion={annotation.addRegion}
-                        onAddStroke={annotation.addStroke}
-                        onRemoveMark={annotation.removeMark}
-                        onCommentChange={annotation.changeComment}
-                        onAttach={annotation.attachDraft}
-                        onCancel={annotation.cancel}
-                    />
+                {annotating ? (
+                    <BrowserAnnotatorStage annotator={annotator} session={annotatorSession} phone={phone} control={annotatorControl} />
                 ) : null}
                 {activeView && (isDaemonAuthoritativeBrowserView(activeView)
                     || (props.browserAutomation && props.browserAutomation.enabled !== false)) ? (
@@ -851,7 +866,7 @@ export function BrowserShell(props: Readonly<{
                 view={activeView}
                 onRetry={toolbar.canReload ? () => dispatchViewCommand('reload') : undefined}
             />
-            {showPhoneChrome ? (
+            {showPhoneChrome && !annotating ? (
                 <View
                     testID={`${testID}-bottom-bar`}
                     accessibilityRole="toolbar"

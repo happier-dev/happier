@@ -1302,6 +1302,15 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+  transcriptPassage: {
+    quote: "Цитировать",
+    annotate: "Добавить заметку",
+    noteTitle: "Добавить заметку",
+    note: "Ваша заметка",
+    notePlaceholder: "Задайте вопрос или напишите, что изменить",
+    saveError: "Не удалось добавить заметку — она сохранена. Если вы редактируете ожидающее сообщение, сначала завершите это, затем повторите попытку.",
+    quoteError: "Не удалось добавить цитату. Если вы редактируете ожидающее сообщение, сначала завершите это, затем повторите попытку.",
+  },
     fileReviewNote: fileReviewNoteTranslations['ru'],
     composerReferences: composerReferenceTranslations['ru'],
     hunkReview: hunkReviewTranslations['ru'],
@@ -9961,6 +9970,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
                 nextRun: "Следующий блок",
                 runOf: ({ index, total }: { index: number; total: number }) => `Блок ${index} из ${total}`,
             },
+            annotate: fileViewerTranslations.ru.annotate,
             viewer: fileViewerTranslations.ru.viewer,
             kind: fileViewerTranslations.ru.kind,
             agentWritingThisFile: ({ agent }: { agent: string }) => `${agent} записывает этот файл`,
@@ -11042,6 +11052,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       attachAnnotation: 'Прикрепить аннотацию',
       contextUnavailable: 'Контекст браузера недоступен',
       attachedPage: ({ title }: { title: string }) => `Страница: ${title}`,
+      attachedAnnotation: ({ title, count }: { title: string; count: string }) => `${title} · Элементы: ${count}`,
+      attachedAnnotationStale: ({ title, count }: { title: string; count: string }) => `Обновите контекст страницы: ${title} · Элементы: ${count}`,
       attachedPageStale: ({ title }: { title: string }) => `Обновите контекст страницы: ${title}`,
       attachedCount: ({ count }: { count: string }) => `${count} контекстов браузера`,
       removeAttachedContext: 'Удалить контекст браузера',
@@ -11059,6 +11071,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       captureUnavailable: 'Захват аннотации недоступен для этого представления.',
       selectUnavailable: 'Выбор элементов недоступен для этого представления.',
       marked: ({ count }: { count: string }) => `Отмечено: ${count}`,
+    elementCount: ({ count }: { count: number }) => `Элементов: ${count}`,
       removeMark: ({ label }: { label: string }) => `Удалить ${label}`,
       markElement: ({ label }: { label: string }) => `Элемент ${label}`,
       markRegion: 'Область',

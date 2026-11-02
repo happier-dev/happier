@@ -3,8 +3,6 @@ import {
   BrowserContextSnapshotV1Schema,
   type BrowserContextSnapshotV1,
 } from '@happier-dev/protocol/browser/context/v1';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserContextSource } from './capture';
@@ -30,28 +28,7 @@ function fakeSource(): BrowserContextSource {
     })),
     captureSummary: vi.fn(async () => ({ ok: true as const, summary: 'summary text' })),
     captureSelectedElement: vi.fn(async () => ({ ok: true as const, selectorPath: 'main > h1' })),
-    captureRegion: vi.fn(async (target) => ({
-      ok: true as const,
-      rect: target.rect,
-      media: {
-        mediaId: 'media_region',
-        mediaKind: 'image' as const,
-        width: target.rect.width,
-        height: target.rect.height,
-        sizeBytes: 1024,
-      },
-    })),
-    captureElement: vi.fn(async () => ({
-      ok: true as const,
-      rect: { x: 5, y: 6, width: 100, height: 40 },
-      media: {
-        mediaId: 'media_element',
-        mediaKind: 'image' as const,
-        width: 100,
-        height: 40,
-        sizeBytes: 1024,
-      },
-    })),
+
   };
 }
 
@@ -74,37 +51,14 @@ const validInput = {
   contextId: 'context_1',
 } as const;
 
-const annotationActionInputs = {
-  'browser.context.annotation.start': validInput,
-  'browser.context.annotation.cancel': validInput,
-  'browser.context.annotation.captureRegion': {
-    ...validInput,
-    rect: { x: 10, y: 20, width: 100, height: 40 },
-  },
-  'browser.context.annotation.captureElement': {
-    ...validInput,
-    selector: '#hero',
-  },
-  'browser.context.annotation.attachComment': {
-    ...validInput,
-    comment: 'looks off here',
-  },
-  'browser.context.annotation.attachStroke': {
-    ...validInput,
-    stroke: {
-      shape: 'rectangle',
-      points: [{ x: 0.1, y: 0.2 }],
-    },
-  },
-  'browser.context.annotation.attachStyleIntent': {
-    ...validInput,
-    styleIntent: 'highlight',
-  },
-// attachDraft executes on the client that mounts the view, so these daemon routes never back it.
-} as const satisfies Record<Exclude<Extract<RuntimeActionIdV1, `browser.context.annotation.${string}`>,
-  'browser.context.annotation.attachDraft'>, unknown>;
-
 describe('browser context routes', () => {
+  it('refuses host-only annotation start and cancel instead of reporting a daemon no-op success', async () => {
+    const route = routes();
+    for (const actionId of ['browser.context.annotation.start', 'browser.context.annotation.cancel'] as const) {
+      expect(await route.dispatch(actionId, validInput)).toMatchObject({ ok: false,
+        errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_context_action_unbacked' });
+    }
+  });
   it('does not disclose previously captured context through attach while its view is held', async () => {
     const owners = createBrowserAutomationOwnerRegistry();
     const control = owners.getInputControl(validInput);
@@ -133,6 +87,26 @@ describe('browser context routes', () => {
     const result = await routes().dispatch('browser.context.captureScreenshot', validInput);
 
     expect((result as { kind?: string }).kind).toBe('browserScreenshot');
+  });
+
+  it('does not claim to execute a mounted-client annotation Action at the daemon', async () => {
+    expect(await routes().dispatch('browser.context.annotation.start', {
+      browserSessionId: validInput.browserSessionId, viewId: validInput.viewId,
+    })).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+  });
+
+  it('attaches and clears the ordinary screenshot after annotation capture aliases retire', async () => {
+    const route = routes();
+    const item = await route.dispatch('browser.context.captureScreenshot', validInput);
+    expect(item).toMatchObject({ kind: 'browserScreenshot', contextId: validInput.contextId });
+    const attachment = await route.dispatch('browser.context.attachToAgentTurn', validInput);
+    expect(attachment).toMatchObject({ contextId: validInput.contextId, state: 'available' });
+    expect(attachment).not.toHaveProperty('structuredBlock');
+    expect(await route.dispatch('browser.context.clear', validInput)).toEqual([item]);
+    expect(await route.dispatch('browser.context.attachToAgentTurn', validInput)).toMatchObject({ ok: false });
+    expect(await route.dispatch('browser.context.captureSelectedElement', validInput)).toMatchObject({
+      kind: 'browserSelectedElement', selectorPath: 'main > h1',
+    });
   });
 
   it('fails screenshot capture closed at the route when no daemon gate is threaded (GATE-SEC-001)', async () => {
@@ -176,181 +150,7 @@ describe('browser context routes', () => {
       ok: false,
       errorCode: 'runtime_action_disabled',
     });
-    expect((result as { error?: string }).error).toContain('browser_context_attach_group_missing');
-  });
-
-  // ANNO-4b end-to-end: capture a multi-target annotation through the daemon route (distinct
-  // contextIds sharing one annotationId) → attach-to-composer groups them into ONE card referencing
-  // the shared media → clear removes the group atomically (the cross-boundary path the unit tests
-  // alone cannot prove).
-  it('captures a multi-target annotation, attaches ONE grouped card, then clears it', async () => {
-    const route = routes();
-    const group = 'anno_group_1';
-
-    const first = await route.dispatch('browser.context.annotation.captureRegion', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_a',
-      annotationId: group,
-      rect: { x: 0, y: 0, width: 50, height: 40 },
-    });
-    expect((first as { kind?: string }).kind).toBe('browserAnnotation');
-    expect((first as { annotationId?: string }).annotationId).toBe(group);
-
-    const second = await route.dispatch('browser.context.annotation.captureElement', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_b',
-      annotationId: group,
-      selector: '#hero',
-    });
-    expect((second as { annotationId?: string }).annotationId).toBe(group);
-
-    // Attach by the shared annotationId → exactly ONE composer attachment card for the group.
-    const attached = await route.dispatch('browser.context.attachToComposer', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_a',
-      annotationId: group,
-    });
-    expect((attached as { v?: number }).v).toBe(1);
-    expect((attached as { attachmentId?: string }).attachmentId).toBe(`browser_context_attachment:${group}`);
-
-    // Attach to an agent turn yields the same single grouped card.
-    const turn = await route.dispatch('browser.context.attachToAgentTurn', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_b',
-      annotationId: group,
-    });
-    expect((turn as { attachmentId?: string }).attachmentId).toBe(`browser_context_attachment:${group}`);
-
-    // Clear removes the whole group; a subsequent attach fails closed (group gone).
-    const cleared = await route.dispatch('browser.context.clear', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_a',
-      annotationId: group,
-    });
-    expect(Array.isArray(cleared)).toBe(true);
-    expect((cleared as readonly unknown[]).length).toBe(2);
-
-    const afterClear = await route.dispatch('browser.context.attachToComposer', {
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_1',
-      navigationGeneration: 2,
-      contextId: 'ctx_a',
-      annotationId: group,
-    });
-    expect(afterClear).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
-  });
-
-  // MCH-5: daemon-side annotation region/element pixel capture for the managed-Chromium engine.
-  it('dispatches annotation.captureRegion to a browserAnnotation context item with region target', async () => {
-    const result = await routes().dispatch('browser.context.annotation.captureRegion', {
-      ...validInput,
-      rect: { x: 10, y: 20, width: 100, height: 40 },
-    });
-
-    expect(BrowserContextItemV1Schema.safeParse(result).success).toBe(true);
-    expect((result as { kind?: string }).kind).toBe('browserAnnotation');
-    expect((result as { target?: { kind?: string } }).target?.kind).toBe('region');
-  });
-
-  it('dispatches annotation.captureElement to a browserAnnotation context item with element target', async () => {
-    const result = await routes().dispatch('browser.context.annotation.captureElement', {
-      ...validInput,
-      selector: '#hero',
-    });
-
-    expect(BrowserContextItemV1Schema.safeParse(result).success).toBe(true);
-    expect((result as { kind?: string }).kind).toBe('browserAnnotation');
-    expect((result as { target?: { kind?: string } }).target?.kind).toBe('element');
-  });
-
-  it('returns invalid_parameters when annotation.captureRegion has no rect', async () => {
-    const result = await routes().dispatch('browser.context.annotation.captureRegion', validInput);
-
-    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-  });
-
-  it('surfaces every annotation runtime action consistently on ui and session-agent', () => {
-    for (const actionId of [
-      'browser.context.annotation.start',
-      'browser.context.annotation.cancel',
-      'browser.context.annotation.captureRegion',
-      'browser.context.annotation.captureElement',
-      'browser.context.annotation.attachComment',
-      'browser.context.annotation.attachStroke',
-      'browser.context.annotation.attachStyleIntent',
-    ] as const) {
-      expect(getActionSpec(actionId).surfaces.ui).toBe(true);
-      expect(getActionSpec(actionId).surfaces.agent).toBe(true);
-    }
-  });
-
-  it('backs metadata-only annotation actions on the daemon context route', async () => {
-    const route = routes();
-    await route.dispatch('browser.context.annotation.captureRegion', {
-      ...validInput,
-      contextId: 'ctx_annotated',
-      rect: { x: 10, y: 20, width: 100, height: 40 },
-    });
-
-    await expect(route.dispatch('browser.context.annotation.start', validInput)).resolves.toMatchObject({
-      v: 1,
-      actionId: 'browser.context.annotation.start',
-      status: 'started',
-    });
-    await expect(route.dispatch('browser.context.annotation.cancel', validInput)).resolves.toMatchObject({
-      v: 1,
-      actionId: 'browser.context.annotation.cancel',
-      status: 'cancelled',
-    });
-    await expect(route.dispatch('browser.context.annotation.attachComment', {
-      ...validInput,
-      contextId: 'ctx_annotated',
-      comment: 'looks off here',
-    })).resolves.toMatchObject({
-      v: 1,
-      actionId: 'browser.context.annotation.attachComment',
-      status: 'updated',
-      contextId: 'ctx_annotated',
-    });
-    await expect(route.dispatch('browser.context.annotation.attachStroke', {
-      ...validInput,
-      contextId: 'ctx_annotated',
-      stroke: { shape: 'rectangle', points: [{ x: 0.1, y: 0.2 }] },
-    })).resolves.toMatchObject({
-      v: 1,
-      actionId: 'browser.context.annotation.attachStroke',
-      status: 'updated',
-      contextId: 'ctx_annotated',
-    });
-    await expect(route.dispatch('browser.context.annotation.attachStyleIntent', {
-      ...validInput,
-      contextId: 'ctx_annotated',
-      styleIntent: 'highlight',
-    })).resolves.toMatchObject({
-      v: 1,
-      actionId: 'browser.context.annotation.attachStyleIntent',
-      status: 'updated',
-      contextId: 'ctx_annotated',
-    });
-  });
-
-  it('does not return browser_context_action_unbacked for surfaced annotation session-agent actions', async () => {
-    for (const [actionId, input] of Object.entries(annotationActionInputs)) {
-      if (!getActionSpec(actionId as RuntimeActionIdV1).surfaces.agent) continue;
-      const result = await routes().dispatch(actionId as RuntimeActionIdV1, input);
-
-      expect(String((result as { error?: string }).error ?? '')).not.toContain('browser_context_action_unbacked');
-    }
+    expect((result as { error?: string }).error).toContain('browser_context_item_missing');
   });
 
   it('binds the requester to the route owner account, ignoring caller-supplied identity', async () => {

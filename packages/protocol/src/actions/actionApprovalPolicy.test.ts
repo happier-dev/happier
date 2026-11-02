@@ -4136,42 +4136,9 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN Â
 
   it('floors the egress-bearing annotation captures but not the non-egress annotation edits', () => {
     expect(isAgentInitiatedApprovalRequiredByDefault('browser.context.annotation.attachDraft')).toBe(true);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.captureRegion' as any,
-      ),
-    ).toBe(true);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.captureElement' as any,
-      ),
-    ).toBe(true);
-    // start/cancel + comment/stroke/style intent are local UI-state edits with no page egress.
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.start' as any,
-      ),
-    ).toBe(false);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.cancel' as any,
-      ),
-    ).toBe(false);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.attachComment' as any,
-      ),
-    ).toBe(false);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.attachStroke' as any,
-      ),
-    ).toBe(false);
-    expect(
-      isAgentInitiatedApprovalRequiredByDefault(
-        'browser.context.annotation.attachStyleIntent' as any,
-      ),
-    ).toBe(false);
+    for (const id of ['browser.context.annotation.start', 'browser.context.annotation.cancel', 'browser.context.annotation.setDraftComment'] as const) {
+      expect(isAgentInitiatedApprovalRequiredByDefault(id)).toBe(false);
+    }
   });
 
   it('floors browser attach actions that egress captured context or recordings to the composer/agent turn', () => {
@@ -4617,8 +4584,6 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
       'browser.context.captureSelectedElement',
       'browser.context.captureNetworkSummary',
       'browser.context.captureConsoleSummary',
-      'browser.context.annotation.captureRegion',
-      'browser.context.annotation.captureElement',
       'localServices.publicPreview.status',
       'localServices.publicPreview.copyUrl',
     ]) {

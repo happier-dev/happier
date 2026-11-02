@@ -145,16 +145,15 @@ describe('LocalPreviewTarget web', () => {
         await act(async () => screen.findByType('iframe').props.onLoad());
         const card = screen.findHostByTestId('local-preview-unavailable');
         expect(card).not.toBeNull();
-        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'The last page was localhost:5173/dashboard.')).toBeDefined();
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'localhost:5173/dashboard')).toBeDefined();
         await screen.pressByTestIdAsync('local-preview-ended-open-again');
         expect(onOpenAgain).toHaveBeenCalledTimes(1);
         expect(screen.findHostByTestId('local-preview-ended-close')).not.toBeNull();
 
-        // Nothing runs it now: no Open again; Close tab is the one action and Services is named.
+        // Nothing runs it now: no Open again; Close tab remains available.
         await screen.update(render({ lastPage: 'localhost:5173/dashboard', onClose }));
         expect(screen.findHostByTestId('local-preview-ended-open-again')).toBeNull();
         expect(screen.findHostByTestId('local-preview-ended-close')).not.toBeNull();
-        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'Open it again from Services.')).toBeDefined();
         await screen.unmount();
     });
 

@@ -37,9 +37,11 @@ import {
 import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
 import { planComposerAttachmentReferenceRemoval } from '@/components/sessions/composer/composerAttachmentReferences';
 import { planComposerReferenceInsertion, recordComposerReferencePublication, snapComposerReferenceOffset } from '@/components/sessions/composer/composerReferenceInsertion';
+import { planComposerAttachmentAppend, type ComposerAttachmentInsertionItem } from '@/components/sessions/composer/composerAttachmentAppend';
+export type { ComposerAttachmentInsertionItem } from '@/components/sessions/composer/composerAttachmentAppend';
 import { buildMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { INLINE_REFERENCE_ATTACHMENT_SCHEME_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
-import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
+import { createExistingSessionComposerDocumentOwner, type SessionComposerDocumentBinding } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
 import type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
 export type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
 import { randomUUID } from '@/platform/randomUUID';
@@ -56,6 +58,7 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storage';
+import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { isSessionRetiredForServer } from '@/sync/store/domains/sessions';
 import { subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
@@ -476,28 +479,43 @@ function capturePersistentSessionDraftScope(ref: ComposerRefV1): ServerAccountSc
     return scope;
 }
 
+/**
+ * The chooser offers every listed Session, and most aren't hydrated: the list row carries the same access
+ * fact, so a listed Session stays writable without being opened first.
+ */
+function readPersistentSession(
+    state: ReturnType<typeof storage.getState>,
+    scope: ServerAccountScope,
+    sessionId: string,
+) {
+    return state.sessions[sessionId]
+        ?? findSessionListLookupSession(state, { serverId: scope.serverId, sessionId })?.session;
+}
+
 function persistentSessionDraftStateSignature(
     scope: ServerAccountScope,
     sessionId: string,
 ): string {
     const state = storage.getState();
     if (!isPersistentSessionDraftCurrent(scope, sessionId)) return 'unavailable';
-    const editable = state.sessions[sessionId]?.access?.capabilities.submitAgentInput === true;
+    const editable = readPersistentSession(state, scope, sessionId)?.access?.capabilities.submitAgentInput === true;
     return `available:${editable}`;
 }
 
 function createPersistentSessionComposerTarget(
     ref: Extract<ComposerRefV1, Readonly<{ kind: 'session' }>>,
+    binding?: SessionComposerDocumentBinding,
 ): ComposerPresentationTarget | null {
-    const scope = capturePersistentSessionDraftScope(ref);
+    const scope = binding?.scope ?? capturePersistentSessionDraftScope(ref);
     const sessionId = readPersistentSessionId(ref);
     if (!scope || !sessionId) return null;
 
-    const isCurrent = () => isPersistentSessionDraftCurrent(scope, sessionId);
+    const isCurrent = binding?.isCurrent ?? (() => isPersistentSessionDraftCurrent(scope, sessionId));
     const owner = createExistingSessionComposerDocumentOwner({ scope, ref, isCurrent });
     const readSnapshot = (): ComposerSnapshotV1 => {
-    const state = storage.getState();
-        const editable = state.sessions[sessionId]?.access?.capabilities.submitAgentInput === true;
+        const state = storage.getState();
+        const session = binding?.session ?? readPersistentSession(storage.getState(), scope, sessionId);
+        const editable = session?.access?.capabilities.submitAgentInput === true;
         return projectComposerDocumentSnapshot({
             owner,
             attachmentCatalog: { entriesById: null },
@@ -533,10 +551,13 @@ function createPersistentSessionComposerTarget(
     });
 }
 
-function readTarget(ref: ComposerRefV1): ComposerPresentationTarget | null {
-    const registered = readRegisteredTarget(ref);
+function readTarget(ref: ComposerRefV1, scope?: ServerAccountScope, binding?: SessionComposerDocumentBinding): ComposerPresentationTarget | null {
+    const active = !scope || areServerAccountScopesEqual(getActiveServerAccountScope(), scope);
+    if (!active && !binding) return null;
+    const registered = active ? (scope ? resolveScopedMountedComposerTarget(ref, scope) : readRegisteredTarget(ref)) : null;
     if (registered) return registered;
-    return ref.kind === 'session' ? createPersistentSessionComposerTarget(ref) : null;
+    const persistent = ref.kind === 'session' ? createPersistentSessionComposerTarget(ref, binding) : null;
+    return persistent && (!scope || areServerAccountScopesEqual(persistent.readScope?.(), scope)) ? persistent : null;
 }
 
 function equalContributionIdentity(
@@ -1298,6 +1319,7 @@ function commitComposerPresentationTransactionApply(
         handle: ComposerContentHandleV1;
         claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
     }>[] = [],
+    discussionSource?: ComposerPresentationDocumentMutation['sessionDiscussionSelectionSourceV1'],
 ): ComposerTransactionResultV1 {
     if (prepared.reviewComments) {
         const currentWorkspace = readReviewCommentWorkspace(prepared.target, ref);
@@ -1312,6 +1334,7 @@ function commitComposerPresentationTransactionApply(
             ...(prepared.selection ? { selection: prepared.selection } : {}),
             references: prepared.references,
             attachments: prepared.attachments,
+            ...(discussionSource ? { sessionDiscussionSelectionSourceV1: discussionSource } : {}),
         },
     });
     if (committed.status !== 'applied') return committed;
@@ -1374,6 +1397,7 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
     executionTarget?: SessionExecutionTargetV1;
     target?: ComposerPresentationTarget | null;
     isTargetCurrent?: (target: ComposerPresentationTarget) => boolean;
+    discussionSource?: ComposerPresentationDocumentMutation['sessionDiscussionSelectionSourceV1'];
 }>): ComposerTransactionResultV1 {
     if (input.target && input.isTargetCurrent?.(input.target) === false) {
         return { status: 'composerUnavailable' };
@@ -1386,7 +1410,7 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
     if (prepared.prepared.stagedMediaClaims.length > 0) {
         return invalidOperation(prepared.prepared.stagedMediaClaims[0]!.operationIndex, 'staged_media_custody_required');
     }
-    return commitComposerPresentationTransactionApply(prepared.prepared, input.request.ref);
+    return commitComposerPresentationTransactionApply(prepared.prepared, input.request.ref, [], input.discussionSource);
 }
 
 /**
@@ -1683,21 +1707,60 @@ export function applyMountedComposerPresentationTransaction(request: ComposerPre
     });
 }
 
-/** Upload drafts live outside the portable document; their chips still use its transaction owner. */
-export function insertMountedComposerAttachmentReferences(input: Readonly<{
+export function insertComposerAttachmentReferences(input: Readonly<{
     ref: ComposerRefV1;
     scope: ServerAccountScope;
-    drafts: readonly AttachmentDraft[];
+    items: readonly ComposerAttachmentInsertionItem[];
+    placement?: 'caret' | 'appendParagraph';
+    sessionBinding?: SessionComposerDocumentBinding;
+    discussionSource?: ComposerPresentationDocumentMutation['sessionDiscussionSelectionSourceV1'];
 }>): ComposerTransactionResultV1 {
-    const snapshot = readMountedComposerPresentationSnapshot(input);
+    const target = readTarget(input.ref, input.scope, input.sessionBinding);
+    const snapshot = target?.readSnapshot?.();
     if (!snapshot) return { status: 'composerUnavailable' };
-    if (input.drafts.length === 0) return { status: 'applied', revision: snapshot.revision };
+    if (input.items.length === 0) return { status: 'applied', revision: snapshot.revision };
+    if (input.placement === 'appendParagraph') {
+        const next = planComposerAttachmentAppend({ snapshot, items: input.items });
+        const text = next.text.slice(snapshot.text.length);
+        const inserted = next.references.slice(snapshot.references.length);
+        if (!text && inserted.length === 0) return { status: 'applied', revision: snapshot.revision };
+        return applyComposerPresentationTransactionAtOwner({
+            request: { ref: input.ref, transaction: { expectedRevision: snapshot.revision,
+                operations: [{ kind: 'text.insert', position: { offset: snapshot.text.length }, text },
+                    ...inserted.map(reference => ({ kind: 'reference.insert' as const, reference }))] } },
+            target, attachmentAuthorityResolver: null, admittedContributor: null,
+            discussionSource: input.discussionSource,
+        });
+    }
     let working = snapshot;
     let firstEdit: ReturnType<typeof planComposerReferenceInsertion>[0] | undefined;
     const inserted: ComposerMentionRef[] = [];
+    const insertText = (value: string): ComposerTransactionResultV1 | null => {
+        if (!value) return null;
+        const range = working.selection ?? { start: working.text.length, end: working.text.length };
+        const edit = { kind: 'text.replaceRange' as const, range, text: value };
+        const text = resolveTextMutation({ snapshot: working, operations: [edit] });
+        if (!text.ok) return text.result;
+        const references = resolveReferences({ snapshot: working, operations: [edit], nextText: text.text, edits: text.edits });
+        if (!references.ok) return references.result;
+        firstEdit ??= edit;
+        const cursor = range.start + value.length;
+        working = { ...working, text: text.text, references: [...references.references], selection: { start: cursor, end: cursor } };
+        return null;
+    };
     // Compose all receipts against one private working snapshot, then publish once. The
     // insertion planner and transaction validator still own boundaries, spacing and rebasing.
-    for (const draft of input.drafts) {
+    for (const [index, item] of input.items.entries()) {
+        if ('text' in item) {
+            const refusal = insertText(item.text);
+            if (refusal) return refusal;
+            if (item.text && index < input.items.length - 1) {
+                const separatorRefusal = insertText('\n\n');
+                if (separatorRefusal) return separatorRefusal;
+            }
+            continue;
+        }
+        const draft = item.draft;
         const operations = planComposerReferenceInsertion({ snapshot: working, at: { kind: 'caret' },
             reference: { kind: INLINE_REFERENCE_ATTACHMENT_SCHEME_V1,
                 ref: buildMentionRefV1(INLINE_REFERENCE_ATTACHMENT_SCHEME_V1, draft.id),
@@ -1712,17 +1775,24 @@ export function insertMountedComposerAttachmentReferences(input: Readonly<{
         const cursor = start + edit.text.length;
         working = { ...working, text: text.text, references: [...references.references], selection: { start: cursor, end: cursor } };
         inserted.push(operations[1].reference);
+        if (item.note) {
+            const refusal = insertText(item.note + (index < input.items.length - 1 ? '\n\n' : ''));
+            if (refusal) return refusal;
+        }
     }
     if (!firstEdit) return { status: 'applied', revision: snapshot.revision };
     const range = firstEdit.kind === 'text.insert'
         ? { start: firstEdit.position.offset, end: firstEdit.position.offset } : firstEdit.range;
     const text = working.text.slice(range.start, working.text.length - (snapshot.text.length - range.end));
     const edit = { ...firstEdit, text };
-    const result = applyMountedComposerPresentationTransaction({ ref: input.ref, scope: input.scope,
-        transaction: { expectedRevision: snapshot.revision,
-            operations: [edit, ...inserted.map(reference => ({ kind: 'reference.insert' as const, reference }))] } });
+    const result = applyComposerPresentationTransactionAtOwner({
+        request: { ref: input.ref, transaction: { expectedRevision: snapshot.revision,
+            operations: [edit, ...inserted.map(reference => ({ kind: 'reference.insert' as const, reference }))] } },
+        target, attachmentAuthorityResolver: null, admittedContributor: null,
+        discussionSource: input.discussionSource,
+    });
     if (result.status === 'applied') {
-        tryFocusVisualSessionComposer(readScopedMountedComposerTarget(input.ref, input.scope));
+        tryFocusVisualSessionComposer(target);
     }
     return result;
 }

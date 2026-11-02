@@ -65,7 +65,7 @@ import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1, composerRefV1Key } from "@ha
 import { PluginContextualResourceStoreProvider } from "@/components/plugins/surfaces/PluginContextualResourceStoreProvider";
 import { projectComposerAttachmentRowItems } from "@/components/sessions/composer/composerAttachmentProjection";
 import { createExistingSessionComposerDocumentOwner } from "@/components/sessions/composer/existingSessionComposerDocumentOwner";
-import { insertMountedComposerAttachmentReferences, removeMountedComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { insertComposerAttachmentReferences, removeMountedComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { createPendingMessageComposerDocumentOwner, withdrawPendingMessageToComposerWithActionApproval } from "@/components/sessions/composer/pendingMessageComposerDocumentOwner";
 import { useActionApprovalContinuation } from "@/components/approvals/useActionApprovalContinuation";
 import type { ComposerDraftFieldCurrentness, MutableComposerDocumentOwner } from "@/components/sessions/composer/composerDocumentOwner";
@@ -2863,8 +2863,8 @@ export function useSessionComposerController({
         eagerUpload: { sessionId, config: attachmentsUploadConfig },
         onPickedDrafts: (drafts) => {
             if (!sessionAccountLifetime?.isCurrent()) return;
-            insertMountedComposerAttachmentReferences({ ref: activeComposerRefRef.current,
-                scope: sessionAccountLifetime.scope, drafts });
+            insertComposerAttachmentReferences({ ref: activeComposerRefRef.current,
+                scope: sessionAccountLifetime.scope, items: (drafts).map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             if (!sessionAccountLifetime?.isCurrent()) return;

@@ -1,8 +1,9 @@
 import type {
-    BrowserDiagnosticFidelityV1,
+    BrowserDiagnosticFidelityV1} from '@happier-dev/protocol/browser/diagnostics/v1';
+import type {
     BrowserRenderEngineKindV1,
     BrowserSemanticAdapterKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/adapters/kinds';
 
 /**
  * Annotation capture availability shared by Markup, its editor and the registered agent Action.

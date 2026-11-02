@@ -5493,7 +5493,6 @@
     "sources/sync/domains/browser/recording/machineRpc.test.ts",
     "sources/sync/domains/browser/recording/reverseCaptureHandler.test.ts",
     "sources/sync/domains/browser/recording/runtimeAttachExecutor.test.ts",
-    "sources/sync/domains/browser/recording/runtimeAttachRegistry.test.ts",
     "sources/sync/domains/browser/recording/state.test.ts",
     "sources/sync/domains/browser/shell/address.test.ts",
     "sources/sync/domains/browser/shell/securityOrigin.test.ts",

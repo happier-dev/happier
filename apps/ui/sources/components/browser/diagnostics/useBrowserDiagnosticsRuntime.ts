@@ -373,7 +373,7 @@ export function useBrowserDiagnosticsRuntime(
                     break;
                 case 'browser.diagnostics.elementPicker.start':
                 case 'browser.diagnostics.elementPicker.cancel':
-                    if (args.actionId === 'browser.diagnostics.elementPicker.start') setPickerActive(true);
+                    if (args.actionId === 'browser.diagnostics.elementPicker.start' && !request.point) setPickerActive(true);
                     pendingRequest = { elementPickerRequest: BrowserDiagnosticsElementPickerRequestV1Schema.parse(engineRequest) };
                     break;
                 default: return unavailable;
@@ -577,8 +577,12 @@ export function useBrowserDiagnosticsRuntime(
 
     const onElementPickerResultBridge = input.onElementPickerResult;
     const handleElementPickerResult = React.useCallback((result: BrowserDiagnosticsElementPickerResultV1) => {
-        if (!pendingResults.current.has(result.pickerRequestId)) return;
+        const pending = pendingResults.current.get(result.pickerRequestId);
+        if (!pending) return;
         settleResult(result.pickerRequestId, result);
+        // A finite point query returns to its awaiting annotator; only interactive selections
+        // trigger the existing capture hand-off and picker-mode lifecycle.
+        if (pending.request.elementPickerRequest?.action === 'start' && pending.request.elementPickerRequest.point) return;
         if (result.status === 'cancelled') {
             for (const [requestId, pending] of pendingResults.current) {
                 if (pending.request.elementPickerRequest?.action === 'start') {

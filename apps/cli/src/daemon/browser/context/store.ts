@@ -1,180 +1,90 @@
-import { BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
-import type { BrowserAnnotationStrokeV1, BrowserAnnotationStyleIntentV1, BrowserContextItemV1 } from '@happier-dev/protocol';
+import type { BrowserContextItemV1 } from '@happier-dev/protocol';
 
-/**
- * ANNO-4b daemon-local browser-context item store. The headless managed-Chromium agent path has no
- * in-app `BrowserContextState` holding captured items, so the daemon retains them here keyed by
- * `contextId` and grouped by `annotationId`. The store is the single owner of the
- * group-by-annotationId invariant on the daemon side: a multi-target annotation (N items sharing one
- * `annotationId` + one cropped `mediaId`) is ONE logical group, attached as ONE composer/agent card,
- * cleared atomically, and its shared `mediaId` is released exactly once.
- *
- * Media references are reference-only (`BrowserScreenshotMediaReferenceV1` carries a `mediaId`, never
- * bytes); the bytes are persisted at capture time via `recording/sessionMediaWriter`. The store
- * tracks which `contextId`s reference each `mediaId` so a clear releases a `mediaId` only when its
- * last referencing item is removed (no premature release while a sibling target still references it,
- * no double-release across the group's N items).
- */
+type AnnotationItem = Extract<BrowserContextItemV1, { kind: 'browserAnnotation' }>;
+type ContextSource = Readonly<{ browserSessionId: string; viewId: string }>;
+
 export type BrowserContextStoreClearResult = Readonly<{
   removedItems: readonly BrowserContextItemV1[];
   releasedMediaIds: readonly string[];
 }>;
 
+/** The daemon retains one item per annotation; marks and element facts live on that item. */
 export type BrowserContextItemStore = Readonly<{
-  record(item: BrowserContextItemV1, source?: Readonly<{ browserSessionId: string; viewId: string }>): void;
+  record(item: BrowserContextItemV1, source?: ContextSource): void;
   item(contextId: string): BrowserContextItemV1 | undefined;
-  source(contextId: string): Readonly<{ browserSessionId: string; viewId: string }> | undefined;
-  /** Items sharing an `annotationId`, in insertion order. Empty when the group is unknown. */
-  group(annotationId: string): readonly BrowserContextItemV1[];
-  /** The `annotationId` a `contextId` belongs to, or `undefined` for a non-annotation/unknown item. */
-  annotationIdForContext(contextId: string): string | undefined;
-  /** Update metadata for an existing annotation item and return the canonical parsed item. */
-  updateAnnotation(input: Readonly<{
-    contextId: string;
-    comment?: string;
-    stroke?: BrowserAnnotationStrokeV1;
-    styleIntent?: BrowserAnnotationStyleIntentV1;
-  }>): BrowserContextItemV1 | undefined;
-  /**
-   * Atomically remove a group (by `annotationId`) or a single item (by `contextId`). When a
-   * `contextId` resolves to an annotation item, its WHOLE group is removed (the group is one logical
-   * annotation). Returns the removed items + the `mediaId`s whose last reference was dropped.
-   */
+  source(contextId: string): ContextSource | undefined;
+  annotation(annotationId: string): AnnotationItem | undefined;
   clear(input: Readonly<{ annotationId?: string; contextId?: string }>): BrowserContextStoreClearResult;
   size(): number;
 }>;
 
 function mediaIdOf(item: BrowserContextItemV1): string | undefined {
-  if (item.kind === 'browserAnnotation' || item.kind === 'browserScreenshot') {
-    return item.media.mediaId;
-  }
+  if (item.kind === 'browserAnnotation') return item.imageRef.mediaId;
+  if (item.kind === 'browserScreenshot') return item.media.mediaId;
   return undefined;
 }
 
 export function createBrowserContextItemStore(): BrowserContextItemStore {
-  const itemsByContextId = new Map<string, Readonly<{ item: BrowserContextItemV1; source?: Readonly<{ browserSessionId: string; viewId: string }> }>>();
-  const insertionOrder: string[] = [];
-  const contextIdsByAnnotation = new Map<string, string[]>();
-  // mediaId -> the set of contextIds that currently reference it (reference counting).
+  const itemsByContextId = new Map<string, Readonly<{ item: BrowserContextItemV1; source?: ContextSource }>>();
+  const contextIdByAnnotation = new Map<string, string>();
   const contextIdsByMediaId = new Map<string, Set<string>>();
 
-  function indexMedia(item: BrowserContextItemV1): void {
+  function remove(contextId: string): BrowserContextStoreClearResult {
+    const item = itemsByContextId.get(contextId)?.item;
+    if (!item) return { removedItems: [], releasedMediaIds: [] };
+    itemsByContextId.delete(contextId);
+    if (item.kind === 'browserAnnotation') contextIdByAnnotation.delete(item.annotationId);
     const mediaId = mediaIdOf(item);
-    if (!mediaId) return;
-    const refs = contextIdsByMediaId.get(mediaId) ?? new Set<string>();
-    refs.add(item.contextId);
-    contextIdsByMediaId.set(mediaId, refs);
-  }
-
-  function unindexMedia(item: BrowserContextItemV1): string | null {
-    const mediaId = mediaIdOf(item);
-    if (!mediaId) return null;
-    const refs = contextIdsByMediaId.get(mediaId);
-    if (!refs) return null;
-    refs.delete(item.contextId);
-    if (refs.size === 0) {
-      contextIdsByMediaId.delete(mediaId);
-      return mediaId;
-    }
-    return null;
-  }
-
-  function removeContextIds(contextIds: readonly string[]): BrowserContextStoreClearResult {
-    const removedItems: BrowserContextItemV1[] = [];
     const releasedMediaIds: string[] = [];
-    for (const contextId of contextIds) {
-      const item = itemsByContextId.get(contextId)?.item;
-      if (!item) continue;
-      itemsByContextId.delete(contextId);
-      const orderIndex = insertionOrder.indexOf(contextId);
-      if (orderIndex >= 0) insertionOrder.splice(orderIndex, 1);
-      if (item.kind === 'browserAnnotation') {
-        const group = contextIdsByAnnotation.get(item.annotationId);
-        if (group) {
-          const remaining = group.filter((id) => id !== contextId);
-          if (remaining.length === 0) contextIdsByAnnotation.delete(item.annotationId);
-          else contextIdsByAnnotation.set(item.annotationId, remaining);
-        }
+    if (mediaId) {
+      const refs = contextIdsByMediaId.get(mediaId);
+      refs?.delete(contextId);
+      if (refs?.size === 0) {
+        contextIdsByMediaId.delete(mediaId);
+        releasedMediaIds.push(mediaId);
       }
-      const released = unindexMedia(item);
-      if (released) releasedMediaIds.push(released);
-      removedItems.push(item);
     }
-    return { removedItems, releasedMediaIds };
+    return { removedItems: [item], releasedMediaIds };
   }
 
   return {
     record(item, source) {
-      const existing = itemsByContextId.get(item.contextId)?.item;
-      if (existing) {
-        // Re-record (re-capture of the same contextId): drop the prior media reference first so the
-        // ref set stays accurate, then re-index.
-        unindexMedia(existing);
-      } else {
-        insertionOrder.push(item.contextId);
+      remove(item.contextId);
+      if (item.kind === 'browserAnnotation') {
+        const previousContextId = contextIdByAnnotation.get(item.annotationId);
+        if (previousContextId) remove(previousContextId);
+        contextIdByAnnotation.set(item.annotationId, item.contextId);
       }
       itemsByContextId.set(item.contextId, { item, ...(source ? { source } : {}) });
-      if (item.kind === 'browserAnnotation') {
-        const group = contextIdsByAnnotation.get(item.annotationId) ?? [];
-        if (!group.includes(item.contextId)) group.push(item.contextId);
-        contextIdsByAnnotation.set(item.annotationId, group);
+      const mediaId = mediaIdOf(item);
+      if (mediaId) {
+        const refs = contextIdsByMediaId.get(mediaId) ?? new Set<string>();
+        refs.add(item.contextId);
+        contextIdsByMediaId.set(mediaId, refs);
       }
-      indexMedia(item);
     },
-
-    item(contextId) {
-      return itemsByContextId.get(contextId)?.item;
-    },
-
+    item: contextId => itemsByContextId.get(contextId)?.item,
     source: contextId => itemsByContextId.get(contextId)?.source,
-
-    group(annotationId) {
-      const ids = contextIdsByAnnotation.get(annotationId) ?? [];
-      return ids
-        .map((id) => itemsByContextId.get(id)?.item)
-        .filter((item): item is BrowserContextItemV1 => item !== undefined);
+    annotation(annotationId) {
+      const contextId = contextIdByAnnotation.get(annotationId);
+      const item = contextId ? itemsByContextId.get(contextId)?.item : undefined;
+      return item?.kind === 'browserAnnotation' ? item : undefined;
     },
-
-    annotationIdForContext(contextId) {
-      const item = itemsByContextId.get(contextId)?.item;
-      return item && item.kind === 'browserAnnotation' ? item.annotationId : undefined;
-    },
-
-    updateAnnotation(input) {
-      const entry = itemsByContextId.get(input.contextId);
-      const item = entry?.item;
-      if (!item || item.kind !== 'browserAnnotation') return undefined;
-      const next = BrowserContextItemV1Schema.parse({
-        ...item,
-        ...(input.comment !== undefined ? { comment: input.comment } : {}),
-        ...(input.stroke !== undefined ? { stroke: input.stroke } : {}),
-        ...(input.styleIntent !== undefined ? { styleIntent: input.styleIntent } : {}),
-      });
-      itemsByContextId.set(input.contextId, { ...entry, item: next });
-      return next;
-    },
-
     clear(input) {
       if (input.annotationId) {
-        const ids = [...(contextIdsByAnnotation.get(input.annotationId) ?? [])];
-        return removeContextIds(ids);
+        const contextId = contextIdByAnnotation.get(input.annotationId);
+        return contextId ? remove(contextId) : { removedItems: [], releasedMediaIds: [] };
       }
-      if (input.contextId) {
-        const item = itemsByContextId.get(input.contextId)?.item;
-        // A contextId that names an annotation item clears its WHOLE group atomically.
-        if (item && item.kind === 'browserAnnotation') {
-          const ids = [...(contextIdsByAnnotation.get(item.annotationId) ?? [])];
-          return removeContextIds(ids);
-        }
-        return removeContextIds([input.contextId]);
+      if (input.contextId) return remove(input.contextId);
+      const removedItems: BrowserContextItemV1[] = [];
+      const releasedMediaIds: string[] = [];
+      for (const contextId of itemsByContextId.keys()) {
+        const result = remove(contextId);
+        removedItems.push(...result.removedItems);
+        releasedMediaIds.push(...result.releasedMediaIds);
       }
-      // No selector: clear everything (atomic full reset).
-      const all = [...insertionOrder];
-      return removeContextIds(all);
+      return { removedItems, releasedMediaIds };
     },
-
-    size() {
-      return itemsByContextId.size;
-    },
+    size: () => itemsByContextId.size,
   };
 }

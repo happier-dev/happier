@@ -54,6 +54,30 @@ export function playElementRectFlight(element: HTMLElement, origin: WindowFlight
     return animation;
 }
 
+/** The same FLIP run forwards: the element leaves its place for `target` and stays there until cancelled. */
+export function playElementRectDeparture(element: HTMLElement, target: WindowFlightRect, options: Readonly<{
+    animationId: string;
+    durationMs: number;
+    easingCss: string;
+    /** Fades over the flight's last `fadeMs`, so it lands as it goes (a success moment). */
+    fadeMs?: number;
+}>): Animation | null {
+    cancelElementRectFlight(element, options.animationId);
+    if (!element.isConnected || typeof element.animate !== 'function') return null;
+    const from = captureElementFlightRect(element);
+    if (from.width === 0 || from.height === 0) return null;
+    const to = rectFlipTransform(target, from);
+    const transform = `translate(${to.translateX}px, ${to.translateY}px) scale(${to.scaleX}, ${to.scaleY})`;
+    const fadeStart = options.fadeMs === undefined ? null : 1 - options.fadeMs / options.durationMs;
+    const animation = element.animate([
+        { transform: 'translate(0px, 0px) scale(1, 1)', transformOrigin: 'left top', opacity: 1 },
+        ...(fadeStart === null ? [] : [{ opacity: 1, offset: fadeStart }]),
+        { transform, transformOrigin: 'left top', opacity: fadeStart === null ? 1 : 0 },
+    ], { duration: options.durationMs, easing: options.easingCss, fill: 'forwards' });
+    animation.id = options.animationId;
+    return animation;
+}
+
 /** A rectangle in a container's coordinates. */
 export type FlightRect = Readonly<{ x: number; y: number; w: number; h: number }>;
 

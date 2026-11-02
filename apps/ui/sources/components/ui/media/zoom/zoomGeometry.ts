@@ -84,7 +84,9 @@ export function resizeZoom(state: ZoomState, image: ZoomSize, previous: ZoomSize
     const bounds = resolveZoomBounds(image, viewport, dpr);
     // Before the first layout there is no centre content point to preserve.
     if (state.scale === 0) return { scale: bounds.min, x: 0, y: 0 };
-    const scale = clampZoom(state.scale, bounds.min, bounds.max);
+    // An unzoomed picture follows fit as the viewport changes; a user zoom keeps its image scale.
+    const wasFitted = state.scale === resolveZoomBounds(image, previous, dpr).min;
+    const scale = wasFitted ? bounds.min : clampZoom(state.scale, bounds.min, bounds.max);
     // Translations are relative to the centre: retaining t/scale retains its content point.
     const point = clampPan({ x: state.x * scale / state.scale, y: state.y * scale / state.scale }, panBounds(image, viewport, scale));
     return { scale, ...point };

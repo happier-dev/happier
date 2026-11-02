@@ -2,6 +2,7 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 import type { ComposerAttachmentDraftV1, ComposerAttachmentViewV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import type { ComposerCapabilitiesV1, ComposerSnapshotV1, ComposerTransactionResultV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
@@ -24,6 +25,8 @@ export type ComposerPresentationDocumentMutation = Readonly<{
     selection?: NonNullable<ComposerSnapshotV1['selection']>;
     references: readonly ComposerMentionRef[];
     attachments: readonly ComposerAttachmentViewV1[];
+    /** Host-owned Session provenance commits with the selected text, never through a plugin operation. */
+    sessionDiscussionSelectionSourceV1?: Omit<DiscussionSelectionSourceV1, 'draftCorrelationId'>;
 }>;
 
 export type ComposerDraftFieldCurrentness = Readonly<{

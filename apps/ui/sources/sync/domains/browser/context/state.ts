@@ -95,25 +95,16 @@ export function markBrowserContextViewNavigation(
     const current = state.navigationGenerationByViewId[input.viewId] ?? 0;
     if (input.navigationGeneration <= current) return state;
 
-    // ANNO-5: a real navigation invalidates any in-flight editor draft + active annotation mode for
-    // the view so a stale-page annotation is never committed against the new navigation.
-    const activeAnnotations = state.activeAnnotationByViewId ?? {};
-    const { [input.viewId]: activeAnnotation, ...activeAnnotationByViewId } = activeAnnotations;
-    const drafts = state.annotationDraftByViewId ?? {};
-    const { [input.viewId]: removedDraft, ...annotationDraftByViewId } = drafts;
     return {
         ...state,
         navigationGenerationByViewId: {
             ...state.navigationGenerationByViewId,
             [input.viewId]: input.navigationGeneration,
         },
-        activeAnnotationByViewId: activeAnnotation ? activeAnnotationByViewId : state.activeAnnotationByViewId,
-        annotationDraftByViewId: removedDraft ? annotationDraftByViewId : state.annotationDraftByViewId,
     };
 }
 
 export {
-    captureBrowserAnnotation,
     captureBrowserPageReference,
     captureBrowserScreenshotReference,
     captureBrowserSelectedElement,
@@ -122,13 +113,9 @@ export {
     cancelBrowserAnnotationMode,
     resolveBrowserContextKindAvailability,
     startBrowserAnnotationMode,
-    updateBrowserAnnotationComment,
-    updateBrowserAnnotationStroke,
-    updateBrowserAnnotationStyleIntent,
 } from './actions';
 export { selectBrowserContextComposerAttachments } from './selectors';
 export type {
-    BrowserAnnotationCommentUpdateResult,
     BrowserAnnotationModeResult,
     BrowserContextAttachResult,
     BrowserContextCaptureResult,

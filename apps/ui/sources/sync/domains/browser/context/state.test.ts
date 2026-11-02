@@ -1,8 +1,11 @@
+import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
 import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserContextCapabilities,
+    BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type {
+    BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
     BrowserDiagnosticsElementPickerResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -132,11 +135,11 @@ describe('browser context state', () => {
         expect(JSON.stringify(item)).not.toContain('#secret');
     });
 
-    it('fails closed with typed unavailable state when browser.context is disabled', () => {
+    it('uses available producer capability when a stale browser.context mirror is disabled', () => {
         const result = captureBrowserPageReference({
             state: createBrowserContextState(),
             browserContextEnabled: false,
-            contextCapabilities,
+            contextCapabilities: { ...contextCapabilities, enabled: false },
             adapterCapabilities,
             viewId: 'view_1',
             target,
@@ -147,9 +150,7 @@ describe('browser context state', () => {
             },
         });
 
-        if (result.status !== 'unavailable') throw new Error('expected context capture to be unavailable');
-        expect(result.reason.lifecycleState).toBe('policyDenied');
-        expect(result.reason.reasonCode).toBe('browser_context_disabled');
+        expect(result.status).toBe('captured');
     });
 
     it('blocks capture for sensitive or private states instead of creating attachable context', () => {
@@ -379,13 +380,13 @@ describe('browser context state', () => {
             viewId: 'view_1',
             navigationGeneration: 7,
             capturedAtMs: 4_000,
-            text: '  selected text with secret-looking tail  ',
+            text: 's'.repeat(BROWSER_CONTEXT_SELECTION_MAX_CHARS + 1),
         });
 
         if (selected.status !== 'captured') throw new Error('expected selected text capture to succeed');
         expect(selected.state.itemsById[selected.itemId]).toMatchObject({
             kind: 'browserTextSelection',
-            text: 'selected tex',
+            text: 's'.repeat(BROWSER_CONTEXT_SELECTION_MAX_CHARS),
             truncated: true,
             redactionLevel: 'summaryOnly',
             fidelity: 'injectedPage',
@@ -400,13 +401,13 @@ describe('browser context state', () => {
             navigationGeneration: 7,
             capturedAtMs: 4_100,
             kind: 'browserDomSnapshotSummary',
-            summary: 'main button input section article footer',
+            summary: 'm'.repeat(BROWSER_CONTEXT_SUMMARY_MAX_CHARS + 1),
         });
 
         if (domSummary.status !== 'captured') throw new Error('expected DOM summary capture to succeed');
         expect(domSummary.state.itemsById[domSummary.itemId]).toMatchObject({
             kind: 'browserDomSnapshotSummary',
-            summary: 'main button input sectio',
+            summary: 'm'.repeat(BROWSER_CONTEXT_SUMMARY_MAX_CHARS),
             truncated: true,
             redactionLevel: 'summaryOnly',
             fidelity: 'injectedPage',
@@ -436,7 +437,7 @@ describe('browser context state', () => {
         ]));
     });
 
-    it('requires browser diagnostics for diagnostics-derived context summaries', async () => {
+    it('uses available summary capability when the diagnostics feature mirror is disabled', async () => {
         const module = await import('./state') as Record<string, unknown>;
         expect(module.captureBrowserSummaryContext).toBeTypeOf('function');
         const captureBrowserSummaryContext = module.captureBrowserSummaryContext as (
@@ -476,16 +477,10 @@ describe('browser context state', () => {
             summary: '1 failed request',
         });
 
-        expect(result).toMatchObject({
-            status: 'unavailable',
-            reason: {
-                lifecycleState: 'policyDenied',
-                reasonCode: 'browser_context_diagnostics_disabled',
-            },
-        });
-        expect(result.state.itemsById).toEqual({});
+        expect(result.status).toBe('captured');
+        expect(Object.values(result.state.itemsById)).toEqual([expect.objectContaining({ kind: 'browserNetworkSummary', summary: '1 failed request' })]);
 
-        const missingGate = captureBrowserSummaryContext({
+        const missingMirror = captureBrowserSummaryContext({
             state: createBrowserContextState(),
             browserContextEnabled: true,
             contextCapabilities: {
@@ -506,13 +501,8 @@ describe('browser context state', () => {
             summary: '1 failed request',
         });
 
-        expect(missingGate).toMatchObject({
-            status: 'unavailable',
-            reason: {
-                lifecycleState: 'policyDenied',
-                reasonCode: 'browser_context_diagnostics_disabled',
-            },
-        });
+        expect(missingMirror.status).toBe('captured');
+        expect(Object.values(missingMirror.state.itemsById)).toEqual([expect.objectContaining({ kind: 'browserNetworkSummary', summary: '1 failed request' })]);
     });
 
     it('captures a selected element from diagnostics picker metadata without storing backend refs or DOM text', async () => {
@@ -564,6 +554,8 @@ describe('browser context state', () => {
                     height: 36,
                 },
                 accessibleName: 'Run task',
+                componentName: 'RunTaskButton',
+                sourceLocation: { file: 'src/RunTaskButton.tsx', line: 24, column: 8 },
             },
         });
 
@@ -580,6 +572,8 @@ describe('browser context state', () => {
             redactionLevel: 'metadataOnly',
             selectorPath: 'html > body > main:nth-of-type(1) > button',
             accessibleName: 'Run task',
+            componentName: 'RunTaskButton',
+            sourceLocation: { file: 'src/RunTaskButton.tsx', line: 24, column: 8 },
             rect: {
                 x: 12,
                 y: 24,
@@ -591,402 +585,9 @@ describe('browser context state', () => {
         expect(JSON.stringify(item)).not.toContain('outerHTMLPreview');
     });
 
-    it('captures and attaches a media-backed browser annotation tied to the source navigation generation', async () => {
-        const module = await import('./state') as Record<string, unknown>;
-        expect(module.startBrowserAnnotationMode).toBeTypeOf('function');
-        expect(module.captureBrowserAnnotation).toBeTypeOf('function');
-        expect(module.updateBrowserAnnotationComment).toBeTypeOf('function');
-        const startBrowserAnnotationMode = module.startBrowserAnnotationMode as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Readonly<{
-                browserContextEnabled: boolean;
-                attachmentsUploadsEnabled: boolean;
-                contextCapabilities: BrowserContextCapabilities;
-                adapterCapabilities: BrowserAdapterCapabilitiesV1;
-                browserSessionId: string;
-                viewId: string;
-                navigationGeneration: number;
-                startedAtMs: number;
-            }>,
-        ) => { status: 'started'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const captureBrowserAnnotation = module.captureBrowserAnnotation as (
-            input: Readonly<{
-                state: ReturnType<typeof createBrowserContextState>;
-                browserContextEnabled: boolean;
-                attachmentsUploadsEnabled: boolean;
-                contextCapabilities: BrowserContextCapabilities;
-                adapterCapabilities: BrowserAdapterCapabilitiesV1;
-                browserSessionId: string;
-                viewId: string;
-                navigationGeneration: number;
-                capturedAtMs: number;
-                media: {
-                    mediaId: string;
-                    mediaKind: 'image';
-                    width: number;
-                    height: number;
-                    sizeBytes: number;
-                };
-                target: {
-                    kind: 'region';
-                    rect: { x: number; y: number; width: number; height: number };
-                };
-                comment?: string;
-            }>,
-        ) => ReturnType<typeof captureBrowserPageReference>;
-        const updateBrowserAnnotationComment = module.updateBrowserAnnotationComment as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Readonly<{ contextId: string; comment: string }>,
-        ) => {
-            status: 'updated';
-            state: ReturnType<typeof createBrowserContextState>;
-        } | {
-            status: 'unavailable';
-            state: ReturnType<typeof createBrowserContextState>;
-        };
-        const annotationCapabilities = {
-            ...contextCapabilities,
-            supportedContextKinds: ['browserAnnotation'],
-            screenshot: {
-                supported: true,
-                requiresAttachmentUploads: true,
-                maxBytes: 5_000_000,
-            },
-        } satisfies BrowserContextCapabilities;
-        const annotationAdapter = {
-            ...adapterCapabilities,
-            diagnosticsFidelityByFamily: {
-                screenshot: 'injectedPage',
-            },
-            contextKinds: ['browserAnnotation'],
-        } satisfies BrowserAdapterCapabilitiesV1;
 
-        const started = startBrowserAnnotationMode(createBrowserContextState(), {
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 7,
-            startedAtMs: 4_600,
-        });
 
-        expect(started.status).toBe('started');
-        if (started.status !== 'started') return;
 
-        const captured = captureBrowserAnnotation({
-            state: started.state,
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 7,
-            capturedAtMs: 4_700,
-            media: {
-                mediaId: 'media_annotation_1',
-                mediaKind: 'image',
-                width: 1280,
-                height: 720,
-                sizeBytes: 300_000,
-            },
-            target: {
-                kind: 'region',
-                rect: { x: 20, y: 40, width: 240, height: 96 },
-            },
-            comment: '  CTA should align with the card edge.  ',
-        });
-
-        if (captured.status !== 'captured') throw new Error('expected annotation capture to succeed');
-        const withComment = updateBrowserAnnotationComment(captured.state, {
-            contextId: captured.itemId,
-            comment: ' Updated comment for the selected region. ',
-        });
-        expect(withComment.status).toBe('updated');
-        if (withComment.status !== 'updated') return;
-        const attached = attachBrowserContextToComposer(withComment.state, {
-            attachmentId: 'annotation_attachment_1',
-            contextId: captured.itemId,
-        });
-        expect(attached.status).toBe('attached');
-        if (attached.status !== 'attached') return;
-
-        const item = attached.state.itemsById[captured.itemId];
-        expect(item).toMatchObject({
-            kind: 'browserAnnotation',
-            browserSessionId: 'browser_session_1',
-            sourceViewId: 'view_1',
-            sourceAdapterKind: 'localPreview',
-            navigationGeneration: 7,
-            lifecycleState: 'available',
-            redactionLevel: 'metadataOnly',
-            fidelity: 'injectedPage',
-            media: { mediaId: 'media_annotation_1' },
-            target: {
-                kind: 'region',
-                rect: { width: 240, height: 96 },
-            },
-            comment: 'Updated comment for the selected region.',
-        });
-        expect(JSON.stringify(item)).not.toContain('inlineBytes');
-
-        const navigated = markBrowserContextViewNavigation(attached.state, {
-            viewId: 'view_1',
-            navigationGeneration: 8,
-        });
-        expect(selectBrowserContextComposerAttachments(navigated)).toEqual([
-            expect.objectContaining({
-                attachmentId: 'annotation_attachment_1',
-                contextId: captured.itemId,
-                capturedNavigationGeneration: 7,
-                currentNavigationGeneration: 8,
-                state: 'navigationStale',
-                requiresReconfirmBeforeSend: true,
-            }),
-        ]);
-    });
-
-    it('captures annotation style intent and a normalized vector stroke as metadata-only context', async () => {
-        const module = await import('./state') as Record<string, unknown>;
-        const startBrowserAnnotationMode = module.startBrowserAnnotationMode as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Record<string, unknown>,
-        ) => { status: 'started'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const captureBrowserAnnotation = module.captureBrowserAnnotation as (
-            input: Record<string, unknown>,
-        ) => ReturnType<typeof captureBrowserPageReference>;
-        const annotationCapabilities = {
-            ...contextCapabilities,
-            supportedContextKinds: ['browserAnnotation'],
-            screenshot: { supported: true, requiresAttachmentUploads: true, maxBytes: 5_000_000 },
-        } satisfies BrowserContextCapabilities;
-        const annotationAdapter = {
-            ...adapterCapabilities,
-            diagnosticsFidelityByFamily: { screenshot: 'injectedPage' },
-            contextKinds: ['browserAnnotation'],
-        } satisfies BrowserAdapterCapabilitiesV1;
-
-        const started = startBrowserAnnotationMode(createBrowserContextState(), {
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 3,
-            startedAtMs: 1_000,
-        });
-        expect(started.status).toBe('started');
-        if (started.status !== 'started') return;
-
-        const captured = captureBrowserAnnotation({
-            state: started.state,
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 3,
-            capturedAtMs: 1_100,
-            media: { mediaId: 'media_annotation_styled', mediaKind: 'image', width: 800, height: 600, sizeBytes: 120_000 },
-            target: { kind: 'region', rect: { x: 10, y: 20, width: 100, height: 80 } },
-            styleIntent: 'highlight',
-            stroke: { shape: 'freehand', points: [{ x: 0.1, y: 0.2 }, { x: 0.5, y: 0.6 }] },
-        });
-        if (captured.status !== 'captured') throw new Error('expected styled annotation capture to succeed');
-        const item = captured.state.itemsById[captured.itemId];
-        expect(item).toMatchObject({
-            kind: 'browserAnnotation',
-            styleIntent: 'highlight',
-            stroke: { shape: 'freehand', points: [{ x: 0.1, y: 0.2 }, { x: 0.5, y: 0.6 }] },
-        });
-    });
-
-    it('updates an existing annotation item stroke and style intent in place', async () => {
-        const module = await import('./state') as Record<string, unknown>;
-        const startBrowserAnnotationMode = module.startBrowserAnnotationMode as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Record<string, unknown>,
-        ) => { status: 'started'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const captureBrowserAnnotation = module.captureBrowserAnnotation as (
-            input: Record<string, unknown>,
-        ) => ReturnType<typeof captureBrowserPageReference>;
-        expect(module.updateBrowserAnnotationStroke).toBeTypeOf('function');
-        expect(module.updateBrowserAnnotationStyleIntent).toBeTypeOf('function');
-        const updateBrowserAnnotationStroke = module.updateBrowserAnnotationStroke as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Record<string, unknown>,
-        ) => { status: 'updated'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const updateBrowserAnnotationStyleIntent = module.updateBrowserAnnotationStyleIntent as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Record<string, unknown>,
-        ) => { status: 'updated'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const annotationCapabilities = {
-            ...contextCapabilities,
-            supportedContextKinds: ['browserAnnotation'],
-            screenshot: { supported: true, requiresAttachmentUploads: true, maxBytes: 5_000_000 },
-        } satisfies BrowserContextCapabilities;
-        const annotationAdapter = {
-            ...adapterCapabilities,
-            diagnosticsFidelityByFamily: { screenshot: 'injectedPage' },
-            contextKinds: ['browserAnnotation'],
-        } satisfies BrowserAdapterCapabilitiesV1;
-        const started = startBrowserAnnotationMode(createBrowserContextState(), {
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 2,
-            startedAtMs: 500,
-        });
-        if (started.status !== 'started') throw new Error('expected annotation mode start');
-        const captured = captureBrowserAnnotation({
-            state: started.state,
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 2,
-            capturedAtMs: 600,
-            media: { mediaId: 'media_a', mediaKind: 'image', width: 400, height: 300, sizeBytes: 50_000 },
-            target: { kind: 'region', rect: { x: 0, y: 0, width: 50, height: 50 } },
-        });
-        if (captured.status !== 'captured') throw new Error('expected styled capture');
-
-        const withStroke = updateBrowserAnnotationStroke(captured.state, {
-            contextId: captured.itemId,
-            stroke: { shape: 'arrow', points: [{ x: 0.2, y: 0.3 }, { x: 0.7, y: 0.8 }] },
-        });
-        expect(withStroke.status).toBe('updated');
-        if (withStroke.status !== 'updated') return;
-        const withIntent = updateBrowserAnnotationStyleIntent(withStroke.state, {
-            contextId: captured.itemId,
-            styleIntent: 'redaction',
-        });
-        expect(withIntent.status).toBe('updated');
-        if (withIntent.status !== 'updated') return;
-        expect(withIntent.state.itemsById[captured.itemId]).toMatchObject({
-            kind: 'browserAnnotation',
-            styleIntent: 'redaction',
-            stroke: { shape: 'arrow', points: [{ x: 0.2, y: 0.3 }, { x: 0.7, y: 0.8 }] },
-        });
-
-        const missing = updateBrowserAnnotationStroke(withIntent.state, {
-            contextId: 'unknown_context',
-            stroke: { shape: 'line', points: [{ x: 0, y: 0 }] },
-        });
-        expect(missing.status).toBe('unavailable');
-    });
-
-    it('fails closed when annotation capture is attempted after navigation changes', async () => {
-        const module = await import('./state') as Record<string, unknown>;
-        expect(module.startBrowserAnnotationMode).toBeTypeOf('function');
-        expect(module.captureBrowserAnnotation).toBeTypeOf('function');
-        const startBrowserAnnotationMode = module.startBrowserAnnotationMode as (
-            state: ReturnType<typeof createBrowserContextState>,
-            input: Readonly<{
-                browserContextEnabled: boolean;
-                attachmentsUploadsEnabled: boolean;
-                contextCapabilities: BrowserContextCapabilities;
-                adapterCapabilities: BrowserAdapterCapabilitiesV1;
-                browserSessionId: string;
-                viewId: string;
-                navigationGeneration: number;
-                startedAtMs: number;
-            }>,
-        ) => { status: 'started'; state: ReturnType<typeof createBrowserContextState> } | { status: 'unavailable'; state: ReturnType<typeof createBrowserContextState> };
-        const captureBrowserAnnotation = module.captureBrowserAnnotation as (
-            input: Readonly<{
-                state: ReturnType<typeof createBrowserContextState>;
-                browserContextEnabled: boolean;
-                attachmentsUploadsEnabled: boolean;
-                contextCapabilities: BrowserContextCapabilities;
-                adapterCapabilities: BrowserAdapterCapabilitiesV1;
-                browserSessionId: string;
-                viewId: string;
-                navigationGeneration: number;
-                capturedAtMs: number;
-                media: {
-                    mediaId: string;
-                    mediaKind: 'image';
-                    width: number;
-                    height: number;
-                    sizeBytes: number;
-                };
-                target: {
-                    kind: 'region';
-                    rect: { x: number; y: number; width: number; height: number };
-                };
-            }>,
-        ) => ReturnType<typeof captureBrowserPageReference>;
-        const annotationCapabilities = {
-            ...contextCapabilities,
-            supportedContextKinds: ['browserAnnotation'],
-            screenshot: {
-                supported: true,
-                requiresAttachmentUploads: true,
-            },
-        } satisfies BrowserContextCapabilities;
-        const annotationAdapter = {
-            ...adapterCapabilities,
-            diagnosticsFidelityByFamily: {
-                screenshot: 'injectedPage',
-            },
-            contextKinds: ['browserAnnotation'],
-        } satisfies BrowserAdapterCapabilitiesV1;
-        const started = startBrowserAnnotationMode(createBrowserContextState(), {
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 7,
-            startedAtMs: 4_600,
-        });
-
-        expect(started.status).toBe('started');
-        if (started.status !== 'started') return;
-
-        const result = captureBrowserAnnotation({
-            state: started.state,
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationCapabilities,
-            adapterCapabilities: annotationAdapter,
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 8,
-            capturedAtMs: 4_700,
-            media: {
-                mediaId: 'media_annotation_1',
-                mediaKind: 'image',
-                width: 1280,
-                height: 720,
-                sizeBytes: 300_000,
-            },
-            target: {
-                kind: 'region',
-                rect: { x: 20, y: 40, width: 240, height: 96 },
-            },
-        });
-
-        expect(result).toMatchObject({
-            status: 'unavailable',
-            reason: {
-                lifecycleState: 'navigationStale',
-                reasonCode: 'browser_context_annotation_stale',
-            },
-        });
-        expect(result.state.itemsById).toEqual({});
-    });
 
     it('marks composer attachments stale when the source view navigates after capture', () => {
         const captured = captureBrowserPageReference({

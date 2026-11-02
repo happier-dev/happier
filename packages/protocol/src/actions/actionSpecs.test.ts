@@ -302,11 +302,6 @@ const RUNTIME_ACTION_IDS = [
   'browser.context.captureConsoleSummary',
   'browser.context.annotation.start',
   'browser.context.annotation.cancel',
-  'browser.context.annotation.captureRegion',
-  'browser.context.annotation.captureElement',
-  'browser.context.annotation.attachComment',
-  'browser.context.annotation.attachStroke',
-  'browser.context.annotation.attachStyleIntent',
   'browser.context.annotation.attachDraft',
   'browser.context.attachToComposer',
   'browser.context.attachToAgentTurn',
@@ -3132,8 +3127,6 @@ describe('Action Spec Registry', () => {
     for (const id of [
       'browser.context.capturePage',
       'browser.context.captureScreenshot',
-      'browser.context.annotation.captureRegion',
-      'browser.context.annotation.captureElement',
       'browser.recording.start',
       // browser.diagnostics INTERACTION verbs — now backed by the live sidecar CDP interaction
       // transport (DIAG-INTERACTION) and surfaced. `eval` stays danger-floored for consent.

@@ -1,4 +1,4 @@
-import { BrowserContextItemV1Schema, type BrowserAnnotationStrokeV1, type BrowserAnnotationStyleIntentV1, type BrowserContextItemV1, type BrowserContextKindV1 } from '@happier-dev/protocol/browser/context/v1';
+import { BROWSER_CONTEXT_SELECTION_MAX_CHARS, BROWSER_CONTEXT_SUMMARY_MAX_CHARS, BrowserContextItemV1Schema, type BrowserContextItemV1, type BrowserContextKindV1 } from '@happier-dev/protocol/browser/context/v1';
 import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
 import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
@@ -10,31 +10,20 @@ import type {
     BrowserContextState,
     BrowserContextUnavailableReason,
     BrowserContextUnavailableReasonCode,
-    BrowserAnnotationCaptureInput,
-    BrowserAnnotationCommentUpdateResult,
     BrowserAnnotationModeResult,
     BrowserAnnotationModeStartInput,
     BrowserPageReferenceCaptureInput,
     BrowserScreenshotReferenceCaptureInput,
     BrowserSelectedElementCaptureInput,
     BrowserSummaryContextCaptureInput,
-    BrowserSummaryContextKind,
     BrowserTextSelectionCaptureInput,
 } from './types';
 
 const CONTEXT_ID_PREFIX = 'browser_context';
-const TEXT_SELECTION_SCHEMA_MAX_CHARS = 2048;
-const SUMMARY_SCHEMA_MAX_CHARS = 8192;
-const DIAGNOSTICS_DERIVED_CONTEXT_KINDS = new Set<BrowserContextKindV1>([
-    'browserNetworkSummary',
-    'browserConsoleSummary',
-    'browserSelectedElement',
-]);
 const MEDIA_BACKED_CONTEXT_KINDS = new Set<BrowserContextKindV1>([
     'browserScreenshot',
     'browserAnnotation',
 ]);
-const BROWSER_ANNOTATION_COMMENT_MAX_CHARS = 2048;
 
 function unavailableReason(
     reasonCode: BrowserContextUnavailableReasonCode,
@@ -74,15 +63,7 @@ function resolvePrivacyReason(
 export function resolveBrowserContextKindAvailability(
     input: BrowserContextKindAvailabilityInput,
 ): BrowserContextUnavailableReason | null {
-    if (!input.browserContextEnabled) {
-        return unavailableReason(
-            'browser_context_disabled',
-            'policyDenied',
-            'Browser context capture is disabled.',
-        );
-    }
-
-    if (!input.contextCapabilities.enabled || !input.contextCapabilities.available) {
+    if (!input.contextCapabilities.available) {
         return unavailableReason(
             'browser_context_capability_unavailable',
             'policyDenied',
@@ -92,14 +73,6 @@ export function resolveBrowserContextKindAvailability(
 
     const privacyReason = resolvePrivacyReason(input.privacyState);
     if (privacyReason) return privacyReason;
-
-    if (DIAGNOSTICS_DERIVED_CONTEXT_KINDS.has(input.kind) && input.browserDiagnosticsEnabled !== true) {
-        return unavailableReason(
-            'browser_context_diagnostics_disabled',
-            'policyDenied',
-            'Browser diagnostics must be enabled to capture this context kind.',
-        );
-    }
 
     if (
         MEDIA_BACKED_CONTEXT_KINDS.has(input.kind)
@@ -229,17 +202,6 @@ function resolveSelectedElementFidelity(
     return input.adapterCapabilities.diagnosticsFidelityByFamily.elements ?? 'unavailable';
 }
 
-function resolveAnnotationFidelity(
-    input: BrowserAnnotationCaptureInput,
-): BrowserDiagnosticFidelityV1 {
-    if (input.target.kind === 'element') {
-        return input.adapterCapabilities.diagnosticsFidelityByFamily.elements
-            ?? input.adapterCapabilities.diagnosticsFidelityByFamily.screenshot
-            ?? 'unavailable';
-    }
-    return input.adapterCapabilities.diagnosticsFidelityByFamily.screenshot ?? 'unavailable';
-}
-
 function resolveSummaryFidelity(
     input: BrowserSummaryContextCaptureInput,
 ): BrowserDiagnosticFidelityV1 {
@@ -293,7 +255,7 @@ function buildPageReferenceItem(input: BrowserPageReferenceCaptureInput): Browse
     return BrowserContextItemV1Schema.parse(item);
 }
 
-function upsertContextItem(state: BrowserContextState, item: BrowserContextItemV1): BrowserContextState {
+export function upsertContextItem(state: BrowserContextState, item: BrowserContextState['itemsById'][string]): BrowserContextState {
     const exists = state.itemsById[item.contextId] !== undefined;
     return {
         ...state,
@@ -405,7 +367,7 @@ export function captureBrowserTextSelection(
 
     const truncated = truncateForContext(
         input.text,
-        Math.min(input.contextCapabilities.text.maxSelectionChars, TEXT_SELECTION_SCHEMA_MAX_CHARS),
+        BROWSER_CONTEXT_SELECTION_MAX_CHARS,
     );
     const item = BrowserContextItemV1Schema.parse({
         v: 1,
@@ -435,18 +397,12 @@ export function captureBrowserTextSelection(
     };
 }
 
-function requiresDiagnosticsForSummary(kind: BrowserSummaryContextKind): boolean {
-    return kind === 'browserNetworkSummary' || kind === 'browserConsoleSummary';
-}
-
 export function captureBrowserSummaryContext(
     input: BrowserSummaryContextCaptureInput,
 ): BrowserContextCaptureResult {
     const unavailable = resolveBrowserContextKindAvailability({
         browserContextEnabled: input.browserContextEnabled,
-        browserDiagnosticsEnabled: requiresDiagnosticsForSummary(input.kind)
-            ? input.browserDiagnosticsEnabled
-            : undefined,
+        browserDiagnosticsEnabled: input.browserDiagnosticsEnabled,
         contextCapabilities: input.contextCapabilities,
         adapterCapabilities: input.adapterCapabilities,
         kind: input.kind,
@@ -463,7 +419,7 @@ export function captureBrowserSummaryContext(
 
     const truncated = truncateForContext(
         input.summary,
-        Math.min(input.contextCapabilities.text.maxSummaryChars, SUMMARY_SCHEMA_MAX_CHARS),
+        BROWSER_CONTEXT_SUMMARY_MAX_CHARS,
     );
     const item = BrowserContextItemV1Schema.parse({
         v: 1,
@@ -559,6 +515,8 @@ export function captureBrowserSelectedElement(
         selectorPath,
         ...(accessibleName ? { accessibleName } : {}),
         ...(input.pickerResult.rect ? { rect: input.pickerResult.rect } : {}),
+        ...(input.pickerResult.componentName ? { componentName: input.pickerResult.componentName } : {}),
+        ...(input.pickerResult.sourceLocation ? { sourceLocation: input.pickerResult.sourceLocation } : {}),
     });
 
     return {
@@ -628,206 +586,5 @@ export function cancelBrowserAnnotationMode(
     };
 }
 
-function resolveActiveAnnotationUnavailable(input: BrowserAnnotationCaptureInput): BrowserContextUnavailableReason | null {
-    const active = (input.state.activeAnnotationByViewId ?? {})[input.viewId];
-    if (!active || active.browserSessionId !== input.browserSessionId || active.viewId !== input.viewId) {
-        return unavailableReason(
-            'browser_context_annotation_inactive',
-            'captureFailed',
-            'Browser annotation mode is not active for this view.',
-        );
-    }
-    if (active.navigationGeneration !== input.navigationGeneration) {
-        return unavailableReason(
-            'browser_context_annotation_stale',
-            'navigationStale',
-            'Browser annotation mode was started for an older navigation.',
-        );
-    }
-    return null;
-}
-
-export function captureBrowserAnnotation(
-    input: BrowserAnnotationCaptureInput,
-): BrowserContextCaptureResult {
-    const activeUnavailable = resolveActiveAnnotationUnavailable(input);
-    if (activeUnavailable) {
-        return {
-            status: 'unavailable',
-            state: input.state,
-            reason: activeUnavailable,
-        };
-    }
-
-    const unavailable = resolveBrowserContextKindAvailability({
-        browserContextEnabled: input.browserContextEnabled,
-        browserDiagnosticsEnabled: input.target.kind === 'element' ? input.browserDiagnosticsEnabled : undefined,
-        attachmentsUploadsEnabled: input.attachmentsUploadsEnabled,
-        contextCapabilities: input.contextCapabilities,
-        adapterCapabilities: input.adapterCapabilities,
-        kind: 'browserAnnotation',
-        privacyState: input.privacyState,
-    });
-
-    if (unavailable) {
-        return {
-            status: 'unavailable',
-            state: input.state,
-            reason: unavailable,
-        };
-    }
-
-    if (input.target.kind === 'element' && input.browserDiagnosticsEnabled !== true) {
-        return {
-            status: 'unavailable',
-            state: input.state,
-            reason: unavailableReason(
-                'browser_context_diagnostics_disabled',
-                'policyDenied',
-                'Browser diagnostics must be enabled to capture element annotations.',
-            ),
-        };
-    }
-
-    const contextId = buildContextIdFromParts({
-        viewId: input.viewId,
-        kind: 'browserAnnotation',
-        navigationGeneration: input.navigationGeneration,
-        capturedAtMs: input.capturedAtMs,
-        contextId: input.contextId,
-    });
-    const item = BrowserContextItemV1Schema.parse({
-        v: 1,
-        contextId,
-        kind: 'browserAnnotation',
-        sourceViewId: input.viewId,
-        sourceAdapterKind: input.adapterCapabilities.adapterKind,
-        fidelity: resolveAnnotationFidelity(input),
-        capturedAtMs: input.capturedAtMs,
-        navigationGeneration: input.navigationGeneration,
-        lifecycleState: 'available',
-        redactionLevel: 'metadataOnly',
-        annotationId: `browser_annotation:${contextId}`,
-        browserSessionId: input.browserSessionId,
-        media: input.media,
-        target: input.target,
-        ...(input.styleIntent ? { styleIntent: input.styleIntent } : {}),
-        ...(input.stroke ? { stroke: input.stroke } : {}),
-        ...(normalizeOptionalBoundedString(input.comment, BROWSER_ANNOTATION_COMMENT_MAX_CHARS)
-            ? { comment: normalizeOptionalBoundedString(input.comment, BROWSER_ANNOTATION_COMMENT_MAX_CHARS) }
-            : {}),
-        ...(stripUrlValues(normalizeOptionalString(input.pageUrl))
-            ? { pageUrl: stripUrlValues(normalizeOptionalString(input.pageUrl)) }
-            : {}),
-        ...(normalizeOptionalBoundedString(input.pageTitle, 512)
-            ? { pageTitle: normalizeOptionalBoundedString(input.pageTitle, 512) }
-            : {}),
-    });
-    const stateWithItem = upsertContextItem(input.state, item);
-
-    return {
-        status: 'captured',
-        state: cancelBrowserAnnotationMode(stateWithItem, { viewId: input.viewId }),
-        itemId: item.contextId,
-    };
-}
-
-type EditableAnnotationItem = Extract<BrowserContextItemV1, { kind: 'browserAnnotation' }>;
-
-function resolveEditableAnnotationItem(
-    state: BrowserContextState,
-    contextId: string,
-): EditableAnnotationItem | BrowserAnnotationCommentUpdateResult {
-    const item = state.itemsById[contextId];
-    if (!item) {
-        return {
-            status: 'unavailable',
-            state,
-            reason: unavailableReason(
-                'browser_context_item_missing',
-                'adapterUnavailable',
-                'Browser annotation context item is no longer available.',
-            ),
-        };
-    }
-    if (item.kind !== 'browserAnnotation' || item.lifecycleState !== 'available') {
-        return {
-            status: 'unavailable',
-            state,
-            reason: unavailableReason(
-                'browser_context_item_unavailable',
-                item.lifecycleState,
-                item.disabledReason ?? 'Browser annotation context item is not editable.',
-            ),
-        };
-    }
-    return item;
-}
-
-function commitAnnotationItemUpdate(
-    state: BrowserContextState,
-    contextId: string,
-    nextItem: BrowserContextItemV1,
-): BrowserAnnotationCommentUpdateResult {
-    return {
-        status: 'updated',
-        state: {
-            ...state,
-            itemsById: {
-                ...state.itemsById,
-                [contextId]: nextItem,
-            },
-        },
-    };
-}
-
-export function updateBrowserAnnotationComment(
-    state: BrowserContextState,
-    input: Readonly<{ contextId: string; comment: string | null | undefined }>,
-): BrowserAnnotationCommentUpdateResult {
-    const resolved = resolveEditableAnnotationItem(state, input.contextId);
-    if ('status' in resolved) return resolved;
-
-    const comment = normalizeOptionalBoundedString(input.comment, BROWSER_ANNOTATION_COMMENT_MAX_CHARS);
-    const { comment: _previousComment, ...itemWithoutComment } = resolved;
-    const nextItem = BrowserContextItemV1Schema.parse({
-        ...itemWithoutComment,
-        ...(comment ? { comment } : {}),
-    });
-
-    return commitAnnotationItemUpdate(state, input.contextId, nextItem);
-}
-
-export function updateBrowserAnnotationStroke(
-    state: BrowserContextState,
-    input: Readonly<{ contextId: string; stroke: BrowserAnnotationStrokeV1 | null | undefined }>,
-): BrowserAnnotationCommentUpdateResult {
-    const resolved = resolveEditableAnnotationItem(state, input.contextId);
-    if ('status' in resolved) return resolved;
-
-    const { stroke: _previousStroke, ...itemWithoutStroke } = resolved;
-    const nextItem = BrowserContextItemV1Schema.parse({
-        ...itemWithoutStroke,
-        ...(input.stroke ? { stroke: input.stroke } : {}),
-    });
-
-    return commitAnnotationItemUpdate(state, input.contextId, nextItem);
-}
-
-export function updateBrowserAnnotationStyleIntent(
-    state: BrowserContextState,
-    input: Readonly<{ contextId: string; styleIntent: BrowserAnnotationStyleIntentV1 | null | undefined }>,
-): BrowserAnnotationCommentUpdateResult {
-    const resolved = resolveEditableAnnotationItem(state, input.contextId);
-    if ('status' in resolved) return resolved;
-
-    const { styleIntent: _previousStyleIntent, ...itemWithoutStyleIntent } = resolved;
-    const nextItem = BrowserContextItemV1Schema.parse({
-        ...itemWithoutStyleIntent,
-        ...(input.styleIntent ? { styleIntent: input.styleIntent } : {}),
-    });
-
-    return commitAnnotationItemUpdate(state, input.contextId, nextItem);
-}
 
 export type { BrowserViewTargetV1 };

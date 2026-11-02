@@ -1,3 +1,4 @@
+import { withShortcut } from '@/keyboard/withShortcut';
 import { HAPPIER_ICON_BUTTON_SIZE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Animated, View } from 'react-native';
@@ -31,11 +32,6 @@ export function usePaneMainHideAvailable(): boolean {
 export function usePaneMainRestoreChipVisible(): boolean {
     const main = usePaneMainColumn();
     return main !== null && main.hidden && main.identity.name.length > 0;
-}
-
-/** The tooltip line: the action, then its key combination when one is bound. */
-function withShortcut(label: string, shortcut: string | undefined): string {
-  return shortcut ? `${label} · ${shortcut}` : label;
 }
 
 /**

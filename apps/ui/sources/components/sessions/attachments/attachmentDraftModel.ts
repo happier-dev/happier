@@ -1,12 +1,17 @@
 import type { AttachmentUploadSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol';
 import type { AttachmentTargetUploadedDraftCheckpoint } from './uploadAttachmentDraftsToSession';
+import type { ImageMarksDocumentV1 } from '@happier-dev/protocol';
 
 export type AttachmentDraftStatus = 'pending' | 'uploading' | 'uploaded' | 'error';
 
 export type AttachmentDraft = Readonly<{
     id: string;
     source: AttachmentUploadSource;
+    /** Editable marks are local to this attachment occurrence, until Send or reload. */
+    edit?: Readonly<{ original: AttachmentUploadSource; document: ImageMarksDocumentV1 }>;
+    /** Browser source facts follow this picked occurrence through edits and Revert. */
+    browserAnnotation?: Readonly<{ annotationId: string; image: ImageMarksDocumentV1['image'] }>;
     status: AttachmentDraftStatus;
     error?: string;
     uploadProgress?: Readonly<{ uploadedBytes: number; totalBytes: number }>;

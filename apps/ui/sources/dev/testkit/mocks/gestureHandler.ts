@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type TestGestureKind = 'pan' | 'longPress' | 'simultaneous';
+export type TestGestureKind = 'pan' | 'longPress' | 'tap' | 'simultaneous' | 'race' | 'exclusive';
 export type TestGestureCallback = (...args: any[]) => void;
 
 export type TestGestureChain = {
@@ -9,6 +9,9 @@ export type TestGestureChain = {
     readonly __handlers: Record<string, TestGestureCallback>;
     readonly __gestures?: TestGestureChain[];
     minDistance(value: number): TestGestureChain;
+    maxPointers(value: number): TestGestureChain;
+    numberOfTaps(value: number): TestGestureChain;
+    maxDelay(value: number): TestGestureChain;
     hitSlop(value: Readonly<Record<string, number>>): TestGestureChain;
     enabled(value: boolean): TestGestureChain;
     activateAfterLongPress(value: number): TestGestureChain;
@@ -52,6 +55,9 @@ function createGestureChain(kind: TestGestureKind, gestures?: TestGestureChain[]
 
     Object.assign(gesture, {
         minDistance: (value: number) => configure('minDistance', value),
+        maxPointers: (value: number) => configure('maxPointers', value),
+        numberOfTaps: (value: number) => configure('numberOfTaps', value),
+        maxDelay: (value: number) => configure('maxDelay', value),
         hitSlop: (value: Readonly<Record<string, number>>) => configure('hitSlop', value),
         enabled: (value: boolean) => configure('enabled', value),
         activateAfterLongPress: (value: number) => configure('activateAfterLongPress', value),
@@ -94,8 +100,12 @@ export function createGestureHandlerMock() {
         Gesture: {
             Pan: () => createGestureChain('pan'),
             LongPress: () => createGestureChain('longPress'),
+            Tap: () => createGestureChain('tap'),
             Simultaneous: (...gestures: TestGestureChain[]) => createGestureChain('simultaneous', gestures),
+            Race: (...gestures: TestGestureChain[]) => createGestureChain('race', gestures),
+            Exclusive: (...gestures: TestGestureChain[]) => createGestureChain('exclusive', gestures),
         },
+        PointerType: { TOUCH: 0, STYLUS: 1, MOUSE: 2, KEY: 3, OTHER: 4 },
         GestureDetector: (props: { children?: React.ReactNode; gesture?: unknown }) =>
             React.createElement('GestureDetector', props, props.children),
         Swipeable: 'Swipeable',

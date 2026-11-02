@@ -47,6 +47,7 @@ export function ExternalUrlTarget(props: Readonly<{
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig | null;
     automation?: BrowserAutomationEngineBridgeConfig;
     bridge?: DesktopWebViewEngineBridge;
+    occlusionProbe?: () => boolean;
     navigationKey?: string;
     navigationCommand?: BrowserFrameNavigationCommand;
     onLifecycle?: BrowserViewLifecycleEmitter;
@@ -88,6 +89,7 @@ export function ExternalUrlTarget(props: Readonly<{
                 diagnostics={props.diagnostics}
                 automation={props.automation}
                 bridge={props.bridge}
+                occlusionProbe={props.occlusionProbe}
                 // G8 break #2: the Wry child view dispatches reload/stop SOLELY from this prop. It
                 // was declared here and forwarded only into the webIframe config below, so the
                 // desktop toolbar's reload/stop reached no engine at all.

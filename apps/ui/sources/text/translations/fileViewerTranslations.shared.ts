@@ -1,5 +1,31 @@
 /** Copy for the Media stage and the File viewer bodies (image, SVG, PDF, video, audio, binary). */
 export type FileViewerTranslations = Readonly<{
+  /** The annotator and the stage's Annotate mode (P2, MIS §3 and §8). */
+  annotate: Readonly<{
+    annotate: string;
+    tools: Readonly<Record<'title' | 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'freehand' | 'highlighter' | 'text' | 'step' | 'blur' | 'crop' | 'element', string>>;
+    colourAndStroke: string;
+    colour: string;
+    colours: Readonly<Record<'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink', string>>;
+    stroke: Readonly<Record<'title' | 's' | 'm' | 'l', string>>;
+    textSize: Readonly<Record<'title' | 's' | 'm' | 'l', string>>;
+    undo: string;
+    redo: string;
+    nothingToUndo: string;
+    nothingToRedo: string;
+    textMark: string;
+    revert: string;
+    done: string;
+    discardPrompt: string;
+    keepEditing: string;
+    discard: string;
+    /** The caption's tail under a composer picture in Annotate mode. */
+    editableUntilSend: string;
+    /** Done could not save the marked picture; the marks stay. */
+    doneFailed: string;
+    /** The tray picture's pen badge: reopen the marks. */
+    editMarks: string;
+  }>;
   viewer: Readonly<{
     stageCounter: (
       params: Readonly<{ current: number; total: number }>,
@@ -105,6 +131,49 @@ export type FileViewerTranslations = Readonly<{
 
 export const fileViewerTranslationsEnglish = {
   en: {
+    annotate: {
+        annotate: "Annotate",
+        tools: {
+            title: "Tools",
+            select: "Select",
+            arrow: "Arrow",
+            rectangle: "Rectangle",
+            ellipse: "Ellipse",
+            freehand: "Draw",
+            highlighter: "Highlighter",
+            text: "Text",
+            step: "Numbered step",
+            blur: "Blur",
+            crop: "Crop",
+            element: "Element",
+        },
+        colourAndStroke: "Colour and stroke",
+        colour: "Colour",
+        colours: {
+            red: "Red",
+            orange: "Orange",
+            yellow: "Yellow",
+            green: "Green",
+            blue: "Blue",
+            purple: "Purple",
+            ink: "Ink",
+        },
+        stroke: { title: "Stroke", s: "Thin", m: "Medium", l: "Thick" },
+        textSize: { title: "Text size", s: "Small", m: "Medium", l: "Large" },
+        undo: "Undo",
+        redo: "Redo",
+        nothingToUndo: "Nothing to undo",
+        nothingToRedo: "Nothing to redo",
+        textMark: "Text mark",
+        revert: "Revert to original",
+        done: "Done",
+        discardPrompt: "Discard marks?",
+        keepEditing: "Keep editing",
+        discard: "Discard",
+        editableUntilSend: "marks stay editable until you send",
+        doneFailed: "The marked picture couldn't be saved. Your marks are kept; try Done again.",
+        editMarks: "Edit marks",
+    },
     viewer: {
       stageCounter: ({ current, total }) => `${current} of ${total}`,
       stageGallery: ({ count }) => (count === 1 ? '1 item' : `${count} items`),

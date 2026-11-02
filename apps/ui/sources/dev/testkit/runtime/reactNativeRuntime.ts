@@ -66,14 +66,9 @@ export async function createReactNativeWebRuntime(
             basePlatform as PlainObject,
             (platformOverrides as PlainObject | undefined) ?? undefined,
         ),
-        AppState: mergeObjectsPreservingDescriptors(
-            {
-                ...(stub.AppState ?? {}),
-                currentState: 'active',
-                addEventListener: () => ({ remove: () => {} }),
-            },
-            appStateOverrides as PlainObject | undefined,
-        ),
+        AppState: appStateOverrides
+            ? mergeObjectsPreservingDescriptors(reactNativeWebAppState.appState, appStateOverrides as PlainObject)
+            : reactNativeWebAppState.appState,
     // Arbitrary SDK-port overrides are intentionally untyped at this fixture boundary.
     } as unknown as DeepMutable<ReactNativeStubModule> & TestReactNativeRuntimeOverrides;
 }
@@ -210,3 +205,6 @@ export function createReactNativeAppStateEmitter(
         },
     };
 }
+
+// Web mocks and eagerly imported lifetime observers must share one OS boundary.
+export const reactNativeWebAppState = createReactNativeAppStateEmitter();

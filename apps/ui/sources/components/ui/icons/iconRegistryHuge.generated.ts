@@ -22,6 +22,7 @@ import ArrowTurnForwardIcon from '@hugeicons/core-free-icons/ArrowTurnForwardIco
 import ArrowUp01Icon from '@hugeicons/core-free-icons/ArrowUp01Icon';
 import ArrowUp02Icon from '@hugeicons/core-free-icons/ArrowUp02Icon';
 import ArrowUpDownIcon from '@hugeicons/core-free-icons/ArrowUpDownIcon';
+import ArrowUpRight01Icon from '@hugeicons/core-free-icons/ArrowUpRight01Icon';
 import AtIcon from '@hugeicons/core-free-icons/AtIcon';
 import Atom01Icon from '@hugeicons/core-free-icons/Atom01Icon';
 import Attachment02Icon from '@hugeicons/core-free-icons/Attachment02Icon';
@@ -70,9 +71,11 @@ import CornerUpLeftIcon from '@hugeicons/core-free-icons/CornerUpLeftIcon';
 import CornerUpRightIcon from '@hugeicons/core-free-icons/CornerUpRightIcon';
 import CpuIcon from '@hugeicons/core-free-icons/CpuIcon';
 import CreditCardIcon from '@hugeicons/core-free-icons/CreditCardIcon';
+import CropIcon from '@hugeicons/core-free-icons/CropIcon';
 import CrosshairIcon from '@hugeicons/core-free-icons/CrosshairIcon';
 import CubeIcon from '@hugeicons/core-free-icons/CubeIcon';
 import Cursor01Icon from '@hugeicons/core-free-icons/Cursor01Icon';
+import CursorRectangleSelection01Icon from '@hugeicons/core-free-icons/CursorRectangleSelection01Icon';
 import DashboardSpeed01Icon from '@hugeicons/core-free-icons/DashboardSpeed01Icon';
 import DashboardSquare01Icon from '@hugeicons/core-free-icons/DashboardSquare01Icon';
 import Delete01Icon from '@hugeicons/core-free-icons/Delete01Icon';
@@ -114,6 +117,7 @@ import GithubIcon from '@hugeicons/core-free-icons/GithubIcon';
 import GlobeIcon from '@hugeicons/core-free-icons/GlobeIcon';
 import GoogleIcon from '@hugeicons/core-free-icons/GoogleIcon';
 import Grid2X2Icon from '@hugeicons/core-free-icons/Grid2X2Icon';
+import Grid3X3Icon from '@hugeicons/core-free-icons/Grid3X3Icon';
 import GripVerticalIcon from '@hugeicons/core-free-icons/GripVerticalIcon';
 import GroupItemsIcon from '@hugeicons/core-free-icons/GroupItemsIcon';
 import HammerIcon from '@hugeicons/core-free-icons/HammerIcon';
@@ -124,6 +128,7 @@ import HeadingIcon from '@hugeicons/core-free-icons/HeadingIcon';
 import HeartIcon from '@hugeicons/core-free-icons/HeartIcon';
 import HelpCircleIcon from '@hugeicons/core-free-icons/HelpCircleIcon';
 import HierarchySquare03Icon from '@hugeicons/core-free-icons/HierarchySquare03Icon';
+import HighlighterIcon from '@hugeicons/core-free-icons/HighlighterIcon';
 import HistoryIcon from '@hugeicons/core-free-icons/HistoryIcon';
 import Home01Icon from '@hugeicons/core-free-icons/Home01Icon';
 import HourglassIcon from '@hugeicons/core-free-icons/HourglassIcon';
@@ -178,6 +183,7 @@ import PanelRightOpenIcon from '@hugeicons/core-free-icons/PanelRightOpenIcon';
 import PauseCircleIcon from '@hugeicons/core-free-icons/PauseCircleIcon';
 import PeerToPeer01Icon from '@hugeicons/core-free-icons/PeerToPeer01Icon';
 import PencilEdit01Icon from '@hugeicons/core-free-icons/PencilEdit01Icon';
+import PencilEdit02Icon from '@hugeicons/core-free-icons/PencilEdit02Icon';
 import PencilIcon from '@hugeicons/core-free-icons/PencilIcon';
 import PieChart01Icon from '@hugeicons/core-free-icons/PieChart01Icon';
 import PinIcon from '@hugeicons/core-free-icons/PinIcon';
@@ -228,6 +234,7 @@ import Target01Icon from '@hugeicons/core-free-icons/Target01Icon';
 import TerminalIcon from '@hugeicons/core-free-icons/TerminalIcon';
 import TextBoldIcon from '@hugeicons/core-free-icons/TextBoldIcon';
 import TextFontIcon from '@hugeicons/core-free-icons/TextFontIcon';
+import TextIcon from '@hugeicons/core-free-icons/TextIcon';
 import TextItalicIcon from '@hugeicons/core-free-icons/TextItalicIcon';
 import TextStrikethroughIcon from '@hugeicons/core-free-icons/TextStrikethroughIcon';
 import TextUnderlineIcon from '@hugeicons/core-free-icons/TextUnderlineIcon';
@@ -236,6 +243,7 @@ import TickDouble01Icon from '@hugeicons/core-free-icons/TickDouble01Icon';
 import Timer01Icon from '@hugeicons/core-free-icons/Timer01Icon';
 import ToggleOnIcon from '@hugeicons/core-free-icons/ToggleOnIcon';
 import TranslateIcon from '@hugeicons/core-free-icons/TranslateIcon';
+import UndoIcon from '@hugeicons/core-free-icons/UndoIcon';
 import UngroupItemsIcon from '@hugeicons/core-free-icons/UngroupItemsIcon';
 import Unlink01Icon from '@hugeicons/core-free-icons/Unlink01Icon';
 import Upload01Icon from '@hugeicons/core-free-icons/Upload01Icon';
@@ -265,6 +273,7 @@ export const HUGE_ICON_REGISTRY = {
     'arrow-circle-right': CircleArrowRight01Icon,
     'arrow-circle-up': CircleArrowUp01Icon,
     'arrow-clockwise': Refresh04Icon,
+    'arrow-counter-clockwise': UndoIcon,
     'arrow-down': ArrowDown02Icon,
     'arrow-elbow-down-left': CornerDownLeftIcon,
     'arrow-elbow-down-right': CornerDownRightIcon,
@@ -274,6 +283,7 @@ export const HUGE_ICON_REGISTRY = {
     'arrow-right': ArrowRight02Icon,
     'arrow-square-out': ExternalLinkIcon,
     'arrow-up': ArrowUp02Icon,
+    'arrow-up-right': ArrowUpRight01Icon,
     'arrows-clockwise': Refresh01Icon,
     'arrows-down-up': ArrowUpDownIcon,
     'arrows-in': ArrowShrink01Icon,
@@ -327,6 +337,7 @@ export const HUGE_ICON_REGISTRY = {
     'copy': Copy01Icon,
     'cpu': CpuIcon,
     'credit-card': CreditCardIcon,
+    'crop': CropIcon,
     'crosshair': CrosshairIcon,
     'cube': CubeIcon,
     'currency-dollar': Dollar01Icon,
@@ -378,11 +389,13 @@ export const HUGE_ICON_REGISTRY = {
     'google-logo': GoogleIcon,
     'graph': ChartRelationshipIcon,
     'grid-four': Grid2X2Icon,
+    'grid-nine': Grid3X3Icon,
     'hammer': HammerIcon,
     'hand': HandIcon,
     'hard-drive-download': HardDriveDownloadIcon,
     'hard-drives': HardDriveIcon,
     'heart': HeartIcon,
+    'highlighter': HighlighterIcon,
     'hourglass': HourglassIcon,
     'house': Home01Icon,
     'image': Image01Icon,
@@ -432,6 +445,7 @@ export const HUGE_ICON_REGISTRY = {
     'pause-circle': PauseCircleIcon,
     'paw-print': FootprintsIcon,
     'pencil': PencilIcon,
+    'pencil-circle': PencilEdit02Icon,
     'pencil-simple': PencilEdit01Icon,
     'person': UserIcon,
     'phone': CallIcon,
@@ -456,6 +470,7 @@ export const HUGE_ICON_REGISTRY = {
     'rocket-launch': Rocket01Icon,
     'scales': JusticeScale01Icon,
     'scissors': Scissor01Icon,
+    'selection': CursorRectangleSelection01Icon,
     'share': Share01Icon,
     'share-network': PeerToPeer01Icon,
     'shield': Shield01Icon,
@@ -494,6 +509,7 @@ export const HUGE_ICON_REGISTRY = {
     'text-h': HeadingIcon,
     'text-italic': TextItalicIcon,
     'text-strikethrough': TextStrikethroughIcon,
+    'text-t': TextIcon,
     'text-underline': TextUnderlineIcon,
     'timer': Timer01Icon,
     'toggle-right': ToggleOnIcon,

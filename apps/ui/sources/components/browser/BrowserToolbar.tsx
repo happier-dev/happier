@@ -1,3 +1,4 @@
+import { withShortcut } from '@/keyboard/withShortcut';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -9,15 +10,6 @@ import type { BrowserToolbarModel } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
 
 import type { BrowserKeyboardShortcutLabels } from './useBrowserKeyboardShortcuts';
-
-/**
- * UB-6: a control that has a keyboard shortcut says so on its tooltip. The label comes from the
- * keyboard-command registry, so a rebound shortcut is never advertised with its stale default and
- * a platform without a binding simply shows the plain tooltip.
- */
-function withShortcut(label: string, shortcut: string | undefined): string {
-    return shortcut ? `${label} (${shortcut})` : label;
-}
 
 const stylesheet = StyleSheet.create(() => ({
     root: {

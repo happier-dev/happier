@@ -3,7 +3,7 @@ import {
     type DesktopBrowserCaptureSnapshotResult,
 } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
 
-import { createBrowserAnnotationCaptureProvider, type BrowserAnnotationMediaRegistrar } from './captureProvider';
+import { createBrowserAnnotationCaptureProvider } from './captureProvider';
 import type { BrowserAnnotationCaptureProvider } from './types';
 
 function decodeBase64ToBytes(base64: string): Uint8Array | null {
@@ -28,28 +28,22 @@ function decodeBase64ToBytes(base64: string): Uint8Array | null {
 
 /**
  * Production annotation capture provider for the desktop (Tauri/Wry) engine. Uses the native
- * `desktop_browser_capture_snapshot` command and registers its PNG through the Session attachment
- * owner. Availability requires both native capture and a persistence registrar. Managed CDP has
- * its separate capture adapter; iframe/RN native snapshot capture remains unsupported.
+ * `desktop_browser_capture_snapshot` command without uploading the original pixels. Availability
+ * follows native capture. Managed CDP has its own source adapter; iframe/RN snapshot capture remains unsupported.
  */
 export function createDesktopBrowserAnnotationCaptureProvider(input: Readonly<{
     available: boolean;
     captureSnapshot?: typeof captureDesktopBrowserSnapshot;
-    registerMedia?: BrowserAnnotationMediaRegistrar;
 }>): BrowserAnnotationCaptureProvider {
     const captureSnapshot = input.captureSnapshot ?? captureDesktopBrowserSnapshot;
     return createBrowserAnnotationCaptureProvider({
-        available: input.available && Boolean(input.registerMedia),
+        available: input.available,
         captureScreenshot: async (request) => {
-            const clip = request.cropClip?.devicePageRect ?? request.cropRect;
             const result: DesktopBrowserCaptureSnapshotResult = await captureSnapshot({
                 browserSessionId: request.browserSessionId,
                 viewId: request.viewId,
                 navigationGeneration: request.navigationGeneration,
                 captureRequestId: `annotation_capture:${request.browserSessionId}:${request.viewId}:${request.capturedAtMs}`,
-                // ANNO-3: forward the union-of-targets crop so native returns the cropped media (not
-                // the full page). Absent ⇒ full-frame capture.
-                ...(clip ? { clip } : {}),
             });
             if (!result.ok || !result.snapshot) {
                 const stale = result.errorCode === 'staleNavigation';
@@ -75,10 +69,10 @@ export function createDesktopBrowserAnnotationCaptureProvider(input: Readonly<{
                     mimeType: 'image/png',
                     width: result.snapshot.width,
                     height: result.snapshot.height,
+                    scale: result.snapshot.scaleFactor,
                     sizeBytes: result.snapshot.sizeBytes,
                 },
             };
         },
-        registerMedia: input.registerMedia ?? (() => null),
     });
 }

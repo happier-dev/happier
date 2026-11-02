@@ -11,6 +11,7 @@ import { ArrowCircleDownIcon } from 'phosphor-react-native/src/icons/ArrowCircle
 import { ArrowCircleRightIcon } from 'phosphor-react-native/src/icons/ArrowCircleRight';
 import { ArrowCircleUpIcon } from 'phosphor-react-native/src/icons/ArrowCircleUp';
 import { ArrowClockwiseIcon } from 'phosphor-react-native/src/icons/ArrowClockwise';
+import { ArrowCounterClockwiseIcon } from 'phosphor-react-native/src/icons/ArrowCounterClockwise';
 import { ArrowDownIcon } from 'phosphor-react-native/src/icons/ArrowDown';
 import { ArrowElbowDownLeftIcon } from 'phosphor-react-native/src/icons/ArrowElbowDownLeft';
 import { ArrowElbowDownRightIcon } from 'phosphor-react-native/src/icons/ArrowElbowDownRight';
@@ -20,6 +21,7 @@ import { ArrowLeftIcon } from 'phosphor-react-native/src/icons/ArrowLeft';
 import { ArrowRightIcon } from 'phosphor-react-native/src/icons/ArrowRight';
 import { ArrowSquareOutIcon } from 'phosphor-react-native/src/icons/ArrowSquareOut';
 import { ArrowUpIcon } from 'phosphor-react-native/src/icons/ArrowUp';
+import { ArrowUpRightIcon } from 'phosphor-react-native/src/icons/ArrowUpRight';
 import { ArrowsClockwiseIcon } from 'phosphor-react-native/src/icons/ArrowsClockwise';
 import { ArrowsDownUpIcon } from 'phosphor-react-native/src/icons/ArrowsDownUp';
 import { ArrowsInIcon } from 'phosphor-react-native/src/icons/ArrowsIn';
@@ -73,6 +75,7 @@ import { CodeIcon } from 'phosphor-react-native/src/icons/Code';
 import { CopyIcon } from 'phosphor-react-native/src/icons/Copy';
 import { CpuIcon } from 'phosphor-react-native/src/icons/Cpu';
 import { CreditCardIcon } from 'phosphor-react-native/src/icons/CreditCard';
+import { CropIcon } from 'phosphor-react-native/src/icons/Crop';
 import { CrosshairIcon } from 'phosphor-react-native/src/icons/Crosshair';
 import { CubeIcon } from 'phosphor-react-native/src/icons/Cube';
 import { CurrencyDollarIcon } from 'phosphor-react-native/src/icons/CurrencyDollar';
@@ -124,10 +127,12 @@ import { GlobeIcon } from 'phosphor-react-native/src/icons/Globe';
 import { GoogleLogoIcon } from 'phosphor-react-native/src/icons/GoogleLogo';
 import { GraphIcon } from 'phosphor-react-native/src/icons/Graph';
 import { GridFourIcon } from 'phosphor-react-native/src/icons/GridFour';
+import { GridNineIcon } from 'phosphor-react-native/src/icons/GridNine';
 import { HammerIcon } from 'phosphor-react-native/src/icons/Hammer';
 import { HandIcon } from 'phosphor-react-native/src/icons/Hand';
 import { HardDrivesIcon } from 'phosphor-react-native/src/icons/HardDrives';
 import { HeartIcon } from 'phosphor-react-native/src/icons/Heart';
+import { HighlighterIcon } from 'phosphor-react-native/src/icons/Highlighter';
 import { HourglassIcon } from 'phosphor-react-native/src/icons/Hourglass';
 import { HouseIcon } from 'phosphor-react-native/src/icons/House';
 import { ImageIcon } from 'phosphor-react-native/src/icons/Image';
@@ -175,6 +180,7 @@ import { PaperclipIcon } from 'phosphor-react-native/src/icons/Paperclip';
 import { PathIcon } from 'phosphor-react-native/src/icons/Path';
 import { PauseCircleIcon } from 'phosphor-react-native/src/icons/PauseCircle';
 import { PawPrintIcon } from 'phosphor-react-native/src/icons/PawPrint';
+import { PencilCircleIcon } from 'phosphor-react-native/src/icons/PencilCircle';
 import { PencilIcon } from 'phosphor-react-native/src/icons/Pencil';
 import { PencilSimpleIcon } from 'phosphor-react-native/src/icons/PencilSimple';
 import { PersonIcon } from 'phosphor-react-native/src/icons/Person';
@@ -203,6 +209,7 @@ import { RocketIcon } from 'phosphor-react-native/src/icons/Rocket';
 import { RocketLaunchIcon } from 'phosphor-react-native/src/icons/RocketLaunch';
 import { ScalesIcon } from 'phosphor-react-native/src/icons/Scales';
 import { ScissorsIcon } from 'phosphor-react-native/src/icons/Scissors';
+import { SelectionIcon } from 'phosphor-react-native/src/icons/Selection';
 import { ShareIcon } from 'phosphor-react-native/src/icons/Share';
 import { ShareNetworkIcon } from 'phosphor-react-native/src/icons/ShareNetwork';
 import { ShieldCheckIcon } from 'phosphor-react-native/src/icons/ShieldCheck';
@@ -240,6 +247,7 @@ import { TextBIcon } from 'phosphor-react-native/src/icons/TextB';
 import { TextHIcon } from 'phosphor-react-native/src/icons/TextH';
 import { TextItalicIcon } from 'phosphor-react-native/src/icons/TextItalic';
 import { TextStrikethroughIcon } from 'phosphor-react-native/src/icons/TextStrikethrough';
+import { TextTIcon } from 'phosphor-react-native/src/icons/TextT';
 import { TextUnderlineIcon } from 'phosphor-react-native/src/icons/TextUnderline';
 import { TimerIcon } from 'phosphor-react-native/src/icons/Timer';
 import { ToggleRightIcon } from 'phosphor-react-native/src/icons/ToggleRight';
@@ -273,6 +281,7 @@ export const ICON_REGISTRY = {
     'arrow-circle-right': ArrowCircleRightIcon,
     'arrow-circle-up': ArrowCircleUpIcon,
     'arrow-clockwise': ArrowClockwiseIcon,
+    'arrow-counter-clockwise': ArrowCounterClockwiseIcon,
     'arrow-down': ArrowDownIcon,
     'arrow-elbow-down-left': ArrowElbowDownLeftIcon,
     'arrow-elbow-down-right': ArrowElbowDownRightIcon,
@@ -282,6 +291,7 @@ export const ICON_REGISTRY = {
     'arrow-right': ArrowRightIcon,
     'arrow-square-out': ArrowSquareOutIcon,
     'arrow-up': ArrowUpIcon,
+    'arrow-up-right': ArrowUpRightIcon,
     'arrows-clockwise': ArrowsClockwiseIcon,
     'arrows-down-up': ArrowsDownUpIcon,
     'arrows-in': ArrowsInIcon,
@@ -336,6 +346,7 @@ export const ICON_REGISTRY = {
     'copy': CopyIcon,
     'cpu': CpuIcon,
     'credit-card': CreditCardIcon,
+    'crop': CropIcon,
     'crosshair': CrosshairIcon,
     'cube': CubeIcon,
     'currency-dollar': CurrencyDollarIcon,
@@ -388,11 +399,13 @@ export const ICON_REGISTRY = {
     'google-logo': GoogleLogoIcon,
     'graph': GraphIcon,
     'grid-four': GridFourIcon,
+    'grid-nine': GridNineIcon,
     'hammer': HammerIcon,
     'hand': HandIcon,
     'hard-drive-download': DownloadIcon,
     'hard-drives': HardDrivesIcon,
     'heart': HeartIcon,
+    'highlighter': HighlighterIcon,
     'hourglass': HourglassIcon,
     'house': HouseIcon,
     'image': ImageIcon,
@@ -443,6 +456,7 @@ export const ICON_REGISTRY = {
     'pause-circle': PauseCircleIcon,
     'paw-print': PawPrintIcon,
     'pencil': PencilIcon,
+    'pencil-circle': PencilCircleIcon,
     'pencil-simple': PencilSimpleIcon,
     'person': PersonIcon,
     'phone': PhoneIcon,
@@ -470,6 +484,7 @@ export const ICON_REGISTRY = {
     'rocket-launch': RocketLaunchIcon,
     'scales': ScalesIcon,
     'scissors': ScissorsIcon,
+    'selection': SelectionIcon,
     'share': ShareIcon,
     'share-network': ShareNetworkIcon,
     'shield': ShieldIcon,
@@ -508,6 +523,7 @@ export const ICON_REGISTRY = {
     'text-h': TextHIcon,
     'text-italic': TextItalicIcon,
     'text-strikethrough': TextStrikethroughIcon,
+    'text-t': TextTIcon,
     'text-underline': TextUnderlineIcon,
     'timer': TimerIcon,
     'toggle-right': ToggleRightIcon,

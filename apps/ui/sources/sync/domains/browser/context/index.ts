@@ -2,7 +2,6 @@ export * from './activeViewAttachment';
 export * from './actions';
 export * from './annotationAdapter';
 export * from './annotationCaptureCapability';
-export * from './annotationCropGeometry';
 export * from './annotationDraft';
 export * from './captureProvider';
 export * from './desktopAnnotationProvider';

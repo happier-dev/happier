@@ -11873,6 +11873,7 @@ const enFiles = {
       nextRun: "Next run",
       runOf: ({ index, total }: { index: number; total: number }) => `Run ${index} of ${total}`,
   },
+  annotate: fileViewerTranslations.en.annotate,
   viewer: fileViewerTranslations.en.viewer,
   kind: fileViewerTranslations.en.kind,
   agentWritingThisFile: ({ agent }: { agent: string }) => `${agent} is writing this file`,
@@ -13037,6 +13038,8 @@ const enBrowserContext = {
     attachAnnotation: 'Attach annotation',
     contextUnavailable: 'Browser context unavailable',
     attachedPage: ({ title }: { title: string }) => `Page: ${title}`,
+    attachedAnnotation: ({ title, count }: { title: string; count: string }) => `${title} · Elements: ${count}`,
+    attachedAnnotationStale: ({ title, count }: { title: string; count: string }) => `Refresh page context: ${title} · Elements: ${count}`,
     attachedPageStale: ({ title }: { title: string }) =>
       `Refresh page context: ${title}`,
     attachedCount: ({ count }: { count: string }) =>
@@ -13051,11 +13054,12 @@ const enBrowserContext = {
     toolDraw: 'Draw',
     toolErase: 'Erase',
     commentPlaceholder: 'Add a comment',
-    attach: 'Attach annotation',
+    attach: 'Attach',
     cancel: 'Cancel',
     captureUnavailable: 'Annotation capture is unavailable for this view.',
     selectUnavailable: 'Element selection is unavailable for this view.',
     marked: ({ count }: { count: string }) => `${count} marked`,
+    elementCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'element' : 'elements'}`,
     removeMark: ({ label }: { label: string }) => `Remove ${label}`,
     markElement: ({ label }: { label: string }) => `Element ${label}`,
     markRegion: 'Region',
@@ -22345,6 +22349,15 @@ const enConversationSearch = {
 };
 
 export const en: TranslationStructure = {
+  transcriptPassage: {
+    quote: "Quote",
+    annotate: "Annotate",
+    noteTitle: "Add a note",
+    note: "Your note",
+    notePlaceholder: "Ask about it, or say what to change",
+    saveError: "Couldn’t add your note — it’s still here. If you’re editing a queued message, finish that first, then try again.",
+    quoteError: "Couldn’t add the quote. If you’re editing a queued message, finish that first, then try again.",
+  },
     fileReviewNote: fileReviewNoteTranslations.en,
     composerReferences: composerReferenceTranslations.en,
     hunkReview: hunkReviewTranslations['en'],
@@ -22867,6 +22880,7 @@ type DeepTranslationShape<T> = T extends (...args: infer Args) => infer Return
 type TranslationOverlay<Base, Overlay> = Omit<Base, keyof Overlay> & Overlay;
 
 type EnglishNamespaces0 = {
+  readonly transcriptPassage: Readonly<{ quote: string; annotate: string; noteTitle: string; note: string; notePlaceholder: string; saveError: string; quoteError: string }>;
   readonly resourceProposal: typeof resourceProposalTranslations.en;
   readonly actionPresentation: typeof actionPresentationTranslations.en;
   readonly conversationSearch: typeof enConversationSearch;

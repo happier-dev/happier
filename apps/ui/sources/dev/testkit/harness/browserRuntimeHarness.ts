@@ -32,6 +32,7 @@ export async function installBrowserRuntimeForTests(options: Readonly<{ url: str
         Element: window.Element,
         Node: window.Node,
         Event: window.Event,
+        EventTarget: window.EventTarget,
         CustomEvent: window.CustomEvent,
         PopStateEvent: window.PopStateEvent,
         MutationObserver: window.MutationObserver,

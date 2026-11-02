@@ -1288,6 +1288,15 @@ function plural({
 
 
 export const zhHans: TranslationStructure = {
+  transcriptPassage: {
+    quote: "引用",
+    annotate: "添加批注",
+    noteTitle: "添加备注",
+    note: "你的备注",
+    notePlaceholder: "提个问题，或说明要改什么",
+    saveError: "无法添加备注，内容已保留。如果你正在编辑待发送的消息，请先完成编辑再重试。",
+    quoteError: "无法添加引用。如果你正在编辑待发送的消息，请先完成编辑再重试。",
+  },
     fileReviewNote: fileReviewNoteTranslations['zh-Hans'],
     composerReferences: composerReferenceTranslations['zh-Hans'],
     hunkReview: hunkReviewTranslations['zh-Hans'],
@@ -9754,6 +9763,7 @@ export const zhHans: TranslationStructure = {
                 nextRun: "下一段",
                 runOf: ({ index, total }: { index: number; total: number }) => `第 ${index} 段，共 ${total} 段`,
             },
+            annotate: fileViewerTranslations['zh-Hans'].annotate,
             viewer: fileViewerTranslations['zh-Hans'].viewer,
             kind: fileViewerTranslations['zh-Hans'].kind,
             agentWritingThisFile: ({ agent }: { agent: string }) => `${agent} 正在写入此文件`,
@@ -10822,6 +10832,8 @@ export const zhHans: TranslationStructure = {
       attachAnnotation: '附加标注',
       contextUnavailable: '浏览器上下文不可用',
       attachedPage: ({ title }: { title: string }) => `页面：${title}`,
+      attachedAnnotation: ({ title, count }: { title: string; count: string }) => `${title} · 元素：${count}`,
+      attachedAnnotationStale: ({ title, count }: { title: string; count: string }) => `刷新页面上下文：${title} · 元素：${count}`,
       attachedPageStale: ({ title }: { title: string }) => `刷新页面上下文：${title}`,
       attachedCount: ({ count }: { count: string }) => `${count} 个浏览器上下文`,
       removeAttachedContext: '移除浏览器上下文',
@@ -10839,6 +10851,7 @@ export const zhHans: TranslationStructure = {
       captureUnavailable: '此视图不支持标注捕获。',
       selectUnavailable: '此视图不支持元素选择。',
       marked: ({ count }: { count: string }) => `已标记 ${count} 处`,
+    elementCount: ({ count }: { count: number }) => `${count} 个元素`,
       removeMark: ({ label }: { label: string }) => `移除${label}`,
       markElement: ({ label }: { label: string }) => `元素 ${label}`,
       markRegion: '区域',

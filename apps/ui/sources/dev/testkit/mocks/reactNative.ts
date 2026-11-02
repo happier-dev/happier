@@ -6,6 +6,7 @@ import {
     createReactNativeNativeRuntime,
     createReactNativeWebRuntime,
     installReactNativeWebRuntime,
+    reactNativeWebAppState,
     type TestReactNativeAppStateStatus,
     type TestReactNativeNativePlatformOS,
     type TestReactNativeRuntimeOverrides,
@@ -20,7 +21,7 @@ type TestReactNativeHostProps = Record<string, unknown> & Readonly<{
     children?: React.ReactNode;
 }>;
 
-export { createReactNativeAppStateEmitter };
+export { createReactNativeAppStateEmitter, reactNativeWebAppState };
 // `react-native` aliases this stub in Vitest. A normal import while its async
 // mock is resolving can await that same mock; only the framework adapter owns
 // bypassing it, while reusable runtime factories stay framework-independent.

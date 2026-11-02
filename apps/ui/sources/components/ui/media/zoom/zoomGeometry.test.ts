@@ -65,6 +65,20 @@ describe('media zoom geometry', () => {
         expect(dismissPresentation(660, 1000)).toEqual({ progress: 1, scale: 0.82, backdrop: 0 });
     });
 
+    it('keeps a fitted picture fitted when shrinking, rotating and expanding the viewport', () => {
+        const image = { width: 2000, height: 1000 };
+        const desktop = { width: 1376, height: 756 };
+        const portrait = { width: 358, height: 844 };
+        const landscape = { width: 812, height: 390 };
+        let viewport = desktop;
+        let state = { scale: resolveZoomBounds(image, viewport, 1).min, x: 0, y: 0 };
+        for (const next of [portrait, landscape, desktop]) {
+            state = resizeZoom(state, image, viewport, next, 1, false);
+            expect(state).toEqual({ scale: resolveZoomBounds(image, next, 1).min, x: 0, y: 0 });
+            viewport = next;
+        }
+    });
+
     it('preserves the centre content point on resize and ignores toolbar-only changes mid-gesture', () => {
         const state = { scale: 1, x: 100, y: 50 };
         expect(resizeZoom(state, { width: 1000, height: 1000 }, { width: 500, height: 500 }, { width: 600, height: 600 }, 1, false))

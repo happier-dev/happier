@@ -137,45 +137,7 @@ fn capture_request(
         view_id: view_id.to_string(),
         navigation_generation,
         capture_request_id: "capture_request_1".to_string(),
-        clip: None,
     }
-}
-
-/// Encodes a deterministic 8-bit RGBA PNG where pixel (x,y) carries `R = x`, `G = y`, `B = 0`,
-/// `A = 255`, so a crop test can assert the cropped pixels came from the requested sub-rectangle.
-fn encode_test_rgba_png(width: u32, height: u32) -> String {
-    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-    let mut rgba = vec![0u8; (width * height * 4) as usize];
-    for y in 0..height {
-        for x in 0..width {
-            let i = ((y * width + x) * 4) as usize;
-            rgba[i] = x as u8;
-            rgba[i + 1] = y as u8;
-            rgba[i + 2] = 0;
-            rgba[i + 3] = 255;
-        }
-    }
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().expect("png header");
-        writer.write_image_data(&rgba).expect("png data");
-    }
-    BASE64_STANDARD.encode(&bytes)
-}
-
-/// Decodes a base64 PNG into (width, height, rgba8) for crop assertions.
-fn decode_rgba_png(bytes_base64: &str) -> (u32, u32, Vec<u8>) {
-    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-    let raw = BASE64_STANDARD.decode(bytes_base64).expect("base64");
-    let decoder = png::Decoder::new(raw.as_slice());
-    let mut reader = decoder.read_info().expect("png info");
-    let mut buffer = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buffer).expect("png frame");
-    buffer.truncate(info.buffer_size());
-    (info.width, info.height, buffer)
 }
 
 fn recording_frame_request(
@@ -376,6 +338,7 @@ impl FakeWebViewHost {
                 mime_type: "image/png".to_string(),
                 width: 4,
                 height: 3,
+                scale_factor: 2.0,
                 size_bytes: 4,
                 bytes_base64: "AQIDBA==".to_string(),
             }))),
@@ -1561,6 +1524,7 @@ fn native_state_captures_snapshot_for_matching_view_generation() {
     assert_eq!(snapshot.mime_type, "image/png");
     assert_eq!(snapshot.width, 4);
     assert_eq!(snapshot.height, 3);
+    assert_eq!(snapshot.scale_factor, 2.0);
     assert_eq!(snapshot.size_bytes, 4);
     assert_eq!(snapshot.bytes_base64, "AQIDBA==");
     assert!(result.error_code.is_none());
@@ -1656,127 +1620,6 @@ fn native_state_rejects_navigation_during_source_privacy_probe_before_pixels() {
     assert!(!host.log.events().contains(&FakeWebViewEvent::Captured {
         view_id: "view_1".to_string()
     }));
-}
-
-#[test]
-fn native_state_crops_capture_snapshot_to_union_of_targets_clip() {
-    // ANNO-3: a clip (the union-of-targets device-pixel rect resolved by the in-app editor) must
-    // crop the captured media to that sub-rectangle — never return the full frame. Mirrors the
-    // `resolveAnnotationCropClip` devicePageRect contract: device px, clamped to the buffer bounds.
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let host = FakeWebViewHost::new(false);
-    // Replace the fake's placeholder bytes with a real 8x6 RGBA PNG so the crop can decode it.
-    *host.capture_result.lock().expect("capture lock") = Ok(DesktopBrowserCapturedSnapshot {
-        browser_session_id: "native_placeholder".to_string(),
-        view_id: "native_placeholder".to_string(),
-        navigation_generation: 999,
-        capture_request_id: "native_placeholder".to_string(),
-        captured_at_ms: 123_456,
-        mime_type: "image/png".to_string(),
-        width: 8,
-        height: 6,
-        size_bytes: 1,
-        bytes_base64: encode_test_rgba_png(8, 6),
-    });
-    let state = DesktopBrowserState::for_test(
-        DesktopBrowserAvailability::available(
-            DesktopBrowserPlatform::MacOs,
-            DesktopBrowserPrimitive::MacOsNsViewWebKit,
-            DesktopBrowserSupport {
-                navigation: true,
-                page_info_diagnostics: true,
-                capture: true,
-                ..DesktopBrowserSupport::default()
-            },
-        ),
-        temp_dir.path().to_path_buf(),
-        Box::new(host.clone()),
-    );
-    assert!(
-        state
-            .open_view(open_request("view_1", "profile_1", "https://example.test"))
-            .ok
-    );
-
-    // Union-of-targets clip: x=2,y=1,w=3,h=2 (device px).
-    let mut request = capture_request("view_1", 0);
-    request.clip = Some(DesktopBrowserCaptureClipRect {
-        x: 2,
-        y: 1,
-        width: 3,
-        height: 2,
-    });
-    let result = state.capture_snapshot(request);
-
-    assert!(result.ok);
-    let snapshot = result.snapshot.expect("snapshot present");
-    // Media dimensions match the CROP, not the 8x6 page.
-    assert_eq!(snapshot.width, 3);
-    assert_eq!(snapshot.height, 2);
-    assert!(snapshot.size_bytes > 0);
-
-    // The cropped pixels came from the requested sub-rectangle: top-left pixel of the crop is the
-    // source pixel at (x=2, y=1) which the test encoder colored R=2, G=1.
-    let (cw, ch, rgba) = decode_rgba_png(&snapshot.bytes_base64);
-    assert_eq!((cw, ch), (3, 2));
-    assert_eq!(rgba[0], 2, "crop top-left R == source x origin");
-    assert_eq!(rgba[1], 1, "crop top-left G == source y origin");
-    // Bottom-right pixel of the crop is source (x=4, y=2): R=4, G=2.
-    let last = (((ch - 1) * cw + (cw - 1)) * 4) as usize;
-    assert_eq!(rgba[last], 4);
-    assert_eq!(rgba[last + 1], 2);
-}
-
-#[test]
-fn native_state_clamps_capture_snapshot_clip_to_buffer_bounds() {
-    // An oversized / off-origin clip is clamped to the captured buffer rather than reading outside it.
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let host = FakeWebViewHost::new(false);
-    *host.capture_result.lock().expect("capture lock") = Ok(DesktopBrowserCapturedSnapshot {
-        browser_session_id: "native_placeholder".to_string(),
-        view_id: "native_placeholder".to_string(),
-        navigation_generation: 999,
-        capture_request_id: "native_placeholder".to_string(),
-        captured_at_ms: 123_456,
-        mime_type: "image/png".to_string(),
-        width: 8,
-        height: 6,
-        size_bytes: 1,
-        bytes_base64: encode_test_rgba_png(8, 6),
-    });
-    let state = DesktopBrowserState::for_test(
-        DesktopBrowserAvailability::available(
-            DesktopBrowserPlatform::MacOs,
-            DesktopBrowserPrimitive::MacOsNsViewWebKit,
-            DesktopBrowserSupport {
-                navigation: true,
-                page_info_diagnostics: true,
-                capture: true,
-                ..DesktopBrowserSupport::default()
-            },
-        ),
-        temp_dir.path().to_path_buf(),
-        Box::new(host.clone()),
-    );
-    assert!(
-        state
-            .open_view(open_request("view_1", "profile_1", "https://example.test"))
-            .ok
-    );
-
-    let mut request = capture_request("view_1", 0);
-    request.clip = Some(DesktopBrowserCaptureClipRect {
-        x: 6,
-        y: 4,
-        width: 100,
-        height: 100,
-    });
-    let result = state.capture_snapshot(request);
-    assert!(result.ok);
-    let snapshot = result.snapshot.expect("snapshot present");
-    // Clamped to the remaining 2x2 region (8-6, 6-4).
-    assert_eq!(snapshot.width, 2);
-    assert_eq!(snapshot.height, 2);
 }
 
 #[test]

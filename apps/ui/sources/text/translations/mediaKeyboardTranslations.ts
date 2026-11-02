@@ -2,7 +2,7 @@ import type { SupportedLanguage } from '../_all';
 
 type MediaKeyboardCopy = Readonly<Record<'mediaPrevious' | 'mediaNext' | 'mediaZoomIn' | 'mediaZoomOut' | 'mediaFit' | 'mediaActualSize' | 'mediaPlayPause', string>>;
 
-export const mediaKeyboardTranslations = {
+const mediaBase = {
     en: { mediaPrevious: 'Previous media item', mediaNext: 'Next media item', mediaZoomIn: 'Zoom in', mediaZoomOut: 'Zoom out', mediaFit: 'Fit media', mediaActualSize: 'Actual size', mediaPlayPause: 'Play or pause media' },
     fr: { mediaPrevious: 'Média précédent', mediaNext: 'Média suivant', mediaZoomIn: 'Agrandir', mediaZoomOut: 'Réduire', mediaFit: 'Ajuster le média', mediaActualSize: 'Taille réelle', mediaPlayPause: 'Lire ou mettre en pause le média' },
     de: { mediaPrevious: 'Vorheriges Medium', mediaNext: 'Nächstes Medium', mediaZoomIn: 'Vergrößern', mediaZoomOut: 'Verkleinern', mediaFit: 'Medium einpassen', mediaActualSize: 'Tatsächliche Größe', mediaPlayPause: 'Medium abspielen oder pausieren' },
@@ -16,3 +16,43 @@ export const mediaKeyboardTranslations = {
     'zh-Hans': { mediaPrevious: '上一个媒体项目', mediaNext: '下一个媒体项目', mediaZoomIn: '放大', mediaZoomOut: '缩小', mediaFit: '适合窗口', mediaActualSize: '实际大小', mediaPlayPause: '播放或暂停媒体' },
     'zh-Hant': { mediaPrevious: '上一個媒體項目', mediaNext: '下一個媒體項目', mediaZoomIn: '放大', mediaZoomOut: '縮小', mediaFit: '符合視窗', mediaActualSize: '實際大小', mediaPlayPause: '播放或暫停媒體' },
 } as const satisfies Record<SupportedLanguage, MediaKeyboardCopy>;
+
+const annotation = {
+    en: { mediaAnnotate: 'Annotate image', annotationGroup: 'Annotate', annotationSelect: 'Select mark', annotationArrow: 'Arrow', annotationRectangle: 'Rectangle', annotationText: 'Text', annotationBlur: 'Blur', annotationUndo: 'Undo marks', annotationRedo: 'Redo marks' },
+    fr: { mediaAnnotate: 'Annoter l’image', annotationGroup: 'Annoter', annotationSelect: 'Sélectionner une marque', annotationArrow: 'Flèche', annotationRectangle: 'Rectangle', annotationText: 'Texte', annotationBlur: 'Flouter', annotationUndo: 'Annuler les marques', annotationRedo: 'Rétablir les marques' },
+    de: { mediaAnnotate: 'Bild kommentieren', annotationGroup: 'Kommentieren', annotationSelect: 'Markierung auswählen', annotationArrow: 'Pfeil', annotationRectangle: 'Rechteck', annotationText: 'Text', annotationBlur: 'Verpixeln', annotationUndo: 'Markierungen rückgängig', annotationRedo: 'Markierungen wiederholen' },
+    es: { mediaAnnotate: 'Anotar imagen', annotationGroup: 'Anotar', annotationSelect: 'Seleccionar marca', annotationArrow: 'Flecha', annotationRectangle: 'Rectángulo', annotationText: 'Texto', annotationBlur: 'Desenfocar', annotationUndo: 'Deshacer marcas', annotationRedo: 'Rehacer marcas' },
+    it: { mediaAnnotate: 'Annota immagine', annotationGroup: 'Annota', annotationSelect: 'Seleziona segno', annotationArrow: 'Freccia', annotationRectangle: 'Rettangolo', annotationText: 'Testo', annotationBlur: 'Sfoca', annotationUndo: 'Annulla segni', annotationRedo: 'Ripeti segni' },
+    pt: { mediaAnnotate: 'Anotar imagem', annotationGroup: 'Anotar', annotationSelect: 'Selecionar marca', annotationArrow: 'Seta', annotationRectangle: 'Retângulo', annotationText: 'Texto', annotationBlur: 'Desfocar', annotationUndo: 'Desfazer marcas', annotationRedo: 'Refazer marcas' },
+    ca: { mediaAnnotate: 'Anota la imatge', annotationGroup: 'Anota', annotationSelect: 'Selecciona una marca', annotationArrow: 'Fletxa', annotationRectangle: 'Rectangle', annotationText: 'Text', annotationBlur: 'Desenfoca', annotationUndo: 'Desfés les marques', annotationRedo: 'Refés les marques' },
+    pl: { mediaAnnotate: 'Opisz obraz', annotationGroup: 'Adnotacje', annotationSelect: 'Wybierz oznaczenie', annotationArrow: 'Strzałka', annotationRectangle: 'Prostokąt', annotationText: 'Tekst', annotationBlur: 'Rozmycie', annotationUndo: 'Cofnij oznaczenia', annotationRedo: 'Ponów oznaczenia' },
+    ru: { mediaAnnotate: 'Разметить изображение', annotationGroup: 'Разметка', annotationSelect: 'Выбрать отметку', annotationArrow: 'Стрелка', annotationRectangle: 'Прямоугольник', annotationText: 'Текст', annotationBlur: 'Размытие', annotationUndo: 'Отменить отметки', annotationRedo: 'Повторить отметки' },
+    ja: { mediaAnnotate: '画像に注釈', annotationGroup: '注釈', annotationSelect: 'マークを選択', annotationArrow: '矢印', annotationRectangle: '四角形', annotationText: 'テキスト', annotationBlur: 'ぼかし', annotationUndo: '注釈を元に戻す', annotationRedo: '注釈をやり直す' },
+    'zh-Hans': { mediaAnnotate: '标注图片', annotationGroup: '标注', annotationSelect: '选择标记', annotationArrow: '箭头', annotationRectangle: '矩形', annotationText: '文字', annotationBlur: '模糊', annotationUndo: '撤销标记', annotationRedo: '重做标记' },
+    'zh-Hant': { mediaAnnotate: '標註圖片', annotationGroup: '標註', annotationSelect: '選擇標記', annotationArrow: '箭頭', annotationRectangle: '矩形', annotationText: '文字', annotationBlur: '模糊', annotationUndo: '復原標記', annotationRedo: '重做標記' },
+} as const;
+
+const editing = {
+    en: { annotationElement: 'Element', annotationEllipse: 'Ellipse', annotationFreehand: 'Draw', annotationHighlighter: 'Highlighter', annotationStep: 'Numbered step', annotationCrop: 'Crop', annotationDelete: 'Delete mark', annotationDuplicate: 'Duplicate mark', annotationNextMark: 'Next mark', annotationPreviousMark: 'Previous mark', annotationNudge: 'Move mark' },
+    fr: { annotationElement: 'Élément', annotationEllipse: 'Ellipse', annotationFreehand: 'Dessiner', annotationHighlighter: 'Surligneur', annotationStep: 'Étape numérotée', annotationCrop: 'Recadrer', annotationDelete: 'Supprimer la marque', annotationDuplicate: 'Dupliquer la marque', annotationNextMark: 'Marque suivante', annotationPreviousMark: 'Marque précédente', annotationNudge: 'Déplacer la marque' },
+    de: { annotationElement: 'Element', annotationEllipse: 'Ellipse', annotationFreehand: 'Zeichnen', annotationHighlighter: 'Textmarker', annotationStep: 'Nummerierter Schritt', annotationCrop: 'Zuschneiden', annotationDelete: 'Markierung löschen', annotationDuplicate: 'Markierung duplizieren', annotationNextMark: 'Nächste Markierung', annotationPreviousMark: 'Vorherige Markierung', annotationNudge: 'Markierung verschieben' },
+    es: { annotationElement: 'Elemento', annotationEllipse: 'Elipse', annotationFreehand: 'Dibujar', annotationHighlighter: 'Resaltador', annotationStep: 'Paso numerado', annotationCrop: 'Recortar', annotationDelete: 'Eliminar marca', annotationDuplicate: 'Duplicar marca', annotationNextMark: 'Marca siguiente', annotationPreviousMark: 'Marca anterior', annotationNudge: 'Mover marca' },
+    it: { annotationElement: 'Elemento', annotationEllipse: 'Ellisse', annotationFreehand: 'Disegna', annotationHighlighter: 'Evidenziatore', annotationStep: 'Passaggio numerato', annotationCrop: 'Ritaglia', annotationDelete: 'Elimina segno', annotationDuplicate: 'Duplica segno', annotationNextMark: 'Segno successivo', annotationPreviousMark: 'Segno precedente', annotationNudge: 'Sposta segno' },
+    pt: { annotationElement: 'Elemento', annotationEllipse: 'Elipse', annotationFreehand: 'Desenhar', annotationHighlighter: 'Marca-texto', annotationStep: 'Etapa numerada', annotationCrop: 'Recortar', annotationDelete: 'Excluir marca', annotationDuplicate: 'Duplicar marca', annotationNextMark: 'Próxima marca', annotationPreviousMark: 'Marca anterior', annotationNudge: 'Mover marca' },
+    ca: { annotationElement: 'Element', annotationEllipse: 'El·lipse', annotationFreehand: 'Dibuixa', annotationHighlighter: 'Retolador', annotationStep: 'Pas numerat', annotationCrop: 'Retalla', annotationDelete: 'Suprimeix la marca', annotationDuplicate: 'Duplica la marca', annotationNextMark: 'Marca següent', annotationPreviousMark: 'Marca anterior', annotationNudge: 'Mou la marca' },
+    pl: { annotationElement: 'Element', annotationEllipse: 'Elipsa', annotationFreehand: 'Rysuj', annotationHighlighter: 'Zakreślacz', annotationStep: 'Numerowany krok', annotationCrop: 'Przytnij', annotationDelete: 'Usuń oznaczenie', annotationDuplicate: 'Powiel oznaczenie', annotationNextMark: 'Następne oznaczenie', annotationPreviousMark: 'Poprzednie oznaczenie', annotationNudge: 'Przesuń oznaczenie' },
+    ru: { annotationElement: 'Элемент', annotationEllipse: 'Эллипс', annotationFreehand: 'Рисовать', annotationHighlighter: 'Маркер', annotationStep: 'Нумерованный шаг', annotationCrop: 'Обрезать', annotationDelete: 'Удалить отметку', annotationDuplicate: 'Дублировать отметку', annotationNextMark: 'Следующая отметка', annotationPreviousMark: 'Предыдущая отметка', annotationNudge: 'Переместить отметку' },
+    ja: { annotationElement: '要素', annotationEllipse: '楕円', annotationFreehand: '描画', annotationHighlighter: '蛍光ペン', annotationStep: '番号付きステップ', annotationCrop: '切り抜き', annotationDelete: 'マークを削除', annotationDuplicate: 'マークを複製', annotationNextMark: '次のマーク', annotationPreviousMark: '前のマーク', annotationNudge: 'マークを移動' },
+    'zh-Hans': { annotationElement: '元素', annotationEllipse: '椭圆', annotationFreehand: '绘制', annotationHighlighter: '荧光笔', annotationStep: '编号步骤', annotationCrop: '裁剪', annotationDelete: '删除标记', annotationDuplicate: '复制标记', annotationNextMark: '下一个标记', annotationPreviousMark: '上一个标记', annotationNudge: '移动标记' },
+    'zh-Hant': { annotationElement: '元素', annotationEllipse: '橢圓', annotationFreehand: '繪製', annotationHighlighter: '螢光筆', annotationStep: '編號步驟', annotationCrop: '裁剪', annotationDelete: '刪除標記', annotationDuplicate: '複製標記', annotationNextMark: '下一個標記', annotationPreviousMark: '上一個標記', annotationNudge: '移動標記' },
+} as const;
+
+export const mediaKeyboardTranslations = {
+    en: { ...mediaBase.en, ...annotation.en, ...editing.en }, fr: { ...mediaBase.fr, ...annotation.fr, ...editing.fr },
+    de: { ...mediaBase.de, ...annotation.de, ...editing.de }, es: { ...mediaBase.es, ...annotation.es, ...editing.es },
+    it: { ...mediaBase.it, ...annotation.it, ...editing.it }, pt: { ...mediaBase.pt, ...annotation.pt, ...editing.pt },
+    ca: { ...mediaBase.ca, ...annotation.ca, ...editing.ca }, pl: { ...mediaBase.pl, ...annotation.pl, ...editing.pl },
+    ru: { ...mediaBase.ru, ...annotation.ru, ...editing.ru }, ja: { ...mediaBase.ja, ...annotation.ja, ...editing.ja },
+    'zh-Hans': { ...mediaBase['zh-Hans'], ...annotation['zh-Hans'], ...editing['zh-Hans'] },
+    'zh-Hant': { ...mediaBase['zh-Hant'], ...annotation['zh-Hant'], ...editing['zh-Hant'] },
+} as const;

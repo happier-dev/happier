@@ -6,6 +6,8 @@ import {
 } from './attachmentDraftMemoryStore';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 
 export type SessionAttachmentDraftScope = Readonly<{
     serverId: string;
@@ -15,6 +17,11 @@ export type SessionAttachmentDraftScope = Readonly<{
     /** Exact Run id or rowless/first-send occurrence that owns these local bytes. */
     occurrenceId: string;
 }>;
+
+/** The existing Session composer occurrence is deterministic even while unmounted. */
+export function resolveSessionAttachmentDraftScope(sessionTarget: ExactSessionMachineTargetIdentity): SessionAttachmentDraftScope {
+    return { ...sessionTarget, occurrenceId: composerRefV1Key({ kind: 'session', sessionId: sessionTarget.sessionId }) };
+}
 
 export function sessionAttachmentDraftKey(scope: SessionAttachmentDraftScope): string {
     // Reuse the canonical Account and Session identity encoders. The occurrence

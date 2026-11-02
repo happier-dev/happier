@@ -112,13 +112,21 @@ export function useKeyboardCommandHintLabel(commandId: KeyboardCommandId): strin
  * The keycaps of one command as the person has bound it here (⌘ P), or nothing when no key runs it:
  * the hint beside a control that does the same thing (Go to file in the Files tree, Text in files).
  */
-export function KeyboardCommandHint(props: Readonly<{ commandId: KeyboardCommandId; testID?: string }>): React.ReactElement | null {
-    const { theme } = useUnistyles();
+export function KeyboardCommandHint(props: Readonly<{ commandId: KeyboardCommandId; tone?: KeyHintProps['tone']; testID?: string }>): React.ReactElement | null {
     const shortcut = useKeyboardCommandHintLabel(props.commandId);
     if (!shortcut) return null;
+    return <KeyCombinationHint label={shortcut} tone={props.tone} testID={props.testID} />;
+}
+
+/**
+ * A key combination as its keycaps, one per key ("Cmd+Shift+2" → ⇧ ⌘ 2 on a Mac, Ctrl Shift 2 elsewhere):
+ * the one way a combination is drawn, beside a label, in a field or in a settings row.
+ */
+export function KeyCombinationHint(props: Readonly<{ label: string; tone?: KeyHintProps['tone']; testID?: string }>): React.ReactElement {
+    const { theme } = useUnistyles();
     return (
-        <View testID={props.testID} accessibilityLabel={shortcut} style={{ flexDirection: 'row', gap: theme.space.s2 }}>
-            {splitKeybindingLabel(shortcut).map((label, index) => <KeyHint key={index} label={label} />)}
+        <View testID={props.testID} accessibilityLabel={props.label} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s2 }}>
+            {splitKeybindingLabel(props.label).map((label, index) => <KeyHint key={index} label={label} tone={props.tone} />)}
         </View>
     );
 }

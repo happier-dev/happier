@@ -1,7 +1,6 @@
 import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
-import { BrowserAnnotationStrokeV1Schema, BrowserAnnotationStyleIntentV1Schema, BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { BrowserAnnotationStrokeV1, BrowserAnnotationStyleIntentV1, BrowserContextAttachmentV1, BrowserContextAnnotationActionResultV1, BrowserContextItemV1, BrowserContextSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
+import type { BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import {
   createBrowserContextCaptureService,
@@ -10,7 +9,6 @@ import {
   type BrowserContextInputControlResolver,
   type BrowserContextSource,
   type BrowserContextCaptureResult,
-  type BrowserContextRegionRect,
 } from './capture';
 import {
   createBrowserContextAttachService,
@@ -29,7 +27,6 @@ export type BrowserContextRouteResult =
   | BrowserContextItemV1
   | readonly BrowserContextItemV1[]
   | BrowserContextAttachmentV1
-  | BrowserContextAnnotationActionResultV1
   | BrowserContextRouteFailure;
 
 export type BrowserContextSnapshotRouteResult =
@@ -66,19 +63,7 @@ const CAPTURE_OPERATIONS: Readonly<Partial<Record<RuntimeActionIdV1, ContextCapt
   'browser.context.captureSelectedElement': 'selectedElement',
 };
 
-// MCH-5: daemon-side annotation route for the managed-Chromium engine. Pixel-bearing region/element
-// leaves produce cropped media through daemon CDP `Page.captureScreenshot({clip})`; metadata-only
-// start/cancel/comment/stroke/style-intent leaves return protocol action results and update the
-// daemon context store when they target an existing captured annotation.
-type AnnotationCaptureOperation = 'region' | 'element';
-
-const ANNOTATION_CAPTURE_OPERATIONS: Readonly<Partial<Record<RuntimeActionIdV1, AnnotationCaptureOperation>>> = {
-  'browser.context.annotation.captureRegion': 'region',
-  'browser.context.annotation.captureElement': 'element',
-};
-
-// ANNO-4b: attach-to-composer / attach-to-agent-turn route through the daemon context-item store +
-// attach service below (group-by-annotationId → ONE card, agnostic egress chokepoint, atomic clear).
+// Attach destinations share the daemon's item store, egress owner and media release path.
 const ATTACH_DESTINATIONS: Readonly<Partial<Record<RuntimeActionIdV1, BrowserContextAttachDestination>>> = {
   'browser.context.attachToComposer': 'composer',
   'browser.context.attachToAgentTurn': 'agentTurn',
@@ -104,59 +89,7 @@ type ParsedContextInput = Readonly<{
   navigationGeneration: number;
   contextId: string;
   annotationId?: string;
-  comment?: string;
-  stroke?: BrowserAnnotationStrokeV1;
-  styleIntent?: BrowserAnnotationStyleIntentV1;
-  rect?: BrowserContextRegionRect;
-  selector?: string;
 }>;
-
-function parseRect(value: unknown): BrowserContextRegionRect | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const r = value as Record<string, unknown>;
-  const x = r.x;
-  const y = r.y;
-  const width = r.width;
-  const height = r.height;
-  if (
-    typeof x !== 'number' || typeof y !== 'number'
-    || typeof width !== 'number' || typeof height !== 'number'
-    || !Number.isFinite(x) || !Number.isFinite(y)
-    || !(width > 0) || !(height > 0)
-  ) {
-    return undefined;
-  }
-  const coordinateSpace = r.coordinateSpace === 'page' || r.coordinateSpace === 'viewport'
-    ? r.coordinateSpace
-    : undefined;
-  const scrollX = typeof r.scrollX === 'number' && Number.isFinite(r.scrollX) ? r.scrollX : undefined;
-  const scrollY = typeof r.scrollY === 'number' && Number.isFinite(r.scrollY) ? r.scrollY : undefined;
-  const devicePixelRatio = typeof r.devicePixelRatio === 'number' && Number.isFinite(r.devicePixelRatio) && r.devicePixelRatio > 0
-    ? r.devicePixelRatio
-    : undefined;
-  const surfaceCandidate = r.surface && typeof r.surface === 'object' && !Array.isArray(r.surface)
-    ? r.surface as Record<string, unknown>
-    : undefined;
-  const surface = typeof surfaceCandidate?.width === 'number'
-      && typeof surfaceCandidate.height === 'number'
-      && Number.isFinite(surfaceCandidate.width)
-      && Number.isFinite(surfaceCandidate.height)
-      && surfaceCandidate.width > 0
-      && surfaceCandidate.height > 0
-    ? { width: surfaceCandidate.width, height: surfaceCandidate.height }
-    : undefined;
-  return {
-    x,
-    y,
-    width,
-    height,
-    ...(coordinateSpace ? { coordinateSpace } : {}),
-    ...(scrollX !== undefined ? { scrollX } : {}),
-    ...(scrollY !== undefined ? { scrollY } : {}),
-    ...(devicePixelRatio !== undefined ? { devicePixelRatio } : {}),
-    ...(surface ? { surface } : {}),
-  };
-}
 
 function parseContextInput(actionId: RuntimeActionIdV1, input: unknown): ParsedContextInput | null {
   const parsed = getActionSpec(actionId).inputSchema.safeParse(input ?? {});
@@ -172,41 +105,15 @@ function parseContextInput(actionId: RuntimeActionIdV1, input: unknown): ParsedC
   const contextId = typeof data.contextId === 'string' && data.contextId.length > 0
     ? data.contextId
     : [browserSessionId, viewId, String(navigationGeneration)].join('\0');
-  const target = data.target && typeof data.target === 'object' && !Array.isArray(data.target)
-    ? (data.target as Record<string, unknown>)
-    : undefined;
-  const rect = parseRect(data.rect) ?? parseRect(target?.rect);
-  const selectorCandidate = typeof data.selector === 'string'
-    ? data.selector
-    : typeof target?.selectorPath === 'string'
-      ? target.selectorPath
-      : undefined;
-  const selector = selectorCandidate && selectorCandidate.length > 0 ? selectorCandidate : undefined;
   const annotationId = typeof data.annotationId === 'string' && data.annotationId.length > 0
     ? data.annotationId
     : undefined;
-  const comment = typeof data.comment === 'string' && data.comment.trim().length > 0
-    ? data.comment.trim()
-    : undefined;
-  const strokeParsed = data.stroke === undefined || data.stroke === null
-    ? undefined
-    : BrowserAnnotationStrokeV1Schema.safeParse(data.stroke);
-  if (strokeParsed && !strokeParsed.success) return null;
-  const styleIntentParsed = data.styleIntent === undefined || data.styleIntent === null
-    ? undefined
-    : BrowserAnnotationStyleIntentV1Schema.safeParse(data.styleIntent);
-  if (styleIntentParsed && !styleIntentParsed.success) return null;
   return {
     browserSessionId,
     viewId,
     navigationGeneration,
     contextId,
     ...(annotationId ? { annotationId } : {}),
-    ...(comment ? { comment } : {}),
-    ...(strokeParsed?.success ? { stroke: strokeParsed.data } : {}),
-    ...(styleIntentParsed?.success ? { styleIntent: styleIntentParsed.data } : {}),
-    ...(rect ? { rect } : {}),
-    ...(selector ? { selector } : {}),
   };
 }
 
@@ -238,41 +145,11 @@ function mapCaptureResult(
   result: BrowserContextCaptureResult,
   options?: Readonly<{
     record?: (item: BrowserContextItemV1) => void;
-    /**
-     * Caller-supplied annotation GROUP key. The daemon capture producer sets `annotationId` to the
-     * per-target `contextId`; when the caller is authoring a multi-target annotation it supplies a
-     * shared `annotationId` so distinct-contextId captures group into ONE attach card. Applied only
-     * to annotation items.
-     */
-    annotationId?: string;
   }>,
 ): BrowserContextRouteResult {
   if (result.status === 'denied') return disabled('browser_context_denied');
-  let item = result.item;
-  if (
-    options?.annotationId
-    && item.kind === 'browserAnnotation'
-    && item.annotationId !== options.annotationId
-  ) {
-    item = BrowserContextItemV1Schema.parse({ ...item, annotationId: options.annotationId });
-  }
-  // ANNO-4b: retain every captured item in the daemon store so a later attach can group it by
-  // annotationId (the headless path has no in-app BrowserContextState holding items).
-  options?.record?.(item);
-  return item;
-}
-
-function annotationActionResult(
-  actionId: RuntimeActionIdV1,
-  status: BrowserContextAnnotationActionResultV1['status'],
-  contextId?: string,
-): BrowserContextAnnotationActionResultV1 {
-  return {
-    v: 1,
-    actionId,
-    status,
-    ...(contextId ? { contextId } : {}),
-  };
+  options?.record?.(result.item);
+  return result.item;
 }
 
 export function createBrowserContextRoutes(input: Readonly<{
@@ -292,10 +169,7 @@ export function createBrowserContextRoutes(input: Readonly<{
     ...(input.resolveInputControl ? { resolveInputControl: input.resolveInputControl } : {}),
   });
 
-  // ANNO-4b: daemon-local item store + attach service. The store retains captured items so the
-  // attach leaves can group them by annotationId into ONE composer/agent card; the attach service
-  // routes the projection through the agnostic egress chokepoint and releases the shared mediaId once
-  // on clear.
+  // The local store retains one item for attachment and releases shared media on clear.
   const store = createBrowserContextItemStore();
   const attachService = createBrowserContextAttachService({ store });
 
@@ -309,8 +183,8 @@ export function createBrowserContextRoutes(input: Readonly<{
 
       const attachDestination = ATTACH_DESTINATIONS[actionId];
       if (attachDestination) {
-        const groupId = parsed.annotationId ?? store.annotationIdForContext(parsed.contextId);
-        const items = groupId ? store.group(groupId) : [store.item(parsed.contextId)].filter((item): item is BrowserContextItemV1 => item !== undefined);
+        const item = parsed.annotationId ? store.annotation(parsed.annotationId) : store.item(parsed.contextId);
+        const items = item ? [item] : [];
         if (items.some(item => {
           const source = store.source(item.contextId);
           return source && input.resolveInputControl?.(source)?.isObservationHeld();
@@ -336,28 +210,6 @@ export function createBrowserContextRoutes(input: Readonly<{
         return cleared.clearedItems;
       }
 
-      if (actionId === 'browser.context.annotation.start') {
-        return annotationActionResult(actionId, 'started');
-      }
-      if (actionId === 'browser.context.annotation.cancel') {
-        return annotationActionResult(actionId, 'cancelled');
-      }
-      if (actionId === 'browser.context.annotation.attachComment') {
-        if (!parsed.comment) return invalidParameters;
-        const updated = store.updateAnnotation({ contextId: parsed.contextId, comment: parsed.comment });
-        return updated ? annotationActionResult(actionId, 'updated', updated.contextId) : disabled('browser_context_annotation_missing');
-      }
-      if (actionId === 'browser.context.annotation.attachStroke') {
-        if (!parsed.stroke) return invalidParameters;
-        const updated = store.updateAnnotation({ contextId: parsed.contextId, stroke: parsed.stroke });
-        return updated ? annotationActionResult(actionId, 'updated', updated.contextId) : disabled('browser_context_annotation_missing');
-      }
-      if (actionId === 'browser.context.annotation.attachStyleIntent') {
-        if (!parsed.styleIntent) return invalidParameters;
-        const updated = store.updateAnnotation({ contextId: parsed.contextId, styleIntent: parsed.styleIntent });
-        return updated ? annotationActionResult(actionId, 'updated', updated.contextId) : disabled('browser_context_annotation_missing');
-      }
-
       // The requester account is bound to the route owner; caller-provided identity
       // is never echoed (Category-2 invariant: caller-provided trust is not trusted).
       const request = {
@@ -371,17 +223,6 @@ export function createBrowserContextRoutes(input: Readonly<{
       const summaryKind = SUMMARY_OPERATIONS[actionId];
       if (summaryKind) {
         return mapCaptureResult(await service.captureSummary({ ...request, kind: summaryKind }), { record });
-      }
-
-      const annotationGroup = { record, ...(parsed.annotationId ? { annotationId: parsed.annotationId } : {}) };
-      const annotationOperation = ANNOTATION_CAPTURE_OPERATIONS[actionId];
-      if (annotationOperation === 'region') {
-        if (!parsed.rect) return invalidParameters;
-        return mapCaptureResult(await service.captureAnnotationRegion({ ...request, rect: parsed.rect }), annotationGroup);
-      }
-      if (annotationOperation === 'element') {
-        if (!parsed.selector) return invalidParameters;
-        return mapCaptureResult(await service.captureAnnotationElement({ ...request, selector: parsed.selector }), annotationGroup);
       }
 
       const operation = CAPTURE_OPERATIONS[actionId];

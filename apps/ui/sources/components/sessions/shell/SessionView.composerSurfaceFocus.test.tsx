@@ -312,6 +312,7 @@ describe('SessionView composer surface focus', () => {
   ] as const)('admits Browser annotation only when the composer upload path is available (%s)', async (_label, featureEnabled, available, shouldStart) => {
     const { SessionBrowserContextRuntimeProvider } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
     const { createBrowserContextAnnotationAdapter } = await import('@/sync/domains/browser/context/annotationAdapter');
+    const { createBrowserAnnotationCaptureProvider } = await import('@/sync/domains/browser/context/captureProvider');
     const { applyBrowserControlEvent, createBrowserControlState } = await import('@/sync/domains/browser/control');
     const { buildBrowserAdapterCapabilities } = await import('@/sync/domains/browser/adapters/capabilities');
     const oldContext = featureEnabledState['browser.context'];
@@ -340,9 +341,12 @@ describe('SessionView composer surface focus', () => {
           supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }),
       });
       const shell = runtime.browserShellContext;
+      const captureScreenshot = vi.fn(() => ({ ok: true as const, snapshot: {
+        bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 100, height: 100, scale: 1, sizeBytes: 1,
+      } }));
       const adapter = createBrowserContextAnnotationAdapter({
         resolveBinding: () => ({ ...shell, view: state.viewsById.view ?? null, browserContextEnabled: shell.enabled === true,
-          captureProvider: { available: true, captureAnnotation: async () => { throw new Error('Start must not capture pixels'); } } }),
+          captureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot }) }),
         onStateChange: shell.onStateChange,
       });
       let result: Awaited<ReturnType<typeof adapter.dispatch>> | undefined;
@@ -350,6 +354,7 @@ describe('SessionView composer surface focus', () => {
       expect(result).toMatchObject(shouldStart
         ? { status: 'started' }
         : { status: 'unavailable', reason: { reasonCode: 'browser_context_attachment_uploads_disabled' } });
+      expect(captureScreenshot).toHaveBeenCalledTimes(shouldStart ? 1 : 0);
     } finally {
       await screen?.unmount();
       featureEnabledState['browser.context'] = oldContext;

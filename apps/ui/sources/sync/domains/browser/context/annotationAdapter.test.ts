@@ -1,16 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sanitizeSessionStructuredInputMeta, type BrowserContextCapabilities } from '@happier-dev/protocol';
+import { type BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 
 import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
-import { buildBrowserContextMessageMetaOverrides } from '@/sync/domains/session/input/browserContext';
 
 import { createBrowserContextAnnotationAdapter } from './annotationAdapter';
-import { createBrowserContextState, markBrowserContextViewNavigation } from './state';
-import { createBrowserAnnotationCaptureProvider } from './captureProvider';
-import type { BrowserAnnotationCaptureProvider, BrowserContextState } from './types';
-import { createBrowserAnnotationRuntimeExecutor } from './runtimeAnnotationExecutor';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createBrowserContextState } from './state';
+import type { BrowserContextState } from './types';
+import { readFrozenBrowserAnnotationDraft } from './annotationDraft';
+import { createDeferred } from '@/dev/testkit';
+import { BrowserDiagnosticsElementPickerResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 const annotationCapabilities = {
     enabled: true,
@@ -63,460 +62,71 @@ function buildView(): BrowserControlViewState {
     } as BrowserControlViewState;
 }
 
-function buildProvider(): BrowserAnnotationCaptureProvider {
-    return {
-        available: true,
-        captureAnnotation: async (request) => ({
-            status: 'captured',
-            browserSessionId: request.browserSessionId,
-            viewId: request.viewId,
-            navigationGeneration: request.navigationGeneration,
-            capturedAtMs: request.capturedAtMs,
-            media: { mediaId: 'media_capture_1', mediaKind: 'image', width: 800, height: 600, sizeBytes: 50_000 },
-            target: { kind: 'region', rect: { x: 0, y: 0, width: 800, height: 600 } },
-            pageUrl: request.currentUrl,
-            pageTitle: request.title,
-        }),
-    };
-}
-
 describe('browser context annotation adapter', () => {
-    it('refuses a stale mounted view, navigation or cancelled draft before pixels or composer state', async () => {
+    it('attaches one supplied diagnostic element through the selected-element owner and rejects stale picker results', async () => {
         let state = createBrowserContextState();
-        const view = buildView();
-        const captureScreenshot = vi.fn(async () => ({ ok: true as const,
-            snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 20, height: 20, sizeBytes: 1 } }));
-        const registerMedia = vi.fn(() => ({ mediaId: 'media', mediaKind: 'image' as const, width: 20, height: 20, sizeBytes: 1 }));
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view, browserContextEnabled: true, attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities, captureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot, registerMedia }) }),
-            onStateChange: next => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const initial = state;
-        const execute = createBrowserAnnotationRuntimeExecutor({ adapter });
-        const input = { browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: view.navigationGeneration };
-        for (const actionId of ['browser.context.annotation.attachDraft', 'browser.context.attachToComposer'] as const) {
-            const valid = actionId === 'browser.context.attachToComposer' ? { ...input, source: 'activePage' } : input;
-            const schema = getActionSpec(actionId).inputSchema;
-            expect(schema.safeParse({ ...valid, source: 'unknown' }).success).toBe(false);
-            expect(schema.safeParse({ ...valid, navigationGeneration: undefined }).success).toBe(false);
-            for (const wrong of [{ browserSessionId: 'other-session' }, { viewId: 'other-view' }, { navigationGeneration: 3 }]) {
-                expect(await execute(actionId, { ...valid, ...wrong })).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
-                expect(state).toBe(initial);
-            }
-            const cancellation = new AbortController();
-            cancellation.abort();
-            expect(await execute(actionId, valid, cancellation.signal)).toMatchObject({ ok: false });
-        }
-        expect(captureScreenshot).not.toHaveBeenCalled();
-        expect(registerMedia).not.toHaveBeenCalled();
-        expect(state).toBe(initial);
-    });
-
-    it('rechecks cancelled admitted draft capture before media upload', async () => {
-        let state = createBrowserContextState();
-        const view = buildView();
-        let completePixels!: () => void;
-        const pixels = new Promise<void>(resolve => { completePixels = resolve; });
-        const captureScreenshot = vi.fn(async () => {
-            await pixels;
-            return { ok: true as const, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 20, height: 20, sizeBytes: 1 } };
-        });
-        const registerMedia = vi.fn(() => ({ mediaId: 'media', mediaKind: 'image' as const, width: 20, height: 20, sizeBytes: 1 }));
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view, browserContextEnabled: true, attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities, captureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot, registerMedia }) }),
-            onStateChange: next => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const initial = state;
-        const cancellation = new AbortController();
-        const execute = createBrowserAnnotationRuntimeExecutor({ adapter });
-        const pending = execute('browser.context.annotation.attachDraft', {
-            browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: view.navigationGeneration,
-        }, cancellation.signal);
-        expect(captureScreenshot).toHaveBeenCalledOnce();
-        cancellation.abort();
-        completePixels();
-        expect(await pending).toMatchObject({ ok: false });
-        expect(registerMedia).not.toHaveBeenCalled();
-        expect(state).toBe(initial);
-    });
-
-    it.each(['captureRegion', 'attachDraft'] as const)('admits %s before pixels and rechecks before upload', async (kind) => {
-        let state = createBrowserContextState();
-        let uploadsEnabled = true;
-        let deferPixels = false;
-        let finishPixels!: () => void;
-        const pixelsReady = new Promise<void>((resolve) => { finishPixels = resolve; });
-        const registerMedia = vi.fn(() => ({ mediaId: 'media', mediaKind: 'image' as const, width: 20, height: 20, sizeBytes: 1 }));
-        const captureScreenshot = vi.fn(async () => {
-            if (deferPixels) await pixelsReady;
-            return { ok: true as const, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 20, height: 20, sizeBytes: 1 } };
-        });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
-                browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: uploadsEnabled,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot, registerMedia }) }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        uploadsEnabled = false;
-        expect(await adapter.dispatch({ kind })).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_attachment_uploads_disabled' } });
-        expect(captureScreenshot).not.toHaveBeenCalled();
-        uploadsEnabled = true;
-        deferPixels = true;
-        const pending = adapter.dispatch({ kind });
-        await Promise.resolve();
-        uploadsEnabled = false;
-        finishPixels();
-        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_attachment_uploads_disabled' } });
-        expect(registerMedia).not.toHaveBeenCalled();
-        expect(state.attachmentOrder).toEqual([]);
-    });
-
-    it.each(['captureRegion', 'attachDraft'] as const)('rejects %s after navigation during upload without restoring old state', async (kind) => {
-        let state = createBrowserContextState();
-        let view = buildView();
-        let finishUpload!: () => void;
-        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
-        const provider = createBrowserAnnotationCaptureProvider({
-            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
-            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
-        });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view, browserContextEnabled: true, browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const pending = adapter.dispatch({ kind });
-        await Promise.resolve();
-        view = { ...view, navigationGeneration: 5 };
-        state = markBrowserContextViewNavigation(state, { viewId: view.viewId, navigationGeneration: 5 });
-        const afterNavigation = state;
-        finishUpload();
-        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
-        expect(state).toBe(afterNavigation);
-        expect(state.attachmentOrder).toEqual([]);
-    });
-
-    it.each(['captureRegion', 'attachDraft'] as const)('does not attach %s into a replacement annotation mode on the same page', async (kind) => {
-        let state = createBrowserContextState();
-        let finishUpload!: () => void;
-        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
-        const provider = createBrowserAnnotationCaptureProvider({
-            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
-            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
-        });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
-                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider, nowMs: () => 1_000 }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const pending = adapter.dispatch({ kind });
-        await adapter.dispatch({ kind: 'cancel' });
-        await adapter.dispatch({ kind: 'start' });
-        const replacement = state;
-        finishUpload();
-        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
-        expect(state).toBe(replacement);
-        expect(state.attachmentOrder).toEqual([]);
-    });
-
-    it('preserves a comment edited while the grouped upload is pending', async () => {
-        let state = createBrowserContextState();
-        let finishUpload!: () => void;
-        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
-                browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities,
-                captureProvider: createBrowserAnnotationCaptureProvider({
-                    captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
-                    registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
-                }) }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const pending = adapter.dispatch({ kind: 'attachDraft' });
-        await adapter.dispatch({ kind: 'setDraftComment', comment: 'Edited during upload' });
-        finishUpload();
-        const result = await pending;
-        expect(result.status).toBe('committed');
-        if (result.status !== 'committed') throw new Error('Expected commit');
-        expect(state.itemsById[result.itemIds[0]]).toMatchObject({ comment: 'Edited during upload' });
-    });
-
-    it('preserves changed geometry instead of committing an earlier grouped crop', async () => {
-        let state = createBrowserContextState();
-        let finishUpload!: () => void;
-        const uploaded = new Promise<void>((resolve) => { finishUpload = resolve; });
-        const provider = createBrowserAnnotationCaptureProvider({
-            captureScreenshot: () => ({ ok: true, snapshot: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 20, height: 20, sizeBytes: 1 } }),
-            registerMedia: async () => { await uploaded; return { mediaId: 'media', mediaKind: 'image', width: 20, height: 20, sizeBytes: 1 }; },
-        });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({ state, view: buildView(), browserContextEnabled: true,
-                attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities, captureProvider: provider }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 0, y: 0, width: 20, height: 20 } });
-        const pending = adapter.dispatch({ kind: 'attachDraft' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 30, y: 0, width: 20, height: 20 } });
-        const edited = state;
-        finishUpload();
-        expect(await pending).toMatchObject({ status: 'unavailable', reason: { reasonCode: 'browser_context_annotation_stale' } });
-        expect(state).toBe(edited);
-        expect(state.annotationDraftByViewId.view_1?.regions).toHaveLength(2);
-        expect(state.attachmentOrder).toEqual([]);
-    });
-
-    it('drives start → captureRegion → comment/stroke/style through the canonical reducers', async () => {
-        let state = createBrowserContextState();
-        const onStateChange = vi.fn((next: BrowserContextState) => { state = next; });
-        const view = buildView();
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({
-                state,
-                view,
-                browserContextEnabled: true,
-                browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: buildProvider(),
-                nowMs: () => 5_000,
-            }),
-            onStateChange,
-        });
-
-        const started = await adapter.dispatch({ kind: 'start' });
-        expect(started.status).toBe('started');
-        expect(state.activeAnnotationByViewId.view_1).toBeDefined();
-
-        const captured = await adapter.dispatch({
-            kind: 'captureRegion',
-            target: { kind: 'region', rect: { x: 10, y: 20, width: 100, height: 80 } },
-            styleIntent: 'callout',
-        });
-        expect(captured.status).toBe('captured');
-        if (captured.status !== 'captured') return;
-        const item = state.itemsById[captured.contextId];
-        expect(item).toMatchObject({
-            kind: 'browserAnnotation',
-            // The caller-supplied region target overrides the provider's full-page target.
-            target: { kind: 'region', rect: { x: 10, y: 20, width: 100, height: 80 } },
-            styleIntent: 'callout',
-            media: { mediaId: 'media_capture_1' },
-        });
-
-        const commented = await adapter.dispatch({
-            kind: 'attachComment',
-            contextId: captured.contextId,
-            comment: 'Align the CTA',
-        });
-        expect(commented.status).toBe('updated');
-
-        const stroked = await adapter.dispatch({
-            kind: 'attachStroke',
-            contextId: captured.contextId,
-            stroke: { shape: 'arrow', points: [{ x: 0.1, y: 0.2 }, { x: 0.4, y: 0.5 }] },
-        });
-        expect(stroked.status).toBe('updated');
-
-        const styled = await adapter.dispatch({
-            kind: 'attachStyleIntent',
-            contextId: captured.contextId,
-            styleIntent: 'highlight',
-        });
-        expect(styled.status).toBe('updated');
-
-        expect(state.itemsById[captured.contextId]).toMatchObject({
-            comment: 'Align the CTA',
-            stroke: { shape: 'arrow' },
-            styleIntent: 'highlight',
-        });
-    });
-
-    it('fails closed when no capture provider is available for a region capture', async () => {
-        const state = createBrowserContextState();
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({
-                state,
-                view: buildView(),
-                browserContextEnabled: true,
-                browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: null,
-                nowMs: () => 5_000,
-            }),
-            onStateChange: vi.fn(),
-        });
-        const result = await adapter.dispatch({
-            kind: 'captureRegion',
-            target: { kind: 'region', rect: { x: 0, y: 0, width: 10, height: 10 } },
-        });
-        expect(result.status).toBe('unavailable');
-    });
-
-    it('captures an element-target annotation (element-picker bridge) through the provider', async () => {
-        let state = createBrowserContextState();
-        const onStateChange = vi.fn((next: BrowserContextState) => { state = next; });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({
-                state,
-                view: buildView(),
-                browserContextEnabled: true,
-                browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: buildProvider(),
-                nowMs: () => 6_000,
-            }),
-            onStateChange,
-        });
-        await adapter.dispatch({ kind: 'start' });
-        const captured = await adapter.dispatch({
-            kind: 'captureElement',
-            target: { kind: 'element', selectorPath: 'main > button.cta', accessibleName: 'Buy now' },
-        });
-        expect(captured.status).toBe('captured');
-        if (captured.status !== 'captured') return;
-        expect(state.itemsById[captured.contextId]).toMatchObject({
-            kind: 'browserAnnotation',
-            target: { kind: 'element', selectorPath: 'main > button.cta', accessibleName: 'Buy now' },
-        });
-    });
-
-    it('commits a stroke-only draft as an attachable cropped annotation group', async () => {
-        let state = createBrowserContextState();
-        const captureRequests: unknown[] = [];
-        const onStateChange = vi.fn((next: BrowserContextState) => { state = next; });
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({
-                state,
-                view: buildView(),
-                browserContextEnabled: true,
-                browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: {
-                    available: true,
-                    captureAnnotation: async (request) => {
-                        captureRequests.push(request);
-                        return {
-                            status: 'captured',
-                            browserSessionId: request.browserSessionId,
-                            viewId: request.viewId,
-                            navigationGeneration: request.navigationGeneration,
-                            capturedAtMs: request.capturedAtMs,
-                            media: {
-                                mediaId: 'media_stroke_crop_1',
-                                mediaKind: 'image',
-                                width: 64,
-                                height: 48,
-                                sizeBytes: 12_000,
-                            },
-                            target: { kind: 'region', rect: { x: 0, y: 0, width: 64, height: 48 } },
-                        };
-                    },
-                },
-                devicePixelRatio: 2,
-                nowMs: () => 7_000,
-            }),
-            onStateChange,
-        });
-
-        expect(await adapter.dispatch({ kind: 'start' })).toMatchObject({ status: 'started' });
-        expect(await adapter.dispatch({
-            kind: 'addDraftStroke',
-            stroke: {
-                shape: 'freehand',
-                points: [{ x: 10, y: 20 }, { x: 40, y: 60 }],
-                widthPx: 3,
-            },
-        })).toMatchObject({ status: 'draftUpdated' });
-
-        const committed = await adapter.dispatch({ kind: 'attachDraft' });
-        expect(committed.status).toBe('committed');
-        if (committed.status !== 'committed') return;
-        expect(captureRequests[0]).toMatchObject({
-            cropClip: {
-                cssViewportRect: { x: 10, y: 20, width: 30, height: 40 },
-                scale: 2,
-            },
-        });
-        expect(committed.itemIds).toHaveLength(1);
-        const item = state.itemsById[committed.itemIds[0]];
-        expect(item).toMatchObject({
-            kind: 'browserAnnotation',
-            media: { mediaId: 'media_stroke_crop_1' },
-            target: { kind: 'region', rect: { x: 0, y: 0, width: 30, height: 40 } },
-            stroke: {
-                shape: 'freehand',
-                points: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
-                widthPx: 3,
-            },
-        });
-    });
-
-    it('attaches every draft mark as one card admitted into the canonical model context', async () => {
-        let state = createBrowserContextState();
-        const view = { ...buildView(), currentUrl: 'https://preview.localhost.test/reset/tok9f8e7d6c5b4a3210ffeeddcc?token=secret#secret' };
-        const adapter = createBrowserContextAnnotationAdapter({
-            resolveBinding: () => ({
-                state,
-                view,
-                browserContextEnabled: true,
-                browserDiagnosticsEnabled: true,
-                attachmentsUploadsEnabled: true,
-                contextCapabilities: annotationCapabilities,
-                captureProvider: buildProvider(),
-                nowMs: () => 8_000,
-            }),
-            onStateChange: (next) => { state = next; },
-        });
-        await adapter.dispatch({ kind: 'start' });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 10, y: 20, width: 30, height: 40 } });
-        await adapter.dispatch({ kind: 'addDraftRegion', rect: { x: 80, y: 90, width: 20, height: 10 } });
-        await adapter.dispatch({ kind: 'setDraftComment', comment: 'Compare both marked areas' });
-        const committed = await adapter.dispatch({ kind: 'attachDraft' });
-        expect(committed.status).toBe('committed');
-        if (committed.status !== 'committed') throw new Error('Draft did not commit');
-
-        const message = buildBrowserContextMessageMetaOverrides({ state });
-        expect(message.ok).toBe(true);
-        if (!message.ok) throw new Error(message.reasonCode);
-        expect(sanitizeSessionStructuredInputMeta(message.metaOverrides)).toMatchObject({
-            happierStructuredInputV1: {
-                browserContext: {
-                    contexts: committed.itemIds.map((contextId) => ({ contextId, pageUrl: 'https://preview.localhost.test/reset/:redacted' })),
-                    attachments: [{
-                        structuredBlock: {
-                            contextIds: committed.itemIds,
-                            regions: [{ rect: { x: 0, y: 0, width: 30, height: 40 } },
-                                { rect: { x: 70, y: 70, width: 20, height: 10 } }],
-                            comment: 'Compare both marked areas',
-                            pageUrl: 'https://preview.localhost.test/reset/:redacted',
-                            screenshot: { media: [{ mediaId: 'media_capture_1' }] },
-                        },
-                    }],
-                },
-            },
-        });
+        const base = buildView();
+        const view: BrowserControlViewState = { ...base, adapterCapabilities: { ...base.adapterCapabilities, contextKinds: ['browserSelectedElement'] } };
+        const publish = vi.fn((next: BrowserContextState) => { state = next; });
+        const adapter = createBrowserContextAnnotationAdapter({ resolveBinding: () => ({ state, view,
+            browserContextEnabled: true, browserDiagnosticsEnabled: true,
+            contextCapabilities: { ...annotationCapabilities, supportedContextKinds: ['browserSelectedElement'] },
+        }), onStateChange: publish });
+        const selected = BrowserDiagnosticsElementPickerResultV1Schema.parse({ v: 1, pickerRequestId: 'pick_1',
+            viewId: view.viewId, navigationGeneration: view.navigationGeneration, tier: 'injectedPage',
+            status: 'selected', audited: true, selectorPath: '#submit', accessibleName: 'Submit' });
+        expect(await adapter.captureSelectedElement?.({ ...selected, navigationGeneration: 0 })).toMatchObject({ status: 'unavailable' });
+        expect(publish).not.toHaveBeenCalled();
+        expect(await adapter.captureSelectedElement?.(selected)).toMatchObject({ status: 'captured' });
+        expect(publish).toHaveBeenCalledTimes(1);
         expect(state.attachmentOrder).toHaveLength(1);
+        expect(state.itemsById[state.itemOrder[0]!]).toMatchObject({ kind: 'browserSelectedElement', selectorPath: '#submit', accessibleName: 'Submit' });
     });
-
+    it('freezes exactly one viewport at start and disposes it on cancel without uploading original pixels', async () => {
+        let state = createBrowserContextState();
+        const view = buildView();
+        const dispose = vi.fn();
+        const captureViewport = vi.fn(async () => ({ status: 'captured' as const,
+            source: { uri: 'blob:viewport', width: 40, height: 30, scale: 1 },
+            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 40, height: 30, sizeBytes: 1 }, dispose,
+        }));
+        const provider = { available: true, captureViewport };
+        const adapter = createBrowserContextAnnotationAdapter({ resolveBinding: () => ({ state, view,
+            browserContextEnabled: true, attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities,
+            captureProvider: provider, commitAnnotation: async () => ({ ok: false as const, reason: 'not_attached' }),
+        }), onStateChange: next => { state = next; } });
+        expect(await adapter.dispatch({ kind: 'start' })).toMatchObject({ status: 'started' });
+        expect(readFrozenBrowserAnnotationDraft(state, view.viewId)?.source.uri).toBe('blob:viewport');
+        expect(await adapter.dispatch({ kind: 'start' })).toMatchObject({ status: 'started' });
+        expect(captureViewport).toHaveBeenCalledTimes(1);
+        expect(await adapter.dispatch({ kind: 'cancel' })).toMatchObject({ status: 'cancelled' });
+        expect(readFrozenBrowserAnnotationDraft(state, view.viewId)).toBeNull();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+    it('shares the one admitted viewport capture across concurrent starts and releases a cancelled result', async () => {
+        let state = createBrowserContextState();
+        const view = buildView();
+        const captured = createDeferred<void>();
+        const dispose = vi.fn();
+        const captureViewport = vi.fn(async () => {
+            await captured.promise;
+            return { status: 'captured' as const, source: { uri: 'blob:pending', width: 40, height: 30, scale: 1 },
+                capture: { bytes: new Uint8Array([1]), mimeType: 'image/png' as const, width: 40, height: 30, sizeBytes: 1 }, dispose };
+        });
+        const adapter = createBrowserContextAnnotationAdapter({ resolveBinding: () => ({ state, view,
+            browserContextEnabled: true, attachmentsUploadsEnabled: true, contextCapabilities: annotationCapabilities,
+            captureProvider: { available: true, captureViewport }, commitAnnotation: async () => ({ ok: false as const, reason: 'not_attached' }),
+        }), onStateChange: next => { state = next; } });
+        const first = adapter.dispatch({ kind: 'start' });
+        const second = adapter.dispatch({ kind: 'start' });
+        await adapter.dispatch({ kind: 'cancel' });
+        captured.resolve();
+        expect(await first).toMatchObject({ status: 'unavailable' });
+        expect(await second).toMatchObject({ status: 'unavailable' });
+        expect(captureViewport).toHaveBeenCalledTimes(1);
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(readFrozenBrowserAnnotationDraft(state, view.viewId)).toBeNull();
+    });
     it('fails closed with a view-unavailable reason when no active view is bound', async () => {
         const adapter = createBrowserContextAnnotationAdapter({
             resolveBinding: () => ({

@@ -19,6 +19,13 @@ export type KeyboardCommandId =
     | 'media.fit'
     | 'media.actualSize'
     | 'media.playPause'
+    | 'media.annotate'
+    | 'annotation.select' | 'annotation.arrow' | 'annotation.rectangle' | 'annotation.text' | 'annotation.blur'
+    | 'annotation.undo' | 'annotation.redo'
+    | 'annotation.ellipse' | 'annotation.freehand' | 'annotation.highlighter' | 'annotation.step' | 'annotation.element' | 'annotation.crop'
+    | 'annotation.delete' | 'annotation.duplicate' | 'annotation.nextMark' | 'annotation.previousMark'
+    | 'annotation.cropApply'
+    | `annotation.nudge${'Left' | 'Right' | 'Up' | 'Down'}${'' | 'Large'}`
     | 'shell.column.toggle'
     | 'panes.main.toggle'
     | 'panes.side.toggle'
@@ -127,7 +134,8 @@ export type KeyboardCommandSettingsTitleKey = Extract<
     | 'files.pane.menu.quickFix'
     | 'settingsKeyboard.commands.codeProblemNext'
     | 'settingsKeyboard.commands.codeProblemPrevious'
-    | `settingsKeyboard.commands.media${'Previous' | 'Next' | 'ZoomIn' | 'ZoomOut' | 'Fit' | 'ActualSize' | 'PlayPause'}`
+    | `settingsKeyboard.commands.media${'Previous' | 'Next' | 'ZoomIn' | 'ZoomOut' | 'Fit' | 'ActualSize' | 'PlayPause' | 'Annotate'}`
+    | `settingsKeyboard.commands.annotation${'Select' | 'Arrow' | 'Rectangle' | 'Text' | 'Blur' | 'Undo' | 'Redo' | 'Ellipse' | 'Freehand' | 'Highlighter' | 'Step' | 'Element' | 'Crop' | 'Delete' | 'Duplicate' | 'NextMark' | 'PreviousMark' | 'Nudge'}`
     | 'settingsKeyboard.commands.shellColumnToggle'
     | 'settingsKeyboard.commands.panesMainToggle'
     | 'settingsKeyboard.commands.panesSideToggle'
@@ -269,6 +277,8 @@ export type ParsedKeybindingRule = KeybindingRule & Readonly<{
 export type KeyboardCommand = Readonly<{
     id: KeyboardCommandId;
     settingsTitleKey: KeyboardCommandSettingsTitleKey;
+    /** A registered focused editor owns these keys, independent of app-wide shortcut opt-ins. */
+    singleKeyScope?: 'focused';
     allowInEditable?: boolean;
     defaultBinding?: KeybindingRule;
     defaultBindings?: readonly KeybindingRule[];

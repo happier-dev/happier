@@ -1,24 +1,16 @@
-import { BrowserAnnotationStrokeV1Schema, BrowserAnnotationStyleIntentV1Schema, BrowserAnnotationTargetV1Schema, type BrowserAnnotationStrokeV1, type BrowserAnnotationStyleIntentV1, type BrowserAnnotationTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { ImageMarksDocumentV1, ImageMarksOperationV1 } from '@happier-dev/protocol';
+import type { ImageAnnotationSource } from '@/components/ui/media/annotation/types';
+import type { BrowserDiagnosticsElementPickerResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 import type {
-    BrowserAnnotationViewportRect,
     BrowserContextState,
     BrowserContextUnavailableReason,
 } from './types';
 import { selectBrowserContextComposerAttachments } from './selectors';
 
-/**
- * The `browser.context.annotation.*` actions and mounted page attachment are mutations against the
- * canonical `BrowserContextState` reducer (start/cancel the mode machine, capture a region/element
- * draft, edit comment/stroke/style intent, commit and page attachment). They are NOT a daemon-producer dispatch — the live
- * pixels flow through the in-app capture provider + attachment system. This leaf validates the
- * action input, then delegates to the adapter, which owns the actual reducer call + composer attach
- * through the existing `activeViewAttachment` owners. Mirrors the recording-attach executor pattern
- * so every annotation action reaches the `ActionExecutor.execute` front door (FINALIZATION-PLAN
- * §2.3/§3.2/§12.20): the BrowserShell toolbar AND an agent dispatch through exactly one path.
- */
+/** Mounted browser Actions mutate the one frozen draft through its owning adapter. */
 export type BrowserAnnotationRuntimeActionId = Extract<
     RuntimeActionIdV1,
     `browser.context.annotation.${string}` | 'browser.context.attachToComposer'
@@ -28,44 +20,13 @@ export type BrowserAnnotationAdapterRequest =
     | Readonly<{ kind: 'start' }>
     | Readonly<{ kind: 'cancel' }>
     | Readonly<{ kind: 'attachPageReference' }>
-    // `target` is optional: when omitted, the capture provider's own region (full-page snapshot) is
-    // used; when supplied (a marquee selection), it overrides the provider target.
-    | Readonly<{ kind: 'captureRegion'; target?: Extract<BrowserAnnotationTargetV1, { kind: 'region' }>; comment?: string; styleIntent?: BrowserAnnotationStyleIntentV1; stroke?: BrowserAnnotationStrokeV1 }>
-    // `target` is required: the element-picker supplies the selector path / accessible name.
-    | Readonly<{ kind: 'captureElement'; target: Extract<BrowserAnnotationTargetV1, { kind: 'element' }>; comment?: string; styleIntent?: BrowserAnnotationStyleIntentV1; stroke?: BrowserAnnotationStrokeV1 }>
-    | Readonly<{ kind: 'attachComment'; contextId: string; comment: string }>
-    | Readonly<{ kind: 'attachStroke'; contextId: string; stroke: BrowserAnnotationStrokeV1 }>
-    | Readonly<{ kind: 'attachStyleIntent'; contextId: string; styleIntent: BrowserAnnotationStyleIntentV1 }>
-    // ANNO-1 editor-session DRAFT authoring actions (Select / Region / Draw / Erase / comment). These
-    // accumulate a multi-target draft in the reducer; they are NOT a per-capture commit. The overlay
-    // dispatches these directly through the same adapter (no parallel reducer).
-    | Readonly<{ kind: 'addDraftTarget'; target: BrowserAnnotationDraftTargetInput }>
-    | Readonly<{ kind: 'addDraftRegion'; rect: BrowserAnnotationViewportRect }>
-    | Readonly<{ kind: 'addDraftStroke'; stroke: BrowserAnnotationDraftStrokeInput }>
-    | Readonly<{ kind: 'removeDraftTarget'; draftId: string }>
     | Readonly<{ kind: 'setDraftComment'; comment: string | null }>
-    // Attach: capture the union crop ONCE and commit the draft into grouped context items.
     | Readonly<{ kind: 'attachDraft' }>;
-
-export type BrowserAnnotationDraftTargetInput = Readonly<{
-    kind: 'element';
-    selectorPath: string;
-    accessibleName?: string;
-    rect?: BrowserAnnotationViewportRect;
-}>;
-
-export type BrowserAnnotationDraftStrokeInput = Readonly<{
-    shape: BrowserAnnotationStrokeV1['shape'];
-    points: readonly Readonly<{ x: number; y: number }>[];
-    colorToken?: string;
-    widthPx?: number;
-}>;
 
 export type BrowserAnnotationAdapterResult =
     | Readonly<{ status: 'started'; state: BrowserContextState }>
     | Readonly<{ status: 'cancelled'; state: BrowserContextState }>
     | Readonly<{ status: 'captured'; state: BrowserContextState; attachmentId: string; contextId: string }>
-    | Readonly<{ status: 'updated'; state: BrowserContextState; contextId: string }>
     | Readonly<{ status: 'draftUpdated'; state: BrowserContextState }>
     | Readonly<{ status: 'committed'; state: BrowserContextState; annotationId: string; itemIds: readonly string[] }>
     | Readonly<{ status: 'attached'; state: BrowserContextState; attachmentId: string }>
@@ -77,6 +38,9 @@ export type BrowserAnnotationAdapterResult =
  */
 export type BrowserContextAnnotationAdapter = Readonly<{
     dispatch(request: BrowserAnnotationAdapterRequest, target?: BrowserAnnotationDispatchTarget): Promise<BrowserAnnotationAdapterResult> | BrowserAnnotationAdapterResult;
+    readFrozenDraft?: () => Readonly<{ source: ImageAnnotationSource; document: ImageMarksDocumentV1 }> | null;
+    applyOperations?: (input: Readonly<{ operations?: readonly ImageMarksOperationV1[]; reset?: boolean }>) => Promise<boolean>;
+    captureSelectedElement?: (pickerResult: BrowserDiagnosticsElementPickerResultV1) => Extract<BrowserAnnotationAdapterResult, { status: 'captured' | 'unavailable' }> | Promise<Extract<BrowserAnnotationAdapterResult, { status: 'captured' | 'unavailable' }>>;
 }>;
 
 export type BrowserAnnotationDispatchTarget = Readonly<{
@@ -112,12 +76,8 @@ function disabledResult(reason: string): BrowserAnnotationFailure {
 const ANNOTATION_RUNTIME_ACTIONS = [
     { actionId: 'browser.context.annotation.start', kind: 'start' },
     { actionId: 'browser.context.annotation.cancel', kind: 'cancel' },
-    { actionId: 'browser.context.annotation.captureRegion', kind: 'captureRegion' },
-    { actionId: 'browser.context.annotation.captureElement', kind: 'captureElement' },
-    { actionId: 'browser.context.annotation.attachComment', kind: 'attachComment' },
-    { actionId: 'browser.context.annotation.attachStroke', kind: 'attachStroke' },
-    { actionId: 'browser.context.annotation.attachStyleIntent', kind: 'attachStyleIntent' },
     { actionId: 'browser.context.annotation.attachDraft', kind: 'attachDraft' },
+    { actionId: 'browser.context.annotation.setDraftComment', kind: 'setDraftComment' },
     { actionId: 'browser.context.attachToComposer', kind: 'attachPageReference' },
 ] as const satisfies readonly Readonly<{
     actionId: BrowserAnnotationRuntimeActionId;
@@ -153,34 +113,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
         : null;
 }
 
-// Tri-state parse outcome so the executor can distinguish three structurally distinct cases at the
-// chokepoint (the actionSpec input schema `.passthrough()`es `target`/`stroke` precisely so this leaf
-// validates them — see actionSpecs.ts RuntimeBrowserContextActionInputSchema):
-//   - absent       → { ok: true } (no value): valid when the field is optional, missing when required
-//   - present+valid → { ok: true, value }: structurally validated against the canonical context schema
-//   - present+invalid → { ok: false }: a contract violation → the whole request is rejected
-// This closes ANNO-4(a): the prior `as unknown as` cast forwarded malformed target/stroke straight to
-// the adapter (a contract lie vs the actionSpec promise of structural validation).
-type FieldOutcome<T> = Readonly<{ ok: true; value?: T }> | Readonly<{ ok: false }>;
-
-function parseOptionalTarget(record: Readonly<Record<string, unknown>>): FieldOutcome<BrowserAnnotationTargetV1> {
-    if (record.target === undefined || record.target === null) return { ok: true };
-    const parsed = BrowserAnnotationTargetV1Schema.safeParse(record.target);
-    return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
-}
-
-function parseOptionalStroke(record: Readonly<Record<string, unknown>>): FieldOutcome<BrowserAnnotationStrokeV1> {
-    if (record.stroke === undefined || record.stroke === null) return { ok: true };
-    const parsed = BrowserAnnotationStrokeV1Schema.safeParse(record.stroke);
-    return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
-}
-
-function parseOptionalStyleIntent(record: Readonly<Record<string, unknown>>): FieldOutcome<BrowserAnnotationStyleIntentV1> {
-    if (record.styleIntent === undefined || record.styleIntent === null) return { ok: true };
-    const parsed = BrowserAnnotationStyleIntentV1Schema.safeParse(record.styleIntent);
-    return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
-}
-
 function buildRequest(
     actionId: BrowserAnnotationRuntimeActionId,
     record: Readonly<Record<string, unknown>>,
@@ -196,62 +128,10 @@ function buildRequest(
             return { kind: 'attachDraft' };
         case 'attachPageReference':
             return record.source === 'activePage' ? { kind: 'attachPageReference' } : null;
-        case 'captureRegion': {
-            // A present target/stroke/styleIntent must be structurally valid; absent is allowed (the
-            // capture provider's full-page snapshot). A present-but-malformed field → reject.
-            const target = parseOptionalTarget(record);
-            const stroke = parseOptionalStroke(record);
-            const styleIntent = parseOptionalStyleIntent(record);
-            if (!target.ok || !stroke.ok || !styleIntent.ok) return null;
-            // Region capture only accepts a region target (or none); reject a non-region target.
-            if (target.value && target.value.kind !== 'region') return null;
-            const comment = readString(record, 'comment');
-            return {
-                kind: 'captureRegion',
-                ...(target.value ? { target: target.value } : {}),
-                ...(comment ? { comment } : {}),
-                ...(styleIntent.value ? { styleIntent: styleIntent.value } : {}),
-                ...(stroke.value ? { stroke: stroke.value } : {}),
-            };
-        }
-        case 'captureElement': {
-            const target = parseOptionalTarget(record);
-            const stroke = parseOptionalStroke(record);
-            const styleIntent = parseOptionalStyleIntent(record);
-            if (!target.ok || !stroke.ok || !styleIntent.ok) return null;
-            // Element capture requires a valid element target.
-            if (!target.value || target.value.kind !== 'element') return null;
-            const comment = readString(record, 'comment');
-            return {
-                kind: 'captureElement',
-                target: target.value,
-                ...(comment ? { comment } : {}),
-                ...(styleIntent.value ? { styleIntent: styleIntent.value } : {}),
-                ...(stroke.value ? { stroke: stroke.value } : {}),
-            };
-        }
-        case 'attachComment': {
-            const contextId = readString(record, 'contextId');
-            const comment = readString(record, 'comment');
-            if (!contextId || !comment) return null;
-            return { kind: 'attachComment', contextId, comment };
-        }
-        case 'attachStroke': {
-            const contextId = readString(record, 'contextId');
-            const stroke = parseOptionalStroke(record);
-            if (!contextId || !stroke.ok || !stroke.value) return null;
-            return { kind: 'attachStroke', contextId, stroke: stroke.value };
-        }
-        case 'attachStyleIntent': {
-            const contextId = readString(record, 'contextId');
-            const styleIntent = parseOptionalStyleIntent(record);
-            if (!contextId || !styleIntent.ok || !styleIntent.value) return null;
-            return { kind: 'attachStyleIntent', contextId, styleIntent: styleIntent.value };
-        }
+        case 'setDraftComment':
+            return record.comment === null || typeof record.comment === 'string'
+                ? { kind, comment: record.comment } : null;
         default:
-            // The editor-session DRAFT request kinds (addDraftTarget/addDraftRegion/addDraftStroke/
-            // removeDraftTarget/setDraftComment) are dispatched directly by the in-page
-            // overlay, never produced from a runtime action id, so they are not built here.
             return null;
     }
 }
@@ -273,8 +153,8 @@ function serializeResult(
             attachmentId: result.attachmentId,
         };
     }
-    if (result.status === 'updated') {
-        return { v: 1, actionId, status: 'updated', contextId: result.contextId };
+    if (result.status === 'draftUpdated') {
+        return { v: 1, actionId, status: result.status };
     }
     if (result.status === 'committed') {
         return { v: 1, actionId, status: 'committed', annotationId: result.annotationId, itemIds: result.itemIds };
@@ -304,7 +184,8 @@ export function createBrowserAnnotationRuntimeExecutor(
         const request = buildRequest(actionId, record);
         if (!request) return invalidParametersResult;
         const navigationGeneration = record.navigationGeneration;
-        if ((request.kind === 'attachDraft' || request.kind === 'attachPageReference')
+        if ((request.kind === 'attachDraft' || request.kind === 'attachPageReference'
+            || request.kind === 'setDraftComment')
             && (typeof navigationGeneration !== 'number' || !Number.isInteger(navigationGeneration) || navigationGeneration < 0)) {
             return invalidParametersResult;
         }

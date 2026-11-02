@@ -858,6 +858,8 @@ export const BrowserDiagnosticsElementPickerRequestV1Schema = lazyZodSchema(() =
     navigationGeneration: NonNegativeIntSchema,
     tier: BrowserDiagnosticsEvalTierV1Schema,
     action: BrowserDiagnosticsElementPickerActionV1Schema,
+    /** Finite hit-test in CSS viewport coordinates; omission starts the interactive picker. */
+    point: z.optional(z.strictObject({ x: z.number(), y: z.number() })),
     diagnosticsInteractionEnabled: z.literal(true),
   }));
 export type BrowserDiagnosticsElementPickerRequestV1 = z.infer<

@@ -4,6 +4,16 @@ import { SessionRunStreamReadEnvelopeSchema } from '../../sessions/control/contr
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 describe('browser context protocol contracts', () => {
+  it('preserves picked element component and source location in generic element context', async () => {
+    const { BrowserContextItemV1Schema } = await import('./v1.js');
+    const picked = {
+      v: 1, kind: 'browserSelectedElement', contextId: 'picked', sourceViewId: 'view',
+      sourceAdapterKind: 'localPreview', fidelity: 'injectedPage', capturedAtMs: 1, navigationGeneration: 2,
+      lifecycleState: 'available', redactionLevel: 'metadataOnly', selectorPath: '#submit',
+      componentName: 'Checkout', sourceLocation: { file: '/src/Checkout.tsx', line: 10, column: 2 },
+    };
+    expect(BrowserContextItemV1Schema.parse(picked)).toEqual(picked);
+  });
   it('exposes a requestable focused credential target without admitting a value carrier', async () => {
     const { BrowserContextSnapshotV1Schema } = await import('./v1.js');
     const snapshot = {
@@ -244,277 +254,6 @@ describe('browser context protocol contracts', () => {
     expect(result.success).toBe(false);
   });
 
-  it('parses browser annotation context with media-backed region metadata and bounded comments', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const parsed = mod.BrowserContextItemV1Schema.parse({
-      v: 1,
-      contextId: 'ctx_annotation_1',
-      kind: 'browserAnnotation',
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview',
-      fidelity: 'injectedPage',
-      capturedAtMs: 2_200,
-      navigationGeneration: 5,
-      lifecycleState: 'available',
-      redactionLevel: 'metadataOnly',
-      annotationId: 'annotation_1',
-      browserSessionId: 'browser_session_1',
-      media: {
-        mediaId: 'media_annotation_1',
-        mediaKind: 'image',
-        width: 1280,
-        height: 720,
-        sizeBytes: 250_000,
-      },
-      target: {
-        kind: 'region',
-        rect: {
-          x: 120,
-          y: 160,
-          width: 320,
-          height: 180,
-        },
-      },
-      comment: 'The CTA overlaps the pricing card.',
-      pageUrl: 'https://preview.localhost.test/pricing',
-      pageTitle: 'Pricing',
-    });
-
-    expect(parsed).toMatchObject({
-      kind: 'browserAnnotation',
-      annotationId: 'annotation_1',
-      browserSessionId: 'browser_session_1',
-      media: { mediaId: 'media_annotation_1' },
-      target: {
-        kind: 'region',
-        rect: { width: 320, height: 180 },
-      },
-      comment: 'The CTA overlaps the pricing card.',
-      pageUrl: 'https://preview.localhost.test/pricing',
-      pageTitle: 'Pricing',
-    });
-  });
-
-  it('parses browser annotation context with a style intent and bounded vector stroke', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const parsed = mod.BrowserContextItemV1Schema.parse({
-      v: 1,
-      contextId: 'ctx_annotation_styled',
-      kind: 'browserAnnotation',
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview',
-      fidelity: 'injectedPage',
-      capturedAtMs: 2_400,
-      navigationGeneration: 6,
-      lifecycleState: 'available',
-      redactionLevel: 'metadataOnly',
-      annotationId: 'annotation_styled',
-      browserSessionId: 'browser_session_1',
-      media: {
-        mediaId: 'media_annotation_styled',
-        mediaKind: 'image',
-        width: 1280,
-        height: 720,
-        sizeBytes: 250_000,
-      },
-      target: {
-        kind: 'region',
-        rect: { x: 10, y: 20, width: 100, height: 80 },
-      },
-      styleIntent: 'callout',
-      stroke: {
-        shape: 'freehand',
-        points: [
-          { x: 0.1, y: 0.2 },
-          { x: 0.3, y: 0.4 },
-        ],
-      },
-    });
-
-    expect(parsed).toMatchObject({
-      kind: 'browserAnnotation',
-      styleIntent: 'callout',
-      stroke: {
-        shape: 'freehand',
-        points: [
-          { x: 0.1, y: 0.2 },
-          { x: 0.3, y: 0.4 },
-        ],
-      },
-    });
-  });
-
-  it('rejects an annotation stroke with out-of-range normalized points', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const result = mod.BrowserContextItemV1Schema.safeParse({
-      v: 1,
-      contextId: 'ctx_annotation_bad_stroke',
-      kind: 'browserAnnotation',
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview',
-      fidelity: 'injectedPage',
-      capturedAtMs: 2_500,
-      navigationGeneration: 6,
-      lifecycleState: 'available',
-      redactionLevel: 'metadataOnly',
-      annotationId: 'annotation_bad_stroke',
-      browserSessionId: 'browser_session_1',
-      media: {
-        mediaId: 'media_annotation_bad_stroke',
-        mediaKind: 'image',
-        width: 1280,
-        height: 720,
-        sizeBytes: 250_000,
-      },
-      target: { kind: 'region', rect: { x: 10, y: 20, width: 100, height: 80 } },
-      stroke: {
-        shape: 'freehand',
-        points: [{ x: 1.5, y: -0.2 }],
-      },
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects an unknown annotation style intent', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const result = mod.BrowserContextItemV1Schema.safeParse({
-      v: 1,
-      contextId: 'ctx_annotation_bad_intent',
-      kind: 'browserAnnotation',
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview',
-      fidelity: 'injectedPage',
-      capturedAtMs: 2_600,
-      navigationGeneration: 6,
-      lifecycleState: 'available',
-      redactionLevel: 'metadataOnly',
-      annotationId: 'annotation_bad_intent',
-      browserSessionId: 'browser_session_1',
-      media: {
-        mediaId: 'media_annotation_bad_intent',
-        mediaKind: 'image',
-        width: 1280,
-        height: 720,
-        sizeBytes: 250_000,
-      },
-      target: { kind: 'region', rect: { x: 10, y: 20, width: 100, height: 80 } },
-      styleIntent: 'definitely-not-a-style',
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it('exposes annotation stroke and style-intent commands', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    expect(mod.BrowserContextCommandV1Schema.parse('attachAnnotationStroke')).toBe('attachAnnotationStroke');
-    expect(mod.BrowserContextCommandV1Schema.parse('attachAnnotationStyleIntent')).toBe('attachAnnotationStyleIntent');
-  });
-
-  it('rejects blocked annotation context with captured media attached', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const result = mod.BrowserContextItemV1Schema.safeParse({
-      v: 1,
-      contextId: 'ctx_annotation_blocked',
-      kind: 'browserAnnotation',
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview',
-      fidelity: 'injectedPage',
-      capturedAtMs: 2_300,
-      navigationGeneration: 5,
-      lifecycleState: 'sensitiveOrigin',
-      redactionLevel: 'blocked',
-      disabledReason: 'Sensitive origin blocks annotation capture.',
-      annotationId: 'annotation_2',
-      browserSessionId: 'browser_session_1',
-      media: {
-        mediaId: 'media_annotation_blocked',
-        mediaKind: 'image',
-        width: 1280,
-        height: 720,
-        sizeBytes: 250_000,
-      },
-      target: {
-        kind: 'region',
-        rect: {
-          x: 120,
-          y: 160,
-          width: 320,
-          height: 180,
-        },
-      },
-    });
-
-    expect(result.success).toBe(false);
-  });
-
-  it('exposes annotation commands and events without widening raw payload contracts', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    expect(mod.BrowserContextCommandV1Schema.parse('startAnnotation')).toBe('startAnnotation');
-    expect(mod.BrowserContextCommandV1Schema.parse('cancelAnnotation')).toBe('cancelAnnotation');
-    expect(mod.BrowserContextCommandV1Schema.parse('captureAnnotationRegion')).toBe('captureAnnotationRegion');
-    expect(mod.BrowserContextCommandV1Schema.parse('captureAnnotationElement')).toBe('captureAnnotationElement');
-    expect(mod.BrowserContextCommandV1Schema.parse('attachAnnotationComment')).toBe('attachAnnotationComment');
-    expect(mod.BrowserContextEventV1Schema.parse('annotationStarted')).toBe('annotationStarted');
-    expect(mod.BrowserContextEventV1Schema.parse('annotationCanceled')).toBe('annotationCanceled');
-    expect(mod.BrowserContextEventV1Schema.parse('annotationCaptured')).toBe('annotationCaptured');
-    expect(mod.BrowserContextEventV1Schema.parse('annotationCommentAttached')).toBe('annotationCommentAttached');
-  });
-
-  it('parses annotation runtime mutation results on the browser context route result contract', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    expect(mod.BrowserContextRouteResultV1Schema.parse({
-      v: 1,
-      actionId: 'browser.context.annotation.start',
-      status: 'started',
-    })).toMatchObject({ status: 'started' });
-    expect(mod.BrowserContextRouteResultV1Schema.parse({
-      v: 1,
-      actionId: 'browser.context.annotation.attachComment',
-      status: 'updated',
-      contextId: 'ctx_annotation_1',
-    })).toMatchObject({ status: 'updated', contextId: 'ctx_annotation_1' });
-
-    expect(mod.BrowserContextRouteResultV1Schema.safeParse({
-      v: 1,
-      actionId: 'browser.context.annotation.attachComment',
-      status: 'unknown',
-      contextId: 'ctx_annotation_1',
-    }).success).toBe(false);
-  });
-
   it('parses browser recording evidence context as artifact references without owning media bytes', async () => {
     const mod = await import('./v1.js').catch(() => null);
 
@@ -556,66 +295,6 @@ describe('browser context protocol contracts', () => {
       ...parsed,
       inlineBytesBase64: 'AAAA',
     }).success).toBe(false);
-  });
-
-  // ANNO-2: a multi-target editor session is represented as N `browserAnnotation` items that SHARE
-  // one `annotationId` group + one cropped `media` + one `comment`. Round-trip the grouped shape and
-  // assert the grouping invariant the composer + agent turn rely on (one card per annotationId).
-  it('round-trips a multi-target annotation group sharing one annotationId + one media (ANNO-2)', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const media = {
-      mediaId: 'media_union_crop_group_1',
-      mediaKind: 'image' as const,
-      width: 260,
-      height: 110,
-      sizeBytes: 4_096,
-    };
-    const base = {
-      v: 1 as const,
-      kind: 'browserAnnotation' as const,
-      sourceViewId: 'view_1',
-      sourceAdapterKind: 'localPreview' as const,
-      fidelity: 'injectedPage' as const,
-      capturedAtMs: 3_000,
-      navigationGeneration: 7,
-      lifecycleState: 'available' as const,
-      redactionLevel: 'metadataOnly' as const,
-      annotationId: 'annotation_group_1',
-      browserSessionId: 'browser_session_1',
-      media,
-      comment: 'needs spacing',
-    };
-    const itemA = mod.BrowserContextItemV1Schema.parse({
-      ...base,
-      contextId: 'browser_context_annotation_group_1_0',
-      target: { kind: 'element', selectorPath: '#a', rect: { x: 0, y: 0, width: 20, height: 20 } },
-    });
-    const itemB = mod.BrowserContextItemV1Schema.parse({
-      ...base,
-      contextId: 'browser_context_annotation_group_1_1',
-      target: { kind: 'element', selectorPath: '#b', rect: { x: 90, y: 40, width: 30, height: 30 } },
-    });
-    const itemRegion = mod.BrowserContextItemV1Schema.parse({
-      ...base,
-      contextId: 'browser_context_annotation_group_1_2',
-      target: { kind: 'region', rect: { x: 190, y: 70, width: 60, height: 40 } },
-      stroke: { shape: 'freehand', points: [{ x: 0.1, y: 0.2 }, { x: 0.9, y: 0.95 }] },
-    });
-
-    const group = [itemA, itemB, itemRegion];
-    // All grouped items share exactly one annotationId + one media = one logical annotation.
-    expect(new Set(group.map((i) => (i.kind === 'browserAnnotation' ? i.annotationId : '')))).toEqual(
-      new Set(['annotation_group_1']),
-    );
-    expect(new Set(group.map((i) => (i.kind === 'browserAnnotation' ? i.media.mediaId : '')))).toEqual(
-      new Set(['media_union_crop_group_1']),
-    );
-    // Distinct contextIds so each marked target round-trips, but one shared comment.
-    expect(new Set(group.map((i) => i.contextId)).size).toBe(3);
-    expect(group.every((i) => i.kind === 'browserAnnotation' && i.comment === 'needs spacing')).toBe(true);
   });
 
   it('exposes exactly one annotation schema in the context discriminated union (no second annotation schema, ANNO-2)', async () => {
@@ -679,7 +358,7 @@ describe('browser context protocol contracts', () => {
     expect(mod.BrowserContextSnapshotV1Schema.safeParse(withFieldValue).success).toBe(true);
     expect(mod.BrowserContextSnapshotV1Schema.safeParse({ ...withFieldValue,
       axNodes: [{ role: 'textbox', value: 'x'.repeat(257) }],
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('rejects a combined snapshot that smuggles a sensitive key (egress-safety net)', async () => {
@@ -705,13 +384,15 @@ describe('browser context protocol contracts', () => {
     expect(result.success).toBe(false);
   });
 
-  it('caps the snapshot collections (a hostile DOM cannot produce an unbounded payload)', async () => {
+  it('preserves full snapshot context and rejects malformed controls', async () => {
     const mod = await import('./v1.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const tooManyAx = Array.from({ length: 513 }, () => ({ role: 'generic' }));
-    const result = mod.BrowserContextSnapshotV1Schema.safeParse({
+    const name = 'Accessible label '.repeat(20).trim();
+    const elements = Array.from({ length: 513 }, (_, index) => ({ role: 'button', name,
+      selector: `#${'long-id'.repeat(200)}-${index}`, rect: { x: 0, y: 0, width: 10, height: 10 } }));
+    const snapshot = {
       v: 1,
       contextId: 'ctx_snap',
       sourceViewId: 'view_1',
@@ -720,10 +401,22 @@ describe('browser context protocol contracts', () => {
       capturedAtMs: 1,
       navigationGeneration: 0,
       redactionLevel: 'none',
-      visibleText: '',
-      axNodes: tooManyAx,
-      interactiveElements: [],
-    });
-    expect(result.success).toBe(false);
+      visibleText: 'Visible text '.repeat(2_000),
+      axNodes: Array.from({ length: 513 }, () => ({ role: 'textbox', name, value: 'x'.repeat(300) })),
+      interactiveElements: elements,
+    };
+    const result = mod.BrowserContextSnapshotV1Schema.safeParse(snapshot);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.axNodes).toEqual(snapshot.axNodes);
+      expect(result.data.interactiveElements).toEqual(elements);
+      expect(result.data.visibleText).toBe(snapshot.visibleText);
+    }
+    expect(mod.BrowserContextSnapshotV1Schema.safeParse({ ...snapshot, interactiveElements: [
+      { ...elements[0], name: 42 },
+    ] }).success).toBe(false);
+    expect(mod.BrowserContextSnapshotV1Schema.safeParse({ ...snapshot, axNodes: [
+      { role: 'textbox', name, value: 'ordinary', password: 'fixture' },
+    ] }).success).toBe(false);
   });
 });

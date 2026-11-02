@@ -8,7 +8,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createServerAccountScope, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import {
     readClaimedBrowserRuntimeWorkspaceOpenRegion,
@@ -102,7 +102,7 @@ export type CreateBrowserRuntimeActionExecutorInput = Readonly<{
     ) => BrowserRecordingAttachAdapter | null | undefined;
     annotation?: BrowserContextAnnotationAdapter;
     resolveAnnotation?: (
-        input: Readonly<{ browserSessionId: string; viewId: string }>,
+        input: Readonly<{ browserSessionId: string; viewId: string; scope: ServerAccountScope }>,
     ) => BrowserContextAnnotationAdapter | null | undefined;
     fallback?: RuntimeActionExecute;
     /** Existing captured-Account machine Action transport, for daemon-owned views only. */
@@ -127,7 +127,7 @@ const invalidParametersResult = {
 } as const satisfies BrowserRuntimeActionFailure;
 
 function browserRuntimeActionDisabledResult(
-    reason: BrowserRuntimeActionDisabledReason,
+    reason: BrowserRuntimeActionFailure['error'],
 ): BrowserRuntimeActionFailure {
     return {
         ok: false,
@@ -463,9 +463,10 @@ export function createBrowserRuntimeActionExecutor(
             && typeof args.input === 'object' && args.input !== null && 'source' in args.input && args.input.source !== undefined)) {
             const parsed = parseRuntimeActionInput(args);
             if (!parsed.ok) return parsed.result;
+            const scope = createServerAccountScope(resolveServerProfileScopeIdForIdentifier(args.context.serverId), args.context.runtimeAccountId);
             const annotationExecutor = createBrowserAnnotationRuntimeExecutor({
                 ...(input.annotation ? { adapter: input.annotation } : {}),
-                ...(input.resolveAnnotation ? { resolveAdapter: input.resolveAnnotation } : {}),
+                ...(input.resolveAnnotation ? { resolveAdapter: (view) => scope ? input.resolveAnnotation?.({ ...view, scope }) : null } : {}),
             });
             return await annotationExecutor(args.actionId, parsed.input, args.context.signal);
         }
@@ -477,6 +478,24 @@ export function createBrowserRuntimeActionExecutor(
                 ...(input.resolveRecordingAttach ? { resolveAdapter: input.resolveRecordingAttach } : {}),
             });
             return await attachExecutor(parsed.input);
+        }
+
+        if (args.actionId === 'browser.context.captureSelectedElement') {
+            const parsed = PUBLIC_ACTION_INPUT_SCHEMAS['browser.context.captureSelectedElement'].safeParse(args.input ?? {});
+            if (!parsed.success) return invalidParametersResult;
+            if (parsed.data.pickerResult) {
+                const scope = createServerAccountScope(resolveServerProfileScopeIdForIdentifier(args.context.serverId), args.context.runtimeAccountId);
+                const adapter = input.annotation ?? (scope ? input.resolveAnnotation?.({
+                    browserSessionId: parsed.data.browserSessionId, viewId: parsed.data.viewId, scope,
+                }) : null);
+                const result = await adapter?.captureSelectedElement?.(parsed.data.pickerResult);
+                if (!result) return browserRuntimeActionDisabledResult('browser_context_unavailable');
+                if (result.status === 'unavailable') {
+                    return browserRuntimeActionDisabledResult(typeof result.reason === 'string' ? result.reason : result.reason.reasonCode);
+                }
+                return result.state.itemsById[result.contextId] ?? browserRuntimeActionDisabledResult('browser_context_item_missing');
+            }
+            return await executeBrowserMachineAction(args, parsed.data, input.executeOnMachine, 'browser_context_unavailable');
         }
 
         // Other diagnostics, capture and recording use catalog admission and the exact-Machine

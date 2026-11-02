@@ -6440,11 +6440,6 @@
       "types": "./dist/browser/context/privacy.d.ts",
       "default": "./dist/browser/context/privacy.js"
     },
-    "./browser/context/annotationCropGeometry": {
-      "happier-source": "./src/browser/context/annotationCropGeometry.ts",
-      "types": "./dist/browser/context/annotationCropGeometry.d.ts",
-      "default": "./dist/browser/context/annotationCropGeometry.js"
-    },
     "./browser/diagnostics/v1": {
       "happier-source": "./src/browser/diagnostics/v1.ts",
       "types": "./dist/browser/diagnostics/v1.d.ts",

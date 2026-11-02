@@ -1272,6 +1272,15 @@ const settingsSessionHandoffTranslationExtensions = {
 
 
 export const ja: TranslationStructure = {
+  transcriptPassage: {
+    quote: "引用",
+    annotate: "注釈を付ける",
+    noteTitle: "メモを追加",
+    note: "メモ",
+    notePlaceholder: "質問や変更してほしい点を書いてください",
+    saveError: "メモを追加できませんでした。内容は保持されています。保留中のメッセージを編集中の場合は、編集を終えてから再試行してください。",
+    quoteError: "引用を追加できませんでした。保留中のメッセージを編集中の場合は、編集を終えてから再試行してください。",
+  },
     fileReviewNote: fileReviewNoteTranslations['ja'],
     composerReferences: composerReferenceTranslations['ja'],
     hunkReview: hunkReviewTranslations['ja'],
@@ -10405,6 +10414,7 @@ localTailscale: {
                 nextRun: "次のまとまり",
                 runOf: ({ index, total }: { index: number; total: number }) => `${total} 件中 ${index} 件目`,
             },
+            annotate: fileViewerTranslations.ja.annotate,
             viewer: fileViewerTranslations.ja.viewer,
             kind: fileViewerTranslations.ja.kind,
             agentWritingThisFile: ({ agent }: { agent: string }) => `${agent} がこのファイルに書き込んでいます`,
@@ -11486,6 +11496,8 @@ localTailscale: {
       attachAnnotation: '注釈を添付',
       contextUnavailable: 'ブラウザーコンテキストは利用できません',
       attachedPage: ({ title }: { title: string }) => `ページ: ${title}`,
+      attachedAnnotation: ({ title, count }: { title: string; count: string }) => `${title} · 要素: ${count}`,
+      attachedAnnotationStale: ({ title, count }: { title: string; count: string }) => `ページコンテキストを更新: ${title} · 要素: ${count}`,
       attachedPageStale: ({ title }: { title: string }) => `ページコンテキストを更新: ${title}`,
       attachedCount: ({ count }: { count: string }) => `${count} 件のブラウザーコンテキスト`,
       removeAttachedContext: 'ブラウザーコンテキストを削除',
@@ -11503,6 +11515,7 @@ localTailscale: {
       captureUnavailable: 'このビューでは注釈のキャプチャを利用できません。',
       selectUnavailable: 'このビューでは要素の選択を利用できません。',
       marked: ({ count }: { count: string }) => `${count} 件をマーク`,
+    elementCount: ({ count }: { count: number }) => `${count} 個の要素`,
       removeMark: ({ label }: { label: string }) => `${label}を削除`,
       markElement: ({ label }: { label: string }) => `要素 ${label}`,
       markRegion: '範囲',

@@ -1,22 +1,27 @@
 import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserAnnotationStrokeV1,
-    BrowserAnnotationStyleIntentV1,
-    BrowserAnnotationTargetV1,
-    BrowserContextCapabilities,
+    BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type {
+    BrowserContextAnnotationElementV2,
     BrowserContextItemV1,
     BrowserContextKindV1,
-    BrowserContextPrivacyState,
     BrowserContextLifecycleStateV1,
+    BrowserScreenshotMediaReferenceV1} from '@happier-dev/protocol/browser/context/v1';
+import type {
+    BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
+    BrowserContextPrivacyState} from '@happier-dev/protocol/browser/context/privacy';
+import type {
     BrowserDiagnosticsElementPickerResultV1,
-    BrowserDiagnosticsElementSourceLocationV1,
-    BrowserScreenshotMediaReferenceV1,
+} from '@happier-dev/protocol/browser/diagnostics/v1';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 
-import type { AnnotationCropClip, AnnotationViewportRect } from './annotationCropGeometry';
+import type { ImageMarksDocumentV1 } from '@happier-dev/protocol';
+import type { ImageAnnotationSource } from '@/components/ui/media/annotation/types';
+import type { BrowserAnnotationViewportCaptureResult } from './captureProvider';
 
-export type { BrowserContextPrivacyState } from '@happier-dev/protocol';
+export type { BrowserContextPrivacyState } from '@happier-dev/protocol/browser/context/privacy';
 
 export type BrowserContextUnavailableReasonCode =
     | 'browser_context_disabled'
@@ -50,66 +55,12 @@ export type BrowserContextState = Readonly<{
     attachmentOrder: readonly string[];
     navigationGenerationByViewId: Readonly<Record<string, number>>;
     activeAnnotationByViewId: Readonly<Record<string, BrowserAnnotationModeState>>;
-    /**
-     * ANNO-1/ANNO-5: the per-view EDITOR-SESSION annotation draft accumulated by the in-page editor
-     * (Select/Region/Draw/Erase + comment) before Attach. Distinct from the single-capture
-     * `BrowserAnnotationDraftInput` — this multi-target draft is committed at Attach into N grouped
-     * `browserAnnotation` items sharing one annotationId + one cropped media. Keyed by viewId and
-     * pinned to a `navigationGeneration` so a navigation clears it (no cross-page leak).
-     */
-    annotationDraftByViewId: Readonly<Record<string, BrowserAnnotationEditorDraft>>;
+    /** The frozen viewport, shared marks document and browser source facts, keyed by view. */
+    annotationDraftByViewId: Readonly<Record<string, BrowserFrozenAnnotationDraft>>;
 }>;
 
-/** A geometric rect in CSS viewport coordinates (origin = current scroll position). */
-export type BrowserAnnotationViewportRect = Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}>;
-
-export type BrowserAnnotationDraftElementTarget = Readonly<{
-    draftId: string;
-    kind: 'element';
-    selectorPath: string;
-    accessibleName?: string;
-    /** Bounding rect in CSS viewport px, used for the union crop. */
-    rect?: BrowserAnnotationViewportRect;
-    /**
-     * UB-7. The component that rendered the picked node and the file it came from, carried through
-     * from the element picker so an attached element tells the agent where to edit, not only where
-     * to look. Absent when the engine cannot supply them (non-React page, production build).
-     */
-    componentName?: string;
-    sourceLocation?: BrowserDiagnosticsElementSourceLocationV1;
-    addedAtMs: number;
-}>;
-
-export type BrowserAnnotationDraftRegionTarget = Readonly<{
-    draftId: string;
-    kind: 'region';
-    /** Marquee rect in CSS viewport px. */
-    rect: BrowserAnnotationViewportRect;
-    addedAtMs: number;
-}>;
-
-export type BrowserAnnotationDraftStroke = Readonly<{
-    draftId: string;
-    kind: 'stroke';
-    shape: BrowserAnnotationStrokeV1['shape'];
-    /** Freehand/vector points in CSS viewport px. Normalized to the crop at commit time. */
-    points: readonly Readonly<{ x: number; y: number }>[];
-    colorToken?: string;
-    widthPx?: number;
-    addedAtMs: number;
-}>;
-
-/**
- * The accumulated multi-target editor session. `targets`/`regions` are the marked elements/regions;
- * `strokes` are freehand overlays; `comment` is the shared annotation note. `annotationId` is the
- * group key every committed item shares so the composer + agent turn render exactly one card.
- */
-export type BrowserAnnotationEditorDraft = Readonly<{
+/** One frozen picture and one canonical image-space document for the browser host. */
+export type BrowserFrozenAnnotationDraft = Readonly<{
     annotationId: string;
     browserSessionId: string;
     viewId: string;
@@ -117,9 +68,13 @@ export type BrowserAnnotationEditorDraft = Readonly<{
     status: 'authoring';
     createdAtMs: number;
     updatedAtMs: number;
-    targets: readonly BrowserAnnotationDraftElementTarget[];
-    regions: readonly BrowserAnnotationDraftRegionTarget[];
-    strokes: readonly BrowserAnnotationDraftStroke[];
+    source: ImageAnnotationSource;
+    capture: Extract<BrowserAnnotationViewportCaptureResult, { status: 'captured' }>['capture'];
+    dispose?: () => void | Promise<void>;
+    document: ImageMarksDocumentV1;
+    elements: Readonly<Record<string, Omit<BrowserContextAnnotationElementV2, 'markId'>>>;
+    pageUrl?: string;
+    pageTitle?: string;
     comment?: string;
 }>;
 
@@ -217,41 +172,7 @@ export type BrowserSelectedElementCaptureInput = Readonly<{
     contextId?: string;
 }>;
 
-export type BrowserAnnotationCaptureInput = Readonly<{
-    state: BrowserContextState;
-    browserContextEnabled: boolean;
-    browserDiagnosticsEnabled?: boolean;
-    attachmentsUploadsEnabled?: boolean;
-    contextCapabilities: BrowserContextCapabilities;
-    adapterCapabilities: BrowserAdapterCapabilitiesV1;
-    browserSessionId: string;
-    viewId: string;
-    navigationGeneration: number;
-    capturedAtMs: number;
-    media: BrowserScreenshotMediaReferenceV1;
-    target: BrowserAnnotationTargetV1;
-    comment?: string | null;
-    styleIntent?: BrowserAnnotationStyleIntentV1 | null;
-    stroke?: BrowserAnnotationStrokeV1 | null;
-    pageUrl?: string | null;
-    pageTitle?: string | null;
-    privacyState?: BrowserContextPrivacyState | null;
-    contextId?: string;
-}>;
-
-export type BrowserAnnotationDraftInput = Readonly<{
-    media: BrowserScreenshotMediaReferenceV1;
-    target: BrowserAnnotationTargetV1;
-    comment?: string | null;
-    styleIntent?: BrowserAnnotationStyleIntentV1 | null;
-    stroke?: BrowserAnnotationStrokeV1 | null;
-    pageUrl?: string | null;
-    pageTitle?: string | null;
-}>;
-
 export type BrowserAnnotationCaptureRequest = Readonly<{
-    /** Live host admission, re-read before pixels, media registration, and result publication. */
-    resolveAdmission?: () => BrowserContextUnavailableReason | null;
     browserSessionId: string;
     viewId: string;
     navigationGeneration: number;
@@ -261,35 +182,11 @@ export type BrowserAnnotationCaptureRequest = Readonly<{
     currentUrl?: string | null;
     title?: string | null;
     securityOrigin?: string | null;
-    /**
-     * ANNO-3 full crop contract. CDP consumes `cssPageRect + scale`; Wry consumes
-     * `devicePageRect`. Absent means full-frame capture.
-     */
-    cropClip?: AnnotationCropClip;
-    /**
-     * Legacy Wry clip field retained for older producers; new producers should use `cropClip`.
-     */
-    cropRect?: AnnotationViewportRect;
 }>;
-
-export type BrowserAnnotationCaptureProviderResult =
-    | Readonly<{
-        status: 'captured';
-        browserSessionId: string;
-        viewId: string;
-        navigationGeneration: number;
-        capturedAtMs?: number;
-      } & BrowserAnnotationDraftInput>
-    | Readonly<{
-        status: 'unavailable';
-        reason?: BrowserContextUnavailableReason;
-      }>;
 
 export type BrowserAnnotationCaptureProvider = Readonly<{
     available: boolean;
-    captureAnnotation: (
-        request: BrowserAnnotationCaptureRequest,
-    ) => BrowserAnnotationCaptureProviderResult | Promise<BrowserAnnotationCaptureProviderResult>;
+    captureViewport(request: BrowserAnnotationCaptureRequest): Promise<BrowserAnnotationViewportCaptureResult>;
 }>;
 
 export type BrowserAnnotationModeStartInput = Readonly<{
@@ -307,17 +204,6 @@ export type BrowserAnnotationModeStartInput = Readonly<{
 export type BrowserAnnotationModeResult =
     | Readonly<{
         status: 'started';
-        state: BrowserContextState;
-      }>
-    | Readonly<{
-        status: 'unavailable';
-        state: BrowserContextState;
-        reason: BrowserContextUnavailableReason;
-      }>;
-
-export type BrowserAnnotationCommentUpdateResult =
-    | Readonly<{
-        status: 'updated';
         state: BrowserContextState;
       }>
     | Readonly<{

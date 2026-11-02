@@ -153,26 +153,11 @@ export type DesktopBrowserCaptureErrorCode =
     | 'sensitiveFieldsPresent'
     | 'captureFailed';
 
-/**
- * ANNO-3 crop clip in **device pixels** of the captured surface's own space — the union-of-targets
- * rect the in-app annotation editor resolves via the canonical `resolveAnnotationCropClip`
- * (`devicePageRect`). DPR conversion happens here (UI side); the native seam clamps to the buffer
- * bounds and crops. Absent ⇒ full-frame capture (unchanged behavior).
- */
-export type DesktopBrowserCaptureClipRect = Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}>;
-
 export type DesktopBrowserCaptureSnapshotRequest = Readonly<{
     browserSessionId: string;
     viewId: string;
     navigationGeneration: number;
     captureRequestId: string;
-    /** ANNO-3 union-of-targets crop (device px). Absent ⇒ full-frame capture. */
-    clip?: DesktopBrowserCaptureClipRect;
 }>;
 
 export type DesktopBrowserCapturedSnapshot = Readonly<{
@@ -184,6 +169,8 @@ export type DesktopBrowserCapturedSnapshot = Readonly<{
     mimeType: 'image/png';
     width: number;
     height: number;
+    /** Encoded image pixels per logical WebView point, reported by the native snapshot producer. */
+    scaleFactor: number;
     sizeBytes: number;
     bytesBase64: string;
 }>;
@@ -420,6 +407,8 @@ function normalizeDesktopBrowserCapturedSnapshot(
     const capturedAtMs = readNonNegativeInteger(record.capturedAtMs);
     const width = readPositiveInteger(record.width);
     const height = readPositiveInteger(record.height);
+    const scaleFactor = typeof record.scaleFactor === 'number' && Number.isFinite(record.scaleFactor) && record.scaleFactor > 0
+        ? record.scaleFactor : null;
     const sizeBytes = readPositiveInteger(record.sizeBytes);
     const bytesBase64 = readString(record.bytesBase64);
     const decodedSizeBytes = bytesBase64
@@ -440,6 +429,7 @@ function normalizeDesktopBrowserCapturedSnapshot(
         || record.mimeType !== 'image/png'
         || width == null
         || height == null
+        || scaleFactor == null
         || sizeBytes == null
         || !bytesBase64
         || decodedSizeBytes !== sizeBytes
@@ -458,6 +448,7 @@ function normalizeDesktopBrowserCapturedSnapshot(
             mimeType: 'image/png',
             width,
             height,
+            scaleFactor,
             sizeBytes,
             bytesBase64,
         },
@@ -676,26 +667,6 @@ export async function drainDesktopBrowserDiagnostics(
     }
 }
 
-/**
- * Integer-normalizes a device-pixel clip for the native command (the Rust `clip` is `u32`): the
- * origin is floored and the extent ceiled so the marked union is fully covered, then dropped if the
- * area is non-positive (native clamps to the real buffer bounds). Keeps a fractional Retina/zoom clip
- * from failing serde deserialization.
- */
-function normalizeCaptureClip(
-    clip: DesktopBrowserCaptureClipRect | undefined,
-): DesktopBrowserCaptureClipRect | undefined {
-    if (!clip) return undefined;
-    const x = Math.max(0, Math.floor(clip.x));
-    const y = Math.max(0, Math.floor(clip.y));
-    const width = Math.ceil(clip.width);
-    const height = Math.ceil(clip.height);
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !(width > 0) || !(height > 0)) {
-        return undefined;
-    }
-    return { x, y, width, height };
-}
-
 export async function captureDesktopBrowserSnapshot(
     request: DesktopBrowserCaptureSnapshotRequest,
 ): Promise<DesktopBrowserCaptureSnapshotResult> {
@@ -703,13 +674,11 @@ export async function captureDesktopBrowserSnapshot(
         return unavailableDesktopBrowserCaptureSnapshotResult('tauri_host_unavailable', 'captureUnsupported');
     }
 
-    const clip = normalizeCaptureClip(request.clip);
     const nativeRequest: DesktopBrowserCaptureSnapshotRequest = {
         browserSessionId: request.browserSessionId,
         viewId: request.viewId,
         navigationGeneration: request.navigationGeneration,
         captureRequestId: request.captureRequestId,
-        ...(clip ? { clip } : {}),
     };
 
     try {

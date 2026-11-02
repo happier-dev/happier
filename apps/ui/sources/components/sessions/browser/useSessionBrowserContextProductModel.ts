@@ -1,8 +1,10 @@
 import * as React from 'react';
-import type { BrowserEventV1 } from '@happier-dev/protocol';
+import type { BrowserEventV1 } from '@happier-dev/protocol/browser/events/v1';
 
 import { createManagedChromiumBrowserAnnotationCaptureProvider } from '@/sync/domains/browser/context';
 import { useBrowserDaemonControlTransport } from '@/sync/domains/browser/control';
+import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
+import { getStorage } from '@/sync/domains/state/storage';
 
 import { useSessionBrowserContextRuntimeContext } from './sessionBrowserContextRuntime';
 
@@ -19,6 +21,10 @@ export function useSessionBrowserContextProductModel(input: Readonly<{
     const runtime = useSessionBrowserContextRuntimeContext();
     const machineId = input.machineId ?? null;
     const serverId = input.serverId ?? null;
+    const previewScope = useSessionWorkspaceTarget(runtime?.sessionTarget?.sessionId, runtime?.sessionTarget?.serverId);
+    const machineHappyHomeDir = getStorage()(state => machineId && serverId
+        ? state.machineListByServerId?.[serverId]?.find(machine => machine.id === machineId)?.metadata?.happyHomeDir ?? null
+        : null);
     const sendCommand = useBrowserDaemonControlTransport({ machineId, serverId });
     const daemonControl = React.useMemo(() => {
         if (!sendCommand) return undefined;
@@ -40,9 +46,9 @@ export function useSessionBrowserContextProductModel(input: Readonly<{
     const captureBinding = React.useMemo(() => {
         if (!machineId) return null;
         const lifetime = { controller: new AbortController() };
-        return { lifetime, provider: createManagedChromiumBrowserAnnotationCaptureProvider({ machineId, serverId,
+        return { lifetime, provider: createManagedChromiumBrowserAnnotationCaptureProvider({ machineId, serverId, previewScope, machineHappyHomeDir,
             get signal() { return lifetime.controller.signal; } }) };
-    }, [machineId, serverId, navigation]);
+    }, [machineId, serverId, navigation, previewScope, machineHappyHomeDir]);
     React.useEffect(() => {
         if (!captureBinding) return;
         if (captureBinding.lifetime.controller.signal.aborted) captureBinding.lifetime.controller = new AbortController();

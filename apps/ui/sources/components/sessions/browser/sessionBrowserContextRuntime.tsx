@@ -1,9 +1,11 @@
 import * as React from 'react';
-import type { BrowserContextCapabilities, RuntimeActionExecute } from '@happier-dev/protocol';
+import type { BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import type { BrowserShellContextState } from '@/components/browser/BrowserShell';
 import {
     createBrowserContextState,
+    disposeAllBrowserAnnotationDrafts,
     removeBrowserContextComposerAttachment,
     type BrowserAnnotationCaptureProvider,
     type BrowserContextState,
@@ -11,7 +13,9 @@ import {
 } from '@/sync/domains/browser/context';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
-import { createBrowserAnnotationMediaRegistrar } from './createBrowserAnnotationMediaRegistrar';
+import { commitBrowserAnnotation, type BrowserAnnotationCommitInput, type BrowserAnnotationCommitResult } from './commitBrowserAnnotation';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 
 const SESSION_BROWSER_CONTEXT_CAPABILITIES = {
     enabled: true,
@@ -54,6 +58,7 @@ export type SessionBrowserContextComposerContext = Readonly<{
 
 export type SessionBrowserContextRuntime = Readonly<{
     state: BrowserContextState;
+    sessionTarget: ExactSessionMachineTargetIdentity | null;
     browserShellContext: BrowserShellContextState;
     composerContext: SessionBrowserContextComposerContext;
 }>;
@@ -64,6 +69,7 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     enabled: boolean;
     scopeKey?: string | null;
     sessionId?: string | null;
+    accountScope?: ServerAccountScope | null;
     attachmentsUploadsEnabled?: boolean;
     annotationCaptureProvider?: BrowserAnnotationCaptureProvider | null;
     annotationRuntimeActionExecute?: RuntimeActionExecute | null;
@@ -79,9 +85,12 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
         setState(next);
     }, []);
     const uploadConfig = useAttachmentsUploadConfig();
-    const annotationMediaRegistrar = React.useMemo(() => params.sessionId
-        ? createBrowserAnnotationMediaRegistrar({ sessionId: params.sessionId, config: uploadConfig })
-        : null, [params.sessionId, uploadConfig]);
+    const sessionTarget = React.useMemo(() => params.sessionId && params.accountScope
+        ? { ...params.accountScope, sessionId: params.sessionId } : null,
+    [params.sessionId, params.accountScope]);
+    const commitAnnotation = React.useCallback((input: BrowserAnnotationCommitInput): Promise<BrowserAnnotationCommitResult> => sessionTarget
+        ? commitBrowserAnnotation({ sessionTarget, config: uploadConfig }, input)
+        : Promise.resolve({ ok: false, reason: 'annotation.targetUnavailable' }), [sessionTarget, uploadConfig]);
     const [attachPageReference, setAttachPageReference] = React.useState<(() => void) | null>(null);
     const annotationRuntimeActionExecute = React.useMemo(
         () => params.annotationRuntimeActionExecute ?? createFrontDoorRuntimeActionExecutor(),
@@ -91,7 +100,8 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     React.useEffect(() => {
         onStateChange(createBrowserContextState());
         setAttachPageReference(null);
-    }, [onStateChange, params.scopeKey]);
+        return () => disposeAllBrowserAnnotationDrafts(readState());
+    }, [onStateChange, readState, params.scopeKey, params.sessionId, params.accountScope?.serverId, params.accountScope?.accountId]);
 
     const removeAttachment = React.useCallback((attachmentId: string) => {
         onStateChange(removeBrowserContextComposerAttachment(readState(), { attachmentId }));
@@ -114,14 +124,16 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
 
         return {
             state,
+            sessionTarget,
             browserShellContext: {
                 state,
+                accountScope: params.accountScope,
                 readState,
                 contextCapabilities,
                 enabled: true,
                 attachmentsUploadsEnabled: params.attachmentsUploadsEnabled,
                 annotationCaptureProvider,
-                annotationMediaRegistrar,
+                commitAnnotation,
                 annotationRuntimeActionExecute,
                 nowMs: params.nowMs,
                 onStateChange,
@@ -141,7 +153,9 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
         onStateChange,
         readState,
         params.annotationCaptureProvider,
-        annotationMediaRegistrar,
+        params.accountScope,
+        commitAnnotation,
+        sessionTarget,
         annotationRuntimeActionExecute,
         params.attachmentsUploadsEnabled,
         params.enabled,

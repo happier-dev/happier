@@ -329,21 +329,6 @@ pub enum DesktopBrowserCaptureErrorCode {
     CaptureWriteFailed,
 }
 
-/// ANNO-3 crop clip for `desktop_browser_capture_snapshot`. Coordinates are **device pixels** in the
-/// captured surface's own space (the union-of-targets rect the in-app annotation editor resolves via
-/// the canonical `resolveAnnotationCropClip` helper — CSS px × devicePixelRatio, viewport-relative).
-/// DPR conversion happens UI-side so the native seam consumes the physical-pixel rect directly; the
-/// native side only clamps the clip to the captured buffer bounds and crops. Absent ⇒ full-frame
-/// capture (unchanged behavior).
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopBrowserCaptureClipRect {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBrowserCaptureSnapshotRequest {
@@ -351,12 +336,9 @@ pub struct DesktopBrowserCaptureSnapshotRequest {
     pub view_id: String,
     pub navigation_generation: u64,
     pub capture_request_id: String,
-    /// ANNO-3 union-of-targets crop (device px). Absent ⇒ full-frame capture.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clip: Option<DesktopBrowserCaptureClipRect>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBrowserCapturedSnapshot {
     pub browser_session_id: String,
@@ -367,11 +349,12 @@ pub struct DesktopBrowserCapturedSnapshot {
     pub mime_type: String,
     pub width: u32,
     pub height: u32,
+    pub scale_factor: f64,
     pub size_bytes: usize,
     pub bytes_base64: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBrowserCaptureSnapshotResult {
     pub ok: bool,

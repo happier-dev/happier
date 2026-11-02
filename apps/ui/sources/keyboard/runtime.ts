@@ -43,6 +43,8 @@ export type KeyboardShortcutDispatcherOptions = Readonly<{
 }>;
 
 export type KeyboardShortcutLabelOptions = Readonly<{
+    enabled?: boolean;
+    enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
     webHost?: KeyboardWebHost;
     disabledCommandIds?: readonly string[];
     overrides?: Readonly<Record<string, readonly KeybindingRule[]>>;
@@ -108,6 +110,9 @@ export function isKeybindingRuleAvailable(
         surface: KeyboardSurface;
         webHost?: KeyboardWebHost;
         singleKeyShortcutsEnabled: boolean;
+        commandId?: KeyboardCommandId;
+        enabled?: boolean;
+        enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
     }>,
 ): boolean {
     const parsed = parseKeybindingRule(rule);
@@ -121,16 +126,12 @@ export function isKeybindingRuleAvailable(
     if (parsed.blockedSurfaces?.includes(options.surface)) return false;
     if (options.surface === 'web' && parsed.webHost
         && parsed.webHost !== (options.webHost ?? (isDesktopHost() ? 'desktop' : 'browser'))) return false;
-    if (!options.singleKeyShortcutsEnabled && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
+    const focusedCommand = options.commandId !== undefined
+        && defaultKeyboardCommands.find(command => command.id === options.commandId)?.singleKeyScope === 'focused';
+    if (options.enabled === false && !focusedCommand
+        && !(options.commandId && options.enabledWhenDisabledCommandIds?.includes(options.commandId))) return false;
+    if (!options.singleKeyShortcutsEnabled && !focusedCommand && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
     return true;
-}
-
-function commandCanRunWhenDisabled(
-    commandId: KeyboardCommandId,
-    enabled: boolean,
-    enabledWhenDisabledCommandIds: readonly KeyboardCommandId[],
-): boolean {
-    return enabled || enabledWhenDisabledCommandIds.includes(commandId);
 }
 
 function resolveNativeConsumableKey(
@@ -189,13 +190,15 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
     handlers: KeyboardShortcutHandlers;
     context: KeyboardContext;
 }>): boolean {
-    if (!commandCanRunWhenDisabled(params.commandId, params.enabled, params.enabledWhenDisabledCommandIds ?? [])) return false;
     if (params.disabledCommandIds.includes(params.commandId)) return false;
     if (!params.handlers[params.commandId]) return false;
     const command = defaultKeyboardCommands.find((entry) => entry.id === params.commandId);
     if (!command) return false;
     if (command.when && !command.when(params.context)) return false;
     return getCommandBindings(params.commandId, params.overrides).some((rule) => isKeybindingRuleAvailable(rule, {
+        commandId: command.id,
+        enabled: params.enabled,
+        enabledWhenDisabledCommandIds: params.enabledWhenDisabledCommandIds,
         platform: params.platform,
         surface: params.surface,
         webHost: params.webHost,
@@ -252,6 +255,9 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
                 && parsed.code === 'Enter' && !parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt
                 && context.findInputFocused !== true) continue;
             if (!isKeybindingRuleAvailable(rule, {
+                commandId: command.id,
+                enabled: options.enabled,
+                enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                 platform: options.platform,
                 surface,
                 webHost: options.webHost,
@@ -276,7 +282,6 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
 export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispatcherOptions) {
     return (event: NormalizedKeyboardEvent): boolean => {
         const surface = options.surface ?? 'native';
-        if (!options.enabled && (options.enabledWhenDisabledCommandIds ?? []).length === 0) return false;
         const context = options.getContext();
         for (const command of defaultKeyboardCommands) {
             if (!commandHasAvailableKeyboardHandler({
@@ -295,6 +300,9 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
 
             for (const rule of getCommandBindings(command.id, options.overrides)) {
                 if (!isKeybindingRuleAvailable(rule, {
+                    commandId: command.id,
+                    enabled: options.enabled,
+                    enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                     platform: options.platform,
                     surface,
                     webHost: options.webHost,
@@ -393,6 +401,9 @@ export function buildKeyboardShortcutLabels(
             .map((command) => {
                 const binding = getCommandBindings(command.id, options.overrides ?? {})
                     .find((rule) => isKeybindingRuleAvailable(rule, {
+                        commandId: command.id,
+                        enabled: options.enabled,
+                        enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                         platform,
                         surface,
                         webHost: options.webHost,

@@ -1,20 +1,17 @@
 import * as React from 'react';
-import type { BrowserContextCapabilities, BrowserEventV1, RuntimeActionExecute } from '@happier-dev/protocol';
+import type { BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type { BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
 
-import type {
-    AnnotationEditorMark,
-    AnnotationEditorSelectCapability,
-} from './AnnotationEditorOverlay';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import {
-    countBrowserAnnotationDraftMarks,
     createBrowserContextAnnotationAdapter,
     createBrowserContextState,
     createDesktopBrowserAnnotationCaptureProvider,
     markBrowserContextViewNavigation,
-    readBrowserAnnotationDraft,
     registerBrowserContextAnnotationAdapter,
     resolveBrowserAnnotationRuntimeActionIdForRequest,
     resolveBrowserAnnotationCaptureCapability,
@@ -22,23 +19,25 @@ import {
     type BrowserAnnotationAdapterResult,
     type BrowserAnnotationCaptureCapability,
     type BrowserAnnotationCaptureProvider,
-    type BrowserAnnotationDraftInput,
     type BrowserContextState,
     type BrowserContextUnavailableReason,
 } from '@/sync/domains/browser/context';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
-import { t } from '@/text';
-import type { BrowserAnnotationMediaRegistrar } from '@/sync/domains/browser/context/captureProvider';
+import type { BrowserAnnotationCommitInput, BrowserAnnotationCommitResult } from '@/components/sessions/browser/commitBrowserAnnotation';
+import type { ImageMarksDocumentV1, ImagePointV1 } from '@happier-dev/protocol';
+import type { BrowserDiagnosticsElementPickerResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { readFrozenBrowserAnnotationDraft, recordBrowserAnnotationElement, updateBrowserAnnotationDocument } from '@/sync/domains/browser/context/annotationDraft';
+import type { BrowserFrozenAnnotationDraft } from '@/sync/domains/browser/context/types';
+import type { BrowserAnnotationPickedElement } from '@/sync/domains/browser/context/elementPickerAnnotationBridge';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * The browser-context / annotation half of the shell.
  *
  * This is one responsibility with a lot of surface: a capture provider chosen from the active
- * engine's capabilities, a dispatch path that prefers the runtime-action front door and falls back
- * to a local adapter, the draft→marks projection the overlay renders, and the disabled-with-reason
- * copy every affordance needs. It lived inline in `BrowserShell` and was the single largest reason
- * that file could not be read in one sitting. Nothing here is new — the owners it calls
- * (`sync/domains/browser/context`) are unchanged; only the seam moved.
+ * engine's capabilities, scoped Action dispatch, and the frozen document consumed by the shared
+ * canvas. The registered adapter owns capture/commit; the controller only projects that draft and
+ * publishes canvas gestures together with their browser element facts.
  */
 
 type RuntimeActionFailureResult = Readonly<{
@@ -71,48 +70,20 @@ function buildAnnotationRuntimeActionInput(
             return base;
         case 'attachDraft':
             return { ...base, navigationGeneration: view.navigationGeneration };
+        case 'setDraftComment': {
+            const { kind: _kind, ...operands } = request;
+            return { ...base, navigationGeneration: view.navigationGeneration, ...operands };
+        }
         case 'attachPageReference':
             return { ...base, navigationGeneration: view.navigationGeneration, source: 'activePage' };
-        case 'captureRegion':
-            return {
-                ...base,
-                ...(request.target ? { target: request.target } : {}),
-                ...(request.comment ? { comment: request.comment } : {}),
-                ...(request.styleIntent ? { styleIntent: request.styleIntent } : {}),
-                ...(request.stroke ? { stroke: request.stroke } : {}),
-            };
-        case 'captureElement':
-            return {
-                ...base,
-                target: request.target,
-                ...(request.comment ? { comment: request.comment } : {}),
-                ...(request.styleIntent ? { styleIntent: request.styleIntent } : {}),
-                ...(request.stroke ? { stroke: request.stroke } : {}),
-            };
-        case 'attachComment':
-            return {
-                ...base,
-                contextId: request.contextId,
-                comment: request.comment,
-            };
-        case 'attachStroke':
-            return {
-                ...base,
-                contextId: request.contextId,
-                stroke: request.stroke,
-            };
-        case 'attachStyleIntent':
-            return {
-                ...base,
-                contextId: request.contextId,
-                styleIntent: request.styleIntent,
-            };
         default:
             return base;
     }
 }
 
 export type BrowserShellContextState = Readonly<{
+    /** Exact owning Session Account; retained browser views never inherit the active Account. */
+    accountScope?: ServerAccountScope | null;
     /** Session machine transport; controller state remains owned by the daemon. */
     daemonControl?: Readonly<{
         sendCommand: BrowserDaemonControlCommandSender;
@@ -127,9 +98,9 @@ export type BrowserShellContextState = Readonly<{
     attachmentsUploadsEnabled?: boolean;
     browserDiagnosticsEnabled?: boolean;
     disabledReason?: string | null;
-    annotationDraft?: BrowserAnnotationDraftInput | null;
     annotationCaptureProvider?: BrowserAnnotationCaptureProvider | null;
-    annotationMediaRegistrar?: BrowserAnnotationMediaRegistrar | null;
+    commitAnnotation?: (input: BrowserAnnotationCommitInput) => Promise<BrowserAnnotationCommitResult>;
+    queryElementAtPoint?: (point: ImagePointV1, navigationGeneration?: number) => Promise<BrowserDiagnosticsElementPickerResultV1 | null>;
     /** True when `annotationCaptureProvider` is the daemon managed-Chromium CDP producer. */
     managedAnnotationCaptureProvider?: boolean;
     /**
@@ -152,34 +123,24 @@ export type BrowserShellContextState = Readonly<{
     onStateChange: (state: BrowserContextState) => void;
     onAttachPageReferenceChange?: (handler: (() => void) | null) => void;
     onAttachUnavailable?: (reason: BrowserContextUnavailableReason) => void;
-    /**
-     * ANNO-1 Select tool: the app-layer overlay intercepts pointer events so it cannot hit-test the
-     * page DOM directly. The host wires this to the element-picker owner, which resolves a picked
-     * element and dispatches `addDraftTarget` through the same annotation adapter. Absent ⇒ Select is
-     * an inert affordance (no fabricated element target).
-     */
-    onAnnotationSelectElement?: () => void;
 }>;
 
 export type BrowserAnnotationController = Readonly<{
-    /** True while the in-page editor overlay should be mounted for the live view. */
+    draft: BrowserFrozenAnnotationDraft | null;
+    capturePending: boolean;
+    changeDocument: (document: ImageMarksDocumentV1) => void;
+    recordElement: (markId: string, element: BrowserAnnotationPickedElement) => void;
+    queryElementAtPoint: ((point: ImagePointV1) => Promise<BrowserDiagnosticsElementPickerResultV1 | null>) | null;
+    /** True while annotation mode is active for the live view. */
     editorActive: boolean;
     captureCapability: BrowserAnnotationCaptureCapability;
-    selectCapability: AnnotationEditorSelectCapability;
-    marks: readonly AnnotationEditorMark[];
-    markCount: number;
     commentValue: string;
     /** Attach the current page as a context reference. */
     attachPageReference: () => void;
     start: () => void;
     cancel: () => void;
-    capture: () => Promise<void>;
-    addRegion: (rect: Readonly<{ x: number; y: number; width: number; height: number }>) => void;
-    addStroke: (points: readonly Readonly<{ x: number; y: number }>[]) => void;
-    removeMark: (draftId: string) => void;
-    changeComment: (comment: string) => void;
-    attachDraft: () => void;
-    selectElement: () => void;
+    changeComment: (comment: string) => Promise<Readonly<{ ok: boolean }>>;
+    attachDraft: () => Promise<Readonly<{ ok: boolean }>>;
     /** Overflow-menu inputs: whether each affordance is offered, and why it is not. */
     supported: boolean;
     active: boolean;
@@ -198,9 +159,15 @@ export function useBrowserAnnotationController(input: Readonly<{
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
 }>): BrowserAnnotationController {
     const { activeView, activeViewNavigationKey, browserContext } = input;
+    const [capturePending, setCapturePending] = React.useState(false);
 
     const browserContextRef = React.useRef(browserContext);
     browserContextRef.current = browserContext;
+    // A pick resolves its facts before the canvas commits its mark. Publish them together, like
+    // pointer samples at gesture end; the shared draft remains the only committed document owner.
+    const pickedElementRef = React.useRef<Readonly<{
+        annotationId: string; viewId: string; markId: string; element: BrowserAnnotationPickedElement;
+    }> | null>(null);
 
     // The in-app annotation capture provider. Prefer an explicitly-supplied provider; otherwise use
     // the desktop (Wry) native-snapshot producer when the active desktop engine advertises capture
@@ -213,9 +180,9 @@ export function useBrowserAnnotationController(input: Readonly<{
         && input.desktopWebViewAvailability.supports.capture,
     );
     const desktopCaptureProvider = React.useMemo<BrowserAnnotationCaptureProvider | null>(() => {
-        if (!desktopCaptureSupported || !browserContext?.annotationMediaRegistrar) return null;
-        return createDesktopBrowserAnnotationCaptureProvider({ available: true, registerMedia: browserContext.annotationMediaRegistrar });
-    }, [desktopCaptureSupported, browserContext?.annotationMediaRegistrar]);
+        if (!desktopCaptureSupported) return null;
+        return createDesktopBrowserAnnotationCaptureProvider({ available: true });
+    }, [desktopCaptureSupported]);
     const suppliedCaptureProvider = browserContext?.annotationCaptureProvider ?? null;
     const effectiveCaptureProvider = browserContext?.managedAnnotationCaptureProvider === true
         ? (activeView?.adapterKind === 'chromiumSidecar' ? suppliedCaptureProvider : desktopCaptureProvider)
@@ -240,7 +207,7 @@ export function useBrowserAnnotationController(input: Readonly<{
                 attachmentsUploadsEnabled: context?.attachmentsUploadsEnabled,
                 contextCapabilities: context?.contextCapabilities ?? ({} as BrowserContextCapabilities),
                 captureProvider: effectiveCaptureProviderRef.current,
-                annotationDraft: context?.annotationDraft,
+                commitAnnotation: context?.commitAnnotation,
                 nowMs: context?.nowMs,
             };
         },
@@ -251,20 +218,25 @@ export function useBrowserAnnotationController(input: Readonly<{
 
     // Register the adapter so the runtime-action front door (and thus an agent) can drive annotation
     // for the active session/view. Keyed on the live view so a stale host can't service another view.
+    const annotationBrowserSessionId = activeView?.browserSessionId;
+    const annotationViewId = activeView?.viewId;
+    const annotationServerId = browserContext?.accountScope?.serverId;
+    const annotationAccountId = browserContext?.accountScope?.accountId;
     React.useEffect(() => {
-        if (!browserContext || !activeView) return undefined;
+        if (!annotationBrowserSessionId || !annotationViewId || !annotationServerId || !annotationAccountId) return undefined;
         return registerBrowserContextAnnotationAdapter({
-            browserSessionId: activeView.browserSessionId,
-            viewId: activeView.viewId,
+            browserSessionId: annotationBrowserSessionId,
+            viewId: annotationViewId,
+            scope: { serverId: annotationServerId, accountId: annotationAccountId },
             adapter: annotationAdapter,
         });
-    }, [annotationAdapter, activeView, browserContext]);
+    }, [annotationAdapter, annotationBrowserSessionId, annotationViewId, annotationServerId, annotationAccountId]);
 
     const dispatchAnnotation = React.useCallback(async (
         request: BrowserAnnotationAdapterRequest,
-    ): Promise<void> => {
+    ): Promise<Readonly<{ ok: boolean }>> => {
         const context = browserContextRef.current;
-        if (!context) return;
+        if (!context) return { ok: false };
         const actionId = resolveBrowserAnnotationRuntimeActionIdForRequest(request);
         if (actionId && context.annotationRuntimeActionExecute && activeViewRef.current) {
             const result = await context.annotationRuntimeActionExecute({
@@ -273,6 +245,10 @@ export function useBrowserAnnotationController(input: Readonly<{
                 context: {
                     surface: 'ui',
                     placement: 'browser_context',
+                    serverId: context.accountScope?.serverId,
+                    expectedAccountId: context.accountScope?.accountId,
+                    actionCaller: { kind: 'host' },
+                    authority: 'present_user',
                 },
             });
             if (isRuntimeActionFailureResult(result)) {
@@ -282,7 +258,10 @@ export function useBrowserAnnotationController(input: Readonly<{
                     message: result.error ?? result.errorCode ?? 'browser_context_annotation_unavailable',
                 });
             }
-            return;
+            const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result).success;
+            const committed = request.kind !== 'attachDraft'
+                || (typeof result === 'object' && result !== null && 'status' in result && result.status === 'committed');
+            return { ok: !isRuntimeActionFailureResult(result) && !pending && committed };
         }
         const dispatcher = context.dispatchAnnotationAction ?? annotationAdapter.dispatch;
         const result = await dispatcher(request);
@@ -296,6 +275,7 @@ export function useBrowserAnnotationController(input: Readonly<{
                 : result.reason;
             context.onAttachUnavailable?.(reason);
         }
+        return { ok: result.status !== 'unavailable' };
     }, [annotationAdapter]);
 
     const attachPageReference = React.useCallback(() => {
@@ -303,38 +283,12 @@ export function useBrowserAnnotationController(input: Readonly<{
     }, [dispatchAnnotation]);
 
     const start = React.useCallback(() => {
-        void dispatchAnnotation({ kind: 'start' });
+        setCapturePending(true);
+        void dispatchAnnotation({ kind: 'start' }).finally(() => setCapturePending(false));
     }, [dispatchAnnotation]);
 
     const cancel = React.useCallback(() => {
         void dispatchAnnotation({ kind: 'cancel' });
-    }, [dispatchAnnotation]);
-
-    const capture = React.useCallback(async () => {
-        const context = browserContextRef.current;
-        if (!context) return;
-        // The toolbar capture button captures a full-page region annotation. When a caller-supplied
-        // draft target exists it is honored; otherwise the capture provider produces the region.
-        const draftTarget = context.annotationDraft?.target;
-        if (draftTarget?.kind === 'element') {
-            await dispatchAnnotation({
-                kind: 'captureElement',
-                target: draftTarget,
-                ...(context.annotationDraft?.comment ? { comment: context.annotationDraft.comment } : {}),
-                ...(context.annotationDraft?.styleIntent ? { styleIntent: context.annotationDraft.styleIntent } : {}),
-                ...(context.annotationDraft?.stroke ? { stroke: context.annotationDraft.stroke } : {}),
-            });
-            return;
-        }
-        await dispatchAnnotation({
-            kind: 'captureRegion',
-            // Omit target → the capture provider produces the full-page region snapshot. A marquee
-            // region draft (if present) overrides it.
-            ...(draftTarget?.kind === 'region' ? { target: draftTarget } : {}),
-            ...(context.annotationDraft?.comment ? { comment: context.annotationDraft.comment } : {}),
-            ...(context.annotationDraft?.styleIntent ? { styleIntent: context.annotationDraft.styleIntent } : {}),
-            ...(context.annotationDraft?.stroke ? { stroke: context.annotationDraft.stroke } : {}),
-        });
     }, [dispatchAnnotation]);
 
     const onAttachPageReferenceChange = browserContext?.onAttachPageReferenceChange;
@@ -367,14 +321,9 @@ export function useBrowserAnnotationController(input: Readonly<{
         activeView && browserContext?.state.activeAnnotationByViewId?.[activeView.viewId],
     );
     const supported = browserContext?.contextCapabilities.supportedContextKinds.includes('browserAnnotation') === true;
-    const draftAvailable = Boolean(browserContext?.annotationDraft)
-        || effectiveCaptureProvider?.available === true;
+    const draftAvailable = effectiveCaptureProvider?.available === true;
 
-    // ANNO-1 in-page editor view model. The overlay is the visual authoring surface; it dispatches
-    // the same DRAFT actions the adapter owns (no parallel reducer). It mounts only while annotation
-    // mode is active for the live view. Capture availability comes from the ANNO-6 engine-matrix
-    // capability owner so the overlay surfaces a disabled-with-reason state on engines with no
-    // cropped-capture producer (iframe / RN), never silently hiding.
+    // The shared canvas edits the one frozen document owned by the registered adapter.
     const editorActive = supported && active && Boolean(activeView);
     const captureCapability = React.useMemo<BrowserAnnotationCaptureCapability>(() => {
         if (!activeView) {
@@ -399,85 +348,60 @@ export function useBrowserAnnotationController(input: Readonly<{
     const captureDisabledReason = captureCapability.available === false
         ? resolveReasonCopy({ reasonCode: captureCapability.disabledReason, kind: 'browserFrame' }).message
         : null;
-    // Memoized on the boolean, not rebuilt per render: this object is a memo dependency upstream,
-    // so a fresh literal would invalidate the controller bundle on every render.
-    const selectElementSupported = Boolean(browserContext?.onAnnotationSelectElement);
-    const selectCapability = React.useMemo<AnnotationEditorSelectCapability>(
-        () => (selectElementSupported
-            ? { available: true }
-            : { available: false, disabledReason: 'browser_context_annotation_picker_unavailable' }),
-        [selectElementSupported],
-    );
-    const annotationDraft = activeView && browserContext
-        ? readBrowserAnnotationDraft(browserContext.state, activeView.viewId)
-        : null;
-    const markCount = activeView && browserContext
-        ? countBrowserAnnotationDraftMarks(browserContext.state, activeView.viewId)
-        : 0;
-    const marks = React.useMemo<readonly AnnotationEditorMark[]>(() => {
-        if (!annotationDraft) return [];
-        return [
-            ...annotationDraft.targets.map((target) => ({
-                draftId: target.draftId,
-                kind: 'element' as const,
-                label: t('browserContext.editor.markElement', { label: target.accessibleName ?? target.selectorPath }),
-                rect: target.rect,
-            })),
-            ...annotationDraft.regions.map((region) => ({
-                draftId: region.draftId,
-                kind: 'region' as const,
-                label: t('browserContext.editor.markRegion'),
-                rect: region.rect,
-            })),
-            ...annotationDraft.strokes.map((stroke) => ({
-                draftId: stroke.draftId,
-                kind: 'stroke' as const,
-                label: t('browserContext.editor.markStroke'),
-                points: stroke.points,
-            })),
-        ];
-    }, [annotationDraft]);
-
-    const addRegion = React.useCallback((rect: Readonly<{ x: number; y: number; width: number; height: number }>) => {
-        void dispatchAnnotation({ kind: 'addDraftRegion', rect });
-    }, [dispatchAnnotation]);
-    const addStroke = React.useCallback((points: readonly Readonly<{ x: number; y: number }>[]) => {
-        void dispatchAnnotation({ kind: 'addDraftStroke', stroke: { shape: 'freehand', points } });
-    }, [dispatchAnnotation]);
-    const removeMark = React.useCallback((draftId: string) => {
-        void dispatchAnnotation({ kind: 'removeDraftTarget', draftId });
-    }, [dispatchAnnotation]);
-    const changeComment = React.useCallback((comment: string) => {
-        void dispatchAnnotation({ kind: 'setDraftComment', comment });
-    }, [dispatchAnnotation]);
-    const attachDraft = React.useCallback(() => {
-        void dispatchAnnotation({ kind: 'attachDraft' });
-    }, [dispatchAnnotation]);
-    const selectElement = React.useCallback(() => {
-        browserContextRef.current?.onAnnotationSelectElement?.();
+    const draft = activeView && browserContext
+        ? readFrozenBrowserAnnotationDraft(browserContext.state, activeView.viewId) : null;
+    const changeComment = React.useCallback((comment: string) => dispatchAnnotation({ kind: 'setDraftComment', comment }), [dispatchAnnotation]);
+    const attachDraft = React.useCallback(() => dispatchAnnotation({ kind: 'attachDraft' }), [dispatchAnnotation]);
+    const changeDocument = React.useCallback((document: ImageMarksDocumentV1) => {
+        const context = browserContextRef.current;
+        const view = activeViewRef.current;
+        if (!context || !view) return;
+        const state = context.readState?.() ?? context.state;
+        const picked = pickedElementRef.current;
+        const draft = readFrozenBrowserAnnotationDraft(state, view.viewId);
+        const withFacts = picked?.viewId === view.viewId && picked.annotationId === draft?.annotationId
+            ? recordBrowserAnnotationElement(state, picked) : state;
+        pickedElementRef.current = null;
+        const next = updateBrowserAnnotationDocument(withFacts, { viewId: view.viewId, document });
+        if (next !== state) context.onStateChange(next);
     }, []);
+    const recordElement = React.useCallback((markId: string, element: BrowserAnnotationPickedElement) => {
+        const context = browserContextRef.current;
+        const view = activeViewRef.current;
+        if (!context || !view) return;
+        const state = context.readState?.() ?? context.state;
+        const draft = readFrozenBrowserAnnotationDraft(state, view.viewId);
+        if (draft) pickedElementRef.current = { annotationId: draft.annotationId, viewId: view.viewId, markId, element };
+    }, []);
+    const queryFrozenElement = React.useCallback((point: ImagePointV1) => {
+        const context = browserContextRef.current;
+        const view = activeViewRef.current;
+        if (!context?.queryElementAtPoint || !view) return Promise.resolve(null);
+        const draft = readFrozenBrowserAnnotationDraft(context.readState?.() ?? context.state, view.viewId);
+        if (!draft) return Promise.resolve(null);
+        // The diagnostics owner rejects a stale generation; never hit-test a new page for an old still.
+        return context.queryElementAtPoint(point, draft.navigationGeneration);
+    }, []);
+    const queryElementAtPoint = browserContext?.queryElementAtPoint ? queryFrozenElement : null;
 
     // Memoized: consumers take the controller as ONE value (the overflow-menu memo depends on
     // `annotation`, not on twenty fields), so a fresh literal per render would defeat every memo
     // downstream. The members are already individually stable — callbacks through `useCallback`,
     // projections through `useMemo` — so this only bundles them.
     return React.useMemo(() => ({
+        draft,
+        capturePending,
+        changeDocument,
+        recordElement,
+        queryElementAtPoint,
         editorActive,
         captureCapability,
-        selectCapability,
-        marks,
-        markCount,
-        commentValue: annotationDraft?.comment ?? '',
+        commentValue: draft?.comment ?? '',
         attachPageReference,
         start,
         cancel,
-        capture,
-        addRegion,
-        addStroke,
-        removeMark,
         changeComment,
         attachDraft,
-        selectElement,
         supported,
         active,
         contextButtonDisabled,
@@ -486,14 +410,15 @@ export function useBrowserAnnotationController(input: Readonly<{
         draftAvailable,
         captureProducerUnavailable,
     }), [
+        draft,
+        capturePending,
+        changeDocument,
+        recordElement,
+        queryElementAtPoint,
         active,
-        addRegion,
-        addStroke,
-        annotationDraft?.comment,
         attachDraft,
         attachPageReference,
         cancel,
-        capture,
         captureCapability,
         captureDisabledReason,
         captureProducerUnavailable,
@@ -502,11 +427,6 @@ export function useBrowserAnnotationController(input: Readonly<{
         contextDisabledReason,
         draftAvailable,
         editorActive,
-        markCount,
-        marks,
-        removeMark,
-        selectCapability,
-        selectElement,
         start,
         supported,
     ]);

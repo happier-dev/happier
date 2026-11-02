@@ -64,13 +64,9 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "browser.automation.tap",
   "browser.automation.type",
   "browser.automation.upload",
-  "browser.context.annotation.attachComment",
   "browser.context.annotation.attachDraft",
-  "browser.context.annotation.attachStroke",
-  "browser.context.annotation.attachStyleIntent",
   "browser.context.annotation.cancel",
-  "browser.context.annotation.captureElement",
-  "browser.context.annotation.captureRegion",
+  "browser.context.annotation.setDraftComment",
   "browser.context.annotation.start",
   "browser.context.attachToAgentTurn",
   "browser.context.attachToComposer",
@@ -1040,13 +1036,9 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly context: Readonly<{
       readonly annotation: Readonly<{
-        readonly attachComment: (input: PublicActionInputById["browser.context.annotation.attachComment"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachComment">>;
         readonly attachDraft: (input: PublicActionInputById["browser.context.annotation.attachDraft"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachDraft">>;
-        readonly attachStroke: (input: PublicActionInputById["browser.context.annotation.attachStroke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachStroke">>;
-        readonly attachStyleIntent: (input: PublicActionInputById["browser.context.annotation.attachStyleIntent"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachStyleIntent">>;
         readonly cancel: (input: PublicActionInputById["browser.context.annotation.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.cancel">>;
-        readonly captureElement: (input: PublicActionInputById["browser.context.annotation.captureElement"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.captureElement">>;
-        readonly captureRegion: (input: PublicActionInputById["browser.context.annotation.captureRegion"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.captureRegion">>;
+        readonly setDraftComment: (input: PublicActionInputById["browser.context.annotation.setDraftComment"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.setDraftComment">>;
         readonly start: (input: PublicActionInputById["browser.context.annotation.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.start">>;
       }> ;
       readonly attachToAgentTurn: (input: PublicActionInputById["browser.context.attachToAgentTurn"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.attachToAgentTurn">>;
@@ -3526,13 +3518,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       context: {
         annotation: {
-          attachComment: (input: PublicActionInputById["browser.context.annotation.attachComment"], options?: ActionExecutionOptions) => execute("browser.context.annotation.attachComment", input, options),
           attachDraft: (input: PublicActionInputById["browser.context.annotation.attachDraft"], options?: ActionExecutionOptions) => execute("browser.context.annotation.attachDraft", input, options),
-          attachStroke: (input: PublicActionInputById["browser.context.annotation.attachStroke"], options?: ActionExecutionOptions) => execute("browser.context.annotation.attachStroke", input, options),
-          attachStyleIntent: (input: PublicActionInputById["browser.context.annotation.attachStyleIntent"], options?: ActionExecutionOptions) => execute("browser.context.annotation.attachStyleIntent", input, options),
           cancel: (input: PublicActionInputById["browser.context.annotation.cancel"], options?: ActionExecutionOptions) => execute("browser.context.annotation.cancel", input, options),
-          captureElement: (input: PublicActionInputById["browser.context.annotation.captureElement"], options?: ActionExecutionOptions) => execute("browser.context.annotation.captureElement", input, options),
-          captureRegion: (input: PublicActionInputById["browser.context.annotation.captureRegion"], options?: ActionExecutionOptions) => execute("browser.context.annotation.captureRegion", input, options),
+          setDraftComment: (input: PublicActionInputById["browser.context.annotation.setDraftComment"], options?: ActionExecutionOptions) => execute("browser.context.annotation.setDraftComment", input, options),
           start: (input: PublicActionInputById["browser.context.annotation.start"], options?: ActionExecutionOptions) => execute("browser.context.annotation.start", input, options),
         },
         attachToAgentTurn: (input: PublicActionInputById["browser.context.attachToAgentTurn"], options?: ActionExecutionOptions) => execute("browser.context.attachToAgentTurn", input, options),

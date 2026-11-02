@@ -25,50 +25,35 @@ function annotationItem(input: Readonly<{
     redactionLevel: 'metadataOnly',
     annotationId: input.annotationId,
     browserSessionId: 'browser_session_1',
-    media: { mediaId: input.mediaId, mediaKind: 'image', width: 100, height: 80, sizeBytes: 2048 },
-    target: { kind: 'element', selectorPath: input.selector ?? '#a' },
+    imageRef: { mediaId: input.mediaId, mediaKind: 'image', width: 100, height: 80, sizeBytes: 2048 },
+    marks: { v: 1, image: { width: 100, height: 80, scale: 1 }, marks: [
+      { id: 'element', kind: 'element', rect: { x: 1, y: 1, width: 20, height: 10 }, label: 'Element', color: 'red' },
+    ] },
+    elements: [{ markId: 'element', selectorPath: input.selector ?? '#a' }],
   });
 }
 
 describe('createBrowserContextItemStore (ANNO-4b)', () => {
-  it('groups N items sharing one annotationId and returns them in insertion order', () => {
+  it('stores one annotation document and releases only its flattened image reference', () => {
+    const annotationId = 'v2-annotation';
+    const item = BrowserContextItemV1Schema.parse({
+      v: 1, kind: 'browserAnnotation', contextId: 'v2-context', sourceViewId: 'view', sourceAdapterKind: 'chromiumSidecar',
+      fidelity: 'cdp', capturedAtMs: 1, navigationGeneration: 2, lifecycleState: 'available', redactionLevel: 'metadataOnly',
+      annotationId, browserSessionId: 'browser',
+      imageRef: { mediaId: 'flattened', mediaKind: 'image', width: 100, height: 80, sizeBytes: 20 },
+      marks: { v: 1, image: { width: 100, height: 80, scale: 1 }, marks: [
+        { id: 'box', kind: 'element', rect: { x: 10, y: 10, width: 20, height: 20 }, color: 'red', label: 'Submit' },
+      ] },
+      elements: [{ markId: 'box', selectorPath: '#submit', sourceLocation: { file: '/src/Form.tsx', line: 10 } }],
+    });
     const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'm1', selector: '#a' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'm1', selector: '#b' }));
-    store.record(annotationItem({ contextId: 'c2', annotationId: 'anno_1', mediaId: 'm1', selector: '#c' }));
-
-    const group = store.group('anno_1');
-    expect(group.map((item) => item.contextId)).toEqual(['c0', 'c1', 'c2']);
-    expect(store.annotationIdForContext('c1')).toBe('anno_1');
-    expect(store.size()).toBe(3);
-  });
-
-  it('clears a 3-target group atomically and releases the shared mediaId exactly once', () => {
-    const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'shared' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'shared' }));
-    store.record(annotationItem({ contextId: 'c2', annotationId: 'anno_1', mediaId: 'shared' }));
-
-    const result = store.clear({ annotationId: 'anno_1' });
-    expect(result.removedItems).toHaveLength(3);
-    // The shared mediaId is released ONCE, not once per target (no leaked refs, no double-release).
-    expect(result.releasedMediaIds).toEqual(['shared']);
-    expect(store.size()).toBe(0);
-    expect(store.group('anno_1')).toEqual([]);
-  });
-
-  it('clearing one contextId of a group removes the whole group (one logical annotation)', () => {
-    const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'shared' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'shared' }));
-
-    const result = store.clear({ contextId: 'c1' });
-    expect(result.removedItems.map((i) => i.contextId).sort()).toEqual(['c0', 'c1']);
-    expect(result.releasedMediaIds).toEqual(['shared']);
+    store.record(item);
+    expect(store.item(item.contextId)).toEqual(item);
+    const removed = store.clear({ annotationId });
+    expect(removed).toEqual({ removedItems: [item], releasedMediaIds: ['flattened'] });
     expect(store.size()).toBe(0);
   });
-
-  it('does not release a mediaId still referenced by a DIFFERENT annotation group', () => {
+  it('does not release a mediaId still referenced by a different annotation', () => {
     const store = createBrowserContextItemStore();
     // Two independent annotations that (pathologically) share a mediaId: clearing one must not
     // release the media the other still references.
@@ -88,30 +73,11 @@ describe('createBrowserContextItemStore (ANNO-4b)', () => {
     store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'm1', selector: '#a' }));
     store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'm1', selector: '#updated' }));
     expect(store.size()).toBe(1);
-    expect(store.item('c0')?.kind === 'browserAnnotation' && store.item('c0'));
+    expect(store.item('c0')).toMatchObject({
+      kind: 'browserAnnotation',
+      elements: [{ selectorPath: '#updated' }],
+    });
     const result = store.clear({ contextId: 'c0' });
     expect(result.releasedMediaIds).toEqual(['m1']);
-  });
-
-  it('updates annotation metadata in the canonical daemon context store', () => {
-    const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'm1', selector: '#a' }));
-
-    const commented = store.updateAnnotation({
-      contextId: 'c0',
-      comment: 'Tighten this spacing',
-    });
-    expect(commented?.kind).toBe('browserAnnotation');
-    expect(commented && commented.kind === 'browserAnnotation' ? commented.comment : undefined).toBe('Tighten this spacing');
-
-    const styled = store.updateAnnotation({
-      contextId: 'c0',
-      styleIntent: 'highlight',
-      stroke: { shape: 'rectangle', points: [{ x: 0.1, y: 0.2 }] },
-    });
-    expect(styled && styled.kind === 'browserAnnotation' ? styled.styleIntent : undefined).toBe('highlight');
-    expect(styled && styled.kind === 'browserAnnotation' ? styled.stroke?.shape : undefined).toBe('rectangle');
-
-    expect(store.updateAnnotation({ contextId: 'missing', comment: 'nope' })).toBeUndefined();
   });
 });

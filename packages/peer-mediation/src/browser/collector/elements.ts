@@ -5,17 +5,7 @@ import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/bro
 import { normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
 import { normalizeBrowserAutomationLocator, parseLocator, resolveBrowserLocatorElements } from '@happier-dev/protocol/browser/automation/locators';
 
-export const INJECTED_ELEMENTS_RUNTIME = `
-  function backendNodeRefFor(node) {
-    if (!pickerNodeRefs || !node) return undefined;
-    var existing = pickerNodeRefs.get(node);
-    if (existing) return existing;
-    pickerSeq += 1;
-    var next = config.viewId + ':' + config.navigationGeneration + ':node:' + pickerSeq;
-    pickerNodeRefs.set(node, next);
-    return next;
-  }
-
+const ELEMENT_DESCRIPTION_RUNTIME = `
   function selectorPathFor(node) {
     var parts = [];
     var current = node;
@@ -59,6 +49,40 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     } catch (_error) {
       return undefined;
     }
+  }
+
+  ${INJECTED_REACT_CONTEXT_RUNTIME}
+
+  function describePickedElement(node) {
+    var accessibleName = accessibleNameFor(node);
+    return {
+      selectorPath: selectorPathFor(node),
+      rect: rectFor(node),
+      ...(accessibleName ? { accessibleName: accessibleName } : {}),
+      ...componentContextFor(node)
+    };
+  }
+`;
+
+/** Same element description as the interactive picker, without installing an overlay or listeners. */
+export function buildBrowserElementAtPointExpression(point: Readonly<{ x: number; y: number }>): string {
+  return `(function () { ${ELEMENT_DESCRIPTION_RUNTIME}
+    var node = document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)});
+    return node ? describePickedElement(node) : null;
+  })()`;
+}
+
+export const INJECTED_ELEMENTS_RUNTIME = `
+  ${ELEMENT_DESCRIPTION_RUNTIME}
+
+  function backendNodeRefFor(node) {
+    if (!pickerNodeRefs || !node) return undefined;
+    var existing = pickerNodeRefs.get(node);
+    if (existing) return existing;
+    pickerSeq += 1;
+    var next = config.viewId + ':' + config.navigationGeneration + ':node:' + pickerSeq;
+    pickerNodeRefs.set(node, next);
+    return next;
   }
 
   function emitPickerState(request, state, selected) {
@@ -134,26 +158,24 @@ export const INJECTED_ELEMENTS_RUNTIME = `
     activePicker = null;
   }
 
-  ${INJECTED_REACT_CONTEXT_RUNTIME}
-
   function selectedElementPayload(node) {
-    var accessibleName = accessibleNameFor(node);
-    var componentContext = componentContextFor(node);
     return {
       backendNodeRef: backendNodeRefFor(node),
-      selectorPath: selectorPathFor(node),
-      rect: rectFor(node),
-      ...(accessibleName ? { accessibleName: accessibleName } : {}),
-      ...componentContext
+      ...describePickedElement(node)
     };
   }
 
   function startElementPicker(request) {
-    teardownElementPicker();
     if (request.diagnosticsInteractionEnabled !== true) {
       postElementPickerResult(request, 'blocked', undefined, 'collector_denied');
       return;
     }
+    if (request.point) {
+      var node = document.elementFromPoint(request.point.x, request.point.y);
+      postElementPickerResult(request, node ? 'selected' : 'cancelled', node ? selectedElementPayload(node) : undefined);
+      return;
+    }
+    teardownElementPicker();
 
     function handleMouseOver(event) {
       if (!event || !event.target || event.target === document.documentElement) return;
@@ -194,10 +216,6 @@ export const INJECTED_ELEMENTS_RUNTIME = `
   function handleElementPickerCommand(message) {
     if (!isCurrentElementPickerCommand(message)) return;
     var request = message.request;
-    if (evalSuppressed) {
-      postElementPickerResult(request, 'collectorDegraded', undefined, 'collector_degraded');
-      return;
-    }
     if (request.action === 'cancel') {
       teardownElementPicker();
       emitPickerState(request, 'cancelled');

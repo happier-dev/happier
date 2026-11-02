@@ -802,27 +802,6 @@ describe('web glass material', () => {
         expect(background).toContain('color-mix(in srgb,');
         expect(background).toContain(lightTheme.colors.button.primary.background);
     });
-    it('gives the browser marking tray one floating coat and retains an edited comment through material tier changes', async () => {
-        const { AnnotationEditorOverlay } = await import('@/components/browser/annotation/AnnotationEditorOverlay');
-        function Editor() {
-            const [comment, setComment] = React.useState('');
-            return <AnnotationEditorOverlay testID="anno" captureCapability={{ available: true, fidelity: 'nativeCallback' }} markCount={0} marks={[]} comment={comment} onCommentChange={setComment}
-                onSelectElement={() => {}} onAddRegion={() => {}} onAddStroke={() => {}} onRemoveMark={() => {}} onAttach={() => {}} onCancel={() => {}} />;
-        }
-        const screen = await renderScreen(<Editor />);
-        const toolbar = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'toolbar')[0]!;
-        const paints = () => toolbar().findAll(node => typeof node.type === 'string' && typeof flattenTestStyle(node.props.style)?.backgroundImage === 'string');
-        // Attach/Cancel own their button roles; only the direct tray plane is floating.
-        expect(toolbar().children.filter(child => typeof child === 'object' && typeof flattenTestStyle(child.props.style)?.backgroundImage === 'string')).toHaveLength(1);
-        await act(async () => { screen.changeTextByTestId('anno-comment', 'keep the comment'); });
-        const field = screen.findHostByTestId('anno-comment');
-        for (const preset of ['solid', 'auto'] as const) {
-            act(() => storage.setState({ settings: { ...storage.getState().settings, ...resolvePreset(storage.getState().settings, preset) } }));
-            expect(screen.findHostByTestId('anno-comment')).toBe(field);
-            expect(screen.findHostByTestId('anno-comment')?.props.value).toBe('keep the comment');
-            expect(paints().length).toBeGreaterThanOrEqual(1);
-        }
-    });
     it('paints a surface opened over a translucent dialog (a field\'s choices) on its own floating paint, even when it asks to be nested', async () => {
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');

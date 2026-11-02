@@ -32,16 +32,14 @@ import {
 } from '@/sync/domains/browser/control';
 import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell';
 import { registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
+import { closeBrowserAnnotationView } from '@/sync/domains/browser/context/annotationDraft';
 import type { BrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { browserControlActionId } from '@/sync/domains/browser/actions/controlActionId';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { useSessionViewerMachine } from '@/components/sessions/viewer/useSessionViewerMachine';
-import {
-    buildCaptureElementRequestFromPickerResult,
-    readRegisteredBrowserContextAnnotationAdapter,
-} from '@/sync/domains/browser/context';
-import type { BrowserDiagnosticsElementPickerResultV1 } from '@happier-dev/protocol';
+import { BrowserDiagnosticsElementPickerResultV1Schema, type BrowserDiagnosticsElementPickerResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { ImagePointV1 } from '@happier-dev/protocol';
 import { evaluateBrowserTargetPolicy } from '@/sync/domains/browser/policy/evaluate';
 import { resolveLocalBrowserProfile } from '@/sync/domains/browser/profiles/localBrowserProfile';
 import { selectActiveBrowserView } from '@/sync/domains/browser/shell';
@@ -392,41 +390,50 @@ export function BrowserSurfaceHost(props: Readonly<{
             && previous.view.title === view.title && previous.view.currentUrl === view.currentUrl) return;
         props.onViewStateChange?.(view);
     }, [focusedView?.browserSessionId, focusedView?.viewId, focusedView?.title, focusedView?.currentUrl, props.onViewStateChange, resetKey]);
-    const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {
-        setSurfaceState(current => {
-            const browserState = events.reduce((state, event) => {
-                // Discovery refreshes authoritative snapshots without replacing an already live
-                // content record (and losing its controller or viewer continuity).
-                if (event.kind === 'viewOpened' && state.viewsById[event.viewId]?.browserSessionId === event.browserSessionId) return state;
-                return applyBrowserControlEvent(state, event);
-            }, current.browserState);
-            if (browserState === current.browserState) return current;
-            const next = { ...current, browserState };
-            surfaceStateRef.current = next;
-            return next;
-        });
+    const annotationContextRef = React.useRef(props.browserContext ?? props.productModels?.browserContext);
+    annotationContextRef.current = props.browserContext ?? props.productModels?.browserContext;
+    const releaseClosedAnnotationView = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => {
+        const context = annotationContextRef.current;
+        if (!context) return;
+        const state = context.readState?.() ?? context.state;
+        const next = closeBrowserAnnotationView(state, view);
+        if (next !== state) context.onStateChange(next);
     }, []);
+    const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {
+        const current = surfaceStateRef.current;
+        const browserState = events.reduce((state, event) => {
+            // Discovery refreshes authoritative snapshots without replacing an already live
+            // content record (and losing its controller or viewer continuity).
+            if (event.kind === 'viewOpened' && state.viewsById[event.viewId]?.browserSessionId === event.browserSessionId) return state;
+            const next = applyBrowserControlEvent(state, event);
+            if (event.kind === 'viewClosed' && state.viewsById[event.viewId] && !next.viewsById[event.viewId]) {
+                releaseClosedAnnotationView(state.viewsById[event.viewId]!);
+            }
+            return next;
+        }, current.browserState);
+        if (browserState === current.browserState) return;
+        const next = { ...current, browserState };
+        surfaceStateRef.current = next;
+        setSurfaceState(next);
+    }, [releaseClosedAnnotationView]);
     const receiveBrowserEvent = React.useCallback((event: BrowserEventV1) => applyDaemonEvents([event]), [applyDaemonEvents]);
     const logicalViewId = focusedView?.viewId ?? props.browserSessionId;
     // B-RC7 (dark-model wiring, §3.8): construct the already-built live-engine diagnostics runtime
     // for the active view. It is view-bound (it needs `focusedView`), so the host is its natural
-    // owner. Only expose it to the shell once it has an actual producer (bridge) or actual daemon
-    // events; otherwise web local previews correctly rely on the previewProxy supplemental model
-    // instead of rendering a fake "Unavailable" injected diagnostics drawer.
-    // Phase 4.2(d): bridge a selected element from the diagnostics picker into a `captureElement`
-    // annotation. Resolves the registered annotation adapter for the active view (the same registry
-    // the runtime-action front door uses) so the picker selection and annotation are one feature.
+    // owner. The diagnostics runtime exposes an injected collector or the daemon's
+    // on-demand snapshot source, including an authoritative view with empty history.
+    const mountedDiagnosticsActions = useMountedActionExecution(browserActionAccountLifetime?.scope, { retainInvocation: true });
+    // Interactive diagnostics selections use the existing selected-element context owner. Frozen
+    // annotation hover/picks settle their finite waiter and never enter this callback.
     const handleElementPickerAnnotationBridge = React.useCallback((result: BrowserDiagnosticsElementPickerResultV1) => {
-        const request = buildCaptureElementRequestFromPickerResult(result);
-        if (!request) return;
-        const annotationAdapter = readRegisteredBrowserContextAnnotationAdapter({
+        if (result.status !== 'selected') return;
+        void mountedDiagnosticsActions.execute('browser.context.captureSelectedElement', {
             browserSessionId: props.browserSessionId,
             viewId: result.viewId,
-        });
-        void annotationAdapter?.dispatch(request);
-    }, [props.browserSessionId]);
-
-    const mountedDiagnosticsActions = useMountedActionExecution(browserActionAccountLifetime?.scope, { retainInvocation: true, openOnRequest: true });
+            navigationGeneration: result.navigationGeneration,
+            pickerResult: result,
+        }, { defaultSessionId: props.pluginBrowserActionContext?.sessionId });
+    }, [mountedDiagnosticsActions.execute, props.browserSessionId, props.pluginBrowserActionContext?.sessionId]);
     const liveBrowserDiagnostics = useBrowserDiagnosticsRuntime({
         view: focusedView ?? null,
         enabled: policy.diagnosticsEnabled === true,
@@ -513,22 +520,31 @@ export function BrowserSurfaceHost(props: Readonly<{
     const browserDiagnosticsForShell = policy.diagnosticsEnabled
         ? productModels?.browserDiagnostics ?? null
         : null;
+    const queryAnnotationElementAtPoint = React.useCallback(async (point: ImagePointV1, navigationGeneration?: number) => {
+        if (!focusedView) return null;
+        const response = await mountedDiagnosticsActions.execute('browser.diagnostics.elementPicker.start', {
+            v: 1, pickerRequestId: randomUUID(), browserSessionId: focusedView.browserSessionId,
+            viewId: focusedView.viewId, navigationGeneration: navigationGeneration ?? focusedView.navigationGeneration,
+            tier: focusedView.adapterKind === 'chromiumSidecar' ? 'cdp' : 'injectedPage',
+            action: 'start', point, diagnosticsInteractionEnabled: true,
+        }, { defaultSessionId: props.pluginBrowserActionContext?.sessionId });
+        if (!response.ok) return null;
+        const result = BrowserDiagnosticsElementPickerResultV1Schema.safeParse(response.result);
+        return result.success ? result.data : null;
+    }, [focusedView, mountedDiagnosticsActions.execute, props.pluginBrowserActionContext?.sessionId]);
     const browserContextForShell = React.useMemo(() => {
         if (!policy.contextEnabled || !productModels?.browserContext) {
             return null;
         }
-        const startElementPicker = browserDiagnosticsForShell?.interaction?.onStartElementPicker;
-        if (!startElementPicker || productModels.browserContext.onAnnotationSelectElement) {
-            return productModels.browserContext;
-        }
         return {
             ...productModels.browserContext,
-            onAnnotationSelectElement: startElementPicker,
+            queryElementAtPoint: productModels.browserContext.queryElementAtPoint ?? queryAnnotationElementAtPoint,
         };
     }, [
         browserDiagnosticsForShell?.interaction?.onStartElementPicker,
         policy.contextEnabled,
         productModels?.browserContext,
+        queryAnnotationElementAtPoint,
     ]);
     const lifecycleSlot = React.useMemo(
         () => createPresentationSlot(props),
@@ -573,12 +589,15 @@ export function BrowserSurfaceHost(props: Readonly<{
         surfaceStateRef.current = next;
         setSurfaceState(next);
         for (const effect of result.effects) {
+            if (effect.kind === 'clientLocalView' && effect.command.kind === 'closeView') {
+                releaseClosedAnnotationView(effect.command);
+            }
             if (effect.kind === 'clientLocalView' && (effect.command.kind === 'openView' || effect.command.kind === 'setTarget')) {
                 props.onViewTargetChange?.({ browserSessionId: effect.command.browserSessionId,
                     viewId: effect.command.viewId, target: effect.command.target });
             }
         }
-    }, [isBrowserActionCurrent, props.onViewTargetChange]);
+    }, [isBrowserActionCurrent, props.onViewTargetChange, releaseClosedAnnotationView]);
 
     const daemonCommandSender = props.sendDaemonCommand ?? productModels?.browserContext?.daemonControl?.sendCommand;
     const receiveDaemonEvents = React.useCallback((events: readonly BrowserEventV1[]) => {

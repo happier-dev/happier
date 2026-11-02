@@ -2266,7 +2266,6 @@
     "sources/sync/domains/browser/recording/nativeViewCaptureShape.ts",
     "sources/sync/domains/browser/recording/reverseCaptureHandler.ts",
     "sources/sync/domains/browser/recording/runtimeAttachExecutor.ts",
-    "sources/sync/domains/browser/recording/runtimeAttachRegistry.ts",
     "sources/sync/domains/browser/recording/state.ts",
     "sources/sync/domains/browser/recording/types.ts",
     "sources/sync/domains/browser/shell/address.ts",

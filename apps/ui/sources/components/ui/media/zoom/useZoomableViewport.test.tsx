@@ -23,6 +23,34 @@ function recognizer(gesture: unknown, id: string): RecordedGesture {
 }
 
 describe('zoom gesture arbitration', () => {
+    it('refits on viewport changes and retains a user zoom and its centre content point', async () => {
+        let current: ReturnType<typeof useZoomableViewport> | undefined;
+        function Harness({ viewportSize }: { viewportSize: { width: number; height: number } }) {
+            current = useZoomableViewport({
+                imageSize: { width: 2000, height: 1000 }, viewportSize,
+                devicePixelRatio: 1, reducedMotion: true,
+            });
+            return null;
+        }
+        const screen = await renderScreen(<Harness viewportSize={{ width: 1376, height: 756 }} />);
+        await screen.update(<Harness viewportSize={{ width: 358, height: 844 }} />);
+        expect(current!.scale.value).toBeCloseTo(358 / 2000);
+        expect(current!.translationX.value).toBe(0);
+        expect(current!.translationY.value).toBe(0);
+
+        // The existing zoomed-resize contract keeps image pixels and the centre content point,
+        // clamping only when the new viewport cannot pan that far.
+        await act(async () => {
+            current!.actual();
+            current!.wheelHandlers.onPan({ x: 100, y: 50 });
+        });
+        await screen.update(<Harness viewportSize={{ width: 812, height: 390 }} />);
+        expect(current!.scale.value).toBe(1);
+        expect(current!.translationX.value / current!.scale.value).toBe(100);
+        expect(current!.translationY.value / current!.scale.value).toBe(50);
+        await screen.unmount();
+    });
+
     it('returns a cancelled gallery drag and pages only when the stroke started at the pan edge', async () => {
         const onPage = vi.fn();
         let current: ReturnType<typeof useZoomableViewport> | undefined;

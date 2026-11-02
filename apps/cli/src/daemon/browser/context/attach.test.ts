@@ -13,31 +13,20 @@ function annotationItem(input: Readonly<{
   annotationId: string;
   mediaId: string;
   selector?: string;
-  region?: Readonly<{ x: number; y: number; width: number; height: number }>;
-  stroke?: Readonly<{
-    shape: 'freehand';
-    points: readonly Readonly<{ x: number; y: number }>[];
-  }>;
 }>): BrowserContextItemV1 {
   return BrowserContextItemV1Schema.parse({
-    v: 1,
-    contextId: input.contextId,
-    kind: 'browserAnnotation',
-    sourceViewId: 'view_1',
-    sourceAdapterKind: 'localPreview',
-    fidelity: 'injectedPage',
-    capturedAtMs: 1_000,
-    navigationGeneration: 3,
-    lifecycleState: 'available',
-    redactionLevel: 'metadataOnly',
-    annotationId: input.annotationId,
-    browserSessionId: 'browser_session_1',
-    media: { mediaId: input.mediaId, mediaKind: 'image', width: 100, height: 80, sizeBytes: 2048 },
-    target: input.region
-      ? { kind: 'region', rect: input.region }
-      : { kind: 'element', selectorPath: input.selector ?? '#target' },
-    comment: 'needs spacing',
-    ...(input.stroke ? { stroke: input.stroke } : {}),
+    v: 1, contextId: input.contextId, kind: 'browserAnnotation', sourceViewId: 'view_1',
+    sourceAdapterKind: 'localPreview', fidelity: 'injectedPage', capturedAtMs: 1_000,
+    navigationGeneration: 3, lifecycleState: 'available', redactionLevel: 'metadataOnly',
+    annotationId: input.annotationId, browserSessionId: 'browser_session_1',
+    imageRef: { mediaId: input.mediaId, mediaKind: 'image', width: 100, height: 80, sizeBytes: 2048 },
+    marks: { v: 1, image: { width: 100, height: 80, scale: 1 }, marks: [
+      { id: 'element', kind: 'element', rect: { x: 20, y: 10, width: 40, height: 30 }, label: 'Save', color: 'red' },
+      { id: 'blur', kind: 'blur', rect: { x: 10, y: 50, width: 20, height: 10 }, size: 'm' },
+    ] },
+    elements: [{ markId: 'element', selectorPath: input.selector ?? '#target', componentName: 'Form',
+      sourceLocation: { file: '/src/Form.tsx', line: 12, column: 2 } }],
+    pageTitle: 'Example', pageUrl: 'https://example.test',
   });
 }
 
@@ -59,76 +48,25 @@ function ownerOnlyConsoleSummary(): BrowserContextItemV1 {
 }
 
 describe('createBrowserContextAttachService (ANNO-4b)', () => {
-  it('attaches a 3-target annotation as exactly ONE composer card referencing the shared media', () => {
+  it('attaches one annotation item through the strict v2 consumer with all marks and source facts', () => {
     const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#a' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#b' }));
-    store.record(annotationItem({ contextId: 'c2', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#c' }));
+    const item = annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'flattened', selector: '#save' });
+    store.record(item);
     const service = createBrowserContextAttachService({ store });
-
-    const result = service.attach({ annotationId: 'anno_1', destination: 'composer' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    // ONE attachment card for the whole group.
-    expect(result.attachment.attachmentId).toBe('browser_context_attachment:anno_1');
-    expect(result.attachedContextIds).toEqual(['c0', 'c1', 'c2']);
-    // Shared reference-only media referenced once.
-    expect(result.mediaIds).toEqual(['crop_1']);
-  });
-
-  it('attaching by one contextId of the group still yields the single group card', () => {
-    const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#a' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#b' }));
-    const service = createBrowserContextAttachService({ store });
-
-    const result = service.attach({ contextId: 'c1', destination: 'agentTurn' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.attachment.attachmentId).toBe('browser_context_attachment:anno_1');
-    expect([...result.attachedContextIds].sort()).toEqual(['c0', 'c1']);
-  });
-
-  it('attaches a schema-validated structured annotation block for model-readable turns', () => {
-    const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#save' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'crop_1', selector: '[data-testid="cancel"]' }));
-    store.record(annotationItem({
-      contextId: 'c2',
-      annotationId: 'anno_1',
-      mediaId: 'crop_1',
-      region: { x: 20, y: 10, width: 40, height: 30 },
-      stroke: { shape: 'freehand', points: [{ x: 0.1, y: 0.2 }, { x: 0.8, y: 0.7 }] },
-    }));
-    const service = createBrowserContextAttachService({ store });
-
-    const result = service.attach({ annotationId: 'anno_1', destination: 'agentTurn' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-
-    const attachment = BrowserContextAttachmentV1Schema.parse(result.attachment);
-    const structuredBlock = (attachment as { structuredBlock?: unknown }).structuredBlock;
-    expect(structuredBlock).toMatchObject({
-      kind: 'browser.annotation.v1',
-      annotationId: 'anno_1',
-      comment: 'needs spacing',
-      contextIds: ['c0', 'c1', 'c2'],
-      elements: [
-        { selectorPath: '#save' },
-        { selectorPath: '[data-testid="cancel"]' },
-      ],
-      regions: [
-        { rect: { x: 20, y: 10, width: 40, height: 30 } },
-      ],
-      strokes: [
-        { shape: 'freehand', points: [{ x: 0.1, y: 0.2 }, { x: 0.8, y: 0.7 }] },
-      ],
-      screenshot: {
-        media: [{ mediaId: 'crop_1', mediaKind: 'image' }],
-        cropRect: { x: 0, y: 0, width: 100, height: 80 },
-      },
-    });
-    expect(JSON.stringify(structuredBlock)).not.toContain('data:image');
+    for (const selector of [{ annotationId: 'anno_1' }, { contextId: 'c0' }]) {
+      const result = service.attach({ ...selector, destination: 'agentTurn' });
+      expect(result.ok).toBe(true);
+      if (!result.ok || item.kind !== 'browserAnnotation') throw new Error('Annotation attach failed');
+      expect(result.attachedContextIds).toEqual(['c0']);
+      expect(result.mediaIds).toEqual(['flattened']);
+      const attachment = BrowserContextAttachmentV1Schema.parse(result.attachment);
+      expect(attachment.structuredBlock).toEqual({
+        v: 2, kind: 'browser.annotation.v2', annotationId: item.annotationId,
+        sourceViewId: item.sourceViewId, browserSessionId: item.browserSessionId, contextIds: [item.contextId],
+        imageRef: item.imageRef, marks: item.marks, elements: item.elements, pageTitle: item.pageTitle, pageUrl: item.pageUrl,
+      });
+      expect(attachment.structuredBlock).not.toHaveProperty('comment');
+    }
   });
 
   it('refuses to attach an owner-only full-fidelity console summary to an agent message', () => {
@@ -156,18 +94,16 @@ describe('createBrowserContextAttachService (ANNO-4b)', () => {
     const result = service.attach({ annotationId: 'missing', destination: 'composer' });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toContain('browser_context_attach_group_missing');
+    expect(result.error).toContain('browser_context_item_missing');
   });
 
-  it('clear releases the shared mediaId once and empties the group', () => {
+  it('clears one annotation and releases its flattened media reference', () => {
     const store = createBrowserContextItemStore();
-    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#a' }));
-    store.record(annotationItem({ contextId: 'c1', annotationId: 'anno_1', mediaId: 'crop_1', selector: '#b' }));
-    const service = createBrowserContextAttachService({ store });
-
-    const cleared = service.clear({ annotationId: 'anno_1' });
-    expect(cleared.releasedMediaIds).toEqual(['crop_1']);
-    expect(cleared.clearedItems).toHaveLength(2);
+    store.record(annotationItem({ contextId: 'c0', annotationId: 'anno_1', mediaId: 'flattened' }));
+    const result = createBrowserContextAttachService({ store }).clear({ annotationId: 'anno_1' });
+    expect(result.releasedMediaIds).toEqual(['flattened']);
+    expect(result.clearedItems).toHaveLength(1);
     expect(store.size()).toBe(0);
   });
+
 });

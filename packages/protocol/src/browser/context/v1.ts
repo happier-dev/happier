@@ -14,10 +14,14 @@ import {
 import { BrowserEvidenceSessionMediaReferenceV1Schema } from '../recording/v1.js';
 import { rejectUnsafeBrowserEgressKeys } from '../diagnostics/egress/keyRejection.js';
 import { SessionImageMediaReferenceV1Schema } from '../../sessions/media/imageReferenceV1.js';
+import { ImageMarksDocumentV1Schema } from '../../sessions/media/imageMarksV1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from '../automation/v1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
+
+/** Shared projection budget for selected text. */
+export const BROWSER_CONTEXT_SELECTION_MAX_CHARS = 2048;
 
 /** Shared egress budget for context summaries and the snapshot's console projection. */
 export const BROWSER_CONTEXT_SUMMARY_MAX_CHARS = 8192;
@@ -93,11 +97,16 @@ const PageReferenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(sch
 const ScreenshotSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserScreenshot'),
   media: BrowserScreenshotMediaReferenceV1Schema,
+  /** Captured CSS viewport, including scrollbars; pixels / width supplies the image scale. */
+  viewport: z.optional(z.strictObject({
+    width: z.number().check(z.positive()),
+    height: z.number().check(z.positive()),
+  })),
 })));
 
 const TextSelectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserTextSelection'),
-  text: z.string().check(z.maxLength(2048)),
+  text: z.string().check(z.maxLength(BROWSER_CONTEXT_SELECTION_MAX_CHARS)),
   truncated: z._default(z.optional(z.boolean()), false),
 })));
 
@@ -116,6 +125,8 @@ const SelectedElementSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(s
   kind: z.literal('browserSelectedElement'),
   selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
   accessibleName: z.optional(z.string().check(z.maxLength(512))),
+  componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
   rect: z.optional(z.strictObject({
       x: z.number(),
       y: z.number(),
@@ -124,132 +135,40 @@ const SelectedElementSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(s
     })),
 })));
 
-export const BrowserAnnotationRectV1Schema = lazyZodSchema(() => z.strictObject({
-    x: z.number(),
-    y: z.number(),
-    width: z.number().check(z.nonnegative()),
-    height: z.number().check(z.nonnegative()),
-  }));
-export type BrowserAnnotationRectV1 = z.infer<typeof BrowserAnnotationRectV1Schema>;
-
-const BrowserAnnotationElementTargetV1Schema = lazyZodSchema(() => z.strictObject({
-      kind: z.literal('element'),
-      selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
-      accessibleName: z.optional(z.string().check(z.maxLength(512))),
-      rect: z.optional(BrowserAnnotationRectV1Schema),
-      /**
-       * UB-7. The component that rendered the annotated element and the source file it came from,
-       * when the engine can resolve them. An agent receiving this annotation gets the edit site,
-       * not just the selector. Both are absent for non-React or production pages.
-       */
-      componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
-      sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
-    }));
-
-export const BrowserAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
-      kind: z.literal('region'),
-      rect: BrowserAnnotationRectV1Schema,
-    }),
-  BrowserAnnotationElementTargetV1Schema,
-]));
-export type BrowserAnnotationTargetV1 = z.infer<typeof BrowserAnnotationTargetV1Schema>;
-
-// Visual intent of an annotation: a redaction-safe, bounded label describing how the marked
-// region/element should read (callout, highlight, redaction overlay, an arrow pointer, or a free
-// freehand sketch). Never carries inline media bytes — the captured pixels live behind `media`.
-export const BrowserAnnotationStyleIntentV1Schema = lazyZodSchema(() => z.enum([
-  'callout',
-  'highlight',
-  'redaction',
-  'arrow',
-  'freeform',
-]));
-export type BrowserAnnotationStyleIntentV1 = z.infer<typeof BrowserAnnotationStyleIntentV1Schema>;
-
-// A vector stroke overlaid on the annotation, expressed in normalized [0,1] media coordinates so it
-// survives scaling and never embeds raw pixels. Bounded point count keeps the payload metadata-only.
-const BrowserAnnotationStrokePointV1Schema = lazyZodSchema(() => z.strictObject({
-    x: z.number().check(z.minimum(0), z.maximum(1)),
-    y: z.number().check(z.minimum(0), z.maximum(1)),
-  }));
-
-export const BrowserAnnotationStrokeV1Schema = lazyZodSchema(() => z.strictObject({
-    shape: z.enum(['freehand', 'line', 'arrow', 'rectangle', 'ellipse']),
-    points: z.array(BrowserAnnotationStrokePointV1Schema).check(z.minLength(1), z.maxLength(512)),
-    colorToken: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(64))),
-    widthPx: z.optional(z.number().check(z.positive(), z.maximum(64))),
-  }));
-export type BrowserAnnotationStrokeV1 = z.infer<typeof BrowserAnnotationStrokeV1Schema>;
-
-// Authoring uses CSS viewport coordinates; committed strokes above use normalized media points.
-export const BrowserAnnotationDraftStrokeV1Schema = lazyZodSchema(() => z.strictObject({
-  shape: BrowserAnnotationStrokeV1Schema.shape.shape,
-  points: z.array(z.strictObject({ x: z.number(), y: z.number() })).check(z.minLength(1)),
-  colorToken: BrowserAnnotationStrokeV1Schema.shape.colorToken,
-  widthPx: BrowserAnnotationStrokeV1Schema.shape.widthPx,
+export const BrowserContextAnnotationElementV2Schema = lazyZodSchema(() => z.strictObject({
+  markId: z.string().check(z.minLength(1)),
+  selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
+  accessibleName: z.optional(z.string().check(z.maxLength(512))),
+  componentName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+  sourceLocation: z.optional(BrowserDiagnosticsElementSourceLocationV1Schema),
 }));
-export type BrowserAnnotationDraftStrokeV1 = z.infer<typeof BrowserAnnotationDraftStrokeV1Schema>;
+export type BrowserContextAnnotationElementV2 = z.infer<typeof BrowserContextAnnotationElementV2Schema>;
 
-export const BrowserAnnotationDraftTargetV1Schema = lazyZodSchema(() => z.pick(
-  BrowserAnnotationElementTargetV1Schema,
-  { kind: true, selectorPath: true, accessibleName: true, rect: true },
-));
-export type BrowserAnnotationDraftTargetV1 = z.infer<typeof BrowserAnnotationDraftTargetV1Schema>;
-
-export const BrowserAnnotationDraftMarkHandleV1Schema = lazyZodSchema(() => z.strictObject({
-  draftId: IdSchema,
-  kind: z.enum(['element', 'region', 'stroke']),
-}));
-
-const AnnotationSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
-  kind: z.literal('browserAnnotation'),
+const annotationV2Fields = {
   annotationId: IdSchema,
   browserSessionId: IdSchema,
-  media: BrowserScreenshotMediaReferenceV1Schema,
-  target: BrowserAnnotationTargetV1Schema,
-  comment: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2048))),
-  styleIntent: z.optional(BrowserAnnotationStyleIntentV1Schema),
-  stroke: z.optional(BrowserAnnotationStrokeV1Schema),
+  imageRef: BrowserScreenshotMediaReferenceV1Schema,
+  marks: ImageMarksDocumentV1Schema,
+  elements: z.array(BrowserContextAnnotationElementV2Schema),
   pageUrl: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
   pageTitle: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-})));
+};
 
-const BrowserContextAnnotationStructuredElementV1Schema = lazyZodSchema(() => z.strictObject({
-    selectorPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
-    accessibleName: z.optional(z.string().check(z.maxLength(512))),
-    rect: z.optional(BrowserAnnotationRectV1Schema),
-  }));
+export const BrowserContextAnnotationItemV2Schema = lazyZodSchema(() => z.strictObject({
+  ...BrowserContextItemBaseV1Schema.shape,
+  kind: z.literal('browserAnnotation'),
+  ...annotationV2Fields,
+}));
+export type BrowserContextAnnotationItemV2 = z.infer<typeof BrowserContextAnnotationItemV2Schema>;
 
-const BrowserContextAnnotationStructuredRegionV1Schema = lazyZodSchema(() => z.strictObject({
-    rect: BrowserAnnotationRectV1Schema,
-  }));
-
-const BrowserContextAnnotationStructuredScreenshotV1Schema = lazyZodSchema(() => z.strictObject({
-    media: z.array(BrowserScreenshotMediaReferenceV1Schema).check(z.minLength(1), z.maxLength(8)),
-    cropRect: z.optional(BrowserAnnotationRectV1Schema),
-  }));
-
-export const BrowserContextAnnotationStructuredBlockV1Schema = lazyZodSchema(() => z.strictObject({
-    v: z.literal(1),
-    kind: z.literal('browser.annotation.v1'),
-    annotationId: IdSchema,
-    sourceViewId: IdSchema,
-    browserSessionId: z.optional(IdSchema),
-    contextIds: z.array(IdSchema).check(z.minLength(1), z.maxLength(128)),
-    elements: z.array(BrowserContextAnnotationStructuredElementV1Schema).check(z.maxLength(64)),
-    regions: z.array(BrowserContextAnnotationStructuredRegionV1Schema).check(z.maxLength(64)),
-    strokes: z.array(BrowserAnnotationStrokeV1Schema).check(z.maxLength(64)),
-    comment: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2048))),
-    screenshot: BrowserContextAnnotationStructuredScreenshotV1Schema,
-    pageUrl: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
-    pageTitle: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-  }).check(z.superRefine((block, context) => {
-    rejectUnsafeBrowserContextKeys(block, context);
-  })));
-export type BrowserContextAnnotationStructuredBlockV1 = z.infer<
-  typeof BrowserContextAnnotationStructuredBlockV1Schema
->;
+export const BrowserContextAnnotationStructuredBlockV2Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2),
+  kind: z.literal('browser.annotation.v2'),
+  sourceViewId: IdSchema,
+  contextIds: z.array(IdSchema).check(z.minLength(1)),
+  ...annotationV2Fields,
+}).check(z.superRefine((block, context) => rejectUnsafeBrowserContextKeys(block, context))));
+export type BrowserContextAnnotationStructuredBlockV2 = z.infer<typeof BrowserContextAnnotationStructuredBlockV2Schema>;
 
 const RecordingEvidenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BrowserContextItemBaseV1Schema, {
   kind: z.literal('browserRecordingEvidence'),
@@ -279,9 +198,9 @@ const RecordingEvidenceSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>
 // the accessibility tree, an interactive-element list with synthesized selectors + layout rects, the
 // visible text, a console summary, and a screenshot reference. Modeled as a STANDALONE schema (not a
 // `BrowserContextItem` discriminated-union member) so it never ripples the per-item consumers; it is
-// the return shape of `BrowserContextRoutes.captureSnapshot`. Every collection is bounded and every
-// string capped so a hostile/huge DOM can never produce an unbounded payload. Per the LANE-B egress
-// model the daemon route returns FULL fidelity to the local owner (`redactionLevel: 'none'`); the
+// the return shape of `BrowserContextRoutes.captureSnapshot`. Valid captured page content is not
+// clipped by a second wire budget. Per the LANE-B egress model the daemon route returns FULL
+// fidelity to the local owner (`redactionLevel: 'none'`); the
 // agent/cloud egress chokepoint redacts before the payload leaves the device.
 const BrowserContextSnapshotRectV1Schema = lazyZodSchema(() => z.strictObject({
     x: z.number(),
@@ -291,25 +210,22 @@ const BrowserContextSnapshotRectV1Schema = lazyZodSchema(() => z.strictObject({
   }));
 
 export const BrowserContextSnapshotAxNodeV1Schema = lazyZodSchema(() => z.strictObject({
-    role: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    name: z.optional(z.string().check(z.maxLength(256))),
-    /** Current non-secret editable text, under the existing per-node text budget. */
-    value: z.optional(z.string().check(z.maxLength(256))),
+    role: z.string().check(z.trim(), z.minLength(1)),
+    name: z.optional(z.string()),
+    /** Current non-secret editable text; field eligibility belongs to the capture owner. */
+    value: z.optional(z.string()),
   }));
 export type BrowserContextSnapshotAxNodeV1 = z.infer<typeof BrowserContextSnapshotAxNodeV1Schema>;
 
 export const BrowserContextSnapshotInteractiveElementV1Schema = lazyZodSchema(() => z.strictObject({
-    role: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    name: z.optional(z.string().check(z.maxLength(256))),
-    selector: z.string().check(z.trim(), z.minLength(1), z.maxLength(1024)),
+    role: z.string().check(z.trim(), z.minLength(1)),
+    name: z.optional(z.string()),
+    selector: z.string().check(z.trim(), z.minLength(1)),
     rect: BrowserContextSnapshotRectV1Schema,
   }));
 export type BrowserContextSnapshotInteractiveElementV1 = z.infer<
   typeof BrowserContextSnapshotInteractiveElementV1Schema
 >;
-
-const SNAPSHOT_AX_NODE_CAP = 512;
-const SNAPSHOT_INTERACTIVE_CAP = 512;
 
 /** Value-free browser proof; scope and human choice still belong to confidential admission. */
 export const BrowserFocusedCredentialTargetV1Schema = lazyZodSchema(() => z.pick(BrowserAutomationSecretFillRequestV1Schema, {
@@ -330,12 +246,11 @@ export const BrowserContextSnapshotV1Schema = lazyZodSchema(() => z.strictObject
     url: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4096))),
     title: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
     media: z.optional(BrowserScreenshotMediaReferenceV1Schema),
-    visibleText: z.string().check(z.maxLength(16_384)),
+    visibleText: z.string(),
     visibleTextTruncated: z._default(z.optional(z.boolean()), false),
-    axNodes: z.array(BrowserContextSnapshotAxNodeV1Schema).check(z.maxLength(SNAPSHOT_AX_NODE_CAP)),
+    axNodes: z.array(BrowserContextSnapshotAxNodeV1Schema),
     axNodesTruncated: z._default(z.optional(z.boolean()), false),
-    interactiveElements: z
-      .array(BrowserContextSnapshotInteractiveElementV1Schema).check(z.maxLength(SNAPSHOT_INTERACTIVE_CAP)),
+    interactiveElements: z.array(BrowserContextSnapshotInteractiveElementV1Schema),
     interactiveElementsTruncated: z._default(z.optional(z.boolean()), false),
     consoleSummary: z.optional(z.string().check(z.maxLength(BROWSER_CONTEXT_SUMMARY_MAX_CHARS))),
     consoleTruncated: z._default(z.optional(z.boolean()), false),
@@ -352,7 +267,7 @@ export const BrowserContextItemV1Schema = lazyZodSchema(() => z
     TextSelectionSchema,
     SummarySchema,
     SelectedElementSchema,
-    AnnotationSchema,
+    BrowserContextAnnotationItemV2Schema,
     RecordingEvidenceSchema,
   ]).check(z.superRefine((item, context) => {
     rejectUnsafeBrowserContextKeys(item, context);
@@ -386,13 +301,6 @@ export const BrowserContextCommandV1Schema = lazyZodSchema(() => z.enum([
   'captureSelectedElement',
   'captureNetworkSummary',
   'captureConsoleSummary',
-  'startAnnotation',
-  'cancelAnnotation',
-  'captureAnnotationRegion',
-  'captureAnnotationElement',
-  'attachAnnotationComment',
-  'attachAnnotationStroke',
-  'attachAnnotationStyleIntent',
   'attachToComposer',
   'attachToAgentTurn',
   'clearCapturedContext',
@@ -407,25 +315,8 @@ export const BrowserContextEventV1Schema = lazyZodSchema(() => z.enum([
   'contextAttachmentRemoved',
   'contextUnavailable',
   'contextPolicyDenied',
-  'annotationStarted',
-  'annotationCanceled',
-  'annotationCaptured',
-  'annotationCommentAttached',
 ]));
 export type BrowserContextEventV1 = z.infer<typeof BrowserContextEventV1Schema>;
-
-const BrowserContextAnnotationRuntimeActionIdV1Schema = lazyZodSchema(() => RuntimeActionIdV1Schema.check(z.refine((value) => value.startsWith('browser.context.annotation.'))));
-
-export const BrowserContextAnnotationActionResultV1Schema = lazyZodSchema(() => z.strictObject({
-    v: z.literal(1),
-    actionId: BrowserContextAnnotationRuntimeActionIdV1Schema,
-    status: z.enum(['started', 'cancelled', 'captured', 'updated']),
-    contextId: z.optional(IdSchema),
-    attachmentId: z.optional(IdSchema),
-  }));
-export type BrowserContextAnnotationActionResultV1 = z.infer<
-  typeof BrowserContextAnnotationActionResultV1Schema
->;
 
 export const BrowserContextAttachmentV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
@@ -436,7 +327,7 @@ export const BrowserContextAttachmentV1Schema = lazyZodSchema(() => z.strictObje
     currentNavigationGeneration: NonNegativeIntSchema,
     state: BrowserContextLifecycleStateV1Schema,
     requiresReconfirmBeforeSend: z._default(z.optional(z.boolean()), false),
-    structuredBlock: z.optional(BrowserContextAnnotationStructuredBlockV1Schema),
+    structuredBlock: z.optional(BrowserContextAnnotationStructuredBlockV2Schema),
   }).check(z.superRefine((attachment, context) => {
     if (attachment.currentNavigationGeneration !== attachment.capturedNavigationGeneration) {
       if (attachment.state !== 'navigationStale' || !attachment.requiresReconfirmBeforeSend) {
@@ -498,7 +389,6 @@ export type BrowserContextRouteFailureV1 = z.infer<typeof BrowserContextRouteFai
 export const BrowserContextRouteResultV1Schema = lazyZodSchema(() => z.union([
   BrowserContextItemV1Schema,
   z.array(BrowserContextItemV1Schema),
-  BrowserContextAnnotationActionResultV1Schema,
   BrowserContextAttachmentV1Schema,
   BrowserContextRouteFailureV1Schema,
 ]));

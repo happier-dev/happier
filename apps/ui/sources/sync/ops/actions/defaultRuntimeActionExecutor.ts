@@ -11,7 +11,6 @@ import {
     readRegisteredBrowserRuntimeControlAdapter,
     readRegisteredBrowserRuntimeDiagnosticsAdapter,
 } from '@/sync/domains/browser/actions/runtimeControlRegistry';
-import { readRegisteredBrowserRecordingAttachAdapter } from '@/sync/domains/browser/recording/runtimeAttachRegistry';
 import { readRegisteredBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/runtimeAnnotationRegistry';
 import { createSimulatorPreviewRuntimeActionExecutor } from '@/sync/domains/devices/simulator/actions/runtimeActionExecutor';
 import { createComputerRuntimeActionExecutor } from '@/sync/domains/computer/actions/runtimeActionExecutor';
@@ -115,10 +114,6 @@ export function createDefaultRuntimeActionExecutor(
         ...(input.browserAutomation ? { automation: input.browserAutomation } : {}),
         ...(!input.browserAutomation ? { resolveAutomation: (request) => readRegisteredBrowserRuntimeAutomationAdapter(request.browserSessionId, request.viewId) } : {}),
         resolveDiagnostics: (request) => readRegisteredBrowserRuntimeDiagnosticsAdapter(request.browserSessionId, request.viewId),
-        // BRW-15 attach-to-composer leaf: resolve the registered recording-attach owner so the
-        // `browser.recording.attachToComposer` action dispatches a real attach (fail-closed when
-        // no owner is registered).
-        resolveRecordingAttach: () => readRegisteredBrowserRecordingAttachAdapter(),
         // Phase 4.2 annotation family: resolve the registered in-app annotation owner (the
         // BrowserShell host) so every `browser.context.annotation.*` action dispatches a real
         // state mutation through the front door (fail-closed when no host is mounted).

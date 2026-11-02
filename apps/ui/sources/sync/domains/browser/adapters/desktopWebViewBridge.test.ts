@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveAnnotationCropClip } from '@/sync/domains/browser/context/annotationCropGeometry';
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
 const isDesktopHostMock = vi.hoisted(() => vi.fn());
@@ -633,88 +632,6 @@ describe('desktop WebView native bridge', () => {
                 captureRequestId: 'capture_request_1',
             },
         });
-    });
-
-    it('forwards the annotation crop clip so the Wry capture matches the union-of-targets rect (ANNO-3)', async () => {
-        isDesktopHostMock.mockReturnValue(true);
-        // Union of two marked targets in CSS viewport px → device clip via the canonical helper.
-        const clip = resolveAnnotationCropClip({
-            targets: [
-                { x: 10, y: 20, width: 30, height: 40 },
-                { x: 50, y: 10, width: 20, height: 20 },
-            ],
-            viewport: {
-                scrollX: 0,
-                scrollY: 0,
-                devicePixelRatio: 2,
-                surface: { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER },
-            },
-        });
-        if (clip.status !== 'clip') throw new Error('expected a clip');
-        // css union {10,10,60,50} × DPR 2 → device {20,20,120,100}.
-        expect(clip.devicePageRect).toEqual({ x: 20, y: 20, width: 120, height: 100 });
-
-        invokeDesktopHostMock.mockResolvedValue({
-            ok: true,
-            availability: {
-                available: true,
-                platform: 'macos',
-                primitive: 'macosNsViewWebKit',
-                renderEngine: 'desktopWebView',
-                producer: 'tauriWryNativeChildView',
-                privilegedIpc: false,
-                supports: {
-                    navigation: true,
-                    goBackForward: false,
-                    reload: false,
-                    stop: false,
-                    pageInfoDiagnostics: true,
-                    nativeDevtools: false,
-                    capture: true,
-                    recording: false,
-                    automation: false,
-                },
-                disabledReasons: [],
-            },
-            // Native returns the CROPPED media — dimensions equal the device clip, not the full page.
-            snapshot: {
-                browserSessionId: 'browser_session_1',
-                viewId: 'view_1',
-                navigationGeneration: 7,
-                captureRequestId: 'capture_request_1',
-                capturedAtMs: 12_345,
-                mimeType: 'image/png',
-                width: clip.devicePageRect.width,
-                height: clip.devicePageRect.height,
-                sizeBytes: 4,
-                bytesBase64: 'AQIDBA==',
-            },
-        });
-        const mod = await import('./desktopWebViewBridge');
-
-        const result = await mod.captureDesktopBrowserSnapshot({
-            browserSessionId: 'browser_session_1',
-            viewId: 'view_1',
-            navigationGeneration: 7,
-            captureRequestId: 'capture_request_1',
-            clip: clip.devicePageRect,
-        });
-
-        // The native command received the union-of-targets device clip (integer-normalized), NOT a
-        // full-frame capture.
-        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_browser_capture_snapshot', {
-            request: {
-                browserSessionId: 'browser_session_1',
-                viewId: 'view_1',
-                navigationGeneration: 7,
-                captureRequestId: 'capture_request_1',
-                clip: { x: 20, y: 20, width: 120, height: 100 },
-            },
-        });
-        // The captured media dimensions equal the crop, not the page.
-        expect(result.ok).toBe(true);
-        expect(result.snapshot?.width).toBe(120);
-        expect(result.snapshot?.height).toBe(100);
     });
 
     it('rejects stale desktop WebView snapshot payloads that do not match the requested generation', async () => {

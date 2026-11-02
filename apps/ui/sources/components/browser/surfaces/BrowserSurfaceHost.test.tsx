@@ -1,3 +1,5 @@
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import * as React from 'react';
 import {
     type BrowserContextCapabilities,
@@ -23,10 +25,8 @@ import {
     type CurrentUiContextSnapshotV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { act } from 'react-test-renderer';
-import { AppState } from 'react-native';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AnnotationCaptureSurface } from '@/components/browser/annotation';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
     getInstalledPluginUiClientExecutableComposition,
@@ -36,15 +36,15 @@ import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/
 import type {
     PluginReactNativeLoaderBackend,
 } from '@/components/plugins/reactNative/loader';
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
-import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { createReactNativeAppStateEmitter } from '@/dev/testkit/mocks/reactNative';
+import { reactNativeWebAppState as browserAppState } from '@/dev/testkit/mocks/reactNative';
 import {
     createBrowserViewState,
     openBrowserTarget,
@@ -65,9 +65,7 @@ import { buildCooperativeNavigationRuntimeScript } from '@happier-dev/peer-media
 
 // The visibility owner installs one app-lifetime watch. Keep one OS emitter for
 // the whole suite so eager executor imports cannot bind it to a discarded stub.
-const browserAppState = createReactNativeAppStateEmitter('active');
-const restoreBrowserAppState = browserAppState.install(AppState);
-afterAll(restoreBrowserAppState);
+
 // Static Browser imports reach Socket consumers before the route harness loads.
 // Register the canonical network boundary hoisted, then let the harness configure it.
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -571,11 +569,15 @@ function BrowserPanelPaneProbe() {
     browserPanelPane = useAppPaneScope('browser-panels:browser_session_default');
     return null;
 }
+let browserRuntime: Awaited<ReturnType<typeof installBrowserRuntimeForTests>>;
+let browserPortalBoundary: ReturnType<typeof installReactDomPortalBoundaryForTests>;
 beforeEach(async () => {
+    browserRuntime = await installBrowserRuntimeForTests({ url: 'https://browser-host.example.test/' });
+    browserPortalBoundary = installReactDomPortalBoundaryForTests();
     browserPanelPane = undefined;
     const { storage } = await import('@/sync/domains/state/storage');
     storage.getState().applyLocalSettings({ appPaneScopesV1: {} });
-    browserAppState.emit('active');
+    if (browserAppState.appState.currentState !== 'active') browserAppState.emit('active');
     browserSystemOpen.mockClear();
     browserPreviewBoundary.response = null;
     browserFeatures = null;
@@ -596,7 +598,7 @@ beforeEach(async () => {
         v: 1, homeServerIdentityId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
         canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
     }, source: 'qr', descriptorAuthority: 'current_connection_observation' });
-    browserAccountConnection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1', request: async (input) => {
+    browserAccountConnection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1', configureSocket: configureConnectedServerSocketBoundary, request: async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === '/v1/features' && browserFeatures) return Response.json(browserFeatures);
         if (path === '/v1/local-services/preview/preview_1/access' && browserFeatures) {
@@ -617,6 +619,8 @@ afterEach(async () => {
     browserAccountConnection = undefined;
     restoreBrowserLocks?.();
     restoreBrowserStorage?.();
+    browserPortalBoundary.restore();
+    browserRuntime.restore();
 });
 
 describe('BrowserSurfaceHost', () => {
@@ -645,7 +649,6 @@ describe('BrowserSurfaceHost', () => {
         vi.stubGlobal('__TAURI_INTERNALS__', undefined);
         vi.stubGlobal('__TAURI__', undefined);
         vi.stubGlobal('isTauri', false);
-        vi.stubGlobal('navigator', Object.create(globalThis.navigator, { userAgent: { value: 'Mozilla/5.0' } }));
         expect((await import('@/utils/platform/desktopHost')).isDesktopHost()).toBe(false);
         const dom = new JSDOM('<!doctype html><title>Sign in</title><body></body>', { url: 'https://preview.happier.test/' });
         const frame = dom.window;
@@ -1514,46 +1517,6 @@ describe('BrowserSurfaceHost', () => {
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('first.test');
     });
 
-    it('projects exact Machine Action events into its mounted Browser state', async () => {
-        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
-        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
-        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
-        const { BrowserCommandDispatchResultV1Schema } = await import('@happier-dev/protocol');
-        const scope = getActiveServerAccountScope();
-        if (!scope) throw new Error('Browser test Account was not restored');
-        const sendDaemonCommand = vi.fn();
-        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
-            kind: 'streamedBrowser', targetId: 'exact-stream', streamId: 'exact-stream',
-        }, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
-        const screen = await renderScreen(<BrowserSurfaceHost
-            browserSessionId="session_1" platform="web" initialBrowserState={initialBrowserState}
-            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
-            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-            productModels={{ browserProfile: { profile: sessionBrowserProfile, activePermissionGrantCount: 0 } }}
-            browserFeatureDecision={enabledBrowserDecision} sendDaemonCommand={sendDaemonCommand}
-            testID="browser-surface"
-        />);
-        const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
-        expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
-        const result = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'close-machine',
-            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [{
-                kind: 'viewClosed', eventId: 'machine-closed', browserSessionId: 'session_1',
-                viewId: 'agent-view', occurredAt: 1000,
-            }] });
-        // The exact Machine Action transport is external; production registration and the
-        // Browser host's real event projection must consume its authoritative response.
-        const execute = createDefaultRuntimeActionExecutor({}, undefined, async () => result);
-        await act(async () => {
-            expect(await execute({ actionId: 'browser.view.close', input: { kind: 'closeView',
-                commandId: 'close-machine', browserSessionId: 'session_1', viewId: 'agent-view' },
-                context: { serverId: scope.serverId, runtimeAccountId: scope.accountId, authority: 'present_user',
-                    externalActionTarget: { kind: 'machine', machineId: 'machine_1' } } })).toEqual(result);
-        });
-        expect(control?.readState()?.viewsById['agent-view']).toBeUndefined();
-        expect(sendDaemonCommand).not.toHaveBeenCalled();
-        await screen.unmount();
-    });
-
     it('retargets the active local-preview view when typed navigation resolves to an external URL target', async () => {
         const onViewTargetChange = vi.fn();
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), target, {
@@ -1950,90 +1913,6 @@ describe('BrowserSurfaceHost', () => {
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('docs.happier.test');
     });
 
-    it('routes annotation Select through the diagnostics element picker for the active surface view', async () => {
-        const {
-            createBrowserContextState,
-            startBrowserAnnotationMode,
-        } = await import('@/sync/domains/browser/context');
-        const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
-            browserSessionId: 'browser_session_default',
-            platform: 'desktop',
-            currentUrl: 'https://docs.happier.test/',
-            targetPolicyDecision: allowedExternalPolicy,
-            desktopWebViewAvailability: annotationDesktopWebView,
-        });
-        const activeView = Object.values(initialBrowserState.viewsById)[0];
-        expect(activeView).toBeDefined();
-        if (!activeView) return;
-        const started = startBrowserAnnotationMode(createBrowserContextState(), {
-            browserContextEnabled: true,
-            attachmentsUploadsEnabled: true,
-            contextCapabilities: annotationContextCapabilities,
-            adapterCapabilities: {
-                ...activeView.adapterCapabilities,
-                diagnosticsFidelityByFamily: {
-                    ...activeView.adapterCapabilities.diagnosticsFidelityByFamily,
-                    screenshot: 'injectedPage',
-                },
-                contextKinds: ['browserPageReference', 'browserAnnotation'],
-            },
-            browserSessionId: activeView.browserSessionId,
-            viewId: activeView.viewId,
-            navigationGeneration: activeView.navigationGeneration,
-            startedAtMs: 10_000,
-        });
-        expect(started.status).toBe('started');
-        if (started.status !== 'started') return;
-        const onStartElementPicker = vi.fn();
-
-        const screen = await renderScreen(
-            <BrowserSurfaceHost
-                browserSessionId="browser_session_default"
-                platform="desktop"
-                initialBrowserState={initialBrowserState}
-                policy={{
-                    browserEnabled: true,
-                    viewTargetsEnabled: true,
-                    diagnosticsEnabled: true,
-                    contextEnabled: true,
-                }}
-                productModels={{
-                    browserContext: {
-                        state: started.state,
-                        contextCapabilities: annotationContextCapabilities,
-                        attachmentsUploadsEnabled: true,
-                        onStateChange: vi.fn(),
-                        nowMs: () => 10_100,
-                    },
-                    browserDiagnostics: {
-                        state: createBrowserDiagnosticsUiStore(),
-                        requestEval: vi.fn(() => false),
-                        requestGetProperties: vi.fn(() => false),
-                        requestReleaseObjectGroup: vi.fn(() => false),
-                        interaction: {
-                            state: 'enabled',
-                            ownerOnly: true,
-                            pickerState: 'idle',
-                            onStartElementPicker,
-                        },
-                    },
-                    browserProfile: {
-                        profile: sessionBrowserProfile,
-                        activePermissionGrantCount: 0,
-                    },
-                }}
-                browserFeatureDecision={enabledBrowserDecision}
-                desktopWebViewAvailability={annotationDesktopWebView}
-                testID="browser-surface"
-            />,
-        );
-
-        expect(screen.findHostByTestId('browser-surface-annotation-editor-tool:select')?.props.accessibilityState?.disabled).not.toBe(true);
-        screen.findByType(AnnotationCaptureSurface).props.onPick({ x: 18, y: 24 });
-
-        expect(onStartElementPicker).toHaveBeenCalledTimes(1);
-    });
-
     it('keeps the address field editable and navigates the active desktop view in place (no new tab)', async () => {
         const launchpadRows = [{
             id: 'recent:external_docs',
@@ -2095,5 +1974,148 @@ describe('BrowserSurfaceHost', () => {
         expect(screen.findByTestId('browser-surface-launchpad')).toBeNull();
         expect(screen.findByTestId('browser-surface-view-frame')).not.toBeNull();
         await vi.waitFor(() => expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('docs.happier.test/changelog'));
+    });
+
+    it.each(['machine', 'local'] as const)('releases the closed frozen source through the %s Action ingress while focus changes retain it', async (ingress) => {
+        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
+        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
+        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const { BrowserCommandDispatchResultV1Schema} = await import('@happier-dev/protocol/browser/control/v1');
+        const activeScope = getActiveServerAccountScope();
+        if (!activeScope) throw new Error('Browser test Account was not restored');
+        const scope = activeScope;
+        const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
+        const { startBrowserAnnotationDraft } = await import('@/sync/domains/browser/context/annotationDraft');
+        const dispose = vi.fn();
+        let hasDraft = () => false;
+        const sendDaemonCommand = vi.fn();
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), ingress === 'machine' ? {
+            kind: 'streamedBrowser', targetId: 'exact-stream', streamId: 'exact-stream',
+        } : target, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
+        function FrozenBrowserHost() {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope: scope });
+            hasDraft = () => Boolean(runtime?.browserShellContext.readState?.().annotationDraftByViewId['agent-view']);
+            React.useEffect(() => {
+                if (!runtime) return;
+                runtime.browserShellContext.onStateChange(startBrowserAnnotationDraft(runtime.state, {
+                    browserSessionId: 'session_1', viewId: 'agent-view', navigationGeneration: 0, nowMs: 100,
+                    source: { uri: 'blob:closed-source', width: 40, height: 30, scale: 1 },
+                    capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 40, height: 30, sizeBytes: 1 }, dispose,
+                }));
+            }, []);
+            return <BrowserSurfaceHost
+            browserSessionId="session_1" platform="web" initialBrowserState={initialBrowserState}
+            browserContext={runtime?.browserShellContext}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            productModels={{ browserProfile: { profile: sessionBrowserProfile, activePermissionGrantCount: 0 } }}
+            browserFeatureDecision={enabledBrowserDecision} sendDaemonCommand={sendDaemonCommand}
+            testID="browser-surface"
+            />;
+        }
+        const screen = await renderScreen(<FrozenBrowserHost />);
+        const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
+        expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
+        expect(hasDraft()).toBe(true);
+        await act(async () => control?.applyDaemonEvents?.([{ kind: 'viewFocused', eventId: 'focus',
+            browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 999 }]));
+        expect(hasDraft()).toBe(true);
+        expect(dispose).not.toHaveBeenCalled();
+        const result = BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: 'close-machine',
+            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [{
+                kind: 'viewClosed', eventId: 'machine-closed', browserSessionId: 'session_1',
+                viewId: 'agent-view', occurredAt: 1000,
+            }] });
+        // The exact Machine Action transport is external; production registration and the
+        // Browser host's real event projection must consume its authoritative response.
+        const execute = createDefaultRuntimeActionExecutor({}, undefined, async () => result);
+        await act(async () => {
+            const outcome = await execute({ actionId: 'browser.view.close', input: { kind: 'closeView',
+                commandId: 'close-machine', browserSessionId: 'session_1', viewId: 'agent-view' },
+                context: { serverId: scope.serverId, runtimeAccountId: scope.accountId, authority: 'present_user',
+                    ...(ingress === 'machine' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } } : {}) } });
+            expect(outcome).toMatchObject({ status: 'dispatched' });
+        });
+        expect(control?.readState()?.viewsById['agent-view']).toBeUndefined();
+        expect(hasDraft()).toBe(false);
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(sendDaemonCommand).not.toHaveBeenCalled();
+        await screen.unmount();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('admits picker-derived selected context independently of the diagnostics picker policy', async () => {
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { BrowserDiagnosticsElementPickerResultV1Schema} = await import('@happier-dev/protocol/browser/diagnostics/v1');
+        const { createBrowserContextState, createBrowserAnnotationCaptureProvider } = await import('@/sync/domains/browser/context');
+        const previous = storage.getState().settings.actionsSettingsV1;
+        const selectedContextCapabilities: BrowserContextCapabilities = { ...annotationContextCapabilities,
+            supportedContextKinds: [...annotationContextCapabilities.supportedContextKinds, 'browserSelectedElement'] };
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+            diagnostics: { enabled: true }, context: { enabled: true },
+        } } });
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
+            browserSessionId: 'browser_session_default', platform: 'desktop', currentUrl: 'https://docs.happier.test/',
+            targetPolicyDecision: allowedExternalPolicy, desktopWebViewAvailability: annotationDesktopWebView,
+        });
+        const view = Object.values(initialBrowserState.viewsById)[0];
+        if (!view) throw new Error('Expected the browser view');
+        const initialContextState = createBrowserContextState();
+        let contextState = initialContextState;
+        // Pixels are a native boundary; the real capture provider,
+        // annotation adapter, registry, diagnostics runtime and Action executor remain in process.
+        const captureScreenshot = vi.fn(async () => ({ ok: true as const, snapshot: {
+            bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' as const, width: 100, height: 100, sizeBytes: 3,
+        } }));
+        storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, actions: { 'browser.context.captureSelectedElement': { enabled: false } },
+        }) } });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="desktop"
+            initialBrowserState={initialBrowserState}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: true }}
+            browserContext={{ state: contextState, readState: () => contextState, contextCapabilities: selectedContextCapabilities,
+                accountScope: getActiveServerAccountScope(),
+                browserDiagnosticsEnabled: true, attachmentsUploadsEnabled: true,
+                annotationCaptureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot }),
+                onStateChange: next => { contextState = next; }, nowMs: () => 10_100,
+            }} browserFeatureDecision={enabledBrowserDecision} desktopWebViewAvailability={annotationDesktopWebView}
+            testID="picker-annotation-policy" />);
+        const diagnostics = () => screen.findByType(BrowserShell).props.browserDiagnostics;
+        expect(diagnostics().interaction.state).toBe('disabled');
+        await act(async () => { diagnostics().interaction.onEnableInteraction(); });
+        const pick = async (selectorPath: string, navigationGeneration = view.navigationGeneration) => {
+            await act(async () => { diagnostics().interaction.onStartElementPicker(); });
+            await vi.waitFor(() => expect(diagnostics().bridge?.elementPickerRequest).toBeDefined());
+            const request = diagnostics().bridge.elementPickerRequest;
+            await act(async () => {
+                diagnostics().bridge.onElementPickerResult(BrowserDiagnosticsElementPickerResultV1Schema.parse({
+                    v: 1, pickerRequestId: request.pickerRequestId, viewId: view.viewId,
+                    navigationGeneration, tier: 'injectedPage', audited: true,
+                    status: 'selected', selectorPath, rect: { x: 1, y: 1, width: 5, height: 5 },
+                    componentName: 'PayButton', sourceLocation: { file: 'src/Pay.tsx', line: 8 },
+                }));
+                await flushHookEffects({ cycles: 4, turns: 4 });
+            });
+        };
+        try {
+            await pick('#refused-element');
+            expect(captureScreenshot).not.toHaveBeenCalled();
+            expect(contextState).toBe(initialContextState);
+            storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {} }) } });
+            await pick('#stale-element', view.navigationGeneration + 1);
+            expect(captureScreenshot).not.toHaveBeenCalled();
+            expect(contextState).toBe(initialContextState);
+            await pick('#allowed-element');
+            await vi.waitFor(() => expect(Object.values(contextState.itemsById)).toMatchObject([
+                { kind: 'browserSelectedElement', selectorPath: '#allowed-element',
+                    componentName: 'PayButton', sourceLocation: { file: 'src/Pay.tsx', line: 8 } },
+            ]));
+            expect(captureScreenshot).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: previous } });
+        }
     });
 });

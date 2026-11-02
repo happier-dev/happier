@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { startBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
 import {
     SessionBrowserContextRuntimeProvider,
     useSessionBrowserContextRuntime,
@@ -63,6 +64,7 @@ function RuntimeProbe(): React.ReactElement {
                             attachmentOrder: ['attachment_1'],
                             navigationGenerationByViewId: { view_1: 1 },
                             activeAnnotationByViewId: {},
+                            annotationDraftByViewId: {},
                         });
                     })}
                 />
@@ -88,6 +90,21 @@ function RuntimeProbe(): React.ReactElement {
 }
 
 describe('session browser context runtime', () => {
+    it('refuses annotation delivery without the invoking Session Account scope', async () => {
+        let outcome: unknown;
+        function UnboundSession(): React.ReactElement {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1' });
+            return <Pressable testID="commit-unbound-annotation" onPress={async () => {
+                outcome = await runtime?.browserShellContext.commitAnnotation?.({ png: new Uint8Array([1]),
+                    original: { uri: 'data:image/png;base64,AQ==', width: 40, height: 30, scale: 1 },
+                    width: 40, height: 30, document: { v: 1, image: { width: 40, height: 30, scale: 1 }, marks: [] },
+                    comment: 'Fix this', annotationId: 'annotation_1' });
+            }} />;
+        }
+        const screen = await renderScreen(<UnboundSession />);
+        await screen.pressByTestIdAsync('commit-unbound-annotation');
+        expect(outcome).toEqual({ ok: false, reason: 'annotation.targetUnavailable' });
+    });
     it('exposes committed state immediately to consecutive actions before a React render', async () => {
         function ConsecutiveActionProbe(): React.ReactElement {
             const runtime = useSessionBrowserContextRuntime({ enabled: true });
@@ -123,13 +140,14 @@ describe('session browser context runtime', () => {
     });
 
     it('resets context state when the runtime scope changes', async () => {
+        const dispose = vi.fn();
         function ScopedRuntimeProbe(props: Readonly<{ scopeKey: string }>): React.ReactElement {
             const runtime = useSessionBrowserContextRuntime({ enabled: true, scopeKey: props.scopeKey });
             return (
                 <View>
                     <Pressable
                         testID="scope-attach"
-                        onPress={() => runtime?.browserShellContext.onStateChange({
+                        onPress={() => runtime?.browserShellContext.onStateChange(startBrowserAnnotationDraft({
                             ...runtime.browserShellContext.state,
                             attachmentsById: {
                                 attachment_1: {
@@ -138,7 +156,9 @@ describe('session browser context runtime', () => {
                                 },
                             },
                             attachmentOrder: ['attachment_1'],
-                        })}
+                        }, { browserSessionId: 'browser_1', viewId: 'view_1', navigationGeneration: 1, nowMs: 1000,
+                            source: { uri: 'blob:frozen', width: 40, height: 30, scale: 1 },
+                            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 40, height: 30, sizeBytes: 1 }, dispose }))}
                     />
                     <Text testID="scope-attachment-count">{runtime?.state.attachmentOrder.length ?? -1}</Text>
                 </View>
@@ -154,6 +174,10 @@ describe('session browser context runtime', () => {
         await screen.update(<ScopedRuntimeProbe scopeKey="session_2" />);
 
         expect(screen.findByTestId('scope-attachment-count')?.props.children).toBe(0);
+        expect(dispose).toHaveBeenCalledTimes(1);
+        await screen.pressByTestIdAsync('scope-attach');
+        await screen.unmount();
+        expect(dispose).toHaveBeenCalledTimes(2);
     });
 
     it('passes annotation capture capability from the session host into browser shell context', async () => {
@@ -163,21 +187,15 @@ describe('session browser context runtime', () => {
                 attachmentsUploadsEnabled: true,
                 annotationCaptureProvider: {
                     available: true,
-                    captureAnnotation: async (request) => ({
+                    captureViewport: async () => ({
                         status: 'captured',
-                        browserSessionId: request.browserSessionId,
-                        viewId: request.viewId,
-                        navigationGeneration: request.navigationGeneration,
-                        media: {
+                        source: { uri: 'data:image/png;base64,AQ==', width: 100, height: 100, scale: 1 },
+                        capture: {
                             mediaId: 'media_session_provider',
                             mediaKind: 'image',
                             width: 100,
                             height: 100,
                             sizeBytes: 10_000,
-                        },
-                        target: {
-                            kind: 'region',
-                            rect: { x: 0, y: 0, width: 100, height: 100 },
                         },
                     }),
                 },

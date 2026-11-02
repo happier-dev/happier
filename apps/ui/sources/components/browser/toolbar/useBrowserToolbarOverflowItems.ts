@@ -61,7 +61,7 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                 id: 'capture-annotation',
                 iconName: 'check',
                 label: t('browserContext.composer.attachAnnotation'),
-                onPress: () => { void annotation.capture(); },
+                onPress: () => { void annotation.attachDraft(); },
                 disabled: annotation.contextButtonDisabled || !annotation.draftAvailable,
                 disabledReason: annotation.contextButtonDisabled
                     ? annotation.contextDisabledReason

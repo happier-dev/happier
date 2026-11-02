@@ -10,7 +10,7 @@ import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 const PREVIEW_CACHE_DIRECTORY_NAME = 'happier-session-file-previews';
 export const PREVIEW_TOO_LARGE_ERROR = 'File exceeds the preview size limit';
 
-export type SessionFilePreviewSource =
+export type SessionFilePreviewSource = (
     | Readonly<{
         kind: 'object-url';
         uri: string;
@@ -24,7 +24,7 @@ export type SessionFilePreviewSource =
         delete: () => Promise<void>;
         byteLength: number;
         mimeType: string;
-    }>;
+    }>) & Readonly<{ bytes?: Uint8Array }>;
 
 export type CreateSessionFilePreviewSourceResult =
     | Readonly<{ ok: true; source: SessionFilePreviewSource }>
@@ -61,6 +61,7 @@ async function createPreviewSource(input: Readonly<{
     signal?: AbortSignal | null;
     onProgress?: PreviewLoadProgressListener | null;
     load: PreviewByteLoader;
+    retainBytes?: boolean;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
     const viewer = resolveFileViewerKind({ path: input.filePath, mimeType: input.mimeType });
     const mimeType = viewer.mimeType;
@@ -87,7 +88,7 @@ async function createPreviewSource(input: Readonly<{
     let byteLength = 0;
     const chunks: Uint8Array[] = [];
     let nativeSink: NativeCacheFileSink | null = null;
-    const shouldCollectChunks = Platform.OS === 'web';
+    const shouldCollectChunks = Platform.OS === 'web' || input.retainBytes === true;
 
     const cleanupNativeSink = async () => {
         if (!nativeSink) return;
@@ -151,6 +152,16 @@ async function createPreviewSource(input: Readonly<{
             return { ok: false, error: 'Preview request cancelled' };
         }
 
+        let retainedBytes: Uint8Array | undefined;
+        if (input.retainBytes) {
+            retainedBytes = new Uint8Array(byteLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+                retainedBytes.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+        }
+
         if (Platform.OS === 'web') {
             const blob = new Blob(chunks as BlobPart[], { type: mimeType });
             chunks.length = 0;
@@ -162,6 +173,7 @@ async function createPreviewSource(input: Readonly<{
                     uri,
                     byteLength,
                     mimeType,
+                    ...(retainedBytes ? { bytes: retainedBytes } : {}),
                     revoke: () => {
                         URL.revokeObjectURL(uri);
                     },
@@ -184,6 +196,7 @@ async function createPreviewSource(input: Readonly<{
                 uri: completedSink.fileUri,
                 byteLength,
                 mimeType,
+                ...(retainedBytes ? { bytes: retainedBytes } : {}),
                 delete: async () => {
                     await completedSink.cleanup();
                 },
@@ -205,6 +218,8 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     expectedSizeBytes?: number | null;
     signal?: AbortSignal | null;
     onProgress?: PreviewLoadProgressListener | null;
+    /** A browser edit retains the original locally without downloading it again at Attach. */
+    retainBytes?: boolean;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
     // Callers own their preview budget; every source also shares the web buffering budget.
     return await createPreviewSource({

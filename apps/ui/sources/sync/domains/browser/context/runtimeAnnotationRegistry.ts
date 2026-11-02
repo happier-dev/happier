@@ -1,4 +1,5 @@
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import type { BrowserContextAnnotationAdapter } from './runtimeAnnotationExecutor';
 
@@ -15,6 +16,10 @@ type BrowserContextAnnotationRegistration = Readonly<{
  */
 const registrations = new Map<string, BrowserContextAnnotationRegistration>();
 
+function registrationKey(input: Readonly<{ browserSessionId: string; viewId: string; scope: ServerAccountScope }>): string {
+    return serverAccountScopedResourceKey(input.scope, browserViewKey(input));
+}
+
 /**
  * Registers the active in-app annotation adapter (the BrowserShell host that owns the live view +
  * capture provider + `BrowserContextState` `onStateChange`). The default runtime action executor
@@ -27,11 +32,12 @@ export function registerBrowserContextAnnotationAdapter(
     input: Readonly<{
         browserSessionId: string;
         viewId: string;
+        scope: ServerAccountScope;
         adapter: BrowserContextAnnotationAdapter;
     }>,
 ): () => void {
     const token = Symbol('browserContextAnnotationAdapter');
-    const key = browserViewKey(input);
+    const key = registrationKey(input);
     registrations.set(key, { token, adapter: input.adapter });
     return () => {
         // Token-checked: only clear the slot if this exact registration still owns it. A remount that
@@ -43,9 +49,9 @@ export function registerBrowserContextAnnotationAdapter(
 }
 
 export function readRegisteredBrowserContextAnnotationAdapter(
-    input: Readonly<{ browserSessionId: string; viewId: string }>,
+    input: Readonly<{ browserSessionId: string; viewId: string; scope: ServerAccountScope }>,
 ): BrowserContextAnnotationAdapter | null {
-    return registrations.get(browserViewKey(input))?.adapter ?? null;
+    return registrations.get(registrationKey(input))?.adapter ?? null;
 }
 
 export function clearBrowserContextAnnotationRegistryForTests(): void {

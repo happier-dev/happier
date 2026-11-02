@@ -44,6 +44,8 @@ export const TextLinkButton = React.memo(function TextLinkButton(
     expanded?: boolean;
     disabled?: boolean;
     testID?: string;
+    /** Lets a surface land keyboard focus on this link (a question's safe answer). */
+    controlRef?: HappierTextLinkButtonProps['controlRef'];
   }>,
 ) {
   const { theme } = useUnistyles();

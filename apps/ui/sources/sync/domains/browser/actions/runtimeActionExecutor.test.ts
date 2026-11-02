@@ -1094,16 +1094,66 @@ describe('browser runtime action executor', () => {
         const execute = realMod.createBrowserRuntimeActionExecutor({});
 
         await expect(execute(runtimeArgs({
-            actionId: 'browser.context.annotation.captureElement',
+            actionId: 'browser.context.annotation.attachDraft',
             input: {
                 browserSessionId: 'browser_session_1',
                 viewId: 'view_1',
-                target: { kind: 'element', selectorPath: 'main > button' },
+                navigationGeneration: 1,
             },
         }))).resolves.toMatchObject({
             ok: false,
             errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:browser:browser_context_annotation_unavailable',
         });
+    });
+    it('attaches a supplied picker result through its scoped mounted owner and preserves ordinary Machine capture', async () => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { createBrowserContextAnnotationAdapter } = await import('../context/annotationAdapter');
+        const { createBrowserContextState } = await import('../context/state');
+        const { registerBrowserContextAnnotationAdapter, readRegisteredBrowserContextAnnotationAdapter } = await import('../context/runtimeAnnotationRegistry');
+        const scope = { serverId: 'picker_home', accountId: 'picker_account' };
+        const view = openViewState({ adapterKind: 'localPreview', engineKind: 'webIframe',
+            target: localPreviewTarget, currentUrl: 'https://preview.example/page', capabilities: {
+                ...localPreviewCapabilities, contextKinds: ['browserSelectedElement'],
+                diagnosticsFidelityByFamily: { elements: 'injectedPage' },
+            } }).viewsById.view_1!;
+        let state = createBrowserContextState();
+        let publications = 0;
+        const adapter = createBrowserContextAnnotationAdapter({
+            resolveBinding: () => ({ state, view, browserContextEnabled: true, browserDiagnosticsEnabled: true,
+                contextCapabilities: { enabled: true, available: true, supportedContextKinds: ['browserSelectedElement'],
+                    supportedAdapterKinds: ['localPreview'], screenshot: { supported: false, requiresAttachmentUploads: true },
+                    text: { maxSelectionChars: 2048, maxSummaryChars: 8192 }, disabledReasons: [], policyDeniedReasons: [] } }),
+            onStateChange: next => { state = next; publications += 1; },
+        });
+        const unregister = registerBrowserContextAnnotationAdapter({ scope,
+            browserSessionId: view.browserSessionId, viewId: view.viewId, adapter });
+        const machineResult = { ok: false, errorCode: 'permission_denied', error: 'permission_denied' } as const;
+        const executeOnMachine = vi.fn(async () => machineResult);
+        const execute = createBrowserRuntimeActionExecutor({ resolveAnnotation: readRegisteredBrowserContextAnnotationAdapter, executeOnMachine });
+        const pickerResult = { v: 1 as const, pickerRequestId: 'picker_1', viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration, tier: 'injectedPage' as const, status: 'selected' as const,
+            audited: true, selectorPath: '#submit', accessibleName: 'Submit', componentName: 'Checkout',
+            sourceLocation: { file: 'src/Checkout.tsx', line: 24, column: 8 } };
+        const input = { browserSessionId: view.browserSessionId, viewId: view.viewId, pickerResult };
+        const context = { surface: 'agent' as const, serverId: scope.serverId, runtimeAccountId: scope.accountId,
+            externalActionTarget: { kind: 'machine' as const, machineId: 'machine_1' } };
+        try {
+            expect(await execute({ actionId: 'browser.context.captureSelectedElement', input, context })).toMatchObject({
+                kind: 'browserSelectedElement', selectorPath: '#submit', componentName: 'Checkout', sourceLocation: pickerResult.sourceLocation,
+            });
+            expect(state.attachmentOrder).toHaveLength(1);
+            expect(publications).toBe(1);
+            expect(executeOnMachine).not.toHaveBeenCalled();
+            expect(await execute({ actionId: 'browser.context.captureSelectedElement', input,
+                context: { ...context, runtimeAccountId: 'other_account' } })).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+            expect(await execute({ actionId: 'browser.context.captureSelectedElement',
+                input: { ...input, pickerResult: { ...pickerResult, navigationGeneration: view.navigationGeneration + 1 } }, context }))
+                .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+            expect(publications).toBe(1);
+            expect(executeOnMachine).not.toHaveBeenCalled();
+            expect(await execute({ actionId: 'browser.context.captureSelectedElement',
+                input: { browserSessionId: view.browserSessionId, viewId: view.viewId }, context })).toEqual(machineResult);
+        } finally { unregister(); }
     });
 });

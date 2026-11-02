@@ -1,4 +1,4 @@
-import { buildBrowserContextAnnotationStructuredBlock } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
+import { buildBrowserContextAnnotationStructuredBlockV2 } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
 import { BrowserContextAttachmentV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { classifyBrowserDiagnosticFieldForDestination } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 import type { BrowserContextAttachmentV1, BrowserContextItemV1 } from '@happier-dev/protocol';
@@ -21,9 +21,9 @@ export type BrowserContextAttachFailure = Readonly<{
 export type BrowserContextAttachSuccess = Readonly<{
   ok: true;
   attachment: BrowserContextAttachmentV1;
-  /** Every contextId in the group this single attachment card represents. */
+  /** The single context item represented by this attachment. */
   attachedContextIds: readonly string[];
-  /** Distinct reference-only media ids referenced by the group (one per annotation crop). */
+  /** The flattened annotation image or screenshot reference. */
   mediaIds: readonly string[];
 }>;
 
@@ -69,81 +69,46 @@ export function isBrowserContextItemAgentEgressSafe(item: BrowserContextItemV1):
 }
 
 function mediaIdOf(item: BrowserContextItemV1): string | undefined {
-  if (item.kind === 'browserAnnotation' || item.kind === 'browserScreenshot') {
-    return item.media.mediaId;
-  }
+  if (item.kind === 'browserAnnotation') return item.imageRef.mediaId;
+  if (item.kind === 'browserScreenshot') return item.media.mediaId;
   return undefined;
 }
 
-/**
- * ANNO-4b attach service. Groups by `annotationId` so a multi-target annotation attaches as exactly
- * ONE composer/agent card (never one per target), passes the group through the agnostic egress
- * chokepoint, and references the shared reference-only `mediaId` (the bytes are already persisted via
- * `recording/sessionMediaWriter` at capture time — attach never inlines bytes). Atomic clear releases
- * the shared `mediaId` once.
- */
+/** Attach one captured item through the existing egress owner. Annotation pixels use the composer path. */
 export function createBrowserContextAttachService(input: Readonly<{
   store: BrowserContextItemStore;
 }>): BrowserContextAttachService {
-  function resolveGroup(selector: Readonly<{ annotationId?: string; contextId?: string }>): readonly BrowserContextItemV1[] {
-    if (selector.annotationId) return input.store.group(selector.annotationId);
-    if (selector.contextId) {
-      const annotationId = input.store.annotationIdForContext(selector.contextId);
-      if (annotationId) return input.store.group(annotationId);
-      const item = input.store.item(selector.contextId);
-      return item ? [item] : [];
-    }
-    return [];
-  }
-
   return {
     attach(request) {
       if (!request.annotationId && !request.contextId) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
-      const group = resolveGroup(request);
-      if (group.length === 0) {
-        return disabled('browser_context_attach_group_missing');
-      }
-      const egressSafe = group.filter(isBrowserContextItemAgentEgressSafe);
-      if (egressSafe.length === 0) {
-        // Every item in the group is owner-only full fidelity → refused, never leaked.
-        return disabled('browser_context_attach_owner_only');
-      }
-      const representative = egressSafe[0];
-      const groupKey = representative.kind === 'browserAnnotation'
-        ? representative.annotationId
-        : representative.contextId;
-      const mediaIds = [
-        ...new Set(egressSafe.map(mediaIdOf).filter((id): id is string => id !== undefined)),
-      ];
-      const structuredBlock = buildBrowserContextAnnotationStructuredBlock(egressSafe);
+      const item = request.annotationId
+        ? input.store.annotation(request.annotationId)
+        : request.contextId ? input.store.item(request.contextId) : undefined;
+      if (!item) return disabled('browser_context_item_missing');
+      if (!isBrowserContextItemAgentEgressSafe(item)) return disabled('browser_context_attach_owner_only');
+      const key = item.kind === 'browserAnnotation' ? item.annotationId : item.contextId;
+      const structuredBlock = item.kind === 'browserAnnotation'
+        ? buildBrowserContextAnnotationStructuredBlockV2(item)
+        : undefined;
       const attachment = BrowserContextAttachmentV1Schema.parse({
         v: 1,
-        attachmentId: `browser_context_attachment:${groupKey}`,
-        contextId: representative.contextId,
-        sourceViewId: representative.sourceViewId,
-        capturedNavigationGeneration: representative.navigationGeneration,
-        currentNavigationGeneration: representative.navigationGeneration,
+        attachmentId: `browser_context_attachment:${key}`,
+        contextId: item.contextId,
+        sourceViewId: item.sourceViewId,
+        capturedNavigationGeneration: item.navigationGeneration,
+        currentNavigationGeneration: item.navigationGeneration,
         state: 'available',
         requiresReconfirmBeforeSend: false,
         ...(structuredBlock ? { structuredBlock } : {}),
       });
-      return {
-        ok: true,
-        attachment,
-        attachedContextIds: egressSafe.map((item) => item.contextId),
-        mediaIds,
-      };
+      const mediaId = mediaIdOf(item);
+      return { ok: true, attachment, attachedContextIds: [item.contextId], mediaIds: mediaId ? [mediaId] : [] };
     },
-
     clear(request) {
       const result = input.store.clear(request);
-      return {
-        ok: true,
-        clearedItems: result.removedItems,
-        releasedMediaIds: result.releasedMediaIds,
-      };
+      return { ok: true, clearedItems: result.removedItems, releasedMediaIds: result.releasedMediaIds };
     },
   };
 }

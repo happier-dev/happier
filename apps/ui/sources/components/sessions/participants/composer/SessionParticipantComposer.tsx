@@ -67,7 +67,7 @@ import {
 } from '@/components/sessions/composer/composerSubmissionCoordinator';
 import {
     applyComposerPresentationTransaction,
-    insertMountedComposerAttachmentReferences,
+    insertComposerAttachmentReferences,
     removeMountedComposerAttachmentReferences,
     notifyComposerPresentationTargetChanged,
     readComposerPresentationSnapshot,
@@ -420,8 +420,8 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         ...(props.sessionId ? { eagerUpload: { sessionId: props.sessionId, config: attachmentsUploadConfig } } : {}),
         onPickedDrafts: (drafts) => {
             if (!composerAccountLifetime?.isCurrent()) return;
-            insertMountedComposerAttachmentReferences({ ref: composerRef,
-                scope: composerAccountLifetime.scope, drafts });
+            insertComposerAttachmentReferences({ ref: composerRef,
+                scope: composerAccountLifetime.scope, items: (drafts).map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             if (!composerAccountLifetime?.isCurrent()) return;

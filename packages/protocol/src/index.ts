@@ -9938,3 +9938,5 @@ export * from './artifacts/artifactMutationHttpV1.js';
 export { type PluginCollectionListExtensionV1 } from './plugins/contributions/ui/v2.js';
 export { type DeploymentRestartInputV1 } from './deployments/deploymentRestartV1.js';
 export { type HealthCheckKindContributionV1 } from './plugins/contributions/healthCheckKinds.js';
+
+export * from './sessions/media/imageMarksV1.js';

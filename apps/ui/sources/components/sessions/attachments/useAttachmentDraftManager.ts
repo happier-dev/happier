@@ -1,38 +1,20 @@
+import { admitAttachmentDraftSources, startEagerAttachmentDraftUploads } from './attachmentDraftAdmission';
+import { projectAttachmentDraftToAgentInputAttachment, resolveAttachmentImagePresentation } from './attachmentDraftPresentation';
 import * as React from 'react';
 
 import type { AttachmentUploadSource, AddWebAttachmentsOptions } from '@/sync/domains/attachments/attachmentsUploadFileSource';
-import { describeAttachmentUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import type { PickedAttachment, AttachmentFilePickerHandle } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import type { AgentInputAttachment } from '@/components/sessions/agentInput/agentInputContracts';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { randomUUID } from '@/platform/randomUUID';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
-import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { removeSubmittedAttachmentDrafts, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
 import { getAttachmentDraftsSnapshotForKey, patchAttachmentDraftForKey, settleAttachmentDraftsForKey,
     subscribeAttachmentDraftsForKey, writeAttachmentDraftsForKey } from './attachmentDraftMemoryStore';
 import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import type { SessionAttachmentTransferContext } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
-
-function resolveSourceSizeBytes(source: AttachmentUploadSource): number | null {
-    if (source.kind === 'folder') return source.entries.reduce((total, entry) => total + (resolveSourceSizeBytes(entry.source) ?? 0), 0);
-    return describeAttachmentUploadFileSource(source).sizeBytes;
-}
-
-function resolveSourceName(source: AttachmentUploadSource): string {
-    return source.kind === 'folder' ? source.name : describeAttachmentUploadFileSource(source).name;
-}
-
-function resolveImageSourcePresentation(source: AttachmentUploadSource) {
-    if (source.kind === 'folder') return null;
-    const viewer = resolveFileViewerKind(source.kind === 'web'
-        ? { path: source.file.name, mimeType: source.file.type }
-        : { path: source.name, mimeType: source.mimeType, ...(source.kind === 'memory' ? { head: source.bytes } : {}) });
-    return viewer.kind === 'image' || viewer.kind === 'svg' ? viewer : null;
-}
 
 export function useAttachmentDraftManager(params: Readonly<{
     enabled: boolean;
@@ -132,21 +114,8 @@ export function useAttachmentDraftManager(params: Readonly<{
     }, [commitDrafts, memoryKey]);
 
     const startEagerUploads = React.useCallback((added: readonly AttachmentDraft[]) => {
-        const target = eagerUploadRef.current;
-        if (!target) return;
-        for (const draft of added) {
-            if (draft.source.kind !== 'folder' || draft.status !== 'pending' || draft.uploadedPath || eagerUploadsRef.current.has(draft.id)) continue;
-            const controller = new AbortController();
-            eagerUploadsRef.current.set(draft.id, controller);
-            void import('./uploadAttachmentDraftsToSession').then(({ uploadAttachmentDraftsToSession }) => uploadAttachmentDraftsToSession({
-                ...target, drafts: [draft], signal: controller.signal,
-                applyDraftPatch: (id, patch) => applyDraftPatch(id, patch, draft.source),
-            })).catch(() => {
-                // The upload owner has already projected the failure onto this draft.
-            }).finally(() => {
-                if (eagerUploadsRef.current.get(draft.id) === controller) eagerUploadsRef.current.delete(draft.id);
-            });
-        }
+        startEagerAttachmentDraftUploads({ drafts: added, target: eagerUploadRef.current,
+            activeUploads: eagerUploadsRef.current, applyDraftPatch });
     }, [applyDraftPatch]);
 
     React.useEffect(() => () => {
@@ -157,20 +126,7 @@ export function useAttachmentDraftManager(params: Readonly<{
     const addSources = React.useCallback((sources: readonly AttachmentUploadSource[]): readonly AttachmentDraft[] => {
         if (!params.enabled || !mounted.current || activeMemoryKey.current !== memoryKey || currentAdmission.current?.() === false) return [];
 
-        const next: AttachmentDraft[] = [];
-        let skippedOversizeCount = 0;
-        for (const source of sources) {
-            const files = source.kind === 'folder' ? source.entries.map(entry => entry.source) : [source];
-            if (files.some(file => (resolveSourceSizeBytes(file) ?? 0) > params.maxFileBytes)) {
-                skippedOversizeCount += 1;
-                continue;
-            }
-            next.push({
-                id: randomUUID(),
-                source,
-                status: 'pending',
-            });
-        }
+        const { drafts: next, skippedOversizeCount } = admitAttachmentDraftSources({ sources, maxFileBytes: params.maxFileBytes });
 
         if (skippedOversizeCount > 0) {
             Modal.alert(
@@ -249,7 +205,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         const urlApi = globalThis.URL;
         let changed = false;
 
-        const activeFiles = new Map(drafts.flatMap(draft => draft.source.kind === 'web' && resolveImageSourcePresentation(draft.source)
+        const activeFiles = new Map(drafts.flatMap(draft => draft.source.kind === 'web' && resolveAttachmentImagePresentation(draft.source)
             ? [[draft.id, draft.source.file] as const] : []));
         for (const [id, preview] of map) {
             // A draft can replace its source without changing identity. Only
@@ -276,35 +232,13 @@ export function useAttachmentDraftManager(params: Readonly<{
             setWebPreviewUrlsVersion((v) => v + 1);
         }
     }, [drafts]);
-
     const agentInputAttachments = React.useMemo<readonly AgentInputAttachment[]>(() => {
         void webPreviewUrlsVersion;
         const webUrls = webPreviewUrlsRef.current;
-
-        return drafts.map((d) => {
-            const name = resolveSourceName(d.source);
-            const presentation = resolveImageSourcePresentation(d.source);
-            const imagePreviewUri = presentation
-                ? (
-                    d.source.kind === 'native'
-                        ? d.source.uri
-                        : d.source.kind === 'memory'
-                            ? d.source.previewUri ?? null
-                            : (webUrls.get(d.id)?.url ?? null)
-                )
-                : null;
-
-            return {
-                key: d.id,
-                label: name,
-                attachmentType: d.source.kind === 'folder' ? 'folder' as const : 'file' as const,
-                status: d.status,
-                preview: imagePreviewUri && presentation ? { kind: 'image', uri: imagePreviewUri, mimeType: presentation.mimeType } : undefined,
-                uploadProgress: d.uploadProgress,
-                error: d.error,
-                onRemove: () => removeDraft(d.id),
-            };
-        });
+        return drafts.map(draft => projectAttachmentDraftToAgentInputAttachment(draft, {
+            webPreviewUri: webUrls.get(draft.id)?.url,
+            onRemove: () => removeDraft(draft.id),
+        }));
     }, [drafts, removeDraft, webPreviewUrlsVersion]);
 
     // Referential stability contract: memoized consumers (composer, transcript rows) receive

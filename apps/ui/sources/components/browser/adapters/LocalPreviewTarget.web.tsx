@@ -25,6 +25,7 @@ export function LocalPreviewTarget(props: Readonly<{
     view?: BrowserControlViewState;
     profileId?: string | null;
     bridge?: DesktopWebViewEngineBridge;
+    occlusionProbe?: () => boolean;
     lifecycleState?: BrowserSurfaceLifecycleState;
     navigationKey?: string;
     navigationCommand?: BrowserFrameNavigationCommand;
@@ -63,6 +64,7 @@ export function LocalPreviewTarget(props: Readonly<{
             profileId={props.profileId}
             testID={props.testID}
             bridge={props.bridge}
+            occlusionProbe={props.occlusionProbe}
             lifecycleState={props.lifecycleState}
             diagnostics={props.diagnostics}
             automation={props.automation}

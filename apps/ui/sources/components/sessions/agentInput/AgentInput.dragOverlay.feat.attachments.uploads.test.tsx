@@ -119,7 +119,7 @@ function PickerComposerHarness({ inputRef, onDrafts }: Readonly<{
     const selection = React.useRef({ start: 7, end: 7 });
     const intake = { enabled: true, maxFileBytes: 1024,
         onPickedDrafts: (drafts: readonly AttachmentDraft[]) => {
-            composerPresentation.insertMountedComposerAttachmentReferences({ ref: pickerComposerRef, scope: pickerScope, drafts });
+            composerPresentation.insertComposerAttachmentReferences({ ref: pickerComposerRef, scope: pickerScope, items: (drafts).map(draft => ({ draft })) });
         } };
     const attachments = useAttachmentDraftManager(intake);
     React.useEffect(() => { onDrafts(attachments.drafts); }, [attachments.drafts, onDrafts]);
