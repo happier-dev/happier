@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
@@ -1277,16 +1277,12 @@ test('extractArchivePayloadToDirectory rejects tar symlink smuggling outside the
 
 test('extractArchivePayloadToDirectory rejects standalone tar symlinks and hardlinks', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-links-'));
-  const payloadDir = join(rootDir, 'payload');
   try {
-    await mkdir(payloadDir, { recursive: true });
-    await writeFile(join(payloadDir, 'target'), 'payload', 'utf8');
-    await symlink('target', join(payloadDir, 'symlink'));
+    // Explicit link headers avoid tar.c's asynchronous hardlink writer race.
     const symlinkArchivePath = join(rootDir, 'symlink.tar.gz');
-    await tar.c(
-      { cwd: payloadDir, file: symlinkArchivePath, gzip: true, portable: true },
-      ['symlink'],
-    );
+    await writeFile(symlinkArchivePath, createTarGzip([
+      { name: 'symlink', type: '2', linkpath: 'target' },
+    ]));
     await assert.rejects(
       extractArchivePayloadToDirectory({
         archiveName: 'symlink.tar.gz',
@@ -1298,12 +1294,11 @@ test('extractArchivePayloadToDirectory rejects standalone tar symlinks and hardl
     assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
     await assert.rejects(stat(join(rootDir, 'extract-symlink')), { code: 'ENOENT' });
 
-    await link(join(payloadDir, 'target'), join(payloadDir, 'hardlink'));
     const hardlinkArchivePath = join(rootDir, 'hardlink.tar.gz');
-    await tar.c(
-      { cwd: payloadDir, file: hardlinkArchivePath, gzip: true, portable: true },
-      ['target', 'hardlink'],
-    );
+    await writeFile(hardlinkArchivePath, createTarGzip([
+      { name: 'target', contents: 'payload' },
+      { name: 'hardlink', type: '1', linkpath: 'target' },
+    ]));
     await assert.rejects(
       extractArchivePayloadToDirectory({
         archiveName: 'hardlink.tar.gz',
