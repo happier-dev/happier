@@ -1,9 +1,9 @@
 import type {
   PluginInvocationContext,
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { getPluginMachineExecutionRouting, type ActionsService } from '@happier-dev/plugin-sdk/actions';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -583,17 +583,17 @@ describe('Conversation binding resolution and creation', () => {
     );
   });
 
-  it('does not carry endpoint evidence across a replacement provider occurrence before principal resolution', async () => {
+  it('retains the selected endpoint proof and resolves principals through the current same-ID provider', async () => {
     const resolve = Reflect.get(management, 'resolveConversationBindingForInvocation');
     expect(resolve).toEqual(expect.any(Function));
     if (typeof resolve !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
-      if (action === endpointResolveAction) {
+      if (Reflect.get(action as object, 'identity').role === 'endpointResolve') {
         return { result: { kind: 'resolved', candidates: [endpointCandidate] }, executionOrigin };
       }
-      if (action === principalResolveAction) {
+      if (Reflect.get(action as object, 'identity').role === 'principalResolve') {
         return { result: { kind: 'resolved', candidates: [principalCandidate] }, executionOrigin };
       }
       throw new Error('Unexpected provider resolution Action.');
@@ -612,25 +612,24 @@ describe('Conversation binding resolution and creation', () => {
       collection,
       execute: vi.fn(),
       executeAdmittedTargetedOperationWithExecutionOrigin,
-      // Stable durable identity re-admits B, but the endpoint evidence was
-      // produced by A and therefore cannot cross the occurrence replacement.
+      // Stable durable identity re-admits B for the next operation, preserving
+      // the selected native endpoint rather than repeating its observation.
       targetedContributions: targetedContributionsFixture([
         providerContributionA,
         providerContributionA,
         providerContributionB,
       ]),
-    }))).resolves.toEqual({ kind: 'stale' });
+    }))).resolves.toEqual({ kind: 'principalCandidates', candidates: [principalCandidate] });
 
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledWith(
-      endpointResolveAction,
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls.map(([action]) => Reflect.get(action as object, 'identity')))
+      .toEqual([
+        endpointResolveAction.identity,
+        admittedProviderOperation('principalResolve', 'provider-occurrence-b').identity,
+      ]);
     expect(collection.batches).toEqual([]);
   });
 
-  it('does not persist a binding when the current provider occurrence changes during target verification', async () => {
+  it('preserves the selected audience after a same-ID provider replacement during target verification', async () => {
     const create = Reflect.get(management, 'createConversationBindingForInvocation');
     expect(create).toEqual(expect.any(Function));
     if (typeof create !== 'function') return;
@@ -646,10 +645,10 @@ describe('Conversation binding resolution and creation', () => {
       items: [],
     }));
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
-      if (action === endpointResolveAction) {
+      if (Reflect.get(action as object, 'identity').role === 'endpointResolve') {
         return { result: { kind: 'resolved', candidates: [endpointCandidate] }, executionOrigin };
       }
-      if (action === principalResolveAction) {
+      if (Reflect.get(action as object, 'identity').role === 'principalResolve') {
         return { result: { kind: 'resolved', candidates: [principalCandidate] }, executionOrigin };
       }
       throw new Error('Unexpected provider resolution Action.');
@@ -680,8 +679,8 @@ describe('Conversation binding resolution and creation', () => {
       collection,
       execute,
       executeAdmittedTargetedOperationWithExecutionOrigin,
-      // The first four contributor reads fence endpoint and principal effects;
-      // final persistence re-admits stable identity B but rejects A's evidence.
+      // The final persistence read re-admits B without repeating the completed
+      // native endpoint and principal observations.
       targetedContributions: targetedContributionsFixture([
         providerContributionA,
         providerContributionA,
@@ -689,10 +688,11 @@ describe('Conversation binding resolution and creation', () => {
         providerContributionA,
         providerContributionB,
       ]),
-    }))).resolves.toEqual({ kind: 'stale' });
+    }))).resolves.toMatchObject({ kind: 'created', binding: { endpoint: endpointCandidate, allowedPrincipalIds: ['person-1'] } });
 
     expect(execute).toHaveBeenCalledOnce();
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(collection.batches).toEqual([]);
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls.map(([action]) => Reflect.get(action as object, 'identity')))
+      .toEqual([endpointResolveAction.identity, principalResolveAction.identity]);
+    expect(collection.batches).toHaveLength(1);
   });
 });

@@ -201,10 +201,8 @@ import {
 } from './outwardDelivery.js';
 import {
   readCurrentProviderContributionForPersistedSelection,
-  readCurrentProviderContributionWitnessForPersistedSelection,
   readSelectedCurrentProviderContribution,
   readSessionPullRequestProviderSelection,
-  type CurrentProviderContributionWitness,
 } from './providerContributions.js';
 import { recommendConversationRecovery } from './recoveryRecommendation.js';
 
@@ -298,7 +296,7 @@ type ProviderConnectionSetup =
 type ConversationStorageContext = Pick<PluginInvocationContext, 'services' | 'signal'>;
 type ChannelStateCollection = ReturnType<PluginAccountStorageScope['collection']>;
 type ChannelStateBatchMutation = Parameters<ChannelStateCollection['batch']>[0][number];
-type BindingResolutionProvider = CurrentProviderContributionWitness;
+type BindingResolutionProvider = Awaited<ReturnType<typeof readCurrentProviderContributionForPersistedSelection>>;
 type ConversationBindingEndpointSelection = ConversationBindingCreateInputV1['endpointSelection'];
 type ConversationBindingResolutionUnavailable = Extract<
   ConversationBindingResolveResultV1,
@@ -324,23 +322,17 @@ type BindingResolutionTerminal = Exclude<
 type BindingEndpointCandidates = Readonly<{
   kind: 'endpointCandidates';
   candidates: readonly ConversationResolvedEndpointV1[];
-  witness: BindingResolutionProvider;
   sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
 type BindingEndpointResolution = BindingResolutionTerminal | BindingEndpointCandidates;
 type BindingPrincipalCandidates = Readonly<{
   kind: 'principalCandidates';
   candidates: readonly ConversationResolvedPrincipalV1[];
-  witness: BindingResolutionProvider;
 }>;
 type BindingPrincipalResolution = BindingResolutionTerminal | BindingPrincipalCandidates;
-type BindingResolutionCurrent = BindingResolutionConnection & Readonly<{
-  provider: BindingResolutionProvider;
-}>;
 type BindingEndpointSelectionResolution = BindingResolutionTerminal | Readonly<{
   kind: 'endpointSelected';
   endpoint: ConversationResolvedEndpointV1;
-  witness: BindingResolutionProvider;
   /** The provider-authenticated shared-endpoint delivery truth for this connection. */
   sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
@@ -348,7 +340,6 @@ type BindingAudienceResolution = BindingResolutionTerminal | Readonly<{
   kind: 'ready';
   endpoint: ConversationResolvedEndpointV1;
   allowedPrincipalIds: readonly string[];
-  witness: BindingResolutionProvider;
   /** The provider-authenticated shared-endpoint delivery truth for this connection. */
   sharedEndpointInputModes?: readonly ConversationBindingInputModeV1[];
 }>;
@@ -429,7 +420,7 @@ async function readCurrentBindingResolutionProvider(input: Readonly<{
   connection: ConversationConnectionUpdateRow;
 }>): Promise<BindingResolutionProvider | null> {
   try {
-    return await readCurrentProviderContributionWitnessForPersistedSelection({
+    return await readCurrentProviderContributionForPersistedSelection({
       context: {
         targetedContributions: input.context.services.targetedContributions,
         signal: input.context.signal,
@@ -448,8 +439,8 @@ function readBindingResolutionAction(
   role: 'endpointResolve' | 'principalResolve',
 ): AdmittedTargetedOperationExecutionHandle | undefined {
   return role === 'endpointResolve'
-    ? provider.contribution.operations.endpointResolve
-    : provider.contribution.operations.principalResolve;
+    ? provider.operations.endpointResolve
+    : provider.operations.principalResolve;
 }
 
 function areAdmittedTargetedOperationIdentitiesEqual(
@@ -465,32 +456,6 @@ function areAdmittedTargetedOperationIdentitiesEqual(
     && left.identity.contributor.contributionId === right.identity.contributor.contributionId
     && left.identity.contributor.occurrenceId === right.identity.contributor.occurrenceId
     && left.identity.role === right.identity.role;
-}
-
-function isSameBindingResolutionProvider(input: Readonly<{
-  before: BindingResolutionProvider;
-  after: BindingResolutionProvider;
-}>): boolean {
-  return isSameCurrentProviderContributionWitnessIdentity(input)
-    && areAdmittedTargetedOperationIdentitiesEqual(
-      readBindingResolutionAction(input.before, 'endpointResolve'),
-      readBindingResolutionAction(input.after, 'endpointResolve'),
-    )
-    && areAdmittedTargetedOperationIdentitiesEqual(
-      readBindingResolutionAction(input.before, 'principalResolve'),
-      readBindingResolutionAction(input.after, 'principalResolve'),
-    );
-}
-
-function isSameCurrentProviderContributionWitnessIdentity(input: Readonly<{
-  before: CurrentProviderContributionWitness;
-  after: CurrentProviderContributionWitness;
-}>): boolean {
-  return input.before.targetOccurrenceId === input.after.targetOccurrenceId
-    && input.before.contribution.contributor.pluginId === input.after.contribution.contributor.pluginId
-    && input.before.contribution.contributor.contributionId === input.after.contribution.contributor.contributionId
-    && input.before.contribution.contributor.occurrenceId
-      === input.after.contribution.contributor.occurrenceId;
 }
 
 function readEndpointResolveRequest(input: Readonly<{
@@ -584,8 +549,7 @@ async function rereadBindingResolutionAfterProviderEffect(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
   context: PluginInvocationContext;
-  providerBefore: BindingResolutionProvider;
-}>): Promise<BindingResolutionCurrent | ConversationBindingResolutionUnavailable | ConversationBindingResolutionStale> {
+}>): Promise<BindingResolutionConnectionRead> {
   const connectionRead = await readCurrentBindingResolutionConnection({
     collection: input.collection,
     connectionId: input.connectionId,
@@ -598,11 +562,7 @@ async function rereadBindingResolutionAfterProviderEffect(input: Readonly<{
     connection: connectionRead.connection,
   });
   if (providerAfter === null) return bindingResolutionUnavailable('providerUnavailable');
-  if (!isSameBindingResolutionProvider({
-    before: input.providerBefore,
-    after: providerAfter,
-  })) return bindingResolutionStale();
-  return { ...connectionRead, provider: providerAfter };
+  return connectionRead;
 }
 
 /** Executes the current endpoint resolver through the connection's exact admitted origin. */
@@ -628,46 +588,56 @@ async function resolveBindingEndpointCandidates(input: Readonly<{
   });
   if (provider === null) return bindingResolutionUnavailable('providerUnavailable');
   const endpointResolve = readBindingResolutionAction(provider, 'endpointResolve');
-  if (endpointResolve === undefined) return bindingResolutionUnavailable('endpointResolveUnsupported');
-
-  const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
-    endpointResolve,
-    readEndpointResolveRequest({
-      connectionId: input.connectionId,
-      connection: connectionRead.connection,
-      query: input.query,
-      kinds: input.kinds,
-    }),
-    {
-      signal: input.context.signal,
-      expectedExecutionRouting: getConversationConnectionExecutionRouting(connectionRead.connection.transportOrigin, connectionRead.connection.providerPluginId),
-    },
-  );
-  assertNotAborted(input.context.signal);
-
+  const resolution = await resolveBindingEndpointCandidatesForConnection({
+    ...input, connection: connectionRead.connection, endpointResolve,
+  });
+  if (resolution.kind === 'unavailable') return resolution;
   const reread = await rereadBindingResolutionAfterProviderEffect({
     collection,
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
     context: input.context,
-    providerBefore: provider,
   });
-  if (reread.kind !== 'current') return reread;
+  return reread.kind === 'current' ? resolution : reread;
+}
+
+/** Resolves principals only after the caller's endpoint selection is freshly re-proven. */
+async function resolveBindingEndpointCandidatesForConnection(input: Readonly<{
+  connectionId: string;
+  connection: ConversationConnectionUpdateRow;
+  endpointResolve: AdmittedTargetedOperationExecutionHandle | undefined;
+  query: string;
+  kinds: ConversationBindingEndpointSelection['kinds'];
+  context: PluginInvocationContext;
+}>): Promise<BindingEndpointResolution> {
+  if (input.endpointResolve === undefined) return bindingResolutionUnavailable('endpointResolveUnsupported');
+  const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
+    input.endpointResolve,
+    readEndpointResolveRequest({
+      connectionId: input.connectionId,
+      connection: input.connection,
+      query: input.query,
+      kinds: input.kinds,
+    }),
+    {
+      signal: input.context.signal,
+      expectedExecutionRouting: getConversationConnectionExecutionRouting(input.connection.transportOrigin, input.connection.providerPluginId),
+    },
+  );
+  assertNotAborted(input.context.signal);
 
   const result = readEndpointResolveResult(execution.result);
   if (result.kind === 'notReady') return result;
   const sharedEndpointInputModes = readConversationConnectionSharedEndpointInputModes(
-    reread.connection.payload,
+    input.connection.payload,
   );
   return {
     kind: 'endpointCandidates',
     candidates: result.candidates,
-    witness: reread.provider,
     ...(sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes }),
   };
 }
 
-/** Resolves principals only after the caller's endpoint selection is freshly re-proven. */
 async function resolveBindingPrincipalCandidates(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
@@ -687,7 +657,6 @@ async function resolveBindingPrincipalCandidates(input: Readonly<{
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
     endpoint: endpointResolution.endpoint,
-    witness: endpointResolution.witness,
     query: input.query,
     context: input.context,
   });
@@ -698,7 +667,6 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
   endpoint: ConversationResolvedEndpointV1;
-  witness: BindingResolutionProvider;
   query: string;
   context: PluginInvocationContext;
 }>): Promise<BindingPrincipalResolution> {
@@ -715,40 +683,18 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
     connection: connectionRead.connection,
   });
   if (provider === null) return bindingResolutionUnavailable('providerUnavailable');
-  if (!isSameBindingResolutionProvider({ before: input.witness, after: provider })) {
-    return bindingResolutionStale();
-  }
   const principalResolve = readBindingResolutionAction(provider, 'principalResolve');
-  if (principalResolve === undefined) return bindingResolutionUnavailable('principalResolveUnsupported');
-
-  const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
-    principalResolve,
-    readPrincipalResolveRequest({
-      connectionId: input.connectionId,
-      connection: connectionRead.connection,
-      endpoint: input.endpoint,
-      query: input.query,
-    }),
-    {
-      signal: input.context.signal,
-      expectedExecutionRouting: getConversationConnectionExecutionRouting(connectionRead.connection.transportOrigin, connectionRead.connection.providerPluginId),
-    },
-  );
-  assertNotAborted(input.context.signal);
-
+  const resolution = await resolveBindingPrincipalCandidatesForConnection({
+    ...input, connection: connectionRead.connection, principalResolve,
+  });
+  if (resolution.kind === 'unavailable') return resolution;
   const reread = await rereadBindingResolutionAfterProviderEffect({
     collection,
     connectionId: input.connectionId,
     expectedConnectionRevision: input.expectedConnectionRevision,
     context: input.context,
-    providerBefore: provider,
   });
-  if (reread.kind !== 'current') return reread;
-
-  const result = readPrincipalResolveResult(execution.result);
-  return result.kind === 'notReady'
-    ? result
-    : { kind: 'principalCandidates', candidates: result.candidates, witness: reread.provider };
+  return reread.kind === 'current' ? resolution : reread;
 }
 
 /**
@@ -760,6 +706,36 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
  * through this one resolver; the operation only names which error domain a
  * rejected selection belongs to.
  */
+async function resolveBindingPrincipalCandidatesForConnection(input: Readonly<{
+  connectionId: string;
+  connection: ConversationConnectionUpdateRow;
+  principalResolve: AdmittedTargetedOperationExecutionHandle | undefined;
+  endpoint: ConversationResolvedEndpointV1;
+  query: string;
+  context: PluginInvocationContext;
+}>): Promise<BindingPrincipalResolution> {
+  if (input.principalResolve === undefined) return bindingResolutionUnavailable('principalResolveUnsupported');
+  const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
+    input.principalResolve,
+    readPrincipalResolveRequest({
+      connectionId: input.connectionId,
+      connection: input.connection,
+      endpoint: input.endpoint,
+      query: input.query,
+    }),
+    {
+      signal: input.context.signal,
+      expectedExecutionRouting: getConversationConnectionExecutionRouting(input.connection.transportOrigin, input.connection.providerPluginId),
+    },
+  );
+  assertNotAborted(input.context.signal);
+
+  const result = readPrincipalResolveResult(execution.result);
+  return result.kind === 'notReady'
+    ? result
+    : { kind: 'principalCandidates', candidates: result.candidates };
+}
+
 async function resolveBindingEndpointSelection(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
@@ -781,7 +757,6 @@ async function resolveBindingEndpointSelection(input: Readonly<{
   return {
     kind: 'endpointSelected',
     endpoint,
-    witness: endpointResolution.witness,
     ...(endpointResolution.sharedEndpointInputModes === undefined
       ? {}
       : { sharedEndpointInputModes: endpointResolution.sharedEndpointInputModes }),
@@ -811,7 +786,6 @@ async function resolveBindingAudienceSelection(input: Readonly<{
   const endpoint = endpointResolution.endpoint;
 
   const resolutions = new Map<string, Extract<BindingPrincipalResolution, { kind: 'principalCandidates' }>>();
-  let witness = endpointResolution.witness;
   const allowedPrincipalIds: string[] = [];
   for (const selection of input.principalSelection.selected) {
     const query = selection.query ?? input.principalSelection.query;
@@ -821,14 +795,12 @@ async function resolveBindingAudienceSelection(input: Readonly<{
         connectionId: input.connectionId,
         expectedConnectionRevision: input.expectedConnectionRevision,
         endpoint,
-        witness,
         query,
         context: input.context,
       });
       if (resolution.kind !== 'principalCandidates') return resolution;
       principalResolution = resolution;
       resolutions.set(query, resolution);
-      witness = resolution.witness;
     }
     const principal = principalResolution.candidates.find((candidate) => (
       candidate.id === selection.id && candidate.kind === selection.kind
@@ -840,7 +812,6 @@ async function resolveBindingAudienceSelection(input: Readonly<{
     kind: 'ready',
     endpoint,
     allowedPrincipalIds,
-    witness,
     ...(endpointResolution.sharedEndpointInputModes === undefined
       ? {}
       : { sharedEndpointInputModes: endpointResolution.sharedEndpointInputModes }),
@@ -1794,8 +1765,7 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
           endpointSelection: createInput.proofEndpointSelection,
           context,
         });
-        if (proof.kind !== 'endpointSelected'
-          || !isSameBindingResolutionProvider({ before: destination.witness, after: proof.witness })) {
+        if (proof.kind !== 'endpointSelected') {
           throw pluginError(
             'channels_pairing_proof_endpoint_unavailable',
             'The proof location must resolve on the same current connection and provider as the destination.',
@@ -2898,7 +2868,7 @@ export async function retestConversationConnectionForInvocation(
       'Connection retest target has an invalid persisted transport.',
     );
   }
-  const providerWitness = await readCurrentProviderContributionWitnessForPersistedSelection({
+  const provider = await readCurrentProviderContributionForPersistedSelection({
     context: {
       targetedContributions: context.services.targetedContributions,
       signal: context.signal,
@@ -2906,7 +2876,6 @@ export async function retestConversationConnectionForInvocation(
     providerPluginId: current.providerPluginId,
     providerContributionSelection: current.providerContributionSelection,
   });
-  const provider = providerWitness.contribution;
   // `connectionTest` is a `required: true` role on the Channels provider point,
   // so an admitted contribution always carries it; there is no absent case to
   // branch on here.
@@ -2950,7 +2919,6 @@ export async function retestConversationConnectionForInvocation(
       collection,
       request,
       context,
-      providerBefore: providerWitness,
     });
     return testResult;
   }
@@ -2969,7 +2937,6 @@ export async function retestConversationConnectionForInvocation(
       collection,
       request,
       context,
-      providerBefore: providerWitness,
     });
     throw pluginError(
       'channels_connection_test_identity_mismatch',
@@ -2980,10 +2947,10 @@ export async function retestConversationConnectionForInvocation(
   // recommendation. Re-observe those through the same safe setup-result owner
   // used by create/transfer, pinned to this saved transport and credential.
   // No identity, configuration, transport, or user-selected freshness is replaced.
-  await rereadConversationConnectionRetestAuthority({ collection, request, context, providerBefore: providerWitness });
+  const beforeSetup = await rereadConversationConnectionRetestAuthority({ collection, request, context });
   const prepared = await runProviderSetup({
     context,
-    provider: providerFromSelectedContribution(provider),
+    provider: providerFromSelectedContribution(beforeSetup.provider),
     providerSetupInput: current.providerSetupInput,
     credentialRef: testRequest.credentialRef,
     expectedExecutionRouting: getConversationConnectionExecutionRouting(current.transportOrigin, current.providerPluginId),
@@ -3011,7 +2978,6 @@ export async function retestConversationConnectionForInvocation(
     collection,
     request,
     context,
-    providerBefore: providerWitness,
   });
   const readinessFact: Parameters<
     typeof recordConversationConnectionProviderReadiness
@@ -3071,10 +3037,10 @@ async function rereadConversationConnectionRetestAuthority(input: Readonly<{
   collection: ChannelStateCollection;
   request: ConversationConnectionRetestInputV1;
   context: PluginInvocationContext;
-  providerBefore: CurrentProviderContributionWitness;
 }>): Promise<Readonly<{
   row: StateRow;
   current: ConversationConnectionUpdateRow;
+  provider: BindingResolutionProvider;
 }>> {
   const row = await input.collection.get(input.request.connectionId, {
     signal: input.context.signal,
@@ -3094,9 +3060,9 @@ async function rereadConversationConnectionRetestAuthority(input: Readonly<{
     || !current.lifecycle.enabled) {
     throw conversationConnectionRetestConflict();
   }
-  let providerAfter: CurrentProviderContributionWitness;
+  let providerAfter: BindingResolutionProvider;
   try {
-    providerAfter = await readCurrentProviderContributionWitnessForPersistedSelection({
+    providerAfter = await readCurrentProviderContributionForPersistedSelection({
       context: {
         targetedContributions: input.context.services.targetedContributions,
         signal: input.context.signal,
@@ -3108,19 +3074,7 @@ async function rereadConversationConnectionRetestAuthority(input: Readonly<{
     if (input.context.signal.aborted) throw cause;
     throw conversationConnectionRetestConflict();
   }
-  if (!isSameCurrentProviderContributionWitnessIdentity({
-    before: input.providerBefore,
-    after: providerAfter,
-  }) || !areAdmittedTargetedOperationIdentitiesEqual(
-    input.providerBefore.contribution.operations.connectionTest,
-    providerAfter.contribution.operations.connectionTest,
-  ) || !areAdmittedTargetedOperationIdentitiesEqual(
-    input.providerBefore.contribution.operations.setup,
-    providerAfter.contribution.operations.setup,
-  )) {
-    throw conversationConnectionRetestConflict();
-  }
-  return { row, current };
+  return { row, current, provider: providerAfter };
 }
 
 function conversationConnectionRetestConflict(): PluginError {
@@ -4662,6 +4616,14 @@ export async function createConversationBindingForInvocation(
     context,
   });
   if (audience.kind !== 'ready') return audience;
+  return await createConversationBindingWithAudience(createInput, audience, context);
+}
+
+async function createConversationBindingWithAudience(
+  createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection'>,
+  audience: Extract<BindingAudienceResolution, { kind: 'ready' }>,
+  context: PluginInvocationContext,
+): Promise<ConversationBindingCreateResult> {
   const { endpoint, allowedPrincipalIds } = audience;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   // The binding identity is minted before verification so the Automation owner
@@ -4692,8 +4654,6 @@ export async function createConversationBindingForInvocation(
         if (scopeRevisionAdvances || (createInput.enabled !== undefined && createInput.enabled !== current.binding.enabled)) {
           const updated = await updateConversationBindingForInvocation({
             bindingId: newBindingId, expectedRevision: retained.revision,
-            expectedConnectionRevision: createInput.expectedConnectionRevision,
-            endpointSelection: createInput.endpointSelection, principalSelection: createInput.principalSelection,
             target: createInput.target, enabled: createInput.enabled ?? current.binding.enabled,
           }, context);
           if (!('bindingId' in updated)) return updated;
@@ -4703,7 +4663,7 @@ export async function createConversationBindingForInvocation(
         }
         const target = await resolveBindingTargetForPersistence(createInput.target, context);
         if (target.kind === 'notVerified') return target;
-        const currentness = await rereadBindingResolutionAfterProviderEffect({ collection, connectionId: createInput.connectionId, expectedConnectionRevision: createInput.expectedConnectionRevision, context, providerBefore: audience.witness });
+        const currentness = await rereadBindingResolutionAfterProviderEffect({ collection, connectionId: createInput.connectionId, expectedConnectionRevision: createInput.expectedConnectionRevision, context });
         if (currentness.kind !== 'current') return currentness;
         return { kind: 'created', binding: current.binding };
       }
@@ -4738,15 +4698,13 @@ export async function createConversationBindingForInvocation(
   if (createInput.target.kind === 'automation') {
     const target = await resolveBindingTargetForPersistence(createInput.target, context, allowedPrincipalIds);
     if (target.kind === 'notVerified') return target;
-    // The Automation verifier is an external boundary. Reuse the incumbent
-    // resolver witness check so its result cannot persist after either the
-    // connection or selected provider contribution ceases to be current.
+    // The Automation verifier is an external boundary. Re-read connection
+    // authority and resolve the current stable provider before persistence.
     const finalCurrent = await rereadBindingResolutionAfterProviderEffect({
       collection,
       connectionId: createInput.connectionId,
       expectedConnectionRevision: createInput.expectedConnectionRevision,
       context,
-      providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
     connectionRowForPersistence = finalCurrent.row;
@@ -4765,7 +4723,6 @@ export async function createConversationBindingForInvocation(
       connectionId: createInput.connectionId,
       expectedConnectionRevision: createInput.expectedConnectionRevision,
       context,
-      providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
     connectionRowForPersistence = finalCurrent.row;
@@ -5098,15 +5055,13 @@ async function mutateConversationBinding(
   }
   let connectionRowForPersistence: StateRow;
   if (audience !== null) {
-    // A resolver witness ceases to authorize persistence when a subsequent
-    // Automation verification or Session-baseline effect changes its current
-    // connection or provider contribution.
+    // Re-read connection authority and the current stable provider after
+    // Automation verification or Session-baseline reads.
     const finalCurrent = await rereadBindingResolutionAfterProviderEffect({
       collection,
       connectionId: current.binding.connectionId,
       expectedConnectionRevision: connection.configurationRevision,
       context,
-      providerBefore: audience.witness,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
     connectionRowForPersistence = finalCurrent.row;

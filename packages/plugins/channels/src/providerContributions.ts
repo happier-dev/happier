@@ -29,15 +29,6 @@ async function readChannelsProviderPointRef(): Promise<ChannelsManifestModule['C
   return (await channelsManifestModulePromise).CHANNELS_PROVIDER_POINT_REF;
 }
 
-/**
- * One ephemeral observation of the admitted provider selection. Callers may
- * carry this only across one in-flight effect chain; durable rows retain the
- * contributor identity but never a target occurrence or Action authority.
- */
-export type CurrentProviderContributionWitness = Readonly<{
-  targetOccurrenceId: string;
-  contribution: ChannelsProviderContributionV1;
-}>;
 
 type ProviderContributionUnavailableReason =
   | 'selectionInvalid'
@@ -147,11 +138,11 @@ export async function readSessionPullRequestProviderSelection(context: ProviderC
  * Action or materialization identity, and this owner intentionally provides no
  * plugin-wide fallback when the selected contribution has retired.
  */
-export async function readCurrentProviderContributionWitnessForPersistedSelection(input: Readonly<{
+export async function readCurrentProviderContributionForPersistedSelection(input: Readonly<{
   context: ProviderContributionReadContext;
   providerPluginId: string;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
-}>): Promise<CurrentProviderContributionWitness> {
+}>): Promise<ChannelsProviderContributionV1> {
   const point = await readChannelsProviderPointRef();
   const snapshot = await readCurrentProviderSnapshot(input.context);
   const matches = snapshot.contributions.filter((contribution) => (
@@ -172,21 +163,5 @@ export async function readCurrentProviderContributionWitnessForPersistedSelectio
       'The persisted conversation provider selection resolved to multiple admitted Channels contributions.',
     );
   }
-  return {
-    targetOccurrenceId: snapshot.occurrenceId,
-    contribution: matches[0]!,
-  };
-}
-
-/**
- * Resolves a durable connection's exact current provider contribution for
- * ordinary one-effect consumers. Multi-effect consumers retain the ephemeral
- * witness above and revalidate it before using derived facts.
- */
-export async function readCurrentProviderContributionForPersistedSelection(input: Readonly<{
-  context: ProviderContributionReadContext;
-  providerPluginId: string;
-  providerContributionSelection: PersistedConversationProviderContributionSelection;
-}>): Promise<ChannelsProviderContributionV1> {
-  return (await readCurrentProviderContributionWitnessForPersistedSelection(input)).contribution;
+  return matches[0]!;
 }

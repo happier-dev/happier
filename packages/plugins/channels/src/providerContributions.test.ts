@@ -12,7 +12,7 @@ import {
   type ChannelsProviderContributionV1,
 } from './manifest.js';
 import {
-  readCurrentProviderContributionWitnessForPersistedSelection,
+  readCurrentProviderContributionForPersistedSelection,
   readSelectedCurrentProviderContribution,
 } from './providerContributions.js';
 
@@ -145,7 +145,7 @@ describe('Channels provider contribution resolution', () => {
   });
 
   it('rejects ambiguous persisted contributor rows without treating them as a current caller selection', async () => {
-    await expect(readCurrentProviderContributionWitnessForPersistedSelection({
+    await expect(readCurrentProviderContributionForPersistedSelection({
       context: context({
         occurrenceId: 'channels-occurrence-a',
         contributions: [contribution(), contribution()],
@@ -163,7 +163,7 @@ describe('Channels provider contribution resolution', () => {
   it('re-admits a persisted stable contribution identity through the current provider generation', async () => {
     const current = contribution('provider-generation-b');
 
-    await expect(readCurrentProviderContributionWitnessForPersistedSelection({
+    await expect(readCurrentProviderContributionForPersistedSelection({
       context: context({
         occurrenceId: 'channels-occurrence-b',
         contributions: [current],
@@ -172,9 +172,6 @@ describe('Channels provider contribution resolution', () => {
       providerContributionSelection: {
         contributionId: selection.contributor.contributionId,
       },
-    })).resolves.toEqual({
-      targetOccurrenceId: 'channels-occurrence-b',
-      contribution: current,
-    });
+    })).resolves.toEqual(current);
   });
 });
