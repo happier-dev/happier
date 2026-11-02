@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import { log } from '@/log';
 import { t } from '@/text';
 import { randomUUID } from '@/platform/randomUUID';
@@ -172,7 +174,6 @@ export async function shareNativeCacheFile(input: Readonly<{
 }>): Promise<NativeCacheFileShareResult> {
     try {
         if (input.isCurrent?.() === false) return { status: 'canceled' };
-        const { Platform } = await import('react-native');
         if (Platform.OS === 'android') {
             const { performAndroidFileAction } = await import('./nativeFileActions');
             if (input.isCurrent?.() === false) return { status: 'canceled' };
