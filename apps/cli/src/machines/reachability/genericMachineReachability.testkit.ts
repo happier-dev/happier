@@ -1094,7 +1094,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
   let tailscaleOperator = daemon.username;
   const tailscaleMutations: string[][] = [];
   const engineId = 'fixture-observed-engine';
-  let nativeSshPort: number | undefined;
+  let nativeSshPort: number | null | undefined;
   const externalInterface = Object.entries(networkInterfaces()).find(([, entries]) => entries?.some(entry => !entry.internal))?.[0];
   const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
   const runNative = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
@@ -1112,6 +1112,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
       }
       if (command.executable === 'ss') {
         expect(args).toEqual([expect.stringMatching(/^-([46])$/u), '-H', '-ltnp']);
+        if (nativeSshPort === null) return ok();
         const address = args[0] === '-4' ? '0.0.0.0' : '[::]';
         return ok(`LISTEN 0 128 ${address}:${nativeSshPort} *:* users(("sshd",pid=412,fd=3))\n`);
       }
@@ -1217,7 +1218,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     throw new Error(`Unexpected P20 native process ${command.executable}`);
   };
   return { calls, runNative, installed, engineId, dockerUnitMutations,
-    async setNativeSshPort(port: number) {
+    async setNativeSshPort(port: number | null) {
       if (!externalInterface) throw new Error('The OS fixture requires an external interface');
       await mkdir('/usr/sbin', { recursive: true, mode: 0o755 });
       // Supply protected OS ancestors, independent of the test host's umask.

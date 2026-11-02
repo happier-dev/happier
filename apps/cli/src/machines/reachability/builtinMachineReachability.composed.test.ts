@@ -109,6 +109,34 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
+  it('reviews and saves a first posture with no native SSH listener or owned firewall without inventing an SSH rule', async () => {
+    const { f, api } = prepared;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const { reachabilityPosture: _posture, ...metadata } = snapshot.metadata;
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion, metadata }))
+        .toMatchObject({ status: 'applied' });
+      await f.hostNative.setNativeSshPort(null);
+      const posture = MachineReachabilityPostureV1Schema.parse({ revision: 0,
+        management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } });
+      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+        change: { kind: 'posture', posture } });
+      expect(raw.ok, JSON.stringify(raw)).toBe(true);
+      if (!raw.ok) throw new Error(raw.errorCode);
+      const review = parseReachabilityInspectResult(raw.result);
+      expect(review).toMatchObject({ posture: null,
+        observation: { management: { publicSsh: 'closed' }, nativeFirewall: {
+          status: 'available', ownedTable: 'absent', retainedSshEndpoints: [],
+        } }, plan: { basis: { nativeFirewall: { status: 'available', ownedTable: 'absent', retainedSshEndpoints: [] } } } });
+      const saved = await executeReviewedReachabilityConfigure(f, api, review);
+      expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({ status: 'applied', posture });
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).every(request => request.mode === 'check')).toBe(true);
+      expect(f.hostNative.calls.filter(call => call.executable === '/usr/sbin/nft').every(call =>
+        call.args.join(' ') === '--version' || call.args.join(' ') === '-j list tables')).toBe(true);
+    } finally { await api.dispose(); }
+  });
+
   it('lists real native descriptors without a plugin identity and inspects only demanded Caddy through the host Action', async () => {
     const { f, api } = prepared;
     try {
