@@ -1,3 +1,4 @@
+import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import type { ExternalActionApprovalReplay } from "@/rpc/handlers/externalAction";
 
 
@@ -59,7 +60,7 @@ import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeAct
 import { createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
 import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan,
-  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionSectionArchiveStopChild, projectExternalActionRequesterHttpAuthorization } from "@/api/externalActionExecutionAuthorization";
+  dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, projectExternalActionRequesterHttpAuthorization } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
 import type { ActionExecutorDeps, RuntimeActionExecute } from "@happier-dev/protocol/actions";
@@ -244,7 +245,7 @@ resolveServerFeaturesSnapshot?: () =>
         // root while executing the reviewed child at this installed native owner.
         const admittedMoveChild = (binding.machineId !== params.machineId || setupPlanChild)
           && (binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start' && actionId === 'session.spawn_new'
-            || binding.actionId === 'session.sections.archive' && actionId === 'session.stop' || setupPlanChild) && movePacket
+            || isSessionStopChildRootV1(binding.actionId) && actionId === 'session.stop' || setupPlanChild) && movePacket
           && context.machineAdmission?.machineId === params.machineId
           && context.machineAdmission.installationId === readInstallationIdentityIfExistsSync()?.installationId
           && context.machineAdmission.actorAccountId === binding.accountId
@@ -254,10 +255,10 @@ resolveServerFeaturesSnapshot?: () =>
           && movePacket.externalActionExecution.authorization.token === context.externalActionExecutionAuthorization.token
           && sameStrictJsonValue(movePacket.externalActionExecution.authorization.binding, binding)
           && sameStrictJsonValue(movePacket.originalActionEnvelope, context.originalActionEnvelope)
-          && await (setupPlanChild ? isReviewedMachineSetupPlanChild : binding.actionId === 'session.sections.archive' ? isReviewedSessionSectionArchiveStopChild
+          && await (setupPlanChild ? isReviewedMachineSetupPlanChild : isSessionStopChildRootV1(binding.actionId) ? isReviewedSessionStopChild
             : binding.actionId === 'discussion.second_opinion.start' ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild)({ authorization: context.externalActionExecutionAuthorization,
             envelope: context.originalActionEnvelope, actionId, machineId: params.machineId, params: input,
-            ...(binding.actionId === 'session.sections.archive' ? { target: context.externalActionTarget } : {}),
+            ...(isSessionStopChildRootV1(binding.actionId) ? { target: context.externalActionTarget } : {}),
             ...(context.signal ? { signal: context.signal } : {}) });
         if (setupPlanChild && movePacket && !admittedMoveChild) {
           return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');

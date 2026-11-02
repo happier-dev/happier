@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
-import { executeSessionSectionActionV1, type SessionSectionActionPortV1, type SessionSectionFolderV1 } from './sessionSections.js';
+import { executeSessionSectionActionV1, isSessionStopChildV1, type SessionSectionActionPortV1, type SessionSectionFolderV1 } from './sessionSections.js';
 import { SessionOrganizationFolderSchema, compareSessionSectionOrderV1, projectSessionSectionV1 } from '../sessions/organization/folders.js';
 import { openSessionOrganizationDisplayEnvelopeV1 } from '../sessions/organization/content.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 describe('Session section Actions', () => {
+  it.each(['session.sections.archive', 'session.delete'])('admits only the captured signed Session operand of the %s Stop child', rootActionId => {
+    const child = { rootActionId, effectActionId: 'session.stop', method: 'stop-session',
+      target: { kind: 'session', sessionId: 'member' }, params: { sessionId: 'member' },
+      rootInput: rootActionId === 'session.delete' ? { sessionId: 'member' } : { sectionId: 'launch' } };
+    expect(isSessionStopChildV1(child)).toBe(true);
+    for (const changed of [
+      { effectActionId: 'session.unarchive' }, { method: 'spawn-happy-session' },
+      { params: { sessionId: 'foreign' } }, { target: { kind: 'machine', machineId: 'carrier' } },
+      { rootInput: { sectionId: 'launch', memberIds: ['forged'] } },
+      { rootInput: { sessionId: 'another-owned-session' } },
+    ]) expect(isSessionStopChildV1({ ...child, ...changed })).toBe(false);
+  });
   it('loads the semantic owner before its catalog without losing the declared schemas', async () => {
     vi.resetModules();
     await import('./sessionSections.js');

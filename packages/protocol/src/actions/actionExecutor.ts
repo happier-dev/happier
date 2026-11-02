@@ -1,3 +1,5 @@
+import { executeSessionDelete } from './executor/session/delete.js';
+import type { AdmittedActionInputById } from './actionSpecs.js';
 import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 import { readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
@@ -2860,6 +2862,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
     const { approvalScope, previewTemplateEnvironmentId, mandatoryApprovalRequired } = scopeAdmission;
+    if (!existingAdmission && spec.hostReviewedChildren) {
+      const children = typeof spec.hostReviewedChildren === 'function'
+        ? spec.hostReviewedChildren(admittedInput)
+        : spec.hostReviewedChildren;
+      if (children.length > 0) {
+        preparedHostReviewedChildren = { children: [...(preparedHostReviewedChildren?.children ?? []), ...children] };
+      }
+    }
     const nativeReview = !existingAdmission && !sharedRequesterRequest
       ? admitPresentUserConfirmationV1(actionId, admittedInput, ctx) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
@@ -2889,9 +2899,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
     }
     const preferenceScope = resolveActionApprovalPreferenceScopeV1(approvalScope, previewTemplateEnvironmentId);
+    const childReviewRequired = childrenPreparation.reviewRequired;
     const resolveBaseApprovalRouting = (executionContext: ActionExecutorContext,
       approvedOperation?: Pick<NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>, 'parent' | 'steps'> | null) => {
-      const context = actionPolicyContext(actionId, childrenPreparation.reviewRequired
+      const context = actionPolicyContext(actionId, childReviewRequired
         ? { ...executionContext, bypassApprovals: false } : executionContext);
       return resolveActionApprovalRouting({
         actionId,
@@ -2899,7 +2910,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         input: admittedInput,
         context,
         settings: context.actionsSettings,
-        reviewAdmitted: reviewAdmitted && !childrenPreparation.reviewRequired,
+        reviewAdmitted: reviewAdmitted && !childReviewRequired,
         ...(approvalScope ? { approvalScope } : {}),
         ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
         ...(mandatoryApprovalRequired ? { mandatoryApprovalRequired } : {}),
@@ -2912,7 +2923,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Pass the raw policy-hook result through (boolean | undefined). When the hook is unwired,
         // `undefined` propagates so `resolveActionApprovalRouting` applies its centralized fail-safe
         // default instead of coercing an unwired dependency to "no approval" here. (F7)
-        requiredByPolicy: context.bypassApprovals ? false : visualAdmission?.networkCreationApprovalRequired === true
+        requiredByPolicy: childReviewRequired ? true : reviewAdmitted ? undefined : context.bypassApprovals ? false : visualAdmission?.networkCreationApprovalRequired === true
           ? true : contextualUiConfirmation !== undefined
           ? deps.isActionApprovalRequired?.(actionId, context, admittedInput, contextualUiConfirmation, approvedOperation, preferenceScope) : contextualSafety === undefined
           ? deps.isActionApprovalRequired?.(actionId, context, admittedInput, undefined, approvedOperation, preferenceScope) : undefined,
@@ -3032,7 +3043,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { surface: widgetTarget, instanceId: added.data.instance.id }, added.data.instance, ctx) : null;
           if (refusal && !isWidgetAdmissionUndecidableHereV1(refusal)) return refusal;
         }
-        if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting && !folderApprovalRouting?.required
+        if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting && !folderApprovalRouting?.required && !childReviewRequired
           && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
           && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {
           const confirmedContext = { ...ctx, presentUserConfirmation: { actionId } };
@@ -4712,6 +4723,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const result = await deps.savedSecretRevealAction({ input: parsed.data as import('../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRevealInputV1, context: ctx });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
+      if (actionId === 'session.delete') {
+        return await executeSessionDelete({ input: parsed.data as AdmittedActionInputById['session.delete'],
+          context: ctx, deps, isDeferredApprovalResult });
+      }
+
       if (isHomeDomainActionIdV1(actionId)) {
         if (!deps.homeDomainAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

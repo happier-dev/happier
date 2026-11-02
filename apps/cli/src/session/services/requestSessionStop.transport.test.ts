@@ -17,16 +17,18 @@ import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actio
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { logger } from '@/ui/logger';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionResumeControlIntent } from './sessionExplicitStopIntent';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 const boundary = vi.hoisted(() => ({ socket: null as unknown, mode: 'timeout', connections: 0 }));
 vi.mock('socket.io-client', () => ({ io: () => { boundary.connections++; return boundary.socket; } }));
@@ -47,6 +49,35 @@ describe('requestSessionStop machine transport', () => {
   let active = false;
   let sessionMetadata: Record<string, unknown>;
   let metadataVersion: number;
+  let afterPhysicalStop: (() => void) | undefined;
+
+  function createDeleteExecutor() {
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
+    return createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
+      serverId: configuration.activeServerId, serverHttpBaseUrl: 'https://delete.test' }),
+    sessionStop: deps.sessionStop });
+  }
+
+  function deleteContext(confirmed = true): ActionExecutorContext {
+    return { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'delete-owner', actionRequestId: 'delete-request', serverId: configuration.activeServerId,
+      externalActionTarget: { kind: 'session', sessionId }, actionsSettings: normalizeActionsSettingsV1({ v: 1 }),
+      ...(confirmed ? { presentUserConfirmation: { actionId: 'session.delete' as const,
+        accountId: 'delete-owner', requestId: 'delete-request', serverId: configuration.activeServerId,
+        target: { kind: 'session' as const, sessionId },
+        inputDigest: computeActionInputApprovalDigestV1('session.delete', { sessionId }) } } : {}),
+    };
+  }
+
+  function mockDeleteHttp() {
+    return vi.spyOn(axios, 'request').mockImplementation(async request => {
+      expect(request.method).toBe('DELETE');
+      expect(request.url).toBe(`https://delete.test/v1/sessions/${sessionId}`);
+      calls.push('delete');
+      return active ? { status: 409, data: { error: 'Session is active' } }
+        : { status: 200, data: { success: true } };
+    });
+  }
 
   function readPersistedStop() {
     if (sessionMetadata.metadataLayoutVersion === 1) {
@@ -72,6 +103,7 @@ describe('requestSessionStop machine transport', () => {
     issuedMethods = [];
     issuedRequestIds = [];
     metadataVersion = 0;
+    afterPhysicalStop = undefined;
     sessionMetadata = {
       encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), share: null,
       ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
@@ -145,6 +177,7 @@ describe('requestSessionStop machine transport', () => {
         return;
       }
       const stopped = { ok: true, result: await socketRpcCodec.encodeResponse(content, { status: 'stopped' }, decoded.callId) };
+      if (boundary.mode === 'delete_stopped') { active = false; afterPhysicalStop?.(); callback?.(stopped); }
       if (boundary.mode === 'slow_stop') setTimeout(() => callback?.(stopped), 22_410);
       // Mirror the relay's existing finite forwarding deadline, not a caller-owned timer.
       if (boundary.mode === 'timeout') setTimeout(() => callback?.({ ok: false, error: 'RPC call timeout' }), 30_000);
@@ -154,9 +187,11 @@ describe('requestSessionStop machine transport', () => {
           details: { cause: 'target_outside_led_subtree' } }, decoded.callId) });
       if (boundary.mode === 'action_unknown') callback?.({ ok: true, result: await socketRpcCodec.encodeResponse(content,
         { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { kind: 'outcomeUnknown' } }, decoded.callId) });
-      if (boundary.mode === 'requester_foreign' || boundary.mode === 'requester_unconfirmed') {
+      if (boundary.mode === 'requester_foreign' || boundary.mode === 'requester_unconfirmed' || boundary.mode === 'requester_cleanup') {
         const result = SessionStopResultSchema.parse(boundary.mode === 'requester_foreign'
           ? { sessionId: 'another-session', stopped: true }
+          : boundary.mode === 'requester_cleanup' ? { sessionId, stopped: false,
+            stopOutcome: { status: 'stopped_cleanup_incomplete', reason: 'terminal_attachment_descriptor_retirement_failed' } }
           : { sessionId, stopped: false, stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' } });
         callback?.({ ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) });
       }
@@ -185,6 +220,168 @@ describe('requestSessionStop machine transport', () => {
     vi.useRealTimers();
   });
 
+  it.each(['confirmed', 'unconfirmed', 'inactive-offline'] as const)(
+    'composes confirmed Delete through real Home refusal and Stop transport (%s)', async outcome => {
+      active = outcome !== 'inactive-offline';
+      boundary.mode = outcome === 'confirmed' ? 'delete_stopped' : outcome === 'unconfirmed' ? 'requester_unconfirmed' : 'unavailable';
+      const http = mockDeleteHttp();
+      const result = createDeleteExecutor().execute('session.delete', { sessionId }, deleteContext());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await result).toMatchObject(outcome === 'unconfirmed'
+        ? { ok: false, errorCode: 'session_stop_unconfirmed' } : { ok: true, result: { success: true } });
+      expect(http).toHaveBeenCalledTimes(outcome === 'confirmed' ? 2 : 1);
+      expect(issuedMethods).toEqual(outcome === 'inactive-offline' ? [] : ['owning-machine:stop-session']);
+      if (outcome === 'inactive-offline') expect(axios.get).not.toHaveBeenCalled();
+      expect(calls.filter(event => event === 'delete' || event === SOCKET_RPC_EVENTS.CALL))
+        .toEqual(outcome === 'confirmed' ? ['delete', SOCKET_RPC_EVENTS.CALL, 'delete']
+          : outcome === 'unconfirmed' ? ['delete', SOCKET_RPC_EVENTS.CALL] : ['delete']);
+      if (outcome === 'confirmed') expect(readPersistedStop()).toMatchObject({ cause: 'explicit_stop' });
+    },
+  );
+
+  it.each(['agent', 'stop-require'] as const)('keeps one real Delete review for %s before HTTP or Stop', async variant => {
+    active = true;
+    boundary.mode = 'delete_stopped';
+    const http = mockDeleteHttp();
+    let reviews = 0;
+    const rows = new Map<string, Record<string, unknown>>();
+    // Replace Artifact HTTP storage, preserving the real store, encryption,
+    // versioned writes, review transitions and fresh origin admission.
+    const get = vi.mocked(axios.get).getMockImplementation();
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+      if (String(args[0]).includes('/v1/artifacts/')) {
+        const row = rows.get(String(args[0]).split('/').at(-1)!);
+        return { status: row ? 200 : 404, data: row };
+      }
+      if (!get) throw new Error('Missing HTTP boundary');
+      return await get(...args);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid Artifact HTTP body');
+      const value = body as Record<string, unknown>;
+      if (String(url).endsWith('/v1/artifacts')) {
+        reviews++;
+        const id = String(value.id);
+        rows.set(id, { ...value, ownerAccountId: 'delete-owner', access: 'owner', encryptionMode: 'e2ee',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+      }
+      const id = String(url).split('/').at(-1)!;
+      const current = rows.get(id);
+      if (!current) throw new Error('Missing Artifact row');
+      if (value.expectedHeaderVersion !== undefined) expect(value.expectedHeaderVersion).toBe(current.headerVersion);
+      if (value.body !== undefined) expect(value.expectedBodyVersion).toBe(current.bodyVersion);
+      const headerVersion = Number(current.headerVersion) + (value.header === undefined ? 0 : 1);
+      const bodyVersion = Number(current.bodyVersion) + (value.body === undefined ? 0 : 1);
+      rows.set(id, { ...current, ...(value.header === undefined ? {} : { header: value.header }),
+        ...(value.body === undefined ? {} : { body: value.body }), headerVersion, bodyVersion });
+      return { status: 200, data: { success: true, headerVersion, bodyVersion } };
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_delete_home' } } }));
+    const requiringStop = normalizeActionsSettingsV1({ v: 1, actions: { 'session.stop': { approvalRequiredSurfaces: ['ui'] } },
+      approvalWaivedSurfaces: { 'session.delete': ['ui'] } });
+    const settings = variant === 'stop-require' ? requiringStop : normalizeActionsSettingsV1({ v: 1 });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'delete-owner', session: 'delete-signin' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutorFromCredentials({ credentials: { ...credentials, token, credentialProvenance: 'stored_session' },
+      serverId: configuration.activeServerId, serverApiUrl: 'https://delete.test', serverIdentityId: 'srv_delete_home',
+      pluginActionExecutionOwner: 'current_process',
+      actionsSettingsProvider: { getActionsSettings: () => settings,
+        getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: settings }) },
+    });
+    const requested = variant === 'agent'
+      ? { ...deleteContext(false), surface: 'agent' as const, authority: 'account_automation' as const }
+      : { ...deleteContext(false), actionsSettings: requiringStop };
+    const pending = await executor.execute('session.delete', { sessionId }, requested);
+    expect(pending, pending.ok ? 'review created' : `${pending.errorCode}: ${pending.error}`)
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    if (!pending.ok || !pending.result || typeof pending.result !== 'object' || !('artifactId' in pending.result)
+      || typeof pending.result.artifactId !== 'string') throw new Error('Missing Delete review');
+    expect(http).not.toHaveBeenCalled();
+    expect(issuedMethods).toEqual([]);
+    const deciding = { ...deleteContext(false), surface: 'cli' as const,
+      ...(variant === 'stop-require' ? { actionsSettings: requiringStop } : {}) };
+    const decision = executor.execute('approval.request.decide', { artifactId: pending.result.artifactId, decision: 'approve' }, deciding);
+    await vi.advanceTimersByTimeAsync(0);
+    const settled = await decision;
+    expect(settled, JSON.stringify(settled))
+      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(reviews).toBe(1);
+    expect(http).toHaveBeenCalledTimes(2);
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+  });
+
+  it.each([
+    { mode: 'forbidden', code: 'RPC_FORBIDDEN' },
+    { mode: 'requester_foreign', code: 'session_stop_unconfirmed' },
+    { mode: 'requester_cleanup', code: 'session_stop_unconfirmed' },
+    { mode: 'hold-refused', code: 'metadata_tuple_conflict' },
+    { mode: 'cancelled', code: 'cancelled' },
+  ])('does not retry Home Delete after real Stop $mode', async ({ mode, code }) => {
+    active = true;
+    boundary.mode = mode === 'hold-refused' || mode === 'cancelled' ? 'delete_stopped' : mode;
+    const lifetime = new AbortController();
+    if (mode === 'cancelled') afterPhysicalStop = () => lifetime.abort();
+    if (mode === 'hold-refused') vi.mocked(axios.patch).mockRejectedValue(new axios.AxiosError('Fixture metadata refusal', 'metadata_tuple_conflict'));
+    const http = mockDeleteHttp();
+    const result = createDeleteExecutor().execute('session.delete', { sessionId }, { ...deleteContext(), signal: lifetime.signal });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, errorCode: code });
+    expect(http).toHaveBeenCalledTimes(1);
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+  });
+
+  it('retries after the real empty runtime owner confirms the Session became inactive', async () => {
+    active = true;
+    boundary.mode = 'no_runtime';
+    let attempts = 0;
+    vi.spyOn(axios, 'request').mockImplementation(async () => {
+      if (attempts++ === 0) { active = false; return { status: 409, data: { error: 'Session is active' } }; }
+      return { status: 200, data: { success: true } };
+    });
+    const result = createDeleteExecutor().execute('session.delete', { sessionId }, deleteContext());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: true, result: { success: true } });
+    expect(attempts).toBe(2);
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+  });
+
+  it.each([
+    { status: 404, error: 'Session not found or not owned by user', code: 'session_absent' },
+    { status: 409, error: 'Session delete condition was lost', code: 'session_delete_conflict' },
+  ])('keeps the real Home refusal $code without invoking Stop', async ({ status, error, code }) => {
+    const http = mockDeleteHttp().mockResolvedValue({ status, data: { error } });
+    expect(await createDeleteExecutor().execute('session.delete', { sessionId }, deleteContext()))
+      .toMatchObject({ ok: false, errorCode: code, details: { error } });
+    expect(http).toHaveBeenCalledTimes(1);
+    expect(issuedMethods).toEqual([]);
+  });
+
+  it('returns an active refusal after the one permitted Stop and Delete retry', async () => {
+    active = true;
+    boundary.mode = 'delete_stopped';
+    const http = mockDeleteHttp().mockResolvedValue({ status: 409, data: { error: 'Session is active' } });
+    const result = createDeleteExecutor().execute('session.delete', { sessionId }, deleteContext());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toMatchObject({ ok: false, errorCode: 'session_active', details: { error: 'Session is active' } });
+    expect(http).toHaveBeenCalledTimes(2);
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+  });
+
+  it.each(['input', 'account', 'home', 'target', 'agent'] as const)('does not borrow a native Delete confirmation for another %s', async variant => {
+    const http = mockDeleteHttp();
+    const original = deleteContext();
+    const context = variant === 'account' ? { ...original, runtimeAccountId: 'another-owner' }
+      : variant === 'home' ? { ...original, serverId: 'another-home' }
+      : variant === 'target' ? { ...original, externalActionTarget: { kind: 'session' as const, sessionId: 'another-session' } }
+      : variant === 'agent' ? { ...original, surface: 'agent' as const, authority: 'account_automation' as const } : original;
+    expect(await createDeleteExecutor().execute('session.delete', { sessionId: variant === 'input' ? 'another-session' : sessionId }, context))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(http).not.toHaveBeenCalled();
+    expect(issuedMethods).toEqual([]);
+  });
+
   it.each(['owning-machine', 'another-machine'])('uses only the installed exact-Machine Stop receiver (%s)', async installedMachineId => {
     active = true;
     boundary.mode = 'unavailable';
@@ -203,7 +400,7 @@ describe('requestSessionStop machine transport', () => {
         return result.result;
       } },
     });
-    const result = await deps.sessionStop!({ sessionId, context: { surface: 'cli', authority: 'present_user' } });
+    const result = await deps.sessionStop!({ sessionId, stopIntent: 'explicit_stop', context: { surface: 'cli', authority: 'present_user' } });
     expect(result).toMatchObject(installedMachineId === 'owning-machine'
       ? { ok: true, sessionId, stopped: true }
       : { ok: true, sessionId, stopped: false, stopOutcome: { reason: 'target_daemon_unavailable' } });
@@ -217,7 +414,7 @@ describe('requestSessionStop machine transport', () => {
     // Observe the real file logger; only HTTP and Socket.IO are replaced above.
     const diagnostic = vi.spyOn(logger, 'warnLocalFile');
     const actionRequestId = 'f2e910c0-0bdd-4f80-ad96-31dc574c701c';
-    const result = requestSessionStop({ credentials, idOrPrefix: sessionId,
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId,
       actionContext: { surface: 'cli', authority: 'present_user', actionRequestId } });
     try {
       await vi.advanceTimersByTimeAsync(0);
@@ -228,6 +425,10 @@ describe('requestSessionStop machine transport', () => {
       });
       expect(calls.filter(event => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
       expect(readPersistedStop()).toMatchObject({ v: 1, cause: 'explicit_stop' });
+      expect(axios.get).toHaveBeenCalledWith(expect.stringContaining(`/v2/sessions/${sessionId}`),
+        expect.objectContaining({ headers: expect.objectContaining({
+          'X-Happier-Request-Purpose': 'session-detail:session-control',
+        }) }));
       expect(issuedRequestIds).toHaveLength(1);
       expect(readPersistedStop()).toMatchObject({ requestId: issuedRequestIds[0] });
       expect(issuedRequestIds[0]).not.toBe(actionRequestId);
@@ -283,7 +484,7 @@ describe('requestSessionStop machine transport', () => {
     if (!address || typeof address === 'string') throw new Error('Missing Stop fixture address');
     try {
       await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () =>
-        requestSessionStop({ credentials, idOrPrefix: sessionId }))).resolves.toMatchObject({
+        requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId }))).resolves.toMatchObject({
         ok: true, sessionId, stopped: true,
       });
       expect(readPersistedStop()).toMatchObject({ cause: 'explicit_stop' });
@@ -300,7 +501,7 @@ describe('requestSessionStop machine transport', () => {
 
   it('retains the persisted person Stop across a fresh automatic-admission read after an ambiguous acknowledgement', async () => {
     boundary.mode = 'disconnect';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       ok: true, stopped: false, stopOutcome: { reason: 'transport_ambiguous' },
     });
     const stop = readPersistedStop();
@@ -312,7 +513,7 @@ describe('requestSessionStop machine transport', () => {
   it('ends the issued physical Stop wait when the ordinary caller lifetime is cancelled', async () => {
     boundary.mode = 'slow_stop';
     const controller = new AbortController();
-    const result = requestSessionStop({ credentials, idOrPrefix: sessionId, ...{ signal: controller.signal } });
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId, ...{ signal: controller.signal } });
     await vi.advanceTimersByTimeAsync(0);
     expect(issuedMethods).toEqual(['owning-machine:stop-session']);
     controller.abort();
@@ -334,34 +535,56 @@ describe('requestSessionStop machine transport', () => {
     expect(vi.mocked(axios.patch)).not.toHaveBeenCalled();
   });
 
+  it.each(['explicit_stop', 'lifecycle_control'] as const)('classifies the session.stop front door before persisting its %s intent', async stopIntent => {
+    boundary.mode = 'stopped';
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
+    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const result = await executor.execute('session.stop', { sessionId, stopIntent },
+      { surface: 'ui', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: true, result: { ok: true, stopped: true } });
+    const metadata = { ...(readPersistedStop() ? { sessionExplicitStopV1: readPersistedStop() } : {}) };
+    expect(resolveSessionAutoResumeAdmissionV1({ metadata, machineAvailable: true, authorityAvailable: true }))
+      .toBe(stopIntent === 'explicit_stop' ? 'held_by_person' : 'eligible');
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+    if (stopIntent === 'lifecycle_control') expect(vi.mocked(axios.patch)).not.toHaveBeenCalled();
+  });
+
   it.each(['automatic', 'own-child', 'grandchild', 'foreign-child', 'misbound-child', 'mismatched-child', 'self'] as const)(
     'retains physical cleanup but authors durable Stop only for an admitted lead on its own child (%s)', async caller => {
       const refused = caller === 'foreign-child' || caller === 'misbound-child' || caller === 'mismatched-child' || caller === 'self';
       boundary.mode = refused ? 'action_refused' : 'stopped';
       sessionMetadata.manager = { sessionId: caller === 'grandchild' ? 'intermediate-session' : 'lead-session' };
       const callerId = caller === 'self' ? sessionId : caller === 'foreign-child' ? 'foreign-session' : 'lead-session';
+      const agentStartContext = resolveCliAgentStartContextV1({
+        sessionId: caller === 'mismatched-child' ? 'different-caller' : callerId, machineId: 'owning-machine', directory: '/repo',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        metadata: {}, starterDepth: 0, turnDepth: 1, callerPermissionMode: 'default', settings: accountSettingsParse({}), roles: {},
+      });
+      if (!agentStartContext || 'ok' in agentStartContext) throw new Error('Expected admitted caller context');
       const actionContext = {
         surface: 'agent' as const, authority: 'account_automation' as const,
         defaultSessionId: callerId, sessionListAccess: 'led_subtree' as const, callerPermissionMode: 'default' as const,
         actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'session.stop': { disabledSurfaces: [] } } }),
         actionCaller: caller === 'automatic' ? { kind: 'host' as const }
           : { kind: 'session' as const, sessionId: callerId, starterDepth: 0, turnDepth: 1 },
-        ...(caller !== 'automatic' && caller !== 'misbound-child' ? { agentStartContext: resolveCliAgentStartContextV1({
-          sessionId: caller === 'mismatched-child' ? 'different-caller' : callerId, machineId: 'owning-machine', directory: '/repo',
-          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-          metadata: {}, starterDepth: 0, turnDepth: 1, callerPermissionMode: 'default', settings: accountSettingsParse({}), roles: {},
-        }) ?? undefined } : {}),
+        ...(caller !== 'automatic' && caller !== 'misbound-child' ? { agentStartContext } : {}),
       };
-      // Home list, metadata HTTP and Socket.IO are the boundaries. The real
+      // Home membership, metadata HTTP and Socket.IO are the boundaries. The real
       // Action scope guard, Stop service, provenance write and physical port run.
-      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
-        sessionList: async ({ query }) => markSessionListQueryResultV1({
-          sessions: query?.underSessionId === 'lead-session' ? [{ id: sessionId, active: false, presence: 'offline', updatedAt: 10 }] : [],
-          nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-        }),
-        sessionStop: async ({ sessionId: target, context }) => requestSessionStop({ credentials, idOrPrefix: target, actionContext: context }),
+      vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+        expect(String(url)).toContain('/v2/sessions/read-batch');
+        if (!body || typeof body !== 'object' || !('underSessionId' in body)
+          || !('sessionIds' in body) || !Array.isArray(body.sessionIds)
+          || !body.sessionIds.every(id => typeof id === 'string')) throw new Error('Expected exact membership read');
+        const session = (await axios.get(`/v2/sessions/${sessionId}`)).data.session;
+        return { status: 200, data: { results: body.sessionIds.map(id => ({ sessionId: id,
+          detail: body.underSessionId === 'lead-session' && id === sessionId
+            ? { status: 200, body: { session } } : { status: 404, body: { error: 'not_found' } },
+        })) } };
       });
-      const result = caller === 'automatic' ? await requestSessionStop({ credentials, idOrPrefix: sessionId, actionContext })
+      const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
+      const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+      const result = caller === 'automatic' ? await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId, actionContext })
         : await executor.execute('session.stop', { sessionId }, actionContext);
       expect(result, JSON.stringify(result)).toMatchObject(refused ? { ok: false } : caller === 'automatic'
         ? { ok: true, stopped: true } : { ok: true, result: { ok: true, stopped: true } });
@@ -387,32 +610,60 @@ describe('requestSessionStop machine transport', () => {
       }
     });
 
-  it('does not signal the receiver when explicit Stop custody cannot be persisted', async () => {
-    boundary.mode = 'stopped';
+  it.each([
+    { mode: 'stopped', failureCode: 'metadata_tuple_conflict', expectedCode: 'metadata_tuple_conflict' },
+    { mode: 'unavailable', failureCode: 'metadata_tuple_conflict', expectedCode: 'metadata_tuple_conflict' },
+    { mode: 'stopped', failureCode: 'private-stop-error-payload', expectedCode: 'session_metadata_update_failed' },
+  ])('still attempts physical Stop when hold persistence fails ($mode / $expectedCode)', async ({ mode, failureCode, expectedCode }) => {
+    boundary.mode = mode;
     const diagnostic = vi.spyOn(logger, 'infoFile');
     const privatePayload = 'private-stop-error-payload';
-    vi.mocked(axios.patch).mockRejectedValue(new axios.AxiosError(privatePayload, 'ERR_BAD_REQUEST', {
+    vi.mocked(axios.patch).mockRejectedValue(new axios.AxiosError(privatePayload, failureCode, {
       headers: new axios.AxiosHeaders({ Authorization: `Bearer ${privatePayload}` }),
       data: privatePayload,
     }));
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
-      ok: true, stopped: false, stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'unexpected_error' },
+    const result = await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
+    expect(result).toMatchObject({ ok: false, errorCode: expectedCode, code: expectedCode,
+      sessionId, stopped: mode === 'stopped',
+      holdRecorded: false, holdFailure: expectedCode,
+      ...(mode === 'unavailable' ? { stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' } } : {}),
     });
+    expect(SessionStopResultSchema.parse(result)).toMatchObject({ holdRecorded: false, holdFailure: expectedCode });
+    expect(result).toMatchObject({ details: { sessionId, stopped: mode === 'stopped',
+      holdRecorded: false, holdFailure: expectedCode } });
     expect(readPersistedStop()).toBeNull();
-    expect(issuedMethods).toEqual([]);
-    expect(diagnostic).toHaveBeenCalledWith('[SESSION STOP] Stop request failed', {
-      sessionId, phase: 'write_stop_intent', classification: { kind: 'protocol_error', retryable: false },
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    expect(diagnostic).toHaveBeenCalledWith('[SESSION STOP] Stop hold not recorded', {
+      sessionId, phase: 'write_stop_intent', code: expectedCode, classification: { kind: 'protocol_error', retryable: false },
     });
+    expect(diagnostic).toHaveBeenCalledWith('[API] session_metadata_update_failed', expect.objectContaining({ code: expectedCode }));
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(privatePayload);
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
+    expect(SessionStopResultSchema.safeParse({ sessionId, stopped: true,
+      holdRecorded: false, holdFailure: privatePayload }).success).toBe(false);
+  });
+
+  it('carries a failed hold and confirmed physical Stop through the public Action failure', async () => {
+    boundary.mode = 'stopped';
+    vi.mocked(axios.patch).mockRejectedValue(new axios.AxiosError('Fixture metadata transport failure', 'metadata_tuple_conflict'));
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
+    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const result = await executor.execute('session.stop', { sessionId, stopIntent: 'explicit_stop' },
+      { surface: 'cli', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'metadata_tuple_conflict',
+      details: { sessionId, stopped: true, holdRecorded: false, holdFailure: 'metadata_tuple_conflict' } });
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+    expect(readPersistedStop()).toBeNull();
   });
 
   it('waits for inactive evidence without quiet rereads and catches it on reconnect', async () => {
     boundary.mode = 'stopped';
     active = true;
-    const result = requestSessionStop({ credentials, idOrPrefix: sessionId });
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
     await vi.advanceTimersByTimeAsync(0);
     const reads = vi.mocked(axios.get).mock.calls.length;
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(10_001);
     expect(vi.mocked(axios.get).mock.calls).toHaveLength(reads);
     active = false;
     events.emit('connect');
@@ -423,7 +674,7 @@ describe('requestSessionStop machine transport', () => {
 
   it('confirms a stopped Session without opening an unused observation connection', async () => {
     boundary.mode = 'stopped';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toEqual({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toEqual({
       ok: true, sessionId, stopped: true,
     });
     // One Machine RPC connection is necessary. A fresh inactive HTTP row
@@ -445,7 +696,7 @@ describe('requestSessionStop machine transport', () => {
       }
       return response;
     });
-    const result = requestSessionStop({ credentials, idOrPrefix: sessionId });
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
     await vi.advanceTimersByTimeAsync(0);
     await expect(result).resolves.toEqual({ ok: true, sessionId, stopped: true });
     expect(boundary.connections).toBe(2);
@@ -454,7 +705,7 @@ describe('requestSessionStop machine transport', () => {
   it.each([false, true])('classifies a real empty Stop owner with session active=%s after decoding its acknowledgement', async (sessionActive) => {
     boundary.mode = 'no_runtime';
     active = sessionActive;
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toEqual({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toEqual({
       ok: true, sessionId, stopped: false,
       stopOutcome: sessionActive
         ? { status: 'physical_stop_unconfirmed', reason: 'target_session_not_found' }
@@ -470,7 +721,7 @@ describe('requestSessionStop machine transport', () => {
     const nodeConsole = new Console(process.stdout, process.stderr);
     vi.spyOn(console, 'log').mockImplementation(nodeConsole.log.bind(nodeConsole));
     boundary.mode = mode;
-    const result = requestSessionStop({ credentials, idOrPrefix: sessionId });
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
     await vi.advanceTimersByTimeAsync(30_001);
     await expect(result).resolves.toEqual({
       ok: true, sessionId, stopped: false,
@@ -485,7 +736,7 @@ describe('requestSessionStop machine transport', () => {
     let settled = false;
     let fallbackUsed = false;
     const operation = entrypoint === 'public'
-      ? requestSessionStop({ credentials, idOrPrefix: sessionId })
+      ? requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })
       : cleanupForkChildBestEffort({ credentials, sessionId, fallbackStopSession: async () => {
         fallbackUsed = true;
         return true;
@@ -507,14 +758,14 @@ describe('requestSessionStop machine transport', () => {
 
   it('retains a definitive authorization refusal', async () => {
     boundary.mode = 'forbidden';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       ok: false, errorCode: 'RPC_FORBIDDEN',
     });
   });
 
   it('preserves a typed receiver Action refusal instead of reporting daemon unavailability', async () => {
     boundary.mode = 'action_refused';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop',
       details: { cause: 'target_outside_led_subtree' },
     });
@@ -523,7 +774,7 @@ describe('requestSessionStop machine transport', () => {
 
   it('retains a definitive unavailable-target response', async () => {
     boundary.mode = 'unavailable';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       stopped: false,
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' },
     });
@@ -531,7 +782,7 @@ describe('requestSessionStop machine transport', () => {
 
   it.each(['requester_foreign', 'requester_unconfirmed'])('does not confirm a %s public Stop receipt', async mode => {
     boundary.mode = mode;
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toEqual({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toEqual({
       ok: true, sessionId, stopped: false, stopOutcome: { status: 'physical_stop_unconfirmed',
         reason: mode === 'requester_foreign' ? 'target_daemon_unavailable' : 'transport_ambiguous' },
     });
@@ -541,7 +792,7 @@ describe('requestSessionStop machine transport', () => {
   it('keeps a receiver Action outcome-unknown response ambiguous even with an inactive row', async () => {
     boundary.mode = 'action_unknown';
     const diagnostic = vi.spyOn(logger, 'infoFile');
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       ok: true, stopped: false, stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
     });
     expect(issuedMethods).toEqual(['owning-machine:stop-session']);
@@ -552,7 +803,7 @@ describe('requestSessionStop machine transport', () => {
 
   it('reports unavailable before emission without issuing Stop', async () => {
     boundary.mode = 'connect_error';
-    await expect(requestSessionStop({ credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
+    await expect(requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId })).resolves.toMatchObject({
       stopped: false,
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' },
     });

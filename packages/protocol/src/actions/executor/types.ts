@@ -1,3 +1,4 @@
+import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitStopV1.js';
 import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateInputV1 } from '../../deployments/deploymentActionsV1.js';
@@ -2083,7 +2084,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   sessionStateFieldSet?: (args: SessionStateFieldActionWrite) => Promise<unknown>;
-  sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null; context?: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionStop?: (args: Readonly<{ sessionId: string; stopIntent: SessionStopIntent; serverId?: string | null; context?: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionRuntimeRefresh?: (args: Readonly<{ sessionId: string; machineId: string; serverId?: string; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTurnCancel?: (args: Readonly<{ sessionId: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTerminalComposerClear?: (args: Readonly<{

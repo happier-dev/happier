@@ -1,3 +1,4 @@
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { ActionExecutorContext, ActionMachineRuntimeDemandV1 } from '../executor/types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
@@ -9,7 +10,7 @@ import type { ActionCompletionDeclaration } from '../actionCompletion.js';
 import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schema } from '../operations/v1.js';
 import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '../actionCliProjection.js';
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
-import type { ActionCaller } from '../executor/types.js';
+import type { ActionCaller, HostReviewedChildrenPlanV1 } from '../executor/types.js';
 import type { ExternalActionTargetV1 } from '../externalActionApi.js';
 import { ActionSafetySchema } from '../safety.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
@@ -167,6 +168,16 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
   safetyForInput: z.optional(z.custom<(input: unknown) => z.infer<typeof ActionSafetySchema> | undefined>((value) => typeof value === 'function')),
   approval: ActionApprovalSchema,
   approvalPolicy: z.optional(ActionApprovalPolicySchema),
+  /** Host-local child roles reviewed with this operation; never catalog or caller authority. */
+  hostReviewedChildren: z.optional(z.union([
+    z.readonly(z.array(z.strictObject({
+      action: ActionIdSchema,
+      role: z.string().check(z.minLength(1)),
+      input: z.optional(StrictJsonValueSchema),
+    }))),
+    z.custom<(input: unknown) => HostReviewedChildrenPlanV1['children']>((value) => typeof value === 'function'),
+  ])),
+
   // UI placements where the action can appear when the relevant surface is enabled.
   placements: z._default(z.array(ActionUiPlacementSchema), []),
   // Optional stable slash command token for UI slash-command placement.
@@ -529,6 +540,7 @@ machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
   id: ParsedActionSpec['id'];
   approval: ParsedActionSpec['approval'];
   approvalPolicy?: ParsedActionSpec['approvalPolicy'];
+  hostReviewedChildren?: ParsedActionSpec['hostReviewedChildren'];
   title: ParsedActionSpec['title'];
   confirmVerb?: ParsedActionSpec['confirmVerb'];
   irreversible?: ParsedActionSpec['irreversible'];

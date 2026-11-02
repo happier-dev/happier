@@ -1,5 +1,6 @@
-import { readScopedActionApprovalPreference } from './actionSettings.js';
-import type { ActionApprovalScopeV1 } from './actionSettings.js';
+import { readScopedActionApprovalPreference, type ActionApprovalScopeV1 } from './actionSettings.js';
+import type { WorkflowApprovedOperationV1 } from './approvedOperationV1.js';
+import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 import { ACTION_IDS } from './actionIds.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
@@ -48,6 +49,7 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   requiredByPolicy?: boolean;
   reviewAdmitted?: boolean;
   approvalScope?: ActionApprovalScopeV1;
+  approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
   defaultSafety?: ActionSpec['safety'];
   /** Host-proved exposure classification; Settings and execution authority still apply. */
@@ -184,7 +186,9 @@ export function isApprovalRequiredByActionsSettings(
   input?: unknown,
   defaultUiConfirmation?: boolean,
   defaultConfirmation?: boolean,
+  approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null,
 ): boolean {
+  if (isHostAdmittedReviewedChildPolicyV1(approvedOperation, actionId, input)) return false;
   const requestActionId = ActionIdSchema.safeParse(actionId);
   if (requestActionId.success && !isActionApprovalWaivable(getActionSpec(requestActionId.data))) return true;
   const surface = resolveApprovalSurface(ctx);
@@ -238,18 +242,22 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && args.context?.authority !== 'present_user' && args.context?.bypassApprovals !== true;
   const explicitComputerApproval = args.settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
     .some(surface => surface === args.context?.surface) === true;
+  const hasPolicyContext = Boolean(args.settings || args.approvedOperation);
+  // Native confirmation answers this operation's default Ask, not a deliberate
+  // per-surface preference. Internal reviewed children are admitted separately
+  // by the single child issuer before this preference layer is reached.
   const requiredByPolicy = args.reviewAdmitted === true
     ? args.settings != null
       && readExplicitActionApprovalPreferenceV1(args.actionId, args.settings, args.context, args.approvalScope) === true
-    : computerConsent
+    : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
-    ? args.settings ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context,
-      args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, true) : true
+    ? hasPolicyContext ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context,
+      args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, true, args.approvedOperation) : true
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
-    : args.settings
-      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation)
+    : hasPolicyContext
+      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input, args.defaultUiConfirmation)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));

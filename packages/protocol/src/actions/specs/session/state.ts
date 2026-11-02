@@ -34,6 +34,8 @@ export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
   actionId: z.string().check(z.refine(id => ActionIdSchema.safeParse(id).success || parseQualifiedPluginActionId(id) !== null)),
 }));
 
+const SessionDeleteInputSchema = lazyZodSchema(() => z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)) }));
+
 export const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   permissionMode: SessionPermissionModeInputSchema,
@@ -361,6 +363,9 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.delete', approval: {result: 'none'},
+    hostReviewedChildren: (input: unknown) => [{ action: 'session.stop' as const, role: 'stop',
+      input: { sessionId: (input as z.output<typeof SessionDeleteInputSchema>).sessionId } }],
+
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     title: 'Delete session',
     description: 'Permanently delete a session. Its daemon removes managed folders through the durable deletion lifecycle.',
@@ -368,7 +373,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     bindings: { mcpToolName: 'session_delete' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId' },
-    inputSchema: lazyZodSchema(() => z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)) })),
+    inputSchema: SessionDeleteInputSchema,
     outputSchema: lazyZodSchema(() => z.strictObject({ success: z.literal(true) })),
     inputHints: { description: 'Permanently delete a session and the folders Happier made for it.', title: 'Delete a session', fields: [{ path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true }] },
     cli: { commands: [{ path: ['session', 'delete'], positionals: ['sessionId'], visibility: 'canonical' }] },

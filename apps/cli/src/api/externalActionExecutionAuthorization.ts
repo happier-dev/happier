@@ -629,7 +629,7 @@ export function readExternalActionSourceMachineRpcSigner(
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
-  if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
+  if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start' || isSessionStopChildRootV1(binding.actionId)
     || isDeploymentChildRootActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
     || isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })) && binding.target.kind === 'machine'
     && binding.target.machineId === binding.machineId) return { machineId: binding.machineId, installationId: binding.installationId };
@@ -661,6 +661,8 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   const binding = parsed.data.binding;
   const source = readExternalActionSourceMachineRpcSigner(parsed.data);
   const deploymentChild = input.deploymentChildRouting;
+  const stopChild = isSessionStopChildV1({ rootActionId: binding.actionId, effectActionId: input.effectActionId,
+    method: input.method.slice(input.method.indexOf(':') + 1), target: input.target, params: input.params });
   const setupPlanRoot = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
     effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN });
   const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
@@ -669,8 +671,9 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     || source.installationId !== input.sourceInstallationId
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)
-    || input.target.kind !== 'machine' || binding.machineId !== input.target.machineId
-    || !externalActionTargetsEqualV1(binding.target, input.target)
+    || isSessionStopChildRootV1(binding.actionId) && !stopChild
+    || !stopChild && (input.target.kind !== 'machine' || binding.machineId !== input.target.machineId
+      || !externalActionTargetsEqualV1(binding.target, input.target))
     || binding.actionId === 'projects.service.relocate'
       && readProjectServiceMoveChildEffectV1(input.method.slice(input.method.indexOf(':') + 1)) !== input.effectActionId
     || binding.actionId === 'discussion.second_opinion.start'
@@ -679,7 +682,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission)
       || input.effectActionId !== deploymentChild.actionId
       || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
-    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !deploymentChild && !setupPlanChild
+    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !deploymentChild && !setupPlanChild && !stopChild
       && !input.method.startsWith(`${binding.machineId}:`)) return null;
   return createExternalActionMachineRpcExecution({
     context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },

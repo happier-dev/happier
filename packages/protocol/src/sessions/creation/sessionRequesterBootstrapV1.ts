@@ -1,3 +1,5 @@
+import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
 import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
@@ -305,7 +307,10 @@ function isReviewedChildRecipientPurpose(authorization: ExternalActionExecutionA
   purpose: ExternalActionRequesterAccountContextPurposeV1): boolean {
   return authorization.binding.actionId === 'projects.service.relocate'
     || authorization.binding.actionId === 'discussion.second_opinion.start'
-      && purpose.kind === 'machine_rpc' && isDiscussionSecondOpinionModelRpcMethodV1(purpose.method);
+      && purpose.kind === 'machine_rpc' && isDiscussionSecondOpinionModelRpcMethodV1(purpose.method)
+    || isSessionStopChildRootV1(authorization.binding.actionId)
+      && purpose.kind === 'machine_rpc' && purpose.method === RPC_METHODS.STOP_SESSION
+      && readSessionStopChildTargetV1(purpose.params) !== null;
 }
 
 function isWorkspaceSyncPreparationRoot(authorization: ExternalActionExecutionAuthorizationV1): boolean {
