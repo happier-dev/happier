@@ -1,3 +1,20 @@
+export type {
+    DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
+    DeploymentTargetFailureTransitionV1, DeploymentTargetCredentialPrincipalV1,
+    DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
+    DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
+    DeploymentTargetPreparationBaseV1, DeploymentTargetInspectInputV1,
+    DeploymentTargetLinkRoleInputV1, DeploymentTargetLifecycleInputV1,
+    DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1,
+    DeploymentTargetObserveInputV1, DeploymentTargetCancelInputV1,
+    DeploymentTargetPriorDeploymentRefV1, DeploymentTargetRollbackInputV1,
+    DeploymentTargetPromoteInputV1, DeploymentTargetTeardownInputV1,
+    DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
+    DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
+} from './deploymentTargets.js';
+export { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
+    hasDeploymentTargetPreparationCoordinatesV1 } from './deploymentTargets.js';
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
 export { HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';

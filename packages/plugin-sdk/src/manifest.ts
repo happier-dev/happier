@@ -1,3 +1,4 @@
+import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
 import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
 import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
@@ -589,6 +590,7 @@ export interface PluginManifest {
     }>[];
   } & {
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
+    deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
     machineSetupPresets?: readonly MachineSetupPresetContributionV1[];
@@ -733,6 +735,7 @@ export interface PluginManifest {
 /** Canonical readonly contribution collection returned by public structural parsing. */
 export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
+  deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
