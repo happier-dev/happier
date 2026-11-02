@@ -1811,7 +1811,7 @@ export async function stopLocalDaemon({
   // Retirement consumes the retained execution, not the replacement bundle or
   // the moving checkout. Keep the existing CLI launch owner authoritative.
   if (runtimeState?.sourceRuntimeLaunch) {
-    const launch = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtimeState.sourceRuntimeLaunch });
+    const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtimeState.sourceRuntimeLaunch });
     cliEntrypoint = launch.entrypoint;
     cliNodeEntrypoint = launch.nodeEntrypoint;
     cliCommand = launch.command;
@@ -1960,7 +1960,7 @@ export async function startLocalDaemonWithAuth({
   const selectedSource = sourceRuntimeLaunchUpdate?.launch
     ?? (runtimeStatePath ? (await readStackRuntimeStateFile(runtimeStatePath))?.sourceRuntimeLaunch : null);
   if (selectedSource) {
-    const launch = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selectedSource });
+    const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selectedSource });
     cliBin = join(launch.cliDir, 'bin', 'happier.mjs');
     cliEntrypoint = launch.entrypoint;
     cliNodeEntrypoint = launch.nodeEntrypoint;

@@ -267,7 +267,7 @@ async function main() {
   }
   const runtimeBackedStart = Boolean(runtimeSnapshot || sourceSnapshot);
   let cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon')
-    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.componentSnapshots?.daemon ?? runtimeSnapshot }) : null;
+    ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.componentSnapshots?.daemon ?? runtimeSnapshot }) : null;
   // This point runs on the server host, after remote placement. Resolve before
   // choosing a provider-specific bundle, migration path or account probe.
   const dbProvider = serverRequested
@@ -307,7 +307,7 @@ async function main() {
     }
     if (localDaemonRequested) {
       const built = await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'daemon', env: process.env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime, requireCoherentSelection });
-      cliLaunchSpec = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
+      cliLaunchSpec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
       sourceRuntimeEnv = applyCliRuntimeLaunchProvenanceEnv({ cliLaunchSpec });
       sourceRuntimeIdentities.daemon = { selected: built.identity, loaded: null };
     }
@@ -1281,7 +1281,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
   const daemonRequested = resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
   const localDaemonRequested = placement.policy.daemons.mode === 'local' && daemonRequested;
   const daemonSnapshot = daemonRequested ? runtimeLaunchContext.componentSnapshots?.daemon ?? null : null;
-  let localCli = localDaemonRequested && daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
+  let localCli = localDaemonRequested && daemonSnapshot ? await resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
   let localSourceIdentity;
   const targetPlans = resolvePreservedDaemonTargetPlans({ targetPlans: placement.targetPlans.map(plan => ({ ...plan,
     services: { ...plan.services, daemon: plan.services.daemon && daemonRequested },
@@ -1307,7 +1307,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir:autostart.baseDir, component: 'daemon', env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal,
       reuseSelected: env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1' });
-    localCli = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
+    localCli = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
     localSourceIdentity = { selected: built.identity, loaded: null };
     env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: localCli });
   }

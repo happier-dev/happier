@@ -508,7 +508,7 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
 async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
-    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
+    ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
   if (cliLaunchSpec) {
     return { cliExecutable: cliLaunchSpec.command, cliLaunchSpec };
   }

@@ -33,9 +33,10 @@ test('source server launch executes nonexecutable emitted JS through its managed
   assert.deepEqual(retained.migration, { mode: 'disabled' }, 'last-green startup must not run old migrations against retained data');
 });
 
-test('source bundle CLI launch uses its retained entry without native snapshot provenance', () => {
-  const spec = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: { cliDir: '/qa/source/cli', entrypoint: '/qa/source/cli/src/index.mjs' } });
-  assert.equal(spec.command, '/qa/source/cli/src/index.mjs');
+test('source bundle CLI launch uses its retained entry without native snapshot provenance', async () => {
+  const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: { cliDir: '/qa/source/cli', entrypoint: '/qa/source/cli/src/index.mjs' } });
+  assert.equal(spec.command, process.execPath);
+  assert.deepEqual(spec.args, ['/qa/source/cli/src/index.mjs']);
   assert.equal(spec.sourceSnapshot, true);
   assert.equal(resolveCliRuntimeLaunchProvenance(spec).runtimeBacked, false);
   const env = applyCliRuntimeLaunchProvenanceEnv({ cliLaunchSpec: spec, env: { HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1' } });
@@ -44,15 +45,15 @@ test('source bundle CLI launch uses its retained entry without native snapshot p
   assert.equal(env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX, '0');
 });
 
-test('runtime launch refuses to invent a missing service entrypoint in a component snapshot', () => {
+test('runtime launch refuses to invent a missing service entrypoint in a component snapshot', async () => {
   const snapshot = { snapshotPath: '/tmp/server-only', daemonDistClosureFingerprint: '1111111111111111',
     manifest: { source: { serverComponent: 'happier-server-light' }, components: {} } };
   assert.throws(() => resolveServerRuntimeLaunchSpec({ serverComponent: 'happier-server-light', snapshot }), /server.*entrypoint/);
-  assert.throws(() => resolveCliRuntimeLaunchSpec({ snapshot }), /daemon.*entrypoint/);
+  await assert.rejects(async () => await resolveCliRuntimeLaunchSpec({ snapshot }), /daemon.*entrypoint/);
 });
 
-test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snapshot', () => {
-  const resolved = resolveCliRuntimeLaunchSpec({
+test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snapshot', async () => {
+  const resolved = await resolveCliRuntimeLaunchSpec({
     snapshot: {
       snapshotPath: '/tmp/stack/runtime/builds/snap-1',
       daemonDistClosureFingerprint: '1111111111111111',
@@ -76,8 +77,8 @@ test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snap
   });
 });
 
-test('runtime CLI provenance is one canonical shape for daemon options and nested CLI environment', () => {
-  const launchSpec = resolveCliRuntimeLaunchSpec({
+test('runtime CLI provenance is one canonical shape for daemon options and nested CLI environment', async () => {
+  const launchSpec = await resolveCliRuntimeLaunchSpec({
     snapshot: {
       snapshotPath: '/tmp/runtime/builds/snap-a',
       launchPath: '/tmp/runtime/builds/snap-a',
@@ -231,8 +232,8 @@ test('resolveServerRuntimeLaunchSpec derives packaged migrations from the provid
   }).migration, { mode: 'disabled' });
 });
 
-test('resolveCliRuntimeLaunchSpec rejects a manifest entrypoint that escapes the snapshot root', () => {
-  assert.throws(() => resolveCliRuntimeLaunchSpec({
+test('resolveCliRuntimeLaunchSpec rejects a manifest entrypoint that escapes the snapshot root', async () => {
+  await assert.rejects(async () => await resolveCliRuntimeLaunchSpec({
     snapshot: {
       snapshotPath: '/tmp/stack/runtime/builds/snap-1',
       daemonDistClosureFingerprint: '1111111111111111',

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { assertSourceRuntimeDependenciesCurrent } from '../../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
 
 import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime/componentCatalog';
 
@@ -54,12 +55,13 @@ export function applyCliRuntimeLaunchProvenanceEnv({ env = {}, cliLaunchSpec = n
   return projected;
 }
 
-export function resolveCliRuntimeLaunchSpec({ snapshot, sourceRuntimeLaunch }) {
+export async function resolveCliRuntimeLaunchSpec({ snapshot, sourceRuntimeLaunch, signal }) {
   if (sourceRuntimeLaunch) {
     const { entrypoint, cliDir, env = {} } = sourceRuntimeLaunch;
     if (!entrypoint || !cliDir) throw new Error('[runtime] source CLI launch requires its retained entrypoint and root.');
+    await assertSourceRuntimeDependenciesCurrent({ entrypoint, env, signal });
     return { source: 'source-snapshot', sourceSnapshot: true, entrypoint, nodeEntrypoint: entrypoint,
-      cliDir, command: entrypoint, args: [], env };
+      cliDir, command: process.execPath, args: [entrypoint], env };
   }
   const daemonDistClosureFingerprint = String(snapshot?.daemonDistClosureFingerprint ?? '').trim().toLowerCase();
   if (!/^[a-f0-9]{16}$/.test(daemonDistClosureFingerprint)) {

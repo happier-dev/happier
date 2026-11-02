@@ -16,6 +16,8 @@ import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { isDevStartupSourceDrift, prepareSourceComponent } from '../utils/dev/devReloadCoordinator.mjs';
 import { captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputIdentity, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
+import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath } from '../utils/proc/dependency_refresh.mjs';
 import { probeCliDistRuntimeImport } from '../utils/cli/cliDistIntegrity.mjs';
 import { retainPendingSourcePreparation, updatePendingSourcePreparationPhase } from '../runtime/shared/pending_source_start.mjs';
 import { readBundledPluginPackageResourceRelativePaths } from '../../../../packages/cli-common/bundledPluginResources.mjs';
@@ -759,8 +761,13 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
 }
 
 async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env = process.env, signal }) {
-  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, env =>
-    consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env, signal }));
+  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (env, publication) => ({
+      ...await consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env, signal }),
+      dependencyPublication: { ...publication.state,
+        markerPath: resolveDependencyRefreshMarkerPath(resolveDependencyInstallRoot(repoDir)),
+        generationPath: `${resolveDependencyRefreshLockPath(resolveDependencyInstallRoot(repoDir), env)}.generation`,
+      },
+    }));
 }
 
 async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env, signal }) {
@@ -1135,8 +1142,22 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   }
   const identity = hash.digest('hex').slice(0, 16);
   const entrypoint = join(runtimeDir, component === 'daemon' ? 'src/index.mjs' : 'sources/main.mjs');
+  // Only installed external imports remain mutable after source emission. Keep
+  // the full installation publication for finite build/reload admission, while
+  // launch demand compares the closure this retained CLI actually imports.
+  // Unbundled sidecars keep relative imports to their retained siblings; those
+  // files already participate in the bundle identity above, not the install.
+  const runtimeImports = component === 'daemon' ? [...new Map(Object.values(result.metafile.outputs)
+    .flatMap(output => output.imports).filter(item => item.external && !item.path.startsWith('.'))
+    .map(item => {
+      const entry = { path: item.path, resolveFrom: join(sourceRepoDir, 'apps/cli/package.json') };
+      return [JSON.stringify(entry), entry];
+    })).values()] : null;
+  const runtimeDependencyClosure = runtimeImports ? { imports: runtimeImports,
+    identity: readSourceRuntimeDependencyIdentity({ imports: runtimeImports, signal }) } : null;
   return {
     identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir, sourceInputDigests,
+    ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
     ...(component === 'daemon' ? {
       nodeEntrypoint: entrypoint, cliDir: runtimeDir,
       env: {

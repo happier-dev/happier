@@ -400,7 +400,7 @@ export async function startDaemonPostAuth({
     join(baseDir, 'cli');
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: mergedEnv });
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
-    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
+    ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
   const launchEnv = applyCliRuntimeLaunchProvenanceEnv({ env: mergedEnv, cliLaunchSpec });
   const runtimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const cliBin = cliLaunchSpec?.command

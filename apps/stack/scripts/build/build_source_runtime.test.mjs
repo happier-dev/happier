@@ -20,6 +20,8 @@ import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
 import { applyServerHostDatabaseProviderEnv } from '../utils/server/apply_runtime_server_database_env.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
+import { relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
+import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { runServerRuntimeMigration } from '../runtime/launch/runServerRuntimeMigration.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { matchesNativeTypeScriptInputVersion, resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
@@ -33,6 +35,75 @@ import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { startDevServer, createDevServerReloadExecutor } from '../utils/dev/server.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { execPnpm } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
+
+test('source CLI launches across unrelated dependency refreshes and refuses changed transitive runtime inputs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-cli-dependency-closure-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture,
+    'import runtime from "freshness-root"; console.log(runtime.value);');
+  await writeFile(join(repoDir, 'apps/cli/scripts/claude_local_launcher.cjs'),
+    'module.exports = require("./claude_version_utils.cjs");');
+  await writeFile(join(repoDir, 'apps/cli/scripts/claude_version_utils.cjs'),
+    'module.exports = { retained: true };');
+  const identityOwner = new URL('./source_author_inputs.mjs', import.meta.url);
+  // The scratch checkout supplies the real launch-time preparation owner, just
+  // as the installed checkout does; relocate imports without replacing logic.
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/source_author_inputs.mjs'),
+    relocateSourceOwnerImports(await readFile(identityOwner, 'utf8'), identityOwner));
+  const virtualModules = join(repoDir, 'node_modules/.pnpm/freshness-root/node_modules');
+  const root = join(virtualModules, 'freshness-root');
+  const leaf = join(virtualModules, 'freshness-leaf');
+  const peer = join(virtualModules, 'freshness-peer');
+  await mkdir(root, { recursive: true });
+  await mkdir(leaf);
+  await mkdir(peer);
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'freshness-root', main: 'index.cjs',
+    dependencies: { 'freshness-leaf': '1.0.0' } }));
+  await writeFile(join(root, 'index.cjs'), 'exports.value = require("freshness-leaf").value;');
+  await writeFile(join(leaf, 'package.json'), JSON.stringify({ name: 'freshness-leaf', main: 'index.cjs',
+    peerDependencies: { 'freshness-peer': '1.0.0' } }));
+  await writeFile(join(leaf, 'index.cjs'), 'exports.value = require("freshness-peer").value;');
+  await writeFile(join(peer, 'package.json'), JSON.stringify({ name: 'freshness-peer', main: 'index.cjs' }));
+  await writeFile(join(peer, 'index.cjs'), 'exports.value = 1;');
+  await symlink(root, join(repoDir, 'apps/cli/node_modules/freshness-root'), process.platform === 'win32' ? 'junction' : 'dir');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const retained = await build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env });
+  assert.deepEqual(createRequire(import.meta.url)(join(retained.cliDir, 'scripts/claude_local_launcher.cjs')),
+    { retained: true }, 'relative sidecar imports load from the retained bundle');
+  const launch = async () => {
+    const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: retained });
+    return (await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env })).stdout.trim();
+  };
+  assert.equal(await launch(), '1');
+  await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ name: '@happier-dev/ui', dependencies: { 'ui-only': '1.0.0' } }));
+  await mkdir(join(repoDir, 'patches'));
+  await writeFile(join(repoDir, 'patches/metro.patch'), 'unrelated Metro patch');
+  await mkdir(join(repoDir, 'apps/ui/node_modules/ui-only'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/ui/node_modules/ui-only/index.js'), 'export const ui = 2;');
+  await writeFile(join(repoDir, 'pnpm-lock.yaml'), 'unrelated workspace wiring');
+  // pnpm can replace or touch shared installed files while adding unrelated
+  // workspace links. The retained runtime depends on their bytes, not inodes.
+  await writeFile(join(peer, 'index.cjs'), 'exports.value = 1;');
+  await writeFile(retained.dependencyPublication.markerPath, JSON.stringify({ identity: 'unrelated-ui-refresh' }));
+  assert.equal(await launch(), '1', 'unrelated workspace and Metro dependency changes must not invalidate the selected CLI');
+  const compiledGuard = fixture.path('compiled-closure-guard.mjs');
+  const { build: compile } = createRequire(new URL('../../../cli/package.json', import.meta.url))('esbuild');
+  await compile({ stdin: { contents: `
+    import { assertSourceRuntimeDependenciesCurrent } from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/cli-common/sourceRuntimeDependencies.mjs', import.meta.url)))};
+    try {
+      await assertSourceRuntimeDependenciesCurrent({ entrypoint: ${JSON.stringify(retained.entrypoint)} });
+      console.log(JSON.stringify({current:true}));
+    } catch ({code,phase,retryable}) { console.log(JSON.stringify({code,phase,retryable})); }
+  `, resolveDir: fixture.root }, outfile: compiledGuard, bundle: true, platform: 'node', format: 'esm' });
+  const bundledCheck = async () => JSON.parse((await promisify(execFile)(process.execPath, [compiledGuard], { env })).stdout);
+  assert.deepEqual(await bundledCheck(), { current: true }, 'the emitted guard must load the real installed-input owner');
+  await writeFile(join(peer, 'index.cjs'), 'exports.value = 2;');
+  await writeFile(retained.dependencyPublication.markerPath, JSON.stringify({ identity: 'runtime-leaf-refresh' }));
+  await assert.rejects(launch(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
+  assert.deepEqual(await bundledCheck(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
+});
 
 test('captured source workspaces run pnpm tasks with private real task state', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-pnpm-state-' });

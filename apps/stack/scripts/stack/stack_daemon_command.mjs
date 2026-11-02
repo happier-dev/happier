@@ -42,11 +42,11 @@ export async function resolveStackDaemonCommandContext({
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir: runtimeLaunchContext.stackBaseDir, component: 'daemon', env });
     sourceRuntimeLaunchUpdate = { launch: { entrypoint: built.entrypoint, cliDir: built.cliDir, env: built.env ?? {} }, identity: built.identity };
-    runtimeLaunchContext.cliLaunchSpec = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: sourceRuntimeLaunchUpdate.launch });
+    runtimeLaunchContext.cliLaunchSpec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: sourceRuntimeLaunchUpdate.launch });
   }
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec
-    ?? (runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null);
+    ?? (runtimeSnapshot ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null);
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';

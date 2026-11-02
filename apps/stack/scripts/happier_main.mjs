@@ -240,7 +240,7 @@ async function main() {
   let { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec
-    ?? (runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
+    ?? (runtimeLaunchContext.snapshot ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
   const resolvedCli = cliLaunchSpec
     ? isNodeRuntimeEntrypoint(cliLaunchSpec.entrypoint)

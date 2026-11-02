@@ -132,7 +132,7 @@ export async function resolveStackRuntimeLaunchContext({ argv = [], env = proces
       await recordStackRuntimeUpdate(statePath, { sourceRuntimeLaunch });
     }
     return { stackName, stackBaseDir, runtimeMode, snapshot: null,
-      cliLaunchSpec: resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch }) };
+      cliLaunchSpec: await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch }) };
   }
   if (purpose === 'deployment' && runtimeMode.mode !== 'source' && !argv.includes('--no-dev-targets')) {
     const components = env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : requiredComponents ?? ['web', 'server'];
