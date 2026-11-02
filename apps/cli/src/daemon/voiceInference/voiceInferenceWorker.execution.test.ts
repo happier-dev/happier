@@ -17,6 +17,7 @@ import type {
 } from './voiceInferenceRuntimeTypes';
 const sttPackId = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const ttsPackId = 'kokoro-82m-v1.0-onnx-q8-wasm';
+const frenchPackId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
 const workers: VoiceInferenceWorkerHandle[] = [];
 const homes: string[] = [];
 let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -74,6 +75,65 @@ afterEach(async () => {
 });
 
 describe('createVoiceInferenceWorkerExecution request lifecycle', () => {
+  it.each(['fr', 'fr-FR'])('selects the catalog French pack for %s instead of the selected English pack', async language => {
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, frenchPackId);
+    await mkdir(packDir, { recursive: true });
+    const bytes = Buffer.from('French native model boundary fixture');
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify({
+      packId: frenchPackId, kind: 'stt_sherpa', model: frenchPackId, version: 'fixture-v1',
+      files: [{ path: 'model.onnx', url: 'https://example.test/model.onnx',
+        sha256: createHash('sha256').update(bytes).digest('hex'), sizeBytes: bytes.byteLength }],
+    }));
+    await writeFile(join(packDir, 'model.onnx'), bytes);
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => { throw new Error('unused'); },
+      transcribeAudio: async input => ({ text: input.packId === frenchPackId ? 'Bonjour' : 'unrelated English', language: input.language }),
+    };
+    const worker = await createExecution(runtime);
+    const filePath = join(resolveVoiceInferencePaths().tempDir, 'french.wav');
+    await writeFile(filePath, createWavHeader());
+    await expect(worker.transcribeAudio({
+      requestId: 'french', uploadId: 'french', filePath, inputMimeType: 'audio/wav',
+      packId: sttPackId, language,
+      normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
+    })).resolves.toMatchObject({ text: 'Bonjour', modelPackId: frenchPackId });
+  });
+
+  it.each([
+    ['fr', 'model_not_installed'],
+    ['ja', 'runtime_unavailable'],
+  ])('returns typed unavailability for absent %s STT instead of invoking English STT', async (language, code) => {
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => { throw new Error('unused'); },
+      transcribeAudio: async () => ({ text: 'unrelated English', language: 'en' }),
+    };
+    const worker = await createExecution(runtime);
+    const filePath = join(resolveVoiceInferencePaths().tempDir, 'missing-french.wav');
+    await writeFile(filePath, createWavHeader());
+    await expect(worker.transcribeAudio({
+      requestId: 'missing-french', uploadId: 'missing-french', filePath, inputMimeType: 'audio/wav',
+      packId: sttPackId, language,
+      normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
+    })).rejects.toMatchObject({ code });
+    expect(await readdir(resolveVoiceInferencePaths().tempDir)).not.toContain('missing-french.wav');
+  });
+
+  it('refuses French streaming when the catalog has no matching streaming pack', async () => {
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => { throw new Error('unused'); },
+      transcribeAudio: async () => { throw new Error('unused'); },
+      createStreamingTranscriptionSession: async () => ({
+        appendPcm16: async () => ({ events: [] }), finish: async () => ({ text: 'English', language: 'en', events: [] }),
+        cancel: async () => {}, close: async () => {},
+      }),
+    };
+    const worker = await createExecution(runtime);
+    await expect(worker.createStreamingTranscriptionSession({
+      requestId: 'french-stream', packId: sttPackId, language: 'fr',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    })).rejects.toMatchObject({ code: 'runtime_unavailable' });
+  });
+
   it('warms a receiver model while the sender keeps its streaming lease and PCM progress', async () => {
     const runtime: VoiceInferenceRuntime = {
       synthesizeTts: async () => { throw new Error('unused'); },

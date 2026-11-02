@@ -32,6 +32,8 @@ type ModelPackCatalogEntryBase = Readonly<{
   streamingCapable: boolean;
   /** Download size in bytes, or null until sourced. */
   sizeBytes: number | null;
+  /** Upstream language codes; omitted when no verified model-card fact is available. */
+  languages?: readonly string[];
   /** Whether the canonical manifest and every integrity-declared asset are currently published. */
   publicationStatus: 'published' | 'unavailable';
   /** Exact non-runtime files admitted and installed with this pack. */
@@ -80,6 +82,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+    languages: ['en'],
     runtimeFamily: 'sherpa_zipformer_streaming',
     defaultFor: 'stt_sherpa',
     runtimeArtifacts: {
@@ -103,6 +106,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+    languages: ['en'],
     runtimeFamily: 'sherpa_zipformer_streaming',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.onnx' },
@@ -133,6 +137,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+    languages: ['en'],
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },
@@ -151,6 +156,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+    languages: ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'],
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },
@@ -161,8 +167,12 @@ export const MODEL_PACK_CATALOG = [
     archiveUrl:
       'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
     streamingCapable: false,
-    sizeBytes: null,
-    publicationStatus: 'unavailable',
+    supportArtifacts: [
+      { type: 'file', kind: 'license', path: 'LICENSES/CC-BY-4.0.txt' },
+      { type: 'file', kind: 'notice', path: 'THIRD_PARTY_NOTICES.txt' },
+    ],
+    sizeBytes: 670_498_712,
+    publicationStatus: 'published',
   },
   {
     // Source id "kokoro-en-v0_19" (extractedDir). Higher-quality, larger Kokoro TTS.

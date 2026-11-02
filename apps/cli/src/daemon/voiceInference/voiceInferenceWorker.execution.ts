@@ -12,6 +12,7 @@ import type {
 import { createInferenceDiagnostics, createUnavailableInferenceDiagnostics } from '@/daemon/inference/inferenceDiagnostics';
 
 import { validateDaemonVoiceInferenceAudioInput } from './validateDaemonVoiceInferenceAudioInput';
+import { resolveSttPackId } from './resolveSttPackId';
 import {
   createVoiceInferenceError,
   normalizePackId,
@@ -347,15 +348,16 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
         }
         await assertTempUploadPath(filePath);
         cleanupFilePath = filePath;
+        const resolvedPackId = resolveSttPackId(normalizedPackId, language, false);
         if (abortController.signal.aborted) {
           throw createVoiceInferenceError('cancelled');
         }
-        const transcribed = await params.lifecycle.runExclusive(normalizedPackId, async () => {
+        const transcribed = await params.lifecycle.runExclusive(resolvedPackId, async () => {
           if (abortController.signal.aborted) {
             throw createVoiceInferenceError('cancelled');
           }
           return await runWithRuntimeErrorHandling(async () => {
-            const { runtime, packDir, manifest, runtimeDescriptor, supportArtifacts } = await params.lifecycle.warmRuntimeForPack(normalizedPackId, abortController.signal);
+            const { runtime, packDir, manifest, runtimeDescriptor, supportArtifacts } = await params.lifecycle.warmRuntimeForPack(resolvedPackId, abortController.signal);
             if (abortController.signal.aborted) {
               throw createVoiceInferenceError('cancelled');
             }
@@ -371,7 +373,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               requestId,
               filePath: validatedInput.filePath,
               inputMimeType: validatedInput.inputMimeType,
-              packId: normalizedPackId,
+              packId: resolvedPackId,
               packDir,
               manifest,
               runtimeDescriptor,
@@ -387,7 +389,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               requestId,
               text: transcribed.text,
               language: transcribed.language,
-              modelPackId: normalizedPackId,
+              modelPackId: resolvedPackId,
             };
           });
         }, { signal: abortController.signal });
@@ -423,10 +425,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
         throw createVoiceInferenceError('internal_error', 'voice_inference_worker_stopped');
       }
       assertValidRequestId(requestId);
-      const normalizedPackId = normalizePackId(packId);
-      if (!normalizedPackId) {
-        throw createVoiceInferenceError('model_not_installed');
-      }
+      const normalizedPackId = resolveSttPackId(packId, language, true);
 
       const abortController = new AbortController();
       const unlinkAbortSignal = linkAbortSignal(signal, abortController);

@@ -1544,6 +1544,12 @@ explicit install, and native runtime loading/worker spawning waits for a model
 operation. The Account's Machine speech preference remains separate and defaults
 on in 0.3 development, independently of Experiments; explicit off choices remain
 respected. Effective availability still follows the canonical feature dependencies.
+In 0.3 development, daemon STT admission resolves an explicit recognition
+language through the model catalog's language declarations. A matching selected
+pack is retained; otherwise a published matching pack is selected. Missing model
+files return `model_not_installed`; a language with no matching pack for the
+requested batch or streaming mode returns `runtime_unavailable`. An English
+pack is never substituted for an explicitly requested French language.
 The 0.3 development STT default is the published
 `sherpa-onnx-streaming-zipformer-en-2023-06-26` pack (chunk-16/left-128 int8,
 72,703,581 bytes including notices), using the existing
@@ -1552,8 +1558,9 @@ dictation. `voice/modelPacks/catalog.ts` owns the default; the Local STT setting
 schema and Dictation's shared STT schema resolve through it. Explicit persisted
 pack choices are preserved, including the still-published February 2023 20M pack.
 No model is installed automatically; the Settings installer fetches the canonical
-integrity-declared manifest. The catalog retains Parakeet as optional, unavailable
-until its publication and runtime prerequisites are met.
+integrity-declared manifest. Parakeet v3 is an optional multilingual batch pack;
+Parakeet v2 remains unavailable until its publication and runtime prerequisites
+are met.
 Binary speech grants authorize the speech application, not a TCP destination port;
 see [peer mediation](peer-mediation.md).
 Streaming PCM capture shares the sender's existing packet coalescer on binary
