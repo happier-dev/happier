@@ -1,0 +1,28 @@
+diff --git a/node_modules/@elevenlabs/client/dist/BaseConversation.js b/node_modules/@elevenlabs/client/dist/BaseConversation.js
+--- a/node_modules/@elevenlabs/client/dist/BaseConversation.js
++++ b/node_modules/@elevenlabs/client/dist/BaseConversation.js
+@@ -255,8 +255,9 @@
+         }
+     }
+     handleErrorEvent(event) {
+-        const errorType = event.error_event.error_type;
+-        const message = event.error_event.message || event.error_event.reason || "Unknown error";
++        const errorEvent = event.error_event;
++        const errorType = errorEvent?.error_type;
++        const message = errorEvent?.message || errorEvent?.reason || "Unknown error";
+         if (errorType === "max_duration_exceeded") {
+             void this.endSessionWithDetails({
+                 reason: "error",
+@@ -269,9 +270,9 @@
+         }
+         this.onError(`Server error: ${message}`, {
+             errorType,
+-            code: event.error_event.code,
+-            debugMessage: event.error_event.debug_message,
+-            details: event.error_event.details,
++            code: errorEvent?.code,
++            debugMessage: errorEvent?.debug_message,
++            details: errorEvent?.details,
+         });
+     }
+     onMessage = async (parsedEvent) => {
