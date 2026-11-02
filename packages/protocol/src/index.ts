@@ -1,3 +1,7 @@
+export * from './deployments/deploymentChildRoutingV1.js';
+export * from './deployments/deploymentArchiveRpcV1.js';
+export * from './deployments/deploymentBindingSelectionNarrowing.js';
+export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1, type DeploymentTargetContributionV1 } from './plugins/contributions/deploymentTargets.js';
 export * from './local/services/nativeLogsV1.js';
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 export * from './actions/specs/machine/services.js';
