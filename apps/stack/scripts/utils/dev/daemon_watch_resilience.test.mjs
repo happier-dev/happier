@@ -249,7 +249,7 @@ test('the real source-runtime owner refuses to build when startup asks for a ret
   );
 });
 
-test('startDevDaemon launches the retained source generation and never builds, waits on build locks or admits a CLI dist', async () => {
+test('startDevDaemon retains source at startup and prepares current source for an explicit restart', async () => {
   let launch = null;
   const prepared = [];
   await startDevDaemon(
@@ -282,14 +282,14 @@ test('startDevDaemon launches the retained source generation and never builds, w
   await startDevDaemon(
     {
       startDaemon: true, cliHomeDir: '/tmp/happy-cli-home-restart', internalServerUrl: 'http://127.0.0.1:3009',
-      restart: true, stackName: 'dev', sourceRuntimeOptions: {},
+      startDaemon: true, restart: true, stackName: 'dev', sourceRuntimeOptions: {},
     },
     {
       prepareDevDaemonSourceRuntimeImpl: async (input) => { prepared.push(input.reuseSelected); return sourceGeneration('gen-2'); },
       startLocalDaemonWithAuthImpl: async (args) => { launch = args; },
     },
   );
-  assert.equal(prepared[1], true, 'even a restart only boots the retained generation; the first reload moves it to current source');
+  assert.equal(prepared[1], false, 'an explicit restart prepares current source before replacing the daemon');
   assert.equal(launch.forceRestart, true);
 });
 

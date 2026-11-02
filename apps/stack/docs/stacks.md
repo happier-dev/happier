@@ -125,6 +125,15 @@ port-collision reallocation path.
 
 ### Source stack reload (0.3 development)
 
+Source CLI and daemon launches use their retained runtime's installed dependency
+closure. A completed UI-only dependency refresh leaves them usable when that
+closure is unchanged. Changed runtime dependencies and unfinished or failed
+dependency publications still require recovery through the dependency owner.
+
+`hstack stack dev <stack> --restart` prepares the current daemon source before
+replacing it through the daemon lifecycle owner. Ordinary startup and recovery
+continue to use the retained source generation.
+
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification
 consumes Stack's selected/loaded identities and authenticated daemon-control

@@ -217,13 +217,13 @@ export async function startDevDaemon({
       let active = inFlightDevDaemonStarts.get(scope);
       if (!active) {
         const start = Promise.resolve().then(async () => {
-          // Startup, recovery and restart boot the retained source generation without
-          // building; the reload coordinator's initial refresh owns every build and
-          // moves the daemon to current source.
+          // Startup and recovery boot the retained generation. An explicit
+          // restart prepares current source before the canonical lifecycle
+          // owner replaces the daemon, including stale installed dependencies.
           const sourceRuntimeLaunchUpdate = await prepareDevDaemonSourceRuntimeImpl({
             sourceRuntimeOptions,
             env,
-            reuseSelected: true,
+            reuseSelected: !restart,
           });
           return await startLocalDaemonWithAuthImpl({
             cliBin,

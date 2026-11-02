@@ -68,7 +68,7 @@ export async function assertSourceRuntimeDependenciesCurrent({ entrypoint, recor
     if (!sourceRuntimeDependencyIdentityMatches(captured, { identity, writerActive,
       ...(record.runtimeDependencyClosure ? { generation: generation?.generation ?? null } : {}) })) {
       const closure = record.runtimeDependencyClosure;
-      if (identity && closure && component === 'daemon') {
+      if (identity && closure) {
         const installDir = dirname(dirname(captured.markerPath));
         const { readSourceRuntimeDependencyIdentity } = await import(pathToFileURL(join(installDir,
           'apps/stack/scripts/build/source_author_inputs.mjs')).href);

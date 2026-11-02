@@ -11,6 +11,52 @@ import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/
 import { assertSourceRuntimeDependenciesCurrent } from '../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import { readDependencyPublicationState, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 
+test('CLI and daemon admission follows their real closure across UI-only, runtime and failed publications', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-component-closure-' });
+  const repoDir = fixture.path('repo');
+  const dependency = fixture.path('repo/node_modules/runtime-input');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  await mkdir(dependency, { recursive: true });
+  await mkdir(fixture.path('repo/apps'), { recursive: true });
+  await writeFile(fixture.path('repo/package.json'), '{"private":true}');
+  await symlink(fileURLToPath(new URL('../../', import.meta.url)), fixture.path('repo/apps/stack'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await withDependencyRefresh({ installDir: repoDir, env }, async () => {
+    await writeFile(`${dependency}/package.json`, JSON.stringify({ name: 'runtime-input', main: 'index.cjs' }));
+    await writeFile(`${dependency}/index.cjs`, 'exports.value = 1;');
+    await writeFile(fixture.path('repo/pnpm-lock.yaml'), '# initial installation');
+  });
+  const imports = [{ path: 'runtime-input', resolveFrom: fixture.path('repo/package.json') }];
+  const record = {
+    dependencyPublication: { ...await readDependencyPublicationState({ installDir: repoDir, env }),
+      markerPath: resolveDependencyRefreshMarkerPath(repoDir),
+      generationPath: `${resolveDependencyRefreshLockPath(repoDir, env)}.generation` },
+    runtimeDependencyClosure: { imports, identity: readSourceRuntimeDependencyIdentity({ imports }) },
+  };
+  const admission = component => assertSourceRuntimeDependenciesCurrent({
+    entrypoint: fixture.path('runtime/apps/cli/src/index.mjs'), record, component, env,
+  });
+  for (const component of ['cli', 'daemon']) await assert.doesNotReject(admission(component));
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(fixture.path('repo/pnpm-lock.yaml'), '# UI-only dependency patch');
+  });
+  assert.notEqual((await readDependencyPublicationState({ installDir: repoDir, env })).identity,
+    record.dependencyPublication.identity, 'the fixture really changes the installation-wide identity');
+  for (const component of ['cli', 'daemon']) await assert.doesNotReject(admission(component),
+    `${component} remains admitted after a UI-only lockfile publication`);
+  await assert.rejects(withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    throw new Error('installation failed');
+  }), /installation failed/);
+  for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' }, 'an unchanged closure cannot admit a failed publication');
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(`${dependency}/index.cjs`, 'exports.value = 2;');
+  });
+  for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' }, 'a changed runtime dependency still requires reload');
+});
+
 test('runtime closure invalidates a removed installed path and re-resolves after an install relayout', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-runtime-input-relayout-' });
   const sourceDir = fixture.path('repo');

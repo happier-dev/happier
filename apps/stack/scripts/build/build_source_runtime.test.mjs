@@ -22,6 +22,7 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
 import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { prepareDevDaemonSourceRuntime, startDevDaemon } from '../utils/dev/daemon.mjs';
 import { runServerRuntimeMigration } from '../runtime/launch/runServerRuntimeMigration.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { matchesNativeTypeScriptInputVersion, resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
@@ -30,11 +31,54 @@ import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCliSourceEntries, readWorkspacePackages, createWorkspaceSourceResolver } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { captureBuildInputFiles } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
+import { withDependencyRefreshLock, withDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { startDevServer, createDevServerReloadExecutor } from '../utils/dev/server.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { execPnpm } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
+
+test('explicit dev daemon restart prepares current dependencies instead of refusing a stale retained generation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dev-restart-dependencies-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'import value from "restart-input"; console.log(value);');
+  const dependency = join(repoDir, 'apps/cli/node_modules/restart-input');
+  await mkdir(dependency, { recursive: true });
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'restart-input', main: 'index.cjs' }));
+  await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  const identityOwner = new URL('./source_author_inputs.mjs', import.meta.url);
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/source_author_inputs.mjs'),
+    relocateSourceOwnerImports(await readFile(identityOwner, 'utf8'), identityOwner));
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+  });
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const stackBaseDir = fixture.path('stacks/consumer');
+  const sourceRuntimeOptions = { repoDir, stackBaseDir };
+  await build({ ...sourceRuntimeOptions, component: 'daemon', env });
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 2;');
+  });
+  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
+  // Keep the actual lifecycle owner active while preventing a fixture from
+  // starting a real daemon: a deliberate owner stop is its natural boundary.
+  await writeFile(runtimeStatePath, JSON.stringify({ daemon: { desiredStateByIdentity: { default: 'stopped' } } }));
+  const result = await startDevDaemon({ startDaemon: true, restart: true, env, runtimeStatePath,
+    cliHomeDir: fixture.path('cli-home'), sourceRuntimeOptions }, {
+    // Linux fixtures relocate the genuine build/admission owner, without
+    // replacing any preparation, selection or daemon lifecycle decisions.
+    prepareDevDaemonSourceRuntimeImpl: options => prepareDevDaemonSourceRuntime(options,
+      { buildSourceRuntimeBundleImpl: build }),
+  });
+  assert.equal(result.reason, undefined, 'restart must get past stale dependency admission');
+  const selected = await build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true });
+  const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selected });
+  assert.equal((await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env })).stdout.trim(), '2');
+});
 
 test('source CLI launches across unrelated dependency refreshes and refuses changed transitive runtime inputs', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-cli-dependency-closure-', registerCleanup: false });
@@ -93,7 +137,7 @@ test('source CLI launches across unrelated dependency refreshes and refuses chan
   await compile({ stdin: { contents: `
     import { assertSourceRuntimeDependenciesCurrent } from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/cli-common/sourceRuntimeDependencies.mjs', import.meta.url)))};
     try {
-      await assertSourceRuntimeDependenciesCurrent({ entrypoint: ${JSON.stringify(retained.entrypoint)} });
+      await assertSourceRuntimeDependenciesCurrent({ entrypoint: ${JSON.stringify(retained.entrypoint)}, component: 'cli' });
       console.log(JSON.stringify({current:true}));
     } catch ({code,phase,retryable}) { console.log(JSON.stringify({code,phase,retryable})); }
   `, resolveDir: fixture.root }, outfile: compiledGuard, bundle: true, platform: 'node', format: 'esm' });
