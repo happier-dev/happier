@@ -1,6 +1,7 @@
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
-    type HealthCheckKindContributionV1, type HealthCheckKindV1 } from '@happier-dev/plugin-sdk';
+    type HealthCheckKindContributionV1, type HealthCheckKindV1, type HealthCheckSourceConfigV1, type DefinedPlugin, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
 import { systemdRuntime } from './systemd.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
@@ -21,7 +22,15 @@ const healthKinds = {
     heartbeat: { title: 'Heartbeat', configSchema: HealthCheckHeartbeatConfigV1ProtocolSchema.jsonSchema },
 } satisfies Record<HealthCheckKindV1, Pick<HealthCheckKindContributionV1, 'title' | 'configSchema'>>;
 
-export const plugin = definePlugin({
+// Keep schema-derived Action types nameable through public SDK exports.
+type MachineServicesActionContracts = Readonly<{
+    'health/setup': ActionContract<HealthCheckSourceConfigV1, JsonValue | void> & Readonly<{
+        pluginId: 'happier.machine.services';
+        localId: 'health/setup';
+    }>;
+}>;
+export const plugin: DefinedPlugin<'happier.machine.services', MachineServicesActionContracts,
+    Readonly<Record<string, readonly never[]>>> = definePlugin({
     id: 'happier.machine.services', version: '0.0.0', displayName: 'Machine services',
     description: 'Observe and control existing native services on the selected Machine.',
     entrypoints: { daemon: './.happier-plugin/daemon.js' },

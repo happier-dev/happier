@@ -1,10 +1,10 @@
 import { HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema,
     HealthCheckSubjectV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema, HEALTH_CHECK_KINDS_V1,
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, arePluginMachineMaterializationRefsEqual,
-    type HealthCheckSourceConfigV1, type HealthCheckResultV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+    type HealthCheckSourceConfigV1, type HealthCheckResultV1, type HealthCheckSubjectV1, type SavedHealthCheckSelectorV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
-    defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+    defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
@@ -12,17 +12,29 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
 export const HEALTH_STATUS_EVENT = 'health-status';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
 const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
-export const healthTransition = defineProtocolObject({ sourceInstanceId: defineProtocolString(),
+type HealthTransition = Readonly<{
+    sourceInstanceId: string;
+    subject: HealthCheckSubjectV1;
+    checkId: string;
+    phase: 'open' | 'resolved';
+    result: HealthCheckResultV1;
+}>;
+type Cursor = Readonly<{
+    basis: string;
+    checks: readonly Readonly<{ checkId: string; status: 'up' | 'down' | 'degraded'; ordinal: number }>[];
+    pending?: readonly Readonly<{ checkId: string; ordinal: number; result: HealthCheckResultV1; receivedAt: number }>[];
+}>;
+
+export const healthTransition: ProtocolComposableSchema<HealthTransition> = defineProtocolObject({ sourceInstanceId: defineProtocolString(),
     subject: HealthCheckSubjectV1ProtocolSchema, checkId: defineProtocolString(),
     phase: defineProtocolUnion([defineProtocolLiteral('open'), defineProtocolLiteral('resolved')]),
     result: HealthCheckResultV1ProtocolSchema }, { policy: 'closed' });
-const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
+const cursorSchema: ProtocolComposableSchema<Cursor> = defineProtocolObject({ basis: defineProtocolString(),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), status, ordinal }, { policy: 'closed' })),
     pending: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), ordinal,
         result: HealthCheckResultV1ProtocolSchema, receivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' })).optional(),
 }, { policy: 'closed' });
-type Cursor = ReturnType<typeof cursorSchema.parse>;
 type Candidate = Readonly<{ key: string; expectedVersion: number | 'absent'; value: Cursor }>;
 
 /** The shared SDK runner owns lifecycle/adoption/wakes/admission. This finite
@@ -169,7 +181,19 @@ export async function runHealthCheckObserver(context: BackgroundServiceContext):
     await runCheckpointedPluginEventObserverV1({ context, source: createHealthCheckSourceAdapter(Date.now, context.services.events.host) });
 }
 
-export const savedHealthActions = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {
+type SavedHealthAction = {
+    title: string;
+    scopes: readonly ['machine', 'global'];
+    surfaces: readonly ['ui', 'cli', 'agent', 'mcp', 'plugin'];
+    dangerLevel: 'safe';
+    readOnly: boolean;
+    execution: { target: 'daemon' };
+    inputSchema: ProtocolComposableSchema<SavedHealthCheckSelectorV1>;
+    resultSchema: ProtocolComposableSchema<HealthCheckResultV1>;
+    run(value: unknown, context: PluginInvocationContext): Promise<HealthCheckResultV1>;
+};
+
+export const savedHealthActions: Record<string, SavedHealthAction> = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {
     title: `Check saved ${kind === 'http' ? 'HTTP' : kind === 'dns' ? 'DNS' : kind === 'tcp' ? 'TCP' : kind}`,
     scopes: ['machine', 'global'] as const, surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] as const,
     dangerLevel: 'safe' as const, readOnly: true, execution: { target: 'daemon' as const },
