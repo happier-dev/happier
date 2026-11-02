@@ -39,7 +39,7 @@ export function resolveInstalledCliRuntimeRootPath(execPath: string): string | n
 
 /**
  * Runtime root of a self-contained first-party binary: the installed active payload
- * payload when launched through a `<home>/bin` CLI shortcut (shortcuts are hardlinks or copies,
+ * when launched through a `<home>/bin` CLI shortcut (shortcuts are hardlinks or copies,
  * so `execPath` is the shortcut), otherwise the binary's own directory. Uses `current.version`
  * to bypass junctions, falling back to `current` for older installs. `null` for node/bun.
  */

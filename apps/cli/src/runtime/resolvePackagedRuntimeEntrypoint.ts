@@ -5,7 +5,6 @@ import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
-  resolveInstalledCliRuntimeRootPath,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
@@ -89,8 +88,6 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
     // The bin wrapper imports its runtime without changing argv. Under Node/Bun the
     // loaded module therefore identifies this checkout/npm install (or runner snapshot).
     isJavaScriptRuntimeExecutable(process.execPath) ? moduleRoot : null,
-    resolveInstalledCliRuntimeRootPath(process.execPath),
-    resolveInstalledCliRuntimeRootPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),

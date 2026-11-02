@@ -1,4 +1,5 @@
 import { basename, dirname } from 'node:path';
+import { resolveInstalledCliRuntimeRootPath } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
 
@@ -97,6 +98,8 @@ export function resolveRuntimeRootFromPackagedBinaryPath(pathLike: string | null
   if (!normalized || isEmbeddedBunBundlePath(normalized)) {
     return null;
   }
+  const installedRoot = resolveInstalledCliRuntimeRootPath(normalized);
+  if (installedRoot) return installedRoot;
   const fileName = basename(normalized).toLowerCase();
   if (!['happier', 'happier.exe', 'happier-dev', 'happier-dev.exe'].includes(fileName)) {
     return null;

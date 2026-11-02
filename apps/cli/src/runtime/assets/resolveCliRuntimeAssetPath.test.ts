@@ -27,7 +27,7 @@ describe('resolveCliRuntimeAssetPath', () => {
       const stateHome = join(root, 'state');
       const versionRoot = join(shimHome, 'cli-preview', 'versions', '0.2.17-preview.1');
       const foreignRoot = join(stateHome, 'cli-preview', 'current');
-      for (const runtimeRoot of [versionRoot, foreignRoot]) {
+      for (const runtimeRoot of [versionRoot, foreignRoot, join(shimHome, 'bin')]) {
         mkdirSync(join(runtimeRoot, 'scripts'), { recursive: true });
         mkdirSync(join(runtimeRoot, 'package-dist'), { recursive: true });
         writeFileSync(join(runtimeRoot, 'package-dist', 'index.mjs'), '');
