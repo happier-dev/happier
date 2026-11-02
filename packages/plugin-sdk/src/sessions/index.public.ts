@@ -4,6 +4,8 @@ export type { SessionTargetV1, SessionTargetSelectorV1, ActionSessionTargetDecla
 export type { ActionResolvedSessionTargetsV1 } from './sessionTargets.js';
 export { SessionMessageSendResultV1ProtocolSchema } from './messageSendResult.js';
 export { PluginSessionInputAttachmentsV1ProtocolSchema } from './inputAuthoring.js';
+export { SessionAcceptedWorkspaceV1Schema, SessionStatusActionResultV1Schema } from './status.js';
+export type { SessionAcceptedWorkspaceV1, SessionStatusActionResultV1 } from './status.js';
 export { AgentPermissionIntentV1Schema } from '../services/sessions.js';
 export { CHANGE_TITLE_TOOL_NAME_ALIASES } from '../services/sessions.js';
 export type { CurrentSessionHandle } from '../services/sessions.js';

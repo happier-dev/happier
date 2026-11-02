@@ -5,6 +5,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 const homes = createHomeGovernanceHarness();
 const httpBoundary = { ...homes, request: createSessionReadBatchFetchBoundary(homes.request) };
@@ -54,4 +55,35 @@ it('reads a Session for a Home the Action context names by profile id and the Ac
   const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id },
     { surface: 'ui', serverId, expectedAccountId: 'alice' });
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { session: { id: session.id } } });
+});
+
+it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout proof only on an explicit status read', async scenario => {
+  const serverId = await homes.addHome({ name: 'Checkout', serverUrl: 'https://checkout-status.test', accountId: 'alice', currentAccount: true });
+  const state = getStorage().getState();
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
+  getStorage().setState({ profileScope: scope });
+  const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'checkout-machine', rootPath: '/work/project', createdAtMs: 1,
+    repositoryIdentity: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/project' } };
+  state.activateProjectAccountRowsScope(scope);
+  getStorage().getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+    workspaceRefs: scenario === 'unavailable' ? [] : [checkout], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+  const session = createSessionFixture({ id: 'checkout-session', encryptionMode: 'plain', ownerAccountId: scenario === 'recipient' ? 'other' : 'alice',
+    access: createSessionAccessFixture(scenario === 'recipient' ? 'view' : 'owner'),
+    metadata: { ...createSessionFixture().metadata!, flavor: 'codex', machineId: checkout.machineId, path: checkout.rootPath, workspaceId: checkout.id } });
+  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+  const executor = createDefaultActionExecutor();
+  const ordinary = await executor.execute('session.status.get', { sessionId: session.id }, { surface: 'ui', serverId, expectedAccountId: 'alice' });
+  expect(ordinary).not.toHaveProperty('result.acceptedWorkspace');
+  if (scenario === 'recipient') expect(ordinary).not.toHaveProperty('result.agentTarget');
+  else expect(ordinary).toMatchObject({ result: {
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+  } });
+  const result = await executor.execute('session.status.get', { sessionId: session.id, includeAcceptedWorkspace: true },
+    { surface: 'ui', serverId, expectedAccountId: 'alice' });
+  expect(result).toMatchObject({ ok: true, result: { session: { id: session.id } } });
+  if (scenario === 'accepted') expect(result).toMatchObject({ result: { acceptedWorkspace: {
+    checkout: { serverId: scope.serverId, workspaceId: checkout.id, machineId: checkout.machineId, rootPath: checkout.rootPath }, repository: checkout.repositoryIdentity,
+  } } });
+  else expect(result).not.toHaveProperty('result.acceptedWorkspace');
+  expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toHaveLength(0);
 });

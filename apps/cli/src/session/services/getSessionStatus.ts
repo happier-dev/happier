@@ -19,11 +19,16 @@ import type { SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { ensureSessionDisplayProjectionAfterOwnerRead } from '@/session/metadata/updateSessionMetadataWithRetry';
+import type { SessionAcceptedWorkspaceV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 
 export type GetSessionStatusResult =
   | Readonly<{ ok: true; session: SessionSummary; agentState: AgentStateSummary | null; awareness: SessionAwarenessProjectionV1; readiness?: SessionReadinessV1;
       connectedServices?: SessionStatusResult['connectedServices'];
+      acceptedWorkspace?: SessionAcceptedWorkspaceV1;
+      agentTarget?: SessionStatusResult['agentTarget'];
       pendingRequests: SessionStatusResult['pendingRequests'] }>
   | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported' | 'encryption_material_unavailable'; candidates?: string[] }>;
 
@@ -63,6 +68,8 @@ export async function getSessionStatus(params: Readonly<{
   idOrPrefix: string;
   live: boolean;
   readiness?: boolean;
+  includeAcceptedWorkspace?: boolean;
+  readAcceptedWorkspace?: (metadata: unknown) => Promise<SessionAcceptedWorkspaceV1 | undefined>;
   operation?: 'conversation' | 'credential';
   credentialPurpose?: QualifiedConnectedAccountPurposeV1;
   credentialTeamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
@@ -157,9 +164,18 @@ export async function getSessionStatus(params: Readonly<{
   const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
     accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode, rawSession: sessionTarget.rawSession });
   const connectedServices = ConnectedServiceBindingsV2IngressSchema.safeParse(ownerMetadata?.connectedServices);
+  const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata);
+  // A readable shared Session does not admit the viewing Account's private checkout census.
+  const explicitAccess = sessionTarget.rawSession.effectiveAccess !== undefined || sessionTarget.rawSession.share !== undefined;
+  const acceptedWorkspace = params.includeAcceptedWorkspace === true && ownerMetadata && explicitAccess
+    && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'owner'
+    ? await params.readAcceptedWorkspace?.(ownerMetadata) : undefined;
+  params.signal?.throwIfAborted();
 
   return {
     ok: true,
+    ...(agentTarget ? { agentTarget } : {}),
+    ...(acceptedWorkspace ? { acceptedWorkspace } : {}),
     ...(connectedServices.success ? { connectedServices: projectConnectedServiceBindingsForChild(connectedServices.data) } : {}),
     session: summarizeSessionRecord({
       credentials: params.credentials,

@@ -6,7 +6,7 @@ import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
+import { resolveAgentExecutionTargetFromSessionMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { resolveAmbientProviderConnectionForModelIntent, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import { isDataKeyAuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
@@ -17,6 +17,7 @@ import { listEntitledTeamCredentialResources } from '@/sync/ops/teams/teamCreden
 import { buildSessionReadinessViewModel } from '@/components/sessions/model/sessionReadinessViewModel';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTargetKey } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionAcceptedWorkspace } from '@/sync/domains/session/sessionAcceptedWorkspace';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -29,7 +30,7 @@ import type { LazyActionAccountContext } from './actionAccountContext';
 /** Status stays usable without a running Agent; detail reads are explicit and use the existing inventory. */
 export function createUiSessionStatusGet(account: LazyActionAccountContext | null | undefined,
   options?: Readonly<{ refreshReadiness?: boolean }>): NonNullable<ActionExecutorDeps['sessionStatusGet']> {
-  return async ({ sessionId, readiness, operation, credentialPurpose, credentialTeamSelection, serverId, signal }) => {
+  return async ({ sessionId, readiness, includeAcceptedWorkspace, operation, credentialPurpose, credentialTeamSelection, serverId, signal }) => {
     if (!account) return { ok: false, code: 'not_authenticated' };
     account.assertCurrent();
     signal?.throwIfAborted();
@@ -57,7 +58,11 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
       ...(system ? { systemPurpose: system.key ?? null } : {}),
       encryption: isDataKeyAuthCredentials(account.credentials) ? { type: 'dataKey' }
         : isLegacyAuthCredentials(account.credentials) ? { type: 'legacy' } : null });
-    const result = { ok: true as const, session: summary, awareness: projectUiSessionAwareness(session, Date.now()) };
+    const acceptedWorkspace = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspace(session, account.accountLifetime.scope, storage.getState()) : undefined;
+    const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(metadata);
+    const result = { ok: true as const, session: summary, awareness: projectUiSessionAwareness(session, Date.now()),
+      ...(agentTarget ? { agentTarget } : {}),
+      ...(acceptedWorkspace ? { acceptedWorkspace } : {}) };
     if (readiness !== true) return result;
     // Diagnostics keep stable attribution when control admission correctly refuses an offline Machine.
     const target = resolveDisplayIdentityForSessionFromState({ state: storage.getState(),

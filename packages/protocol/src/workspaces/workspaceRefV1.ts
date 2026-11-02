@@ -1,7 +1,8 @@
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 const StoredNonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const LookupNonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
@@ -50,6 +51,13 @@ export const WorkspaceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   rootPath: LookupNonEmptyStringSchema,
 }));
 export type WorkspaceAddressV1 = z.infer<typeof WorkspaceAddressV1Schema>;
+/** Private accepted checkout facts, emitted only after Session and Account census admission. */
+export const SessionAcceptedWorkspaceV1Schema = lazyZodSchema(() => z.strictObject({
+  checkout: WorkspaceAddressV1Schema,
+  repository: z.optional(ScmHostingRepositoryIdentityV1Schema),
+}));
+export type SessionAcceptedWorkspaceV1 = z.infer<typeof SessionAcceptedWorkspaceV1Schema>;
+export const SessionAcceptedWorkspaceV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionAcceptedWorkspaceV1Schema));
 
 export const ProjectKeyV1Schema = lazyZodSchema(() => z.union([
   ProjectKeyByIdV1Schema,

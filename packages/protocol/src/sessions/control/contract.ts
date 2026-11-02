@@ -1,5 +1,6 @@
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { SessionTeamCredentialBindingIntentV1Schema } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { z } from 'zod/mini';
@@ -12,6 +13,8 @@ import { SessionAwarenessOriginV1Schema, SessionAwarenessProjectionV1Schema } fr
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
 import { SessionViewerProjectionV1Schema } from '../personal/viewer.js';
 import { SessionReadinessV1Schema } from './sessionReadinessV1.js';
+import { SessionAcceptedWorkspaceV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 export { SessionReadinessV1Schema, composeSessionReadinessV1 } from './sessionReadinessV1.js';
 export type { SessionReadinessV1, SessionReadinessFactsV1, SessionCredentialReadinessV1, SessionReadinessRepairV1 } from './sessionReadinessV1.js';
 
@@ -632,6 +635,8 @@ export type V2SessionMessageResponse = z.infer<typeof V2SessionMessageResponseSc
 
 export const SessionStatusResultSchema = lazyZodSchema(() => z.looseObject({
   session: SessionSummarySchema,
+  acceptedWorkspace: z.optional(SessionAcceptedWorkspaceV1Schema),
+  agentTarget: z.optional(AgentExecutionTargetV1Schema),
   // Content-free Session selection; omitted when its owner metadata cannot be opened.
   connectedServices: z.optional(ConnectedServiceBindingsV2Schema),
   readiness: z.optional(SessionReadinessV1Schema),
@@ -655,6 +660,7 @@ export const SessionStatusActionResultV1Schema = lazyZodSchema(() => z.union([
   z.looseObject({ ...SessionStatusResultSchema.shape, ok: z.optional(z.literal(true)) }),
   z.strictObject({ ok: z.literal(false), code: z.string(), candidates: z.optional(z.array(z.string())) }),
 ]));
+export const SessionStatusActionResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionStatusActionResultV1Schema));
 
 export const SessionCreateResultSchema = lazyZodSchema(() => z.looseObject({
   session: SessionSummarySchema,
