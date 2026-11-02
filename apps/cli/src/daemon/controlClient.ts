@@ -15,6 +15,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import {
   clearReplaceableDaemonLock,
   daemonStateMatchesOwner,
@@ -1251,7 +1252,7 @@ export async function requestExecutionRunConnectedServicesMaterialization(
   options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<
   | { ok: true; result: { activationId: string; env: Record<string, string>; unsetEnvKeys?: readonly string[]; connectedServicesBindings: unknown; registration: ExecutionRunConnectedServicesRegistrationV1 } }
-  | { ok?: false; error?: string; errorCode?: string; errorMessage?: string }
+  | { ok?: false; error?: string; errorCode?: string; errorMessage?: string; uxDiagnostic?: ConnectedServiceUxDiagnosticV1 }
 > {
   options.signal?.throwIfAborted();
   // Allocate the existing activation identity before dispatch, so a lost
@@ -1295,6 +1296,7 @@ export async function requestExecutionRunConnectedServicesMaterialization(
   const refusal = ConnectedServiceRunRejectedStartResultSchema.safeParse(failure?.response ?? response);
   if (refusal.success && !refusal.data.ok) {
     return { ok: false, errorCode: refusal.data.errorCode,
+      ...(refusal.data.uxDiagnostic ? { uxDiagnostic: refusal.data.uxDiagnostic } : {}),
       ...(typeof failure?.error === 'string' ? { error: sanitizeConnectedServiceDiagnosticString(failure.error) } : {}),
       errorMessage: refusal.data.errorMessage
         ? sanitizeConnectedServiceDiagnosticString(refusal.data.errorMessage)

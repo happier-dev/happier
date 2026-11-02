@@ -67,6 +67,7 @@ import {
   ConnectedServiceRunRejectedStartRequestSchema,
   ConnectedServiceRunRejectedStartResultSchema,
   type ConnectedServiceRunRejectedStartHandler,
+  ConnectedServiceRunMaterializationFailureResponseSchema,
   ConnectedServiceRunMaterializeRequestSchema,
   ConnectedServiceRunMaterializeSuccessResponseSchema,
   ConnectedServiceRunReleaseRequestSchema,
@@ -2610,14 +2611,7 @@ export function createDaemonControlApp({
       response: {
         200: ConnectedServiceRunMaterializeSuccessResponseSchema,
         401: authSchema401,
-        403: z.object({
-          ok: z.literal(false),
-          errorCode: z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
-            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable]),
-          modelId: z.optional(z.string()),
-          errorMessage: z.optional(z.string()),
-        }),
+        403: ConnectedServiceRunMaterializationFailureResponseSchema,
         501: z.object({
           ok: z.literal(false),
           errorCode: z.literal(CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable),
@@ -2643,6 +2637,7 @@ export function createDaemonControlApp({
           errorCode: result.errorCode,
           ...('modelId' in result && result.modelId ? { modelId: result.modelId } : {}),
           ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+          ...(result.uxDiagnostic ? { uxDiagnostic: result.uxDiagnostic } : {}),
         };
       }
       return {

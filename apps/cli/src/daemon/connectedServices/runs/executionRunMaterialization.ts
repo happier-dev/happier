@@ -19,6 +19,7 @@ import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedSer
 import { ConnectedServiceSpawnModelUnavailableError, ConnectedServiceSpawnResumeUnreachableError } from '../resolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceMaterializationBlockedError } from '../materialize/materializeConnectedServicesForSpawn';
 import {
+    buildConnectedServiceCredentialSpawnErrorResult,
     boundConnectedServiceMaterializationDiagnosticValue,
 } from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import {
@@ -1119,13 +1120,16 @@ export function createExecutionRunConnectedServicesBridge(
                     // text: it can name a credential or a local path, so it passes
                     // the same diagnostic privacy owner before it is retained or
                     // bridged to the runner.
-                    const safeResolutionFailure = sanitizeConnectedServiceDiagnosticError(error);
+                    const credentialFailure = buildConnectedServiceCredentialSpawnErrorResult({ agentId, error });
+                    const uxDiagnostic = credentialFailure?.errorDetail?.kind === 'connected_service_ux_diagnostic'
+                        ? credentialFailure.errorDetail.uxDiagnostic : undefined;
+                    const safeResolutionFailure = uxDiagnostic?.code ?? sanitizeConnectedServiceDiagnosticError(error);
                     logger.warn('[DAEMON RUN] Execution-run connected services resolution failed; failing closed', {
                         runId: input.runId,
                         agentId,
                         error: safeResolutionFailure,
                     });
-                    return blocked(safeResolutionFailure);
+                    return { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}) };
                 }
 
                 if (!resolved) {

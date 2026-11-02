@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import axios from 'axios';
+import { QualifiedConnectedAccountListResponseV4Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { ApiClient } from '@/api/api';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { deriveConnectedServiceRunMaterializeToken, isValidConnectedServiceRunMaterializeToken } from './capabilityToken';
 
 import {
     readConnectedAccountRequestAuthCapabilityFile,
@@ -21,6 +26,8 @@ import {
 import {
     createConnectedAccountRequestAuthSubjectRegistry,
 } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
+import { ConnectedServiceRunMaterializationFailureResponseSchema } from './materializeContract';
 import { createExecutionRunConnectedServicesBridge } from './executionRunMaterialization';
 import type { CreateExecutionRunConnectedServicesBridgeDeps } from './executionRunMaterialization';
 
@@ -149,6 +156,52 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
 }
 
 describe('createExecutionRunConnectedServicesBridge', () => {
+    it('retains the profile action-required diagnostic when direct Run materialization is refused', async () => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const credentials = { token: 'fixture-home-token', encryption: null };
+        const api = await ApiClient.create(credentials);
+        const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{
+            ref: { service, accountId: 'profile_1' }, status: 'needs_reauth', authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+            configurationReady: true, configurationRevision: null, scopes: [],
+        }] });
+        const home = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (new URL(String(url)).pathname === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+            throw new Error('Profile refusal must precede credential materialization');
+        });
+        const { bridge, registerRunTargets } = createBridge({
+            acquireAgentPurposeContributions: async () => ({
+                contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
+                isCurrent: () => true, release: async () => undefined,
+            }),
+            resolveAuthForSpawn: input => resolveConnectedServiceAuthForSpawn({ ...input, api, credentials,
+                activeServerDir: '/unused-home', baseDir: '/unused-materialization',
+            }),
+        });
+        const app = createDaemonControlApp({
+            getChildren: () => [], machineId: 'machine', stopSession: async () => ({ status: 'not_found' }),
+            spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+            requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'master-token',
+            verifyRunMaterializeToken: provided => isValidConnectedServiceRunMaterializeToken(provided, 'master-token'),
+            materializeConnectedServicesForExecutionRun: bridge.materialize,
+        });
+        try {
+            const response = await app.inject({ method: 'POST', url: '/connected-service-run/materialize',
+                headers: { 'x-happier-daemon-token': deriveConnectedServiceRunMaterializeToken('master-token') },
+                payload: { ...MATERIALIZE_INPUT, connectedServices: PERSISTED_RUN_BINDINGS, activationId: randomUUID() },
+            });
+            expect(response.statusCode).toBe(403);
+            const result: unknown = response.json();
+            expect(result).toMatchObject({ ok: false, uxDiagnostic: {
+                code: 'connected_service_credential_reconnect_required', retryable: false,
+                serviceId: 'happier.agent.codex/openai-codex', profileId: 'profile_1',
+                diagnostics: { reconnectCause: 'listed_needs_reauth' },
+            } });
+            expect(ConnectedServiceRunMaterializationFailureResponseSchema.parse(result)).toEqual(result);
+            expect(registerRunTargets).not.toHaveBeenCalled();
+        } finally { await app.close(); home.mockRestore(); }
+    });
     it('retains the native checkpoint through credential rematerialization of the exact Run activation', async () => {
         const h = createBridge();
         const first = await h.bridge.materialize({ ...MATERIALIZE_INPUT, activationId: randomUUID() });

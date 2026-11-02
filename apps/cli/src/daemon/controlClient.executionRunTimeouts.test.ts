@@ -19,6 +19,15 @@ import {
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
 import { readDaemonState } from '@/persistence';
 import { logger } from '@/ui/logger';
+import { buildConnectedServiceCredentialSpawnErrorResult } from './connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import { ConnectedServiceSpawnProfileActionRequiredError } from './connectedServices/resolveConnectedServiceAuthForSpawn';
+import { resolveExecutionRunConnectedServicesEnv } from '@/agent/runtime/bridges/executionRun/runtime/connectedServicesEnv';
+import { createLazyExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/hostRuntime/lazy';
+import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
+import { startExecutionRun } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
+import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
+import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -82,6 +91,53 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     } },
   };
   const foreignActivationId = '22222222-2222-4222-8222-222222222222';
+  it('carries a daemon profile-action refusal through Voice Run start without retrying', async () => {
+    const ownerResult = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex',
+      error: new ConnectedServiceSpawnProfileActionRequiredError({
+        serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', status: 'needs_reauth',
+      }),
+    });
+    if (ownerResult?.errorDetail?.kind !== 'connected_service_ux_diagnostic') throw new Error('Expected owner diagnostic');
+    const uxDiagnostic = ownerResult.errorDetail.uxDiagnostic;
+    const paths: string[] = [];
+    // Substitute only daemon HTTP. Client parsing, Run credential resolution,
+    // lazy startup, Voice adaptation and the public terminal error stay real.
+    vi.stubGlobal('fetch', async (url: string) => {
+      const path = new URL(url).pathname;
+      paths.push(path);
+      if (path.endsWith('/release')) return new Response(JSON.stringify({ ok: true, released: false }));
+      if (path.endsWith('/materialize')) return new Response(JSON.stringify({ ok: false,
+        errorCode: 'connected_service_run_materialization_blocked', errorMessage: uxDiagnostic.code, uxDiagnostic,
+      }), { status: 403 });
+      throw new Error('Unexpected daemon HTTP request');
+    });
+    const createRuntime = () => createLazyExecutionRunHostRuntime({ resolveRuntime: async () => {
+      await resolveExecutionRunConnectedServicesEnv({ runId: 'voice-profile-refusal', backendId: 'codex',
+        backendSourceKind: 'built_in', connectedServices: materializeRequest.connectedServices, cwd: '/repo',
+      });
+      throw new Error('A refused profile cannot create an Agent runtime');
+    } });
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'voice-chat' };
+    let terminalError: ExecutionRunState['error'];
+    try {
+      await startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          modelSelection: selection, connectedServices: materializeRequest.connectedServices,
+          intentInput: { commitModelSelection: selection }, permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'long_lived', ioMode: 'streaming', bootstrapMode: 'none' },
+        parentProvider: 'codex', sendAcp: async () => {}, streamedTranscriptSession: null, createRuntime,
+        getNowMs: () => 1, budgetRegistry: null, runs: new Map<string, ExecutionRunState>(),
+        controllers: new Map<string, ExecutionRunController>(), enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {}, finishRun: async (_id, patch) => { terminalError = patch.error; },
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(terminalError && ExecutionRunErrorSchema.parse(terminalError)).toMatchObject({
+        code: uxDiagnostic.code, uxDiagnostic,
+      }));
+      expect(paths).toEqual(['/connected-service-run/materialize', '/connected-service-run/release']);
+    } finally { await voiceAgentManager.dispose(); }
+  });
   const successResponse = (activationId: string, registrationActivationId = activationId) => ({
     ok: true, result: { activationId, env: {}, connectedServicesBindings: materializeRequest.connectedServices,
       registration: { v: 1, activationId: registrationActivationId, runKey: materializeRequest.runId,

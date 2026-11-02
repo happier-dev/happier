@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { ConnectedServiceUxDiagnosticV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import { ConnectedServiceBindingsV2IngressSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ExecutionRunConnectedServicesLaunchV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -137,6 +138,16 @@ export const CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES = {
     resumeUnavailable: 'provider_session_state_unavailable_for_resume',
 } as const;
 
+export const ConnectedServiceRunMaterializationFailureResponseSchema = z.strictObject({
+    ok: z.literal(false),
+    errorCode: z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
+        CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+        CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable]),
+    modelId: z.optional(z.string()),
+    errorMessage: z.optional(z.string()),
+    uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
+});
+
 export const ConnectedServiceRunRejectedStartRequestSchema = z.strictObject({
     runId: z.string().check(z.trim(), z.minLength(1)),
     runnerPid: z.number().check(z.int(), z.positive()),
@@ -154,8 +165,7 @@ export const ConnectedServiceRunRejectedStartRequestSchema = z.strictObject({
 export type ConnectedServiceRunRejectedStartRequest = z.infer<typeof ConnectedServiceRunRejectedStartRequestSchema>;
 export const ConnectedServiceRunRejectedStartResultSchema = z.union([
     z.strictObject({ ok: z.literal(true), retry: z.literal(true) }),
-    z.strictObject({
-        ok: z.literal(false),
+    z.extend(ConnectedServiceRunMaterializationFailureResponseSchema, {
         errorCode: z.enum([
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
@@ -163,8 +173,6 @@ export const ConnectedServiceRunRejectedStartResultSchema = z.union([
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
             CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable,
         ]),
-        modelId: z.optional(z.string()),
-        errorMessage: z.optional(z.string()),
     }),
 ]);
 export type ConnectedServiceRunRejectedStartResult = z.infer<typeof ConnectedServiceRunRejectedStartResultSchema>;
@@ -181,14 +189,7 @@ export type ConnectedServiceRunMaterializationHandlerResult =
         connectedServicesBindings: unknown;
         registration: ExecutionRunConnectedServicesRegistrationV1;
     }>
-    | Readonly<{
-        ok: false;
-        errorCode: typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked
-            | typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable
-            | typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable;
-        modelId?: string;
-        errorMessage?: string;
-    }>;
+    | z.infer<typeof ConnectedServiceRunMaterializationFailureResponseSchema>;
 
 export type ConnectedServiceRunMaterializationHandler = (
     input: ConnectedServiceRunMaterializeRequest,
