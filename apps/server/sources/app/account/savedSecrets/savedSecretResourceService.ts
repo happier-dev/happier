@@ -4,7 +4,7 @@ import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/prot
 import { TeamRoleV1Schema } from '@happier-dev/protocol/teams';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogResultV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { isTeamPrincipalRoleV1 } from "@happier-dev/protocol/teams";
@@ -37,6 +37,7 @@ import { readNotificationChannelCatalogInTx, mutateNotificationChannelCatalogInT
 import type { Prisma } from "@prisma/client";
 import { isDeepStrictEqual } from "node:util";
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import * as privacyKit from "privacy-kit";
 import { writeAccountSettingsInTx } from "@/app/accountSettings/writeAccountSettingsInTx";
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
@@ -750,12 +751,11 @@ export class SavedSecretResourceTransactionAbort extends Error {
 
 function readStoredContent(resourceId: string, value: string): SavedSecretResourceStoredContentV1 | null {
     try {
-        const opened = decodeSensitiveContentFromAtRestStorage({
+        return decodeSensitiveContentFromAtRestStorage({
             keyPath: ["storage", "saved_secret_resource", resourceId, "v1"],
             value,
+            contentSchema: createStoredReadSchema(SavedSecretResourceStoredContentV1Schema),
         });
-        const parsed = SavedSecretResourceStoredContentV1Schema.safeParse(opened);
-        return parsed.success ? parsed.data : null;
     } catch {
         return null;
     }
@@ -766,7 +766,18 @@ function storeContent(resourceId: string, content: SavedSecretResourceStoredCont
         contentMode: content.t === "plain" ? "plain" : "e2ee",
         keyPath: ["storage", "saved_secret_resource", resourceId, "v1"],
         content,
+        contentSchema: SavedSecretResourceStoredContentV1Schema,
     });
+}
+
+function readSavedSecretMetadata(row: Pick<StoredResourceRow, 'id' | 'storedContent' | 'encryptionMode' | 'kind'>) {
+    const stored = readStoredContent(row.id, row.storedContent);
+    const encryptionMode = row.encryptionMode === 'plain' && stored?.t === 'plain' ? 'plain'
+        : row.encryptionMode === 'e2ee' && stored?.t === 'encrypted' ? 'e2ee' : null;
+    const kind = row.kind === 'apiKey' || row.kind === 'token' || row.kind === 'password' || row.kind === 'other' ? row.kind : null;
+    if (!stored || !encryptionMode || !kind) return null;
+    const storage = stored.storage ?? (stored.t === 'plain' ? describeSavedSecretResourceContentV1(stored.v) : undefined);
+    return { stored, encryptionMode, kind, storage };
 }
 
 type EncryptedMaterialStatus =
@@ -861,14 +872,11 @@ function projectRow(
     } catch {
         return projectCorruptRow(row, accountId);
     }
-    const stored = readStoredContent(row.id, row.storedContent);
-    const modeMatches = (row.encryptionMode === "plain" && stored?.t === "plain")
-        || (row.encryptionMode === "e2ee" && stored?.t === "encrypted");
-    const metadataKind = row.kind === "apiKey" || row.kind === "token" || row.kind === "password" || row.kind === "other"
-        ? row.kind : null;
-    if (!metadataKind || !stored || !modeMatches) {
+    const metadata = readSavedSecretMetadata(row);
+    if (!metadata) {
         return projectCorruptRow(row, accountId);
     }
+    const { kind: metadataKind } = metadata;
     const materialStatus = row.encryptionMode === "e2ee"
         ? encryptedMaterialStatus
         : "ready";
@@ -878,6 +886,7 @@ function projectRow(
         relationship: isOwner ? "owner" : "recipient",
         name: row.displayName.trim().length > 0 ? row.displayName : null,
         kind: metadataKind,
+        ...(metadata.storage ? { storage: metadata.storage } : {}),
         encryptionMode: row.encryptionMode === "plain" || row.encryptionMode === "e2ee"
             ? row.encryptionMode
             : null,
@@ -1805,7 +1814,7 @@ async function readSavedSecretHistoryResourceValueInTx(tx: Tx, input: Readonly<{
         select: { revision: true, encryptionMode: true, storedContent: true } });
     if (!row || row.revision !== input.expectedRevision || row.encryptionMode !== 'plain') return null;
     const content = readStoredContent(input.resourceId, row.storedContent);
-    return content?.t === 'plain' ? content.v.value : null;
+    return content?.t === 'plain' && content.v.v === 1 ? content.v.value : null;
 }
 
 export async function validateSavedSecretHistoryTransferProofsInTx(tx: Tx, input: Readonly<{

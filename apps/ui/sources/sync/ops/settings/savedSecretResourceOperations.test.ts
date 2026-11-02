@@ -1007,7 +1007,7 @@ describe('Saved Secret operations through their real Account and Action owners',
                 const key = envelope ? await encryption.decryptEncryptionKey(envelope.encryptedDataKey, account.scope) : null;
                 if (!key) throw new Error('Expected the genuine owner Resource envelope');
                 expect(openSavedSecretResourceStoredContentV1({ resourceId: packet.resourceId, mode: 'e2ee',
-                    storedContent: packet.storedContent, resourceDataKey: key })?.value).toBe(exactValue);
+                    storedContent: packet.storedContent, resourceDataKey: key })).toMatchObject({ v: 1, value: exactValue });
                 if (packet.expectedSettingsVersion !== account.settingsVersion || account.catalogRows.has(NOTIFICATION_CHANNELS_ROUTE_V1))
                     return Response.json({ error: 'references_conflict' }, { status: 409 });
                 account.materialRow(packet.resourceId, 'e2ee', packet.storedContent, 1, key);
@@ -1060,7 +1060,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             const content = openSavedSecretResourceStoredContentV1({
                 resourceId: packet.resourceId, mode: 'plain', storedContent: packet.storedContent,
             });
-            expect(content?.value).toBe(exactValue);
+            expect(content).toMatchObject({ v: 1, value: exactValue });
             // This is the real HTTP storage boundary: admit both before persisting
             // either, without staging a Resource or issuing a Settings mutation.
             account.materialRow(packet.resourceId, 'plain', packet.storedContent, 1);

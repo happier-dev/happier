@@ -16,7 +16,11 @@ import {
   SAVED_SECRET_RESOURCE_MAX_CONTENT_JSON_UTF8_BYTES_V1,
   SAVED_SECRET_RESOURCE_MAX_ENCRYPTED_PAYLOAD_UTF8_BYTES_V1,
   SavedSecretResourceContentV1Schema,
+  SavedSecretExternalSourceV1Schema,
+  SavedSecretResourceSourceV1Schema,
+  type SavedSecretResourceSourceV1,
   SavedSecretResourceStoredContentV1Schema,
+  describeSavedSecretResourceContentV1,
   type SavedSecretResourceContentV1,
   type SavedSecretResourceStoredContentV1,
 } from './savedSecretResourceContentSchemaV1.js';
@@ -27,12 +31,17 @@ export {
   SAVED_SECRET_RESOURCE_MAX_CONTENT_JSON_UTF8_BYTES_V1,
   SAVED_SECRET_RESOURCE_MAX_ENCRYPTED_PAYLOAD_UTF8_BYTES_V1,
   SavedSecretResourceContentV1Schema,
+  SavedSecretExternalSourceV1Schema,
+  SavedSecretResourceSourceV1Schema,
   SavedSecretResourceStoredContentV1Schema,
 };
 export type {
   SavedSecretResourceContentV1,
+  SavedSecretResourceSourceV1,
   SavedSecretResourceStoredContentV1,
 };
+export { describeSavedSecretResourceContentV1, SavedSecretStorageDescriptorV1Schema,
+  type SavedSecretStorageDescriptorV1 } from './savedSecretResourceContentSchemaV1.js';
 
 const EncryptedSavedSecretResourcePayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -62,7 +71,7 @@ export function sealSavedSecretResourceStoredContentV1(
   const content = SavedSecretResourceContentV1Schema.parse(params.content);
 
   if (params.mode === 'plain') {
-    return { t: 'plain', v: content };
+    return { t: 'plain', v: content, storage: describeSavedSecretResourceContentV1(content) };
   }
   if (params.resourceDataKey.length !== tweetnacl.secretbox.keyLength) {
     throw new Error(`Invalid resource DEK length: ${params.resourceDataKey.length}`);
@@ -85,7 +94,7 @@ export function sealSavedSecretResourceStoredContentV1(
   const combined = new Uint8Array(nonce.length + boxed.length);
   combined.set(nonce);
   combined.set(boxed, nonce.length);
-  return { t: 'encrypted', c: encodeBase64(combined, 'base64') };
+  return { t: 'encrypted', c: encodeBase64(combined, 'base64'), storage: describeSavedSecretResourceContentV1(content) };
 }
 
 type OpenSavedSecretResourceStoredContentV1Params =

@@ -144,7 +144,10 @@ describe('selected Account credential material', () => {
             resourceId, mode: 'plain', content: { v: 1, name: 'Home-managed key', kind: 'token', value: 'home-managed-token' },
         });
         // Resource HTTP boundary has already supplied its explicit resource mode.
-        const readResource = async () => openSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', storedContent })?.value ?? null;
+        const readResource = async () => {
+            const content = openSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', storedContent });
+            return content?.v === 1 ? content.value : null;
+        };
         const result = await readQualifiedConnectedAccountCredentialMaterial({
             account, getAccountEncryptionMode: async () => 'e2ee', readCredential: async () => snapshot, openCredentialContent,
             secrets: { admit: async () => undefined, read: readResource },
@@ -153,9 +156,12 @@ describe('selected Account credential material', () => {
         expect(openCredentialContent('e2ee', snapshot.content)).toEqual({ v: 1, values: {}, secretRefs: { token: reference } });
         await expect(readQualifiedConnectedAccountCredentialMaterial({
             account, getAccountEncryptionMode: async () => 'e2ee', readCredential: async () => snapshot, openCredentialContent,
-            secrets: { admit: async () => undefined, read: async () => openSavedSecretResourceStoredContentV1({
-                resourceId, mode: 'e2ee', storedContent, resourceDataKey: new Uint8Array(32).fill(8),
-            })?.value ?? null },
+            secrets: { admit: async () => undefined, read: async () => {
+                const content = openSavedSecretResourceStoredContentV1({
+                    resourceId, mode: 'e2ee', storedContent, resourceDataKey: new Uint8Array(32).fill(8),
+                });
+                return content?.v === 1 ? content.value : null;
+            } },
         })).rejects.toMatchObject({ code: 'connected_account_credential_secret_unavailable' });
     });
 

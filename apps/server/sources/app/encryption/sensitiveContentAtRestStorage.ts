@@ -28,12 +28,18 @@ type StoredContentAtRestContainerV1 =
         ciphertext: string;
     }>;
 
+type ContentSchema<TEnvelope extends StoredJsonContentEnvelope> = Readonly<{
+    parse(value: unknown): TEnvelope;
+}>;
+
 export function encodeSensitiveContentForAtRestStorage(params: Readonly<{
     contentMode: "plain" | "e2ee";
     keyPath: string[];
     content: StoredJsonContentEnvelope;
+    /** A domain envelope can retain its declared value-free header fields. */
+    contentSchema?: ContentSchema<StoredJsonContentEnvelope>;
 }>): string {
-    const content = StoredJsonContentEnvelopeSchema.parse(params.content);
+    const content = (params.contentSchema ?? StoredJsonContentEnvelopeSchema).parse(params.content);
     const json = JSON.stringify(content);
     const shouldServerSeal = params.contentMode === "plain"
         && readEncryptionFeatureEnv(process.env).plainAccountCredentialsAtRest
@@ -62,10 +68,19 @@ export class SensitiveContentAtRestStorageError extends Error {
     }
 }
 
-export function decodeSensitiveContentFromAtRestStorage(params: Readonly<{
+type DecodeParams = Readonly<{
     keyPath: string[];
     value: string;
+}>;
+
+export function decodeSensitiveContentFromAtRestStorage<TEnvelope extends StoredJsonContentEnvelope>(
+    params: DecodeParams & Readonly<{ contentSchema: ContentSchema<TEnvelope> }>,
+): TEnvelope;
+export function decodeSensitiveContentFromAtRestStorage(params: DecodeParams): StoredJsonContentEnvelope;
+export function decodeSensitiveContentFromAtRestStorage(params: DecodeParams & Readonly<{
+    contentSchema?: ContentSchema<StoredJsonContentEnvelope>;
 }>): StoredJsonContentEnvelope {
+    const schema = params.contentSchema ?? StoredJsonContentEnvelopeSchema;
     const raw = JSON.parse(params.value) as unknown;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
         throw new SensitiveContentAtRestStorageError(
@@ -79,7 +94,7 @@ export function decodeSensitiveContentFromAtRestStorage(params: Readonly<{
         );
     }
     if (container.storage === "json_v1") {
-        return StoredJsonContentEnvelopeSchema.parse(container.content);
+        return schema.parse(container.content);
     }
     if (
         container.storage === "server_sealed_json_v1"
@@ -89,7 +104,7 @@ export function decodeSensitiveContentFromAtRestStorage(params: Readonly<{
             params.keyPath,
             Buffer.from(container.ciphertext, "base64"),
         );
-        return StoredJsonContentEnvelopeSchema.parse(JSON.parse(opened));
+        return schema.parse(JSON.parse(opened));
     }
     throw new SensitiveContentAtRestStorageError(
         "Unsupported stored connected-account content envelope",

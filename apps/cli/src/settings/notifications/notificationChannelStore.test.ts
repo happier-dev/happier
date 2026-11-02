@@ -220,7 +220,7 @@ describe('notification catalog initial signing resource transfer', () => {
         if (mode === 'plain') {
           expect(resource.keyEnvelopes).toEqual([]);
           expect(openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode,
-            storedContent: resource.storedContent })?.value).toBe(values[index]);
+            storedContent: resource.storedContent })).toMatchObject({ v: 1, value: values[index] });
         } else {
           const envelope = resource.keyEnvelopes?.[0];
           expect(envelope?.recipientAccountId).toBe(accountId);
@@ -229,7 +229,7 @@ describe('notification catalog initial signing resource transfer', () => {
             recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(secret) });
           if (!dataKey) throw new Error('Resource owner envelope cannot reopen');
           try { expect(openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode,
-            storedContent: resource.storedContent, resourceDataKey: dataKey })?.value).toBe(values[index]); }
+            storedContent: resource.storedContent, resourceDataKey: dataKey })).toMatchObject({ v: 1, value: values[index] }); }
           finally { dataKey.fill(0); }
         }
       }

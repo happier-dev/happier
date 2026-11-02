@@ -2085,7 +2085,7 @@ describe('managed acquisition durable custody', () => {
                         storedContent: credential.storedContent })
                     : dataKey ? openSavedSecretResourceStoredContentV1({ resourceId: credential.resourceId, mode,
                         storedContent: credential.storedContent, resourceDataKey: dataKey }) : null;
-                if (!content) throw new Error('Native token could not be opened');
+                if (content?.v !== 1) throw new Error('Native token value could not be opened');
                 return content;
             } finally { dataKey?.fill(0); }
         }
@@ -2285,7 +2285,7 @@ describe('managed acquisition durable custody', () => {
         const native = nativeFixture({ privateNative: true, nativeTransport: false, nativeCredentialService: true,
             onNativeRole: async (role, body, context) => {
                 if (role !== 'acquire') throw new Error('Withdrawn SSH material must prevent guest setup');
-                if (!disclosedContent) throw new Error('Retained SSH material was not admitted');
+                if (disclosedContent?.v !== 1) throw new Error('Retained SSH material value was not admitted');
                 const lease = await context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' });
                 if (lease.kind !== 'bytes') throw new Error('SSH bytes lease was not returned');
                 expect(new TextDecoder().decode(lease.bytes)).toBe(disclosedContent.value);
@@ -2458,7 +2458,7 @@ describe('managed acquisition durable custody', () => {
             content = openSavedSecretResourceStoredContentV1({ resourceId: credential.resourceId, mode, storedContent: credential.storedContent, resourceDataKey: dataKey });
             dataKey.fill(0);
         }
-        if (!content) throw new Error('Bootstrap SavedSecret content could not be opened');
+        if (content?.v !== 1) throw new Error('Bootstrap SavedSecret value could not be opened');
         expect(createPublicKey(content.value).asymmetricKeyType).toBe('rsa');
         const retry = { homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0 };
         let retryWork: Promise<JsonValue | null> | undefined;

@@ -75,8 +75,7 @@ it('renames and replaces an imported private resource directly, but confirms del
     await vi.waitFor(() => expect(home?.updates).toHaveLength(2));
     const replacement = home.updates[1]!;
     const opened = openSavedSecretResourceStoredContentV1({ resourceId: replacement.resourceId, mode: 'plain', storedContent: replacement.storedContent });
-    expect(opened?.name).toBe('Personal renamed');
-    expect(opened?.value === '  personal replacement\n').toBe(true);
+    expect(opened).toMatchObject({ v: 1, name: 'Personal renamed', value: '  personal replacement\n' });
     expect(confirm).not.toHaveBeenCalled();
     await screen.pressByTestIdAsync(`saved-secret:${ref}:delete`);
     await vi.waitFor(() => expect(home?.deletes).toHaveLength(1));

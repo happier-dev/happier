@@ -377,7 +377,7 @@ describe('SavedSecret material-demand legacy import', () => {
     const values = [observed, ...(observed.additionalSavedSecretResources ?? [])].map(created => {
       expect(created.encryptionMode).toBe(mode);
       if (created.encryptionMode === 'plain') return openSavedSecretResourceStoredContentV1({ resourceId: created.resourceId,
-        mode: 'plain', storedContent: created.storedContent })?.value;
+        mode: 'plain', storedContent: created.storedContent });
       if (material?.type !== 'legacy') throw new Error('fixture_missing_account_key');
       const envelope = created.keyEnvelopes?.find(candidate => candidate.recipientAccountId === 'batch-account');
       if (!envelope) throw new Error('fixture_missing_owner_envelope');
@@ -385,9 +385,9 @@ describe('SavedSecret material-demand legacy import', () => {
         recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(material.secret) });
       if (!resourceDataKey) throw new Error('fixture_unreadable_owner_envelope');
       return openSavedSecretResourceStoredContentV1({ resourceId: created.resourceId, mode: 'e2ee',
-        storedContent: created.storedContent, resourceDataKey })?.value;
+        storedContent: created.storedContent, resourceDataKey });
     });
-    expect(values).toEqual(['first-private', 'second-private']);
+    expect(values).toMatchObject([{ v: 1, value: 'first-private' }, { v: 1, value: 'second-private' }]);
     expect(observed.nextSettings).toBeNull();
     expect(observed).not.toHaveProperty('expectedSettingsVersion');
     expect(observed.referenceCensus).toEqual({ scope: 'catalogs', accountMode: mode, catalogs: { connectedConfigurations: 7 } });

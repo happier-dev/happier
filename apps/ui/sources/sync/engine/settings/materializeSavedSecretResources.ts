@@ -73,6 +73,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
             }
 
             entries.push(resource.entry);
+            if (content.v !== 1) continue;
             materialized.push(Object.freeze({
                 id: resource.entry.ref,
                 name: content.name,

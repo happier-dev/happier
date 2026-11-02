@@ -37,8 +37,8 @@ export function prepareLegacyNotificationChannelCatalogV1(input: Readonly<{
     const content = value === null ? null : SavedSecretResourceContentV1Schema.safeParse({
       v: 1, name: 'Webhook signing secret', kind: 'other', value,
     });
-    if (!content?.success) diagnostics.push({ channelId: channel.id, reason: 'secret-unavailable' });
-    else signingSecrets.push({ resourceId, value: content.data.value, displayName: content.data.name, kind: 'other' });
+    if (value === null || !content?.success) diagnostics.push({ channelId: channel.id, reason: 'secret-unavailable' });
+    else signingSecrets.push({ resourceId, value, displayName: content.data.name, kind: 'other' });
     return { ...record, signingSecretRef: formatSharedSavedSecretRefV1(resourceId) };
   });
   const record = { v: 1 as const, channels };

@@ -5,7 +5,7 @@ import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecre
 import type { SavedSecretImportSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSavedSecretCatalogFingerprintV1, parseSavedSecretCatalogReferenceV1, projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import type { SavedSecretCatalogResourceV1, SavedSecretResourceStoredContentV1, SecretStringV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogResourceV1, SavedSecretResourceContentV1, SavedSecretResourceStoredContentV1, SecretStringV1 } from '@happier-dev/protocol';
 import {
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
@@ -61,6 +61,10 @@ export type SavedSecretResolutionFailureStatusV1 = Exclude<
   SavedSecretResolutionV1,
   { status: 'ready' }
 >['status'];
+
+export type SavedSecretContentResolutionV1 =
+  | Readonly<{ status: 'ready'; content: SavedSecretResourceContentV1; fingerprint: string; source: 'personal' | 'shared_resource' }>
+  | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;
 
 export type SavedSecretOperationAdmissionFailureReason =
   | 'reference_missing' | 'reference_unavailable' | 'reference_forbidden'
@@ -127,6 +131,8 @@ export type SavedSecretInspectionV1 =
       /** Catalog revision only; the private fingerprint still owns material recheck. */
       catalogFingerprint: string | null;
       source: 'personal' | 'shared_resource';
+      /** Whose secret this is. A resource row without the fact is not the reader's. */
+      relationship: 'owner' | 'recipient';
       kind: 'apiKey' | 'token' | 'password' | 'other' | null;
       storage: 'settings_plain' | 'settings_encrypted' | 'resource_plain' | 'resource_e2ee';
     }>
@@ -141,6 +147,7 @@ export type SavedSecretMaterializerV1 = Readonly<{
   inspect: (ref: string) => SavedSecretInspectionV1;
   describe: (ref: string) => SavedSecretDescriptionV1;
   resolve: (ref: string) => SavedSecretResolutionV1;
+  resolveContent: (ref: string) => SavedSecretContentResolutionV1;
   recheck: (ref: string, fingerprint: string) => SavedSecretResolutionV1;
   matchesSharedResourceRevision: (ref: string, revision: number) => boolean;
 }>;
@@ -197,6 +204,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
   resourceCatalogState?: SavedSecretCatalogState;
   /** Captured invocation publication; async grant checks happen at its effect owner. */
   isCurrent?: () => boolean;
+  externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
 }>): SavedSecretMaterializerV1 {
   const personal = readPersonalSecrets(input.accountSettings);
   const activeSnapshot = input.isCurrent ? null : getActiveAccountSettingsSnapshot();
@@ -236,6 +244,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
           updatedAt: personalMaterial.updatedAt,
         })}`,
         source: 'personal',
+        relationship: 'owner',
         catalogFingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'personal', revision: personalMaterial.updatedAt }),
         kind: personalMaterial.kind,
         storage: personalMaterial.secret.encryptedValue ? 'settings_encrypted' : 'settings_plain',
@@ -282,13 +291,14 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
         storedContent: resource.storedContent,
       })}`,
       source: 'shared_resource',
+      relationship: resource.relationship === 'owner' ? 'owner' : 'recipient',
       catalogFingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'shared_resource', revision: resource.revision }),
       kind: resource.kind,
       storage: resource.encryptionMode === 'plain' ? 'resource_plain' : 'resource_e2ee',
     };
   };
 
-  const resolve = (ref: string): SavedSecretResolutionV1 => {
+  const resolveContent = (ref: string): SavedSecretContentResolutionV1 => {
     const inspected = inspect(ref);
     if (inspected.status !== 'ready') return inspected;
     if (inspected.source === 'personal') {
@@ -297,7 +307,7 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
       if (value === null) return { status: 'temporarily_unavailable' };
       return {
         status: 'ready',
-        value,
+        content: { v: 1, name: material.name ?? '', kind: material.kind ?? 'other', value },
         fingerprint: inspected.fingerprint,
         source: 'personal',
       };
@@ -332,21 +342,40 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
       || content.kind !== resource.kind) {
       return { status: 'corrupt' };
     }
+    if (content.v === 2 && content.source.kind === 'external' && inspected.relationship !== 'owner') {
+      return { status: 'forbidden' };
+    }
     return {
       status: 'ready',
-      value: content.value,
+      content,
       fingerprint: inspected.fingerprint,
       source: 'shared_resource',
     };
   };
 
+  const resolve = (ref: string): SavedSecretResolutionV1 => {
+    const resolved = resolveContent(ref);
+    if (resolved.status !== 'ready') return resolved;
+    if (resolved.content.v !== 1) {
+      if (resolved.content.source.kind !== 'external') return { status: 'mode_incompatible' };
+      const acquisition = input.externalAcquisitions?.get(ref);
+      if (!acquisition) return { status: 'temporarily_unavailable' };
+      return acquisition.status === 'ready'
+        ? { status: 'ready', value: acquisition.value, source: resolved.source, fingerprint: resolved.fingerprint }
+        : acquisition;
+    }
+    const { content, ...metadata } = resolved;
+    return { ...metadata, value: content.value };
+  };
+
   return {
     inspect,
     resolve,
+    resolveContent,
     describe: (ref) => {
       // Resolve owns lifetime, mode and authenticated resource-metadata admission.
       // Only its safe display projection escapes this API; material stays transient.
-      const resolved = resolve(ref);
+      const resolved = resolveContent(ref);
       if (resolved.status !== 'ready') return resolved;
       const parsed = parseSavedSecretCatalogReferenceV1(ref);
       const displayName = resolved.source === 'personal'
@@ -372,14 +401,15 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
 
 export function createSavedSecretMaterializerFromSnapshotV1(
   snapshot: ActiveAccountSettingsSnapshot,
-  input?: Readonly<{ isCurrent: () => boolean }>,
+  input?: Readonly<{ isCurrent?: () => boolean; externalAcquisitions?: SavedSecretExternalAcquisitionsV1 }>,
 ): SavedSecretMaterializerV1 {
   return createSavedSecretMaterializerV1({
     accountSettings: snapshot.settings,
     settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
     resources: snapshot.savedSecretResources ?? [],
     resourceCatalogState: snapshot.savedSecretCatalogState,
-    ...(input ? { isCurrent: input.isCurrent } : {}),
+    ...(input?.isCurrent ? { isCurrent: input.isCurrent } : {}),
+    ...(input?.externalAcquisitions ? { externalAcquisitions: input.externalAcquisitions } : {}),
   });
 }
 
@@ -423,3 +453,5 @@ export function readSavedSecretRevisionsFromSnapshotV1(
 export type SavedSecretExternalAcquisitionV1 =
   | Readonly<{ status: 'ready'; value: string }>
   | Exclude<SavedSecretResolutionV1, { status: 'ready' }>;
+
+export type SavedSecretExternalAcquisitionsV1 = ReadonlyMap<string, SavedSecretExternalAcquisitionV1>;

@@ -3,6 +3,7 @@ import {
     type SavedSecretResourceMaterialV1,
 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { requestHomeDomain, type HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
@@ -10,10 +11,35 @@ import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountC
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
+import { installedSecretSourceDeclarations, withSavedSecretProviderLabels } from './savedSecretCatalogPresentation';
+
+function catalogProviderDeclarations(scope: ServerAccountScope) {
+    return installedSecretSourceDeclarations(readPluginAccountAvailability(scope).readInstalledPlugins());
+}
+
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
 export type SavedSecretCatalogReadResult =
     | Readonly<{ ok: true; resources: readonly SavedSecretResourceMaterialV1[] }>
     | Readonly<{ ok: false; failure: HomeDomainFailure }>;
+
+/** Catalog presentation requests metadata only; material reads retain their admitted owner below. */
+export async function readSavedSecretCatalogMetadataInContext(
+    context: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'request' | 'assertCurrent'>,
+    signal?: AbortSignal,
+): Promise<Readonly<{ ok: true; resources: ReturnType<typeof SharedSavedSecretListOutputV1Schema.parse>['resources'] }>
+    | Readonly<{ ok: false; failure: HomeDomainFailure }>> {
+    const result = await requestHomeDomain({
+        scope: { serverId: context.serverId, accountId: context.accountId },
+        path: '/v1/account/saved-secrets/resources', effect: 'read', method: 'GET',
+        input: undefined, schema: SharedSavedSecretListOutputV1Schema, signal, requestAuthority: context,
+    });
+    return result.ok ? { ok: true, resources: withSavedSecretProviderLabels(result.value.resources.map(entry => ({ entry })),
+        catalogProviderDeclarations({ serverId: context.serverId, accountId: context.accountId })).map(resource => resource.entry) }
+        : { ok: false, failure: result.failure };
+}
 
 export async function readSavedSecretCatalog(
     scope: ServerAccountScope,
@@ -29,7 +55,7 @@ export async function readSavedSecretCatalog(
         signal,
     });
     return result.ok
-        ? { ok: true, resources: result.value.resources }
+        ? { ok: true, resources: withSavedSecretProviderLabels(result.value.resources, catalogProviderDeclarations(scope)) }
         : { ok: false, failure: result.failure };
 }
 

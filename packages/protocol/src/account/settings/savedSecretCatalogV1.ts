@@ -6,7 +6,7 @@ import {
   parseSavedSecretRefV1,
   SHARED_SAVED_SECRET_REF_V1_PREFIX,
 } from './savedSecretReferenceV1.js';
-import { SavedSecretResourceStoredContentV1Schema } from './savedSecretResourceContentSchemaV1.js';
+import { SavedSecretResourceStoredContentV1Schema, SavedSecretStorageDescriptorV1Schema } from './savedSecretResourceContentSchemaV1.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { AccountDisplayProfileV1BaseSchema, readAccountNameFromLegacyProfileV1 } from '../accountDisplayProfileV1.js';
@@ -66,6 +66,8 @@ export const SavedSecretCatalogEntryV1Schema = lazyZodSchema(() => z.strictObjec
   relationship: z.enum(['owner', 'recipient']),
   name: z.nullable(z.string().check(z.minLength(1), z.maxLength(100))),
   kind: z.nullable(z.enum(['apiKey', 'token', 'password', 'other'])),
+  /** Absent on retained encrypted rows until their next content write. */
+  storage: z.optional(SavedSecretStorageDescriptorV1Schema),
   encryptionMode: z._default(z.optional(z.nullable(SavedSecretResourceEncryptionModeV1Schema)), null),
   owner: z._default(z.optional(z.nullable(SavedSecretCatalogAccountSummaryV1Schema)), null),
   accessSources: z._default(z.optional(z.array(SavedSecretCatalogAccessSourceV1Schema)), []),

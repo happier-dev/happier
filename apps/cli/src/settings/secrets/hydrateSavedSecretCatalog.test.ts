@@ -323,7 +323,7 @@ describe('Saved Secret catalog hydration', () => {
       recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(secret) });
     if (!resourceDataKey) throw new Error('unreadable_owner_envelope');
     expect(openSavedSecretResourceStoredContentV1({ resourceId: encrypted.resourceId, mode: 'e2ee',
-      storedContent: encrypted.storedContent, resourceDataKey })?.value).toBe('private-fixture');
+      storedContent: encrypted.storedContent, resourceDataKey })).toMatchObject({ v: 1, value: 'private-fixture' });
     expect(() => prepare({ ...base, credentials: { token, encryption: null }, accountMode: 'e2ee',
       referenceCensus: { accountMode: 'e2ee', profiles: { referenceGuardRevision: 'absent', rows: [] } } })).toThrow();
     expect(() => prepare({ ...base, credentials: { token, encryption: null }, accountMode: 'plain', accountId: 'other-account',
