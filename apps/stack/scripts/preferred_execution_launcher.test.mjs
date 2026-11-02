@@ -1,9 +1,13 @@
+import { killProcessTree } from './utils/proc/proc.mjs';
+import { terminateProcessPid } from './utils/proc/terminate.mjs';
+import { isPidAlive } from './utils/proc/pids.mjs';
+import { brokerAddress, createAdmissionBroker } from './utils/proc/admission_broker.mjs';
 import assert from 'node:assert/strict';
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
@@ -65,11 +69,27 @@ const executionNeutralEnv = Object.fromEntries(
   ].includes(key)),
 );
 
+async function installObservedWorkerLoginShell(binDir) {
+  // The remote login shell is an OS boundary. Keep prerequisite, compiler-pin
+  // and component-capability logic real; supply its existing worker sample
+  // only where the remote shell would observe that machine's OS resources.
+  await executable(join(binDir, 'bash'), `#!/bin/sh
+if [ "\${1-}" = -lc ]; then
+  case "\${2-}" in
+    *'cpu=$(getconf'*)
+      /usr/bin/awk 'NR==1 {for(i=1;i<=16;i++) printf "%s%s",(i==1?"":" "),$i; printf "\\n%s %s %s %s\\n",($17==""?$7:$17),($18==""?0:$18),($19==""?$8:$19),($20==""?0:$20)}' "$FIXTURE_PROBE_SAMPLE"
+      exit $? ;;
+  esac
+fi
+exec /bin/bash "$@"
+`);
+}
+
 async function executable(path, contents) {
   if (path.endsWith('/node')) {
     // These are internal policy/admission owners, even when their argv contains
     // a compiler or test payload that the external executable fixture handles.
-    contents = contents.replace(/^(#![^\n]*\n)/, `$1case "\${1-}:\${2-}" in\n  *native_execution_projection.mjs:--validate-execution-config) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\ncase "\${1-}" in\n  *controller_coalescing.mjs|*remote_commands.mjs|*workspace_build_admission.mjs|*worker_disk_budget.mjs|*remote_dependency_bootstrap.mjs|*remote_validation_preparation.mjs) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\n`);
+    contents = contents.replace(/^(#![^\n]*\n)/, `$1case "\${1-}:\${2-}" in\n  *native_execution_projection.mjs:--validate-execution-config) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\ncase "\${1-}" in\n  *controller_coalescing.mjs|*remote_commands.mjs|*workspace_build_admission.mjs|*admission_client.mjs|*admission_broker.mjs|*worker_disk_budget.mjs|*remote_dependency_bootstrap.mjs|*remote_validation_preparation.mjs) exec ${JSON.stringify(process.execPath)} "$@" ;;\nesac\n`);
   }
   await writeFile(path, contents, 'utf8');
   await chmod(path, 0o755);
@@ -448,10 +468,17 @@ async function runtimeAdmissionTransportFixture(t) {
   const workers = {};
   for (const name of ['starved', 'roomy']) {
     workers[name] = await installNativeAdmissionFixture({ root: join(fixture.root, name), prepareDependencies: true });
+    workers[name].goRoot = join(fixture.root, name, 'go');
+    await mkdir(workers[name].goRoot, { recursive: true });
+    for (const evidence of ['LICENSE', 'PATENTS']) await writeFile(join(workers[name].goRoot, evidence), 'Go distribution evidence\n');
+    workers[name].pressure = await holdNativeAdmissionFixtureMemory(t, workers[name], { totalKiB: 28311552, availableKiB: 9437184 });
     workers[name].sample = join(fixture.root, `${name}-sample`);
     await writeFile(workers[name].sample, `8 ${name === 'starved' ? '0.1' : '12'} 0.3 22000000 20 0 9437184 28311552 0 0 0 0 0 0 0 linux\n`);
   }
-  for (const target of fixture.config.targets) target.repoDir = resolve(workers[target.name].launcher, '../../../..');
+  for (const target of fixture.config.targets) {
+    target.repoDir = resolve(workers[target.name].launcher, '../../../..');
+    await mkdir(join(target.repoDir, 'packages/plugins/cliproxyapi/managed-runtime'), { recursive: true });
+  }
   await writeFile(fixture.configPath, JSON.stringify(fixture.config));
   await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
   const controller = join(fixture.root, 'worker-controller.mjs');
@@ -463,18 +490,30 @@ process.stdin.on('end', () => { console.error('fixture-controller-input-EOF:' + 
 createInterface({input:process.stdin}).once('line', line => { console.log('BODY:' + worker + ':' + line); process.exit(Number(process.env.PAYLOAD_EXIT || 0)); });
 `);
   await executable(join(fixture.binDir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+  await executable(join(fixture.binDir, 'go'), `#!/bin/sh
+[ "$1:$2" = env:GOROOT ] || exit 93
+# Real Go selects its module toolchain from cwd, not the repository root.
+case "$PWD" in */packages/plugins/cliproxyapi/managed-runtime) ;; *) exit 94 ;; esac
+[ -z "\${FIXTURE_GO_READS-}" ] || printf 'observed\\n' >> "$FIXTURE_GO_READS"
+printf '%s\\n' "$FIXTURE_GO_ROOT"
+`);
+  await installObservedWorkerLoginShell(fixture.binDir);
   await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(fixture.binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7,$8}\' "$RUNTIME_WORKER_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   await executable(join(fixture.binDir, 'ssh'), [
     '#!/bin/bash',
     'printf "ssh:%s\\n" "$*" >> "$FIXTURE_TRACE"',
     'case "$*" in *starved-host*) worker=starved; export RUNTIME_WORKER_SAMPLE="$STARVED_SAMPLE"; native="$STARVED_NATIVE" ;; *) worker=roomy; export RUNTIME_WORKER_SAMPLE="$ROOMY_SAMPLE"; native="$ROOMY_NATIVE" ;; esac',
+    'case "$worker" in starved) export FIXTURE_GO_ROOT="$STARVED_GO_ROOT" ;; *) export FIXTURE_GO_ROOT="$ROOMY_GO_ROOT" ;; esac',
+    'export FIXTURE_PROBE_SAMPLE="$RUNTIME_WORKER_SAMPLE"',
     'for argument in "$@"; do remote=$argument; done',
     'case "$*" in',
-    ' *getconf*) cat "$RUNTIME_WORKER_SAMPLE" ;;',
+    ' *getconf*) eval "$remote" ;;',
     ' *-O\\ check*|*-MNf*) exit 0 ;;',
     ' *remote_execution_custody.sh*)',
     '  case "$remote" in *" cancel "*) eval "$remote"; exit $? ;; esac',
+    // Real SSH does not forward Node's private controller test-run marker.
+    '  unset NODE_TEST_CONTEXT',
     '  printf "%s\\n" "$worker" >> "$DISPATCHES"',
     '  remote=${remote//"$RUNTIME_REAL_LAUNCHER"/"$native"}',
     '  remote=${remote//"apps/stack/scripts/build/remote_runtime_build.mjs"/"$RUNTIME_CONTROLLER"}',
@@ -483,6 +522,7 @@ createInterface({input:process.stdin}).once('line', line => { console.log('BODY:
     'esac', '',
   ].join('\n'));
   fixture.invocation.env = { ...fixture.invocation.env, STARVED_SAMPLE: workers.starved.sample, ROOMY_SAMPLE: workers.roomy.sample,
+    STARVED_GO_ROOT: workers.starved.goRoot, ROOMY_GO_ROOT: workers.roomy.goRoot,
     STARVED_NATIVE: workers.starved.launcher, ROOMY_NATIVE: workers.roomy.launcher,
     RUNTIME_REAL_LAUNCHER: launcher, RUNTIME_CONTROLLER: controller };
   return { ...fixture, workers };
@@ -535,15 +575,15 @@ esac
     child.stderr.on('data', chunk => { stderr += chunk; });
     const exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
     t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await exited; });
+    const waitingWorker = fixture.workers.starved;
     if (typecheck) {
       await waitForRuntime(() => /HSTACK_(?:[A-Z_]*_)?BUSY|queued on /.test(stderr),
         () => `public typecheck never reported its placement outcome:\n${stderr}`);
       assert.doesNotMatch(stderr, /HSTACK_(?:[A-Z_]*_)?BUSY/, 'pool probes must not look like terminal refusals');
     }
-    const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
-    await waitForRuntime(async () => stderr.includes('waiting for heavyweight admission')
-      && (await readdir(waiters).catch(() => [])).length === 1, () => `full busy sweep never retained its native queue position:\n${stderr}`);
-    const [waiter] = await readdir(waiters);
+    await waitForRuntime(async () => (await waitingWorker.brokerStatus()).waitingCount === 1,
+      () => `full busy sweep never retained its native queue position:\n${stderr}`);
+    const queued = await waitingWorker.brokerStatus();
     const costs = async () => {
       const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
       return {
@@ -563,26 +603,30 @@ esac
     // Let a real pressure retry elapse. Waiting must not re-sync or bootstrap.
     await new Promise(resolve => setTimeout(resolve, 1200));
     assert.deepEqual(await costs(), initialCosts, 'routing, sync and bootstrap work grew while queued');
-    assert.deepEqual(await readdir(waiters), [waiter], 'native waiter identity changed');
+    const idle = await waitingWorker.brokerStatus();
+    // The broker's existing catch-up clock observes external RAM recovery.
+    // Those observations must preserve demand without repeating placement.
+    assert.deepEqual({ ...idle, sampleCount: queued.sampleCount }, queued,
+      'idle native demand must retain its queue position across recovery observations');
     if (cancel) {
-      // An unrelated live incarnation must survive this controller's cancel.
-      const stat = await readFile(`/proc/${process.pid}/stat`, 'utf8');
-      const identity = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
-      const neighbor = `${process.pid}-${identity}`;
-      await writeFile(join(waiters, neighbor), `${process.pid} ${identity} 0 runtime-build 0\n`);
+      const neighbor = spawn('/bin/sh', [waitingWorker.launcher, '--heavyweight-admission', '--class=runtime-build',
+        '--machine=worker', '--', '/usr/bin/true'], { ...fixture.invocation, stdio: 'ignore' });
+      const neighborExit = new Promise(resolve => neighbor.once('close', resolve));
+      t.after(async () => { if (neighbor.exitCode === null && neighbor.signalCode === null) neighbor.kill('SIGTERM'); await neighborExit; });
+      await waitForRuntime(async () => (await waitingWorker.brokerStatus()).waitingCount === 2, () => 'unrelated socket waiter did not join');
       child.kill('SIGTERM');
       assert.deepEqual(await exited, { code: 130, signal: null }, stderr);
-      await waitForRuntime(async () => !(await readdir(waiters)).includes(waiter), () => 'cancelled native waiter remained');
-      assert.deepEqual(await readdir(waiters), [neighbor]);
+      await waitForRuntime(async () => (await waitingWorker.brokerStatus()).waitingCount === 1, () => 'cancelled native waiter remained');
+      assert.equal(neighbor.exitCode, null, 'cancelling one caller preserves the unrelated socket waiter');
       await assert.rejects(access(join(fixture.config.targets[0].repoDir, 'payload-runs')), { code: 'ENOENT' });
     } else {
-      await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+      await waitingWorker.pressure.release(() => writeFile(waitingWorker.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n'));
       assert.deepEqual(await exited, { code: typecheck ? 2 : 0, signal: null }, stderr);
       if (typecheck) assert.match(stdout, /TS2322/, 'the queued public typecheck must produce its compiler verdict');
       else assert.equal(await readFile(join(fixture.config.targets[0].repoDir, 'payload-runs'), 'utf8'), 'once\n');
       assert.equal((stderr.match(/queued on /g) ?? []).length, 1, 'queue output must not repeat while waiting');
       assert.equal((stderr.match(/admitted on starved/g) ?? []).length, 1, 'capacity recovery announces admission once');
-      assert.deepEqual(await readdir(waiters), []);
+      assert.equal((await waitingWorker.brokerStatus()).waitingCount, 0);
       assert.deepEqual(await costs(), initialCosts);
     }
   });
@@ -972,7 +1016,7 @@ test('runtime skip targets refreshes a future-dated legacy projection without tr
   assert.match(await readFile(projectionPath, 'utf8'), /^configured_target_names=/m);
 });
 
-async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 28311552, roomyLoad = 4, roomyAvailableKiB = 25480397, roomyTotalKiB = 28311552, fallback = 'error' } = {}) {
+async function memoryRoutingFixture(t, { availableKiB = resolveHeavyweightMemoryFloorKiB('validation') - 1, totalKiB = 28311552, roomyLoad = 4, roomyAvailableKiB = 25480397, roomyTotalKiB = 28311552, fallback = 'error' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-memory-routing-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const binDir = join(root, 'bin');
@@ -1027,6 +1071,8 @@ esac
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'printf "ssh:%s\\n" "$*" >> "$FIXTURE_TRACE"',
+    'for argument in "$@"; do remote=$argument; done',
+    '[ "$remote" != : ] || exit 0',
     'case "$*" in',
     '  *getconf*)',
     '    case "$*" in',
@@ -1058,6 +1104,33 @@ esac
     } },
   };
 }
+
+test('AUTO sends small suites to a free peer when the broker head reserves the other host', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 11600000, roomyLoad: 80 });
+  // Unix socket paths must stay short even under a remote custody TMPDIR.
+  const root = await mkdtemp('/tmp/happier-rank-');
+  const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old.lock'),
+    // OS boundary: reproduce nl1's physical sample while retaining real queue policy.
+    sampleResources: async () => ({ availableMemoryKiB: 11600000, totalMemoryKiB: 33554432 }) });
+  await broker.start();
+  const head = createConnection(brokerAddress(root));
+  t.after(async () => { head.destroy(); await broker.close(); await rm(root, { recursive: true, force: true }); });
+  await new Promise((resolve, reject) => { head.once('connect', resolve); head.once('error', reject); });
+  head.write(JSON.stringify({ kind: 'acquire', className: 'compilation-ui', floorKiB: 27262976,
+    pid: process.pid, repoDir: fixture.root, locks: [], env: {} }) + '\n');
+  await waitForRuntime(() => broker.status().waitingCount === 1, () => 'the big head did not enter admission');
+  const budget = broker.status();
+  await writeFile(fixture.samplePath, `8 0.1 0.35 22000000 20 0 11600000 33554432 0 0 0 0 0 0 0 linux ${budget.unreservedMemoryKiB} 0 33554432 ${budget.queuedMemoryKiB}\n`);
+  for (const cached of [false, true]) {
+    const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'remote:roomy\n', `cached=${cached}: a fitting peer must precede the reserved head`);
+  }
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy', 'roomy'],
+    'a small suite must not spend preparation on the head-reserved host');
+});
+
+
 
 async function controllerCoalescingFixture(t) {
   const fixture = await memoryRoutingFixture(t);
@@ -1247,30 +1320,48 @@ test('automatic placement flushes an eligible no-watch first-cycle worker before
   assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 1);
 });
 
-test('automatic placement recovers and surfaces a transient staged-file collision before selecting the worker', async t => {
+for (const { problem, flushes, selectRoomy = false } of [
+  { problem: 'unable to relocate staged file: file exists', flushes: 1 },
+  { problem: 'unable to swap file: unable to set staged file permissions: unable to set permission bits: chmod /staging/source: no such file or directory', flushes: 3 },
+  { problem: 'unable to set staged file permissions: chmod /staging/source: no such file or directory', flushes: 3, selectRoomy: true },
+]) test(selectRoomy ? 'automatic placement never flushes an unselected transient mirror'
+  : `automatic placement recovers and surfaces a transient staged-file problem after ${flushes} synchronization cycles`, async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  if (selectRoomy) {
+    const sample = (await readFile(fixture.samplePath, 'utf8')).trim().split(' ');
+    sample[1] = '200';
+    await writeFile(fixture.samplePath, sample.join(' ') + '\n');
+  }
   const marker = join(fixture.root, 'collision-cleared');
   await executable(join(fixture.binDir, 'mutagen'), [
     '#!/bin/sh',
     'printf "mutagen:%s\\n" "$*" >> "$FIXTURE_TRACE"',
     'case "$2" in',
-    '  flush) : > "$COLLISION_MARKER"; printf "\\rForcing synchronization cycle for session fixture\\r" ;;',
+    '  flush) [ "$3" != happier-starved ] || printf "cycle\\n" >> "$COLLISION_MARKER"; printf "\\rForcing synchronization cycle for session fixture\\r" ;;',
     '  list)',
     '    transition=0/0',
-    '    if [ "$3" = happier-starved ] && [ ! -e "$COLLISION_MARKER" ]; then transition=1/0; fi',
+    `    if [ "$3" = happier-starved ] && [ "$(wc -l < "$COLLISION_MARKER" 2>/dev/null || printf 0)" -lt ${flushes} ]; then transition=1/0; fi`,
     '    printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|%s|active|2|ok|0|0\\n" "$3" "$transition"',
-    '    [ "$transition" = 0/0 ] || printf "%s\\n" "unable to relocate staged file: file exists" ;;',
+    `    [ "$transition" = 0/0 ] || printf '%s\\n' ${posixQuote(`fixture/source.mjs|${problem}`)} ;;`,
     'esac',
   ].join('\n'));
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], {
     ...fixture.invocation, env: { ...fixture.invocation.env, COLLISION_MARKER: marker },
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'remote:starved', 'a recoverable low-load worker must not be excluded');
-  assert.match(result.stderr, /requesting a fresh scan through the dispatch flush barrier/);
-  assert.match(result.stderr, /Forcing synchronization cycle/, 'flush progress must stay observable on the diagnostic stream');
+  assert.equal(result.stdout.trim(), selectRoomy ? 'remote:roomy' : 'remote:starved', 'transient synchronization must preserve load-based selection');
   const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
+  if (selectRoomy) {
+    assert.equal((trace.match(/mutagen:sync flush happier-starved\b/g) ?? []).length, 0,
+      'an unselected mirror must not hold placement behind its rescan barrier');
+    await assert.rejects(access(marker), { code: 'ENOENT' });
+    return;
+  }
+  assert.match(result.stderr, /needs a fresh scan/);
+  assert.match(result.stderr, /Forcing synchronization cycle/, 'flush progress must stay observable on the diagnostic stream');
   assert.ok(trace.indexOf('mutagen:sync flush') < trace.lastIndexOf('remote_execution_custody.sh'), trace);
+  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, flushes,
+    'only the selected worker crosses the converging dispatch flush barrier');
 });
 
 test('remote admission state failure is typed before payload dispatch', async (t) => {
@@ -4851,7 +4942,7 @@ test('native launcher retries the same target without multiplexing when the auth
     '  last_argument=$argument',
     'done',
     'case "$*" in',
-    '  "-G "*) printf "controlpath %s/%s.sock\\n" "$SSH_CONTROL_PATH" "$last_argument"; exit 0 ;;',
+    '  *-G*) printf "controlpath %s/%s.sock\\n" "$SSH_CONTROL_PATH" "$last_argument"; exit 0 ;;',
     '  *getconf*) case "$*" in *mac2-host*) printf "8 4 0.5\\n" ;; *) printf "8 1 0.5\\n" ;; esac ;;',
     '  *command\\ -v*|*-O\\ check*|*-MNf*) exit 0 ;;',
     '  *mac-host*)',
@@ -4954,7 +5045,7 @@ for argument in "$@"; do
   previous=$argument; last_argument=$argument
 done
 case "$*" in
-  "-G "*) printf 'controlpath %s/%s.sock\\n' "$SSH_CONTROL_PATH" "$target"; exit 0 ;;
+  *-G*) printf 'controlpath %s/%s.sock\\n' "$SSH_CONTROL_PATH" "$target"; exit 0 ;;
   *getconf*) case "$target" in mac-host) printf '8 1 0.5\\n' ;; *) printf '8 4 0.5\\n' ;; esac; exit 0 ;;
   *command\\ -v*|*-O\\ check*|*-MNf*) exit 0 ;;
 esac
@@ -5697,8 +5788,8 @@ test('native launcher excludes a low-load target that cannot launch the requeste
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) case "$*" in *mac2-host*) printf "8 1 0.5\\n" ;; *) printf "8 4 0.5\\n" ;; esac ;;',
-    '  *command\\ -v*probe-command*) case "$*" in *mac2-host*) exit 1 ;; *) exit 0 ;; esac ;;',
+    // Tool and telemetry checks share one SSH request at the OS boundary.
+    '  *getconf*) case "$*" in *mac2-host*) exit 73 ;; esac; printf "8 4 1 10000000 1 0 28000000 28000000 0 0 0 0 0 0 0 linux\\n28000000 0 28000000 0\\n-\\n" ;;',
     '  *) printf "remote:%s\\n" "$*" ;;',
     'esac',
     '',
@@ -6542,6 +6633,7 @@ test('startup and explicit sync share the command dispatch barrier and preserve 
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
+    '  *getconf*) printf "8 4 1 10000000 1 0 28000000 28000000 0 0 0 0 0 0 0 linux\\n28000000 0 28000000 0\\n-\\n" ;;',
     '  *"&& command -v "*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     `  *) printf 'mirror:'; cat "${mirrorBytes}" ;;`,
@@ -6695,6 +6787,9 @@ test('native launcher flushes an automatically selected mirror and retries anoth
   ].join('\n'));
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
+    // The joint probe observes tools and load on the same SSH request. Return
+    // its real telemetry shape rather than relying on legacy keyless caches.
+    'case "$*" in *getconf*) case "$*" in *linux-host*) sample_load=0 ;; *) sample_load=2 ;; esac; printf "4 %s 1 10000000 1 0 28000000 28000000 0 0 0 0 0 0 0 linux\\n28000000 0 28000000 0\\n-\\n" "$sample_load"; exit 0 ;; esac',
     'case "$*" in *"&& command -v "*) exit 0 ;; esac',
     `if [ ! -e "${freshMarker}" ]; then printf '%s\\n' 'remote dispatch attempted before sync flush' >&2; exit 74; fi`,
     'case "$*" in',
@@ -6727,6 +6822,65 @@ test('native launcher flushes an automatically selected mirror and retries anoth
   ]);
   await readFile(remoteMarker);
   await assert.rejects(readFile(localMarker), { code: 'ENOENT' });
+
+  await t.test('AUTO retains prerequisite exclusions after another host fails synchronization', async () => {
+    const originalSsh = await readFile(join(binDir, 'ssh'), 'utf8');
+    const originalMutagen = await readFile(join(binDir, 'mutagen'), 'utf8');
+    const prerequisiteFailed = join(root, 'prerequisite-failed');
+    const probes = join(root, 'prerequisite-probes');
+    try {
+      // The OS transport fails mac2's prerequisite once. A later selected-host
+      // sync failure expires shared observations without changing this request.
+      await executable(join(binDir, 'ssh'), originalSsh.replace('#!/bin/sh', [
+        '#!/bin/sh',
+        `case "$*" in *mac2-host*getconf*) printf 'probe\\n' >> '${probes}'; if [ ! -e '${prerequisiteFailed}' ]; then : > '${prerequisiteFailed}'; exit 73; fi ;; esac`,
+      ].join('\n')));
+      await executable(join(binDir, 'mutagen'), originalMutagen.replace('#!/bin/sh', [
+        '#!/bin/sh',
+        `if [ "$2" = flush ] && [ "$3" = named-linux-sync ]; then rm -f -- '${join(cacheDir, 'mac2.cache')}'; fi`,
+      ].join('\n')));
+      for (const name of ['linux', 'mac2']) await rm(join(cacheDir, `${name}.cache`), { force: true });
+      const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'request-exhausted'], {
+        cwd: repoRoot, encoding: 'utf8',
+        env: { ...executionNeutralEnv, HOME: root, XDG_RUNTIME_DIR: root,
+          HAPPIER_STACK_STORAGE_DIR: storageDir, PATH: `${binDir}:/usr/bin:/bin`, TMPDIR: root },
+      });
+      assert.notEqual(result.status, 0, 'a failed prerequisite must stay excluded for the entire request');
+      assert.match(result.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+      assert.match(result.stderr, /mac2=prerequisite/);
+      assert.doesNotMatch(result.stdout, /remote:/, 'no payload may start after the pool is exhausted');
+      assert.equal((await readFile(probes, 'utf8')).trim().split('\n').length, 1,
+        'cache expiry must not re-probe a prerequisite already refused for this request');
+    } finally {
+      await executable(join(binDir, 'ssh'), originalSsh);
+      await executable(join(binDir, 'mutagen'), originalMutagen);
+      for (const name of ['linux', 'mac2']) await rm(join(cacheDir, `${name}.cache`), { force: true });
+    }
+  });
+
+  await t.test('AUTO returns a typed prerequisite failure when local fallback is configured', async () => {
+    const projectionPath = join(stackDir, 'dev-target-exec-v1.sh');
+    const originalProjection = await readFile(projectionPath, 'utf8');
+    const originalSsh = await readFile(join(binDir, 'ssh'), 'utf8');
+    try {
+      await writeFile(projectionPath, originalProjection.replace("fallback_mode='error'", "fallback_mode='local'"));
+      await executable(join(binDir, 'ssh'), originalSsh.replace('#!/bin/sh\n',
+        '#!/bin/sh\ncase "$*" in *getconf*) exit 73 ;; esac\n'));
+      for (const name of ['linux', 'mac2']) await rm(join(cacheDir, `${name}.cache`), { force: true });
+      const exhausted = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'prerequisite-exhausted'], {
+        cwd: repoRoot, encoding: 'utf8',
+        env: { ...executionNeutralEnv, HOME: root, XDG_RUNTIME_DIR: root,
+          HAPPIER_STACK_STORAGE_DIR: storageDir, PATH: `${binDir}:/usr/bin:/bin`, TMPDIR: root },
+      });
+      assert.notEqual(exhausted.status, 0);
+      assert.match(exhausted.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+      assert.doesNotMatch(exhausted.stdout, /remote:|local:/);
+    } finally {
+      await writeFile(projectionPath, originalProjection);
+      await executable(join(binDir, 'ssh'), originalSsh);
+      for (const name of ['linux', 'mac2']) await rm(join(cacheDir, `${name}.cache`), { force: true });
+    }
+  });
 
   // The same public retry must retain an authoritative sibling source, not
   // restart against the executor checkout after the first target fails.

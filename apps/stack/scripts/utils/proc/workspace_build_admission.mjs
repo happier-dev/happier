@@ -196,24 +196,29 @@ export function createWorkspaceBuildResourceObservation({ locks = [], env = proc
   // This snapshot is shared by standalone waits and the host broker. Heartbeat
   // writes do not change resource identity. Canonical liveness can change even
   // when a crashed holder leaves every byte untouched.
-  const readSnapshot = () => JSON.stringify([
-    lockPaths.map(path => {
-      let value;
-      try { value = readFileSync(path, 'utf8'); }
-      catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-      try {
-        const { updatedAtMs, ...identity } = JSON.parse(value);
-        return identity;
-      } catch { return value; }
-    }),
-    publicationPaths.map(path => observeWorkspaceBundleLock(path)),
-    publicationPaths.map(path => observeWorkspaceBundleLockPriority(path, { priorityScope })),
-    readerDirectories.map(path => {
-      try { return readdirSync(path).sort(); }
-      catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-    }),
-  ]);
-  return { directories, isRelevant, readSnapshot };
+  const readState = () => {
+    const publications = publicationPaths.map(path => observeWorkspaceBundleLock(path));
+    const snapshot = JSON.stringify([
+      lockPaths.map(path => {
+        let value;
+        try { value = readFileSync(path, 'utf8'); }
+        catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+        try {
+          const { updatedAtMs, ...identity } = JSON.parse(value);
+          return identity;
+        } catch { return value; }
+      }),
+      publications,
+      publicationPaths.map(path => observeWorkspaceBundleLockPriority(path, { priorityScope })),
+      readerDirectories.map(path => {
+        try { return readdirSync(path).sort(); }
+        catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+      }),
+    ]);
+    return { publicationBlocked: publications.some(publication => publication.active), snapshot };
+  };
+  const readSnapshot = () => readState().snapshot;
+  return { directories, isRelevant, readSnapshot, readState };
 }
 
 /** Non-Linux and in-process publishers use the same all-resource attempt as

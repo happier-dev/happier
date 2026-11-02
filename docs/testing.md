@@ -629,9 +629,12 @@ It considers requests from oldest to newest, reserving the oldest memory waiter'
 minimum supported floor before offering spare memory to later requests. New
 arrivals cannot consume the capacity needed by that waiter as holders release;
 once its floor is covered, younger requests can use the remainder even before
-its payload starts. No aging deadline or cumulative backfill accounting is used. Workspace-busy
+its payload starts. The broker's published `unreservedMemoryKiB` deducts that
+head floor too, so AUTO ranks a fitting peer ahead of a head-reserved host using
+the existing memory input. No aging deadline or cumulative backfill accounting is used. Workspace-busy
 requests release their offered capacity and partial leases, then wait for their
-own resource changes. A physically fitting request can wait without an admission
+own resource changes. A head blocked by an active publication also waits without
+reserving its floor before its first offer. A physically fitting request can wait without an admission
 deadline; `--no-wait` instead returns a typed busy result.
 
 The broker's private pathname socket and client-owned slot witnesses carry
@@ -677,9 +680,9 @@ Stack unit roots, CLI default test homes/bins, external-hook configuration fixtu
 
 Service placements do not exclude command hosts. OS available memory already accounts for current server/Expo/daemon/browser processes. Admission subtracts only unused admitted-work envelopes from that available memory; a service RSS estimate with shared-page overcount cannot block otherwise fitting work. Active builds retain their `runtime-build` class reservation. Diagnostics expose service memory and unused command reservations; no second placement list exists. A class larger than total physical RAM fails immediately with a remote-routing instruction. A fitting class waits for available capacity rather than treating a currently resident service as permanently reserved growth.
 
-FIFO admission covers the oldest memory waiter's minimum supported floor before offering spare memory to younger work. The broker owns ordering and capacity; clients own nonblocking workspace acquisition and payload witnesses. Resource changes and closure of the broker's connection to the client listener wake admission through existing events, with no waiter poll or decision mutex per request. Admission cannot make unavailable physical capacity appear.
+FIFO admission covers the oldest memory waiter's minimum supported floor before offering spare memory to younger work. An active publication lease prevents that virtual reservation even before the waiter's first resource offer; the canonical publication observation wakes it when the lease changes. The broker owns ordering and capacity; clients own nonblocking workspace acquisition and payload witnesses. Resource changes and closure of the broker's connection to the client listener wake admission through existing events, with no waiter poll or decision mutex per request. Admission cannot make unavailable physical capacity appear.
 
-Capacity exclusions are invocation-specific: healthy raw samples remain usable by focused work on smaller workers and retain the default 15-second positive probe TTL. Dependency-refresh waiting belongs to the bootstrap's workspace lock before payload admission, within the same cancellable target execution. A selected sync-flush failure retries another target before any command starts; if reachable targets have synchronization or prerequisite failures, the launcher reports an actionable error. Configured `fallback=local` applies only when no remote target is reachable, with an explicit log. Explicit `includeLocal` participation, local placement and machine-local invocations remain distinct from fallback. Exit 137 remains authoritative and reports possible OOM with the last target memory sample; it is never automatically replayed. Outbound routing requires a cwd inside the synchronized repository; explicitly local publishers and already-placed children may use temporary repositories.
+Capacity exclusions are invocation-specific: healthy raw samples remain usable by focused work on smaller workers and retain the default 15-second positive probe TTL. Dependency-refresh waiting belongs to the bootstrap's workspace lock before payload admission, within the same cancellable target execution. A selected sync-flush failure tries another target before any command starts. Prerequisite and sync failures remain excluded for that invocation even after shared probe observations expire; an exhausted preparation pool settles with `HSTACK_EXEC_DISPATCH_REFUSED`. Configured `fallback=local` applies only when no remote target is reachable, with an explicit log. Explicit `includeLocal` participation, local placement and machine-local invocations remain distinct from fallback. Exit 137 remains authoritative and reports possible OOM with the last target memory sample; it is never automatically replayed. Outbound routing requires a cwd inside the synchronized repository; explicitly local publishers and already-placed children may use temporary repositories.
 
 Development fleet workers hosted on Windows use the managed WSL2 backend: `dev-targets add NAME --managed-wsl --outer-ssh=ALIAS --outer-ssh-config-file=PATH --dedicated-cpus=N --dedicated-memory-gib=N` provisions a named Ubuntu 24.04 guest through an authenticated Windows SSH host. The guest remains a POSIX execution target under the existing synchronization, placement and admission owners. Configure automatic placement with the guest name only; the Windows host stays a manual boundary. Capacity is explicit and `.wslconfig` applies to all WSL2 guests for that Windows user. Provisioning requires other WSL workloads stopped; forced capacity changes refuse to stop other running distributions. Guest SSH keys are pinned through the authenticated host, and a Windows startup task keeps the guest running. This backend is development-only. Verify enrollment with `doctor`, `sync`, and a command through `dev-targets exec NAME` before selecting the guest for automatic placement.
 
@@ -715,12 +718,16 @@ exact-target typechecks alone.
 
 Known scan races (`hashed size mismatch: <bytes> != <size>` from Mutagen 0.18.1)
 and transition races (file modification during validation, a disappearing leaf,
-or a missing staged file during permission application) request one fresh flush
-through the same barrier, including before the first completed cycle. Startup
-uses that barrier too. Native and Windows consumers use the same readiness
-policy and retain the existing flush retry and timeout. Recovery never
-admits a payload until a fresh inspection is clean; persistent, unknown,
-excluded or permission-denied scan and transition problems remain unhealthy.
+or a missing staged file during permission application) request a fresh flush
+through the same barrier, including before the first completed cycle. Candidate
+probes admit this recoverable preparation without flushing any mirror; only the
+selected worker crosses the mandatory clean barrier. Startup uses that barrier
+too. The POSIX barrier continues Mutagen cycles while the canonical observation
+reports this known transient churn and remains cancellable.
+Native Windows consumers retain their existing flush retry and timeout with
+the same readiness classification. Recovery never admits a payload until an
+inspection is clean; unknown, excluded or permission-denied scan and transition
+problems remain unhealthy.
 
 Managed worker enrollment and automatic command placement attempt to disable sleep through `dev-targets power no-sleep NAME|auto`. Ordinary unmanaged SSH enrollment requires explicit `host prepare --no-sleep` or `power no-sleep`. Managed workers apply the same policy to their outer host and Linux guest. Windows disables AC/battery idle and unattended sleep, idle hibernation and lid-triggered sleep; macOS disables idle system sleep; Linux masks systemd sleep targets. Manual targets are excluded from automatic placement setup. An existing Windows machine policy enforcing zero satisfies that setting; conflicting policy remains an error. Administrator privileges are required, and denied settings are reported without blocking worker enrollment or changing placement. The explicit power command returns failure for incomplete configuration. These defaults belong to worker setup, not ordinary Happier installation on a personal computer.
 

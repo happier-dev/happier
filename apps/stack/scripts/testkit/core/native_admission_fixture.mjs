@@ -160,7 +160,7 @@ esac
   // Native runtime dispatch consumes these real source preparation owners.
   // Forward the entry identity too: a plain symlink skips their CLI main guard
   // because Node resolves import.meta.url to the original module's real path.
-  for (const entry of ['remote_dependency_bootstrap.mjs', 'remote_validation_preparation.mjs', 'native_execution_projection.mjs']) {
+  for (const entry of ['remote_dependency_bootstrap.mjs', 'remote_validation_preparation.mjs', 'native_execution_projection.mjs', 'historical_temp_roots.mjs']) {
     const canonicalEntry = join(sourceRoot, 'apps/stack/scripts/utils/dev_targets', entry);
     const packageEnvironment = entry === 'remote_dependency_bootstrap.mjs'
       ? `process.env.PATH = ${JSON.stringify(packageBin)} + ':' + process.env.PATH; delete process.env.npm_execpath;\n` : '';

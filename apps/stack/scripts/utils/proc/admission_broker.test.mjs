@@ -59,17 +59,17 @@ async function acquire(root, floorKiB, t, extra = {}) {
     await beforeReady?.();
     const peers = new Set();
     const server = createServer(socket => { peers.add(socket); socket.on('close', () => peers.delete(socket)); });
-    server.listen(reserved.slotAddress);
-    await once(server, 'listening');
-    client.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
-    const admitted = await client.next();
-    assert.equal(admitted.kind, 'admitted');
     const release = async () => {
       for (const peer of peers) peer.destroy();
       client.socket.destroy();
       await new Promise(resolve => server.close(resolve));
     };
     t.after(release);
+    server.listen(reserved.slotAddress);
+    await once(server, 'listening');
+    client.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
+    const admitted = await client.next();
+    assert.equal(admitted.kind, 'admitted');
     return { admitted, release, slotAddress: reserved.slotAddress };
   } };
 }
@@ -180,6 +180,10 @@ test('the head floor survives a stream of small jobs, with backfill only from sp
       'the head and small follower must remain queued until the head floor is covered');
   };
   await assertNoBackfill();
+  const placementSample = await request(root, { kind: 'sample' });
+  assert.equal((await placementSample.next()).unreservedMemoryKiB, 0,
+    'placement must not advertise memory covered by the waiting head floor');
+  placementSample.socket.destroy();
   const samples = broker.status().sampleCount;
   for (let index = 0; index < 20; index += 1) {
     const client = await request(root, { kind: 'sample' });
@@ -677,17 +681,46 @@ test('an unrelated arrival never reoffers unchanged blocked publication demand',
   const priority = createWorkspaceBundleLockPriorityScope({ resources: locks });
   priority.activate();
   t.after(() => priority.dispose());
-  const blocked = await acquire(root, 10, t, { locks });
+  const blocked = await acquire(root, 70, t, { locks });
   assert.equal((await blocked.next()).kind, 'reserved');
   assert.equal((await tryWorkspaceBuildResources({ locks })).acquired, false);
   blocked.socket.write(JSON.stringify({ kind: 'resources-busy' }) + '\n');
-  const barrier = await request(root, { kind: 'sample' });
-  await barrier.next();
-  barrier.socket.destroy();
-  const unrelated = await acquire(root, 20, t);
+  while (broker.status().activeCount !== 0) await new Promise(setImmediate);
+  const unrelated = await acquire(root, 40, t);
   await unrelated.admit();
-  assert.equal(broker.status().activeCount, 1, 'only unrelated work may receive a capacity offer');
+  const follower = await acquire(root, 20, t);
+  await follower.admit();
+  assert.equal(broker.status().activeCount, 2,
+    'a publication-blocked head must reserve no memory even when its floor exceeds remaining memory');
   assert.equal(broker.status().waitingCount, 1, 'publication demand stays blocked until its own resource changes');
+});
+
+test('publication demand cannot reserve a head floor before its first resource offer', linux, async t => {
+  const { root, broker } = await fixture(t);
+  const holder = await acquire(root, 60, t);
+  await holder.admit();
+  const locks = [{ path: join(root, 'publication.lock') }];
+  const publication = await tryWorkspaceBuildResources({ locks });
+  assert.equal(publication.acquired, true);
+  try {
+    const observedAcquire = async (floorKiB, extra) => {
+      const samples = broker.status().sampleCount;
+      const client = await acquire(root, floorKiB, t, extra);
+      // Capacity observation completes before drain in the same broker turn.
+      // Wait for that published progress rather than another socket's query.
+      while (broker.status().sampleCount === samples) await new Promise(setImmediate);
+      return client;
+    };
+    await observedAcquire(70, { locks });
+    assert.equal(broker.status().unreservedMemoryKiB, 40,
+      'a publication-blocked head must not reduce the placement budget');
+    const follower = await observedAcquire(20);
+    assert.equal(broker.status().activeCount, 2,
+      'a head whose publication resource is unavailable must leave memory for admissible work');
+    await follower.admit();
+  } finally {
+    await publication.release();
+  }
 });
 
 test('connections during startup wait for the recovered initial capacity observation', linux, async t => {

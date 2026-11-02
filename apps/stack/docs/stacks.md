@@ -199,7 +199,13 @@ Write live or repeatedly rewritten captures to `.project/tmp/**`, a scratch
 directory, or a Mutagen-ignored suffix under `plans/` (for example `.ndjson`,
 `.jsonl`, `.png`, `.webm`, `.log`, `.trace` or `.har`). The existing ignore policy
 also excludes `browser-diagnostics.json` under `plans/`. Status and dispatch
-share one readiness policy.
+share one readiness policy. A missing staged file makes Mutagen schedule a
+fresh cycle itself; the POSIX dispatch barrier continues these known transient
+cycles until clean and remains cancellable. Candidate probes observe this
+recoverable state without flushing unselected mirrors. Stopping the writer can
+restore readiness without a reset. If a source problem persists,
+`hstack dev-targets sync <target>` owns the explicit fresh scan and still requires
+a clean result.
 
 Use `local` placement for services on the controller. A separate mirror on the
 same host must remain outside the authoritative checkout: the synchronization

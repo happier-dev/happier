@@ -111,10 +111,19 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   let started = false;
   let heldOldLockFd = oldLockFd;
 
-  function status() {
+  function slotMemoryBudget() {
     const reservedMemoryKiB = [...slots.values()].reduce((sum, slot) => sum + slot.floorKiB, 0);
-    return { ...sample, reservedMemoryKiB,
-      unreservedMemoryKiB: Math.max(0, sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB),
+    return { reservedMemoryKiB,
+      unreservedMemoryKiB: Math.max(0, sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB) };
+  }
+  function status() {
+    const memory = slotMemoryBudget();
+    const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed);
+    const headFloorKiB = head ? (head.floorOptions?.at(-1).floorKiB ?? head.floorKiB) : 0;
+    // Publish the budget a new request can use, including C3's virtual head
+    // reservation. Publication-blocked demand has no memory reservation.
+    return { ...sample, ...memory,
+      unreservedMemoryKiB: Math.max(0, memory.unreservedMemoryKiB - headFloorKiB),
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
@@ -246,7 +255,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   async function drain() {
     // Oldest to newest. Cover each waiting floor before offering younger work
     // the remainder, so backfill cannot delay the head when holders release.
-    let availableMemoryKiB = status().unreservedMemoryKiB;
+    let availableMemoryKiB = slotMemoryBudget().unreservedMemoryKiB;
     for (const item of [...waiting]) {
       if (item.slot || item.blocked) continue;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
@@ -258,7 +267,15 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const fitting = item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB);
       if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB) {
         if (item.noWait) refuse(item, 'HSTACK_MEMORY_BUSY');
-        else availableMemoryKiB = Math.max(0, availableMemoryKiB - minimumFloorKiB);
+        else {
+          // A head that cannot fit has not reached the client's resource
+          // attempt yet. An active publication must not reserve its floor.
+          const resources = item.observation.readState();
+          if (resources.publicationBlocked) {
+            item.blocked = true;
+            item.resourceSnapshot = resources.snapshot;
+          } else availableMemoryKiB = Math.max(0, availableMemoryKiB - minimumFloorKiB);
+        }
         continue;
       }
       const floorKiB = fitting?.floorKiB ?? item.floorKiB;

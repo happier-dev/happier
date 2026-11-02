@@ -1167,7 +1167,7 @@ configure_mutagen_environment() {
   fi
 }
 
-sync_is_ready() {
+sync_is_available() {
   target_name=$1
   target_number=$2
   sync_name=$(sync_name_for_target "$target_name" "$target_number") || return 1
@@ -1398,7 +1398,7 @@ probe_target() {
             case "$refusal" in
               "$name="*)
                 excluded_reason=${refusal#*=}
-                case "$excluded_reason" in sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
+                case "$excluded_reason" in dependencies|sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
                 break ;;
             esac
           done ;;
@@ -1436,7 +1436,7 @@ probe_target() {
     fi
   fi
   target_unavailable_reason=prerequisite
-  if sync_is_ready "$name" "$number"; then
+  if sync_is_available "$name" "$number"; then
     sample=$(remote_load_probe "$number" 2>/dev/null)
     load_probe_status=$?
     [ "$load_probe_status" -ne 255 ] || target_unavailable_reason=unreachable
@@ -1641,6 +1641,18 @@ fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
+  case "$candidate_available:$candidate_cache" in
+    0:prerequisite|0:capability|0:bun-pin|0:go-toolchain|0:dispatch-sync)
+      case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
+        *" $candidate_name "*) ;;
+        *)
+          HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS="${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} $candidate_name"
+          if [ "$candidate_cache" != dispatch-sync ]; then
+            HSTACK_EXEC_PRE_DISPATCH_REFUSALS="${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} $candidate_name=$candidate_cache"
+          fi
+          export HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_REFUSALS ;;
+      esac ;;
+  esac
   case "$candidate_cache" in
     dispatch-ssh)
       HSTACK_EXEC_PRE_DISPATCH_REFUSALS="${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} $candidate_name=ssh"
@@ -1730,6 +1742,12 @@ if [ -z "$selected" ]; then
     cleanup_probe_tmp
     exit 75
   fi
+  for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
+    case "$refusal" in
+      *=ssh) ;;
+      *) report_dispatch_refusals; exit 1 ;;
+    esac
+  done
   if [ "${fallback_mode-local}" = error ] || [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then
     if report_dispatch_refusals; then exit 1; fi
   fi
