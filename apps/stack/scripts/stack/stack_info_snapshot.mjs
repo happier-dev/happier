@@ -1,3 +1,6 @@
+import { observeRemoteSourceRuntime as readRemoteSourceRuntime } from './remote_source_runtime.mjs';
+import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+import { realpath } from 'node:fs/promises';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { getEnvValueAny } from '../utils/env/values.mjs';
@@ -32,6 +35,16 @@ import { readJsonIfExists } from '../utils/fs/json.mjs';
 import { readPendingSourcePreparation } from '../runtime/shared/pending_source_start.mjs';
 
 const readExistingEnv = readTextOrEmpty;
+
+async function readManagedCliIdentity(env) {
+  try {
+    const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', processEnv: env });
+    const binaryPath = await realpath(paths.resolvedBinaryPath ?? paths.binaryPath);
+    return { status: 'installed', binaryPath };
+  } catch (error) {
+    return { status: error.code === 'ENOENT' ? 'absent' : 'unavailable', binaryPath: null };
+  }
+}
 
 function normalizePid(value) {
   const pid = Number(value);
@@ -118,6 +131,9 @@ export async function resolveStackComponentRuntime({
 export async function readStackInfoSnapshot({
   rootDir,
   stackName,
+  observeRemoteSourceRuntime = true,
+  synchronizeDaemonState = true,
+  runRemoteProcessImpl,
   listListenPidsWithStatusImpl = listListenPidsWithStatus,
   isTcpPortListeningImpl = isTcpPortListening,
   isPidOwnedByStackImpl = isPidOwnedByStack,
@@ -165,7 +181,7 @@ export async function readStackInfoSnapshot({
     runtimeState: initialRuntimeState, defaultPort: null, trustOptions: runtimeStatusTrustOptions });
   const trustedRuntimeServerPort = endpoint.runtimePort;
   const initialDaemonPlacement = String(initialRuntimeState?.placement?.daemon ?? '').trim();
-  const runtimeState = initialDaemonPlacement && initialDaemonPlacement !== 'local'
+  let runtimeState = !synchronizeDaemonState || (initialDaemonPlacement && initialDaemonPlacement !== 'local')
     ? initialRuntimeState
     : await readStackRuntimeStateWithDaemonSync({
         runtimeStatePath,
@@ -175,6 +191,11 @@ export async function readStackInfoSnapshot({
       }, {
         checkDaemonStateImpl: observeDaemonState,
       });
+
+  if (observeRemoteSourceRuntime) {
+    runtimeState = await readRemoteSourceRuntime({ stackName, baseDir, runtimeState, env: stackScopedEnv },
+      { runProcess: runRemoteProcessImpl });
+  }
 
   const runtimePorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
   const serverPort = endpoint.port;
@@ -486,6 +507,15 @@ export async function readStackInfoSnapshot({
     target && target !== 'local' ? null : await inspectWorkspaceQaStalePackagesForComponent(dir),
   ])));
 
+  const managedCli = remoteDaemon.target ? remoteTargets[remoteDaemon.target]?.managedCli ?? null
+    : await readManagedCliIdentity(componentEnv);
+  // Startup records the executing module's identity. Use that authenticated
+  // daemon observation, never the wrapper's advertised source identity.
+  const daemonEntry = remoteDaemon.target ? remoteTargets[remoteDaemon.target]?.daemonEntry ?? null : {
+    selected: runtimeState?.sourceRuntimeLaunch?.entrypoint ?? null,
+    loaded: daemonRunning ? observedDaemon.daemonState?.runtimeEntrypoint ?? null : null,
+  };
+
   return {
     ok: true,
     stackName,
@@ -498,6 +528,8 @@ export async function readStackInfoSnapshot({
       serverPort: Number.isFinite(pinnedServerPort) && pinnedServerPort > 0 ? pinnedServerPort : null,
     },
     runtime: {
+      managedCli,
+      daemonEntry,
       script: typeof runtimeState?.script === 'string' ? runtimeState.script : null,
       ownerPid: Number.isFinite(ownerPid) && ownerPid > 1 ? ownerPid : null,
       runningPid: Number.isFinite(runningPid) && runningPid > 1 ? runningPid : null,

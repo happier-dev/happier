@@ -264,3 +264,36 @@ test('readStackInfoSnapshot reports runtime snapshots with missing daemon node e
     restore();
   }
 });
+
+test('reload observes managed CLI on the daemon host without substituting the controller install', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'remote-managed-cli-info' });
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  await writeFile(join(fixture.stackDir, 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'worker', platform: 'posix', ssh: 'daemon-worker', repoDir: process.cwd(),
+      cliHomeDir: join(fixture.root, 'worker-cli') }] }));
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1,
+    stackName: fixture.stackName, sourceRuntimeIdentities: {}, placement: { daemon: 'worker' },
+    remoteTargets: { worker: { runtimeMode: 'source-snapshot', services: { daemon: true },
+      status: 'running', serviceStatus: { daemon: 'running' } } } }));
+  const managedCli = { status: 'installed', binaryPath: '/worker/cli/versions/one/happier' };
+  // SSH is the system boundary; the real runtime observer and snapshot projection remain in use.
+  const readInfo = out => readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName,
+    synchronizeDaemonState: false, runRemoteProcessImpl: async () => ({ code: 0, out: JSON.stringify(out) }) });
+  const observation = { serviceStatus: { daemon: 'running' },
+    sourceRuntimeIdentities: { daemon: { selected: 'daemon-code', loaded: 'daemon-code' } }, managedCli };
+  observation.daemonEntry = { selected: '/worker/source/cli/src/index.mjs', loaded: '/worker/managed/package-dist/index.mjs' };
+  assert.deepEqual((await readInfo(observation)).runtime.managedCli, managedCli);
+  assert.deepEqual((await readInfo(observation)).runtime.daemonEntry, observation.daemonEntry);
+  const runtimePath = join(fixture.stackDir, 'stack.runtime.json');
+  const incumbent = JSON.parse(await readFile(runtimePath, 'utf8'));
+  await writeFile(runtimePath, JSON.stringify({ ...incumbent,
+    stopRequest: { requestedAt: new Date().toISOString() } }));
+  const interrupted = await readInfo(observation);
+  assert.deepEqual(interrupted.runtime.managedCli, managedCli,
+    'an interrupted stop must retain the observation needed to verify its recovery');
+  assert.ok(interrupted.runtime.health.issues.includes('stop_cleanup_incomplete'));
+  delete observation.managedCli;
+  delete observation.daemonEntry;
+  assert.equal((await readInfo(observation)).runtime.managedCli, null);
+  assert.equal((await readInfo(observation)).runtime.daemonEntry, null);
+});

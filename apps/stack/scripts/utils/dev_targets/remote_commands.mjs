@@ -1,3 +1,4 @@
+import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -1748,7 +1749,7 @@ export function buildRemoteRuntimeSnapshotImportCommand(target, { stackName, arc
     : `set -euo pipefail; cd -- ${quote(target.repoDir)}; exec node ${args.map(quote).join(' ')}`);
 }
 
-export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId, runtimeMode = 'controlled', services = {}, sourceUi = 'export', includeDaemonServerUrl = false }) {
+export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId, runtimeMode = 'controlled', services = {}, sourceUi = 'export', includeDaemonServerUrl = false, observeLive = false }) {
   const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const statePath = paths.stackBaseDir + '/stack.runtime.json';
   const components = ['server', 'daemon'].filter(component => services[component] === true);
@@ -1786,7 +1787,9 @@ export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snap
     "if (!raw.trim()) fail('runtime_state_empty');",
     "let s; try { s=JSON.parse(raw); } catch { fail('runtime_state_invalid'); }",
     "if (!s || typeof s !== 'object' || Array.isArray(s)) fail('runtime_state_invalid');",
-    runtimeMode === 'source-snapshot'
+    observeLive && runtimeMode === 'source-snapshot'
+      ? buildRuntimeSnapshotObservationExpression({ target, paths, services })
+      : runtimeMode === 'source-snapshot'
       ? sourceProbe
       : includeDaemonServerUrl ? ['const observed = {};', ...daemonEndpointProbe, 'process.stdout.write(JSON.stringify(observed));'].join('\n')
         : `process.exit(s.runtimeSnapshotId===${JSON.stringify(snapshotId)}?0:1)`,
