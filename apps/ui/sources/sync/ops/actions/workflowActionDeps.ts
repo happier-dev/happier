@@ -136,7 +136,7 @@ export function createUiWorkflowAction(params: Readonly<{
     const executeRelay = createUiAccountAction(params);
     const resolveSession = createUiTriggerSessionResolver(account);
     const invokePullRequestBinding = async (
-        input: Exclude<SessionPullRequestBindingInputV1, { kind: 'list' }>,
+        input: Extract<SessionPullRequestBindingInputV1, { kind: 'attach' | 'removeTrigger' }> & Readonly<{ sessionId: string }>,
         caller: Parameters<typeof resolveSession>[1],
     ) => {
         if (!caller) targetUnavailable();
