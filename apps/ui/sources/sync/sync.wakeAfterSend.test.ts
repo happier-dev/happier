@@ -51,6 +51,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
 import { readPersistedSessionViewport } from './domains/state/sessionViewportPersistence';
+import { Encryption } from '@/sync/encryption/encryption';
 
 const initialStorageState = storage.getState();
 
@@ -472,11 +473,19 @@ describe('sync.sendMessage wake-after-send', () => {
         }, 1);
 
         const { sync } = await import('./sync');
-        const sendMessageSpy = vi.spyOn(sync, 'sendMessage').mockRejectedValue(new Error('direct fallback should not run'));
-        vi.spyOn(apiSocket, 'request').mockRejectedValue(new Error('session unavailable'));
+        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'encryption', Encryption.createWithoutKeyMaterial());
+        sync.resetMessageTransport();
+        const emitWithAck = vi.spyOn(apiSocket, 'emitWithAck');
+        const send = vi.spyOn(apiSocket, 'send');
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ error: 'Session not found' }, { status: 404 }));
 
-        await expect(sync.submitMessage(sessionId, 'should stay queued')).rejects.toThrow(/session.*not.*available|session.*not.*found/i);
+        await expect(sync.submitMessage(sessionId, 'should stay queued')).rejects.toThrowError(new Error('not_found'));
 
-        expect(sendMessageSpy).not.toHaveBeenCalled();
+        expect(requestSpy).toHaveBeenCalledWith(`/v2/sessions/${sessionId}`, expect.objectContaining({ method: 'GET' }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionPending[sessionId]).toBeUndefined();
     });
 });
