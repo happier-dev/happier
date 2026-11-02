@@ -3,6 +3,7 @@ import { parseQualifiedPluginContributionKey } from '../plugins/contributionIden
 export * from './probedCatalogOption.js';
 export * from './agentProbeObservation.js';
 export * from './pluginMarketplace.js';
+export * from './invokeFailure.js';
 
 export type CapabilityKind = 'cli' | 'tool' | 'dep';
 
@@ -71,7 +72,7 @@ export type CapabilitiesInvokeRequest = {
 
 export type CapabilitiesInvokeResponse =
   | { ok: true; result: unknown }
-  | { ok: false; error: { message: string; code?: string }; logPath?: string };
+  | { ok: false; error: { message: string; code?: string; retryable?: boolean; details?: Readonly<Record<string, string>> }; logPath?: string };
 
 export {
   CodexPassiveRealtimeSetupResultV1Schema,
