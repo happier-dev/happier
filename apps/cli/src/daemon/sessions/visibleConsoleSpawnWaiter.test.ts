@@ -7,6 +7,7 @@ import { logger } from '@/ui/logger';
 import { waitForVisibleConsoleSessionWebhook } from './visibleConsoleSpawnWaiter';
 import { createOnChildExited } from './onChildExited';
 import { buildWindowsHostedTerminalAttachment } from '../platform/windows/windowsHostedSessionRuntime';
+import * as processRunState from '../processRunState';
 
 function installProcessKillMock(aliveRef: { alive: boolean }): void {
   vi.spyOn(process, 'kill').mockImplementation(
@@ -93,6 +94,9 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
 
   it('reports startup exit immediately and retains tracking when terminal cleanup fails', async () => {
     vi.useFakeTimers();
+    // Keep both OS observations in the absent-process fixture. Real ps can
+    // find an unrelated process at this PID or finish after fake-time advancement.
+    vi.spyOn(processRunState, 'readProcessRunState').mockResolvedValue('dead');
     const warning = vi.spyOn(logger, 'warn');
     installProcessKillMock({ alive: false });
     const pid = 12347;
