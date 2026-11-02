@@ -3,7 +3,10 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { CollectionSessionRequestPeekData } from '@/components/ui/lists/collection/CollectionSessionRequestPeekData';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
@@ -73,6 +76,50 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('retries an opened request through its mounted hydration command and retires it on close', async () => {
+        let servedSession: ReturnType<typeof createSessionFixture> | null = null;
+        const boundary = createSessionMetadataHttpBoundary(() => servedSession ? { [servedSession.id]: servedSession } : {});
+        const sessionReads = createSessionReadBatchHttpBoundary(request => boundary.handle(request.url)
+            ?? (request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined));
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://collection-request-retry.test', accountId: 'account-a', currentAccount: true }],
+            route: sessionReads.handle });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const session = createSessionFixture({ id: 'request-retry-session', serverId: server.id, encryptionMode: 'plain',
+            active: true, agentState: { controlledByUser: null, requests: { permission: {
+                tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: 1,
+            } }, completedRequests: {} } });
+        getStorage().getState().applySessions([session]);
+        const tree = (open: boolean) => <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <Publication /><CollectionSessionRequestPeekData open={open}
+                        request={{ kind: 'permission', serverId: server.id, sessionId: session.id, requestId: 'permission' }}>
+                        {() => null}
+                    </CollectionSessionRequestPeekData>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(true));
+        await vi.waitFor(() => expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === t('common.retry'))).toBe(true));
+        // Introduce the server update after startup, so this measures the mounted
+        // Retry command rather than startup's legacy-display maintenance read.
+        servedSession = createSessionFixture({ ...session, metadata: { ...session.metadata!, name: 'Current request context' },
+            metadataVersion: session.metadataVersion + 1 });
+        const command = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.retry'))!;
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        await vi.waitFor(() => expect(getStorage().getState().sessions[session.id]?.metadata?.name).toBe('Current request context'));
+        expect(sessionReads.componentRequests.filter(request => request.path === `/v2/sessions/${session.id}`)).toHaveLength(1);
+        await screen.update(tree(false));
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, { surface: 'agent' })).toMatchObject({ ok: false });
+        await screen.update(tree(true));
+        await vi.waitFor(() => expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === t('common.retry'))).toBe(true));
+        expect(sessionReads.componentRequests.filter(request => request.path === `/v2/sessions/${session.id}`)).toHaveLength(1);
+    });
+
     it('keeps an unchanged local command when its owner adds a sibling and invokes its latest callback', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://local-command-reconcile.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
