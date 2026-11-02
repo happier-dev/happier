@@ -152,6 +152,9 @@ describe('CLI Vitest workspace package source resolution', () => {
         )));
         expect(workspacePackageSourcesPlugin.resolveId(
             '@happier-dev/protocol/automations/automationEventV1',
+        )).toBe(resolve('../../packages/protocol/src/automations/automationEventV1.ts'));
+        expect(workspacePackageSourcesPlugin.resolveId(
+            '@happier-dev/protocol/test/zodLocaleSetup',
         )).toBeNull();
     });
 
