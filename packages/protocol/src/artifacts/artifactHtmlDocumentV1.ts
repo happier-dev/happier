@@ -2,7 +2,8 @@ import { parse as parseHtml, serialize, defaultTreeAdapter, type DefaultTreeAdap
 import { parse as parseModule } from 'es-module-lexer/js';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
-import { ArtifactHtmlBundleV1Schema, type ArtifactHtmlBundleV1 } from './artifactHtmlV1.js';
+import { artifactHtmlFrameAdmissionScriptV1, isArtifactHtmlNetworkHintRelV1 } from './artifactHtmlFrameAdmissionV1.js';
+import { ArtifactHtmlBundleV1Schema, GeneratedArtifactHtmlBundleV1Schema, type ArtifactHtmlBundleV1 } from './artifactHtmlV1.js';
 import type { PluginHostedWebBridgeBootstrapConfigV1 } from '../plugins/ui/hostedWebBridge.js';
 import { normalizeUiSurfaceCapabilityRequestV1, type UiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 
@@ -33,154 +34,33 @@ type ImportMap = Readonly<Record<string, string | null>>;
 
 // These native browser bindings are used only by the serialized guest below.
 // Keep their reflection-only types local so host compilers need no DOM globals.
-type NativeDomPrototype = Readonly<{ prototype: object }>;
-declare const Node: NativeDomPrototype;
-declare const Element: NativeDomPrototype;
-declare const HTMLTemplateElement: NativeDomPrototype;
-declare const Document: NativeDomPrototype;
-declare const Range: NativeDomPrototype;
-declare const DocumentFragment: NativeDomPrototype;
-declare const CharacterData: NativeDomPrototype;
-declare const DocumentType: NativeDomPrototype;
-declare const ShadowRoot: NativeDomPrototype;
-declare const NodeList: Readonly<{ prototype: { item(index: number): unknown } }>;
-declare const DOMParser: {
-  new(): object;
-  readonly prototype: { parseFromString(html: string, mimeType: string): unknown };
-};
 declare const XMLHttpRequest: Readonly<{ prototype: {
   open(this: unknown, method: string, url: string | URL, async?: boolean, username?: string | null, password?: string | null): void;
 } }>;
 
+
+function collectFrameElements(parsed: DefaultTreeAdapterTypes.ParentNode, egressCeiling = true): Element[] {
+  const elements: Element[] = [];
+  const collect = (node: DefaultTreeAdapterTypes.ParentNode): void => {
+    for (const child of [...node.childNodes]) {
+      if (!('tagName' in child)) continue;
+      if (child.tagName === 'base'
+        || (egressCeiling && ['iframe', 'frame', 'frameset', 'object', 'embed'].includes(child.tagName))
+        || (egressCeiling && child.tagName === 'link' && child.attrs.some(attr => attr.name === 'rel' && isArtifactHtmlNetworkHintRelV1(attr.value)))
+        || (child.tagName === 'meta' && child.attrs.some(attr => attr.name === 'http-equiv'))) {
+        defaultTreeAdapter.detachNode(child);
+        continue;
+      }
+      elements.push(child);
+      collect(child);
+      if (child.tagName === 'template' && 'content' in child) collect(child.content);
+    }
+  };
+  collect(parsed);
+  return elements;
+}
 function scriptJson(value: unknown): string {
   return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
-}
-
-/** CSP does not refuse about:srcdoc. Admit DOM writes synchronously instead. */
-function installFrameAdmission(): void {
-  // Capture native DOM operations before authored code can replace globals or
-  // detach a node's JavaScript prototype without changing its browser brand.
-  const NativeNode = Node;
-  const NativeElement = Element;
-  const NativeTemplate = HTMLTemplateElement;
-  const NativeParser = DOMParser;
-  const NativeException = DOMException;
-  const NativeTypeError = TypeError;
-  const string = String;
-  const domString = (value: unknown): string => {
-    if (typeof value === 'symbol') throw new NativeTypeError('Cannot convert a Symbol value to a string');
-    return string(value);
-  };
-  const apply = Reflect.apply;
-  const hasInstance = Function.prototype[Symbol.hasInstance];
-  const readType = Object.getOwnPropertyDescriptor(NativeNode.prototype, 'nodeType')!.get!;
-  const isNode = (value: unknown): boolean => {
-    try { apply(readType, value, []); return true; }
-    catch (error) {
-      if (apply(hasInstance, NativeTypeError, [error])) return false;
-      throw error;
-    }
-  };
-  const readChildren = Object.getOwnPropertyDescriptor(NativeNode.prototype, 'childNodes')!.get!;
-  const readName = Object.getOwnPropertyDescriptor(NativeElement.prototype, 'localName')!.get!;
-  const readTemplate = Object.getOwnPropertyDescriptor(NativeTemplate.prototype, 'content')!.get!;
-  const readLength = Object.getOwnPropertyDescriptor(NodeList.prototype, 'length')!.get!;
-  const readItem = NodeList.prototype.item;
-  const forbidden = new Set(['iframe', 'frame', 'frameset', 'object', 'embed']);
-  const isForbidden = forbidden.has.bind(forbidden);
-  const refuse = (): never => { throw new NativeException('Nested browsing contexts are unavailable', 'SecurityError'); };
-  const assertNode = (node: unknown): void => {
-    const isElement = apply(readType, node, []) === 1;
-    const name = isElement ? apply(readName, node, []) : null;
-    if (isElement && isForbidden(name)) refuse();
-    const children: unknown = apply(readChildren, node, []);
-    for (let index = 0; index < apply(readLength, children, []); index++) {
-      const child = apply(readItem, children, [index]);
-      if (child !== null) assertNode(child);
-    }
-    if (name === 'template') {
-      let content: unknown;
-      try { content = apply(readTemplate, node, []); }
-      catch (error) {
-        // A non-HTML element named template has no native template content.
-        if (apply(hasInstance, NativeTypeError, [error])) return;
-        throw error;
-      }
-      assertNode(content);
-    }
-  };
-  const parse = NativeParser.prototype.parseFromString;
-  const assertHtml = (value: unknown): string => {
-    const html = domString(value);
-    assertNode(apply(parse, new NativeParser(), [html, 'text/html']));
-    return html;
-  };
-  // Lock the captured admission methods before authored code can obtain the
-  // native variants. This is guest-local DOM policy, not a host bridge.
-  const patch = (owner: object, name: string, guard: (args: unknown[]) => void): void => {
-    const descriptor = Object.getOwnPropertyDescriptor(owner, name);
-    if (typeof descriptor?.value !== 'function') return;
-    const original: (...args: unknown[]) => unknown = descriptor.value;
-    Object.defineProperty(owner, name, {
-      ...descriptor, configurable: false, writable: false,
-      value: function(this: unknown, ...args: unknown[]) {
-        guard(args);
-        return apply(original, this, args);
-      },
-    });
-  };
-  const assertInputs = (args: unknown[]): void => {
-    for (let index = 0; index < args.length; index++) {
-      const value = args[index];
-      if (isNode(value)) assertNode(value);
-    }
-  };
-  for (const [name, index] of [['createElement', 0], ['createElementNS', 1]] as const) {
-    patch(Document.prototype, name, args => {
-      if (args.length <= index) return;
-      const name = domString(args[index]);
-      if (isForbidden(name.split(':').at(-1)!.toLowerCase())) refuse();
-      args[index] = name;
-    });
-  }
-  for (const name of ['appendChild', 'insertBefore', 'replaceChild']) patch(Node.prototype, name, args => assertInputs([args[0]]));
-  patch(Range.prototype, 'insertNode', assertInputs);
-  for (const owner of [Element.prototype, Document.prototype, DocumentFragment.prototype]) {
-    for (const name of ['append', 'prepend', 'replaceChildren']) patch(owner, name, assertInputs);
-  }
-  for (const owner of [Element.prototype, CharacterData.prototype, DocumentType.prototype]) {
-    for (const name of ['before', 'after', 'replaceWith']) patch(owner, name, assertInputs);
-  }
-  patch(Element.prototype, 'insertAdjacentElement', args => assertInputs([args[1]]));
-  for (const [owner, name] of [[Element.prototype, 'innerHTML'], [Element.prototype, 'outerHTML'], [ShadowRoot.prototype, 'innerHTML']] as const) {
-    const descriptor = Object.getOwnPropertyDescriptor(owner, name);
-    if (!descriptor?.set) continue;
-    const set = descriptor.set;
-    Object.defineProperty(owner, name, {
-      ...descriptor, configurable: false,
-      set(this: unknown, value: unknown) { apply(set, this, [assertHtml(value === null ? '' : value)]); },
-    });
-  }
-  patch(Element.prototype, 'insertAdjacentHTML', args => { if (args.length > 1) args[1] = assertHtml(args[1]); });
-  for (const owner of [Element.prototype, ShadowRoot.prototype]) {
-    for (const name of ['setHTML', 'setHTMLUnsafe']) patch(owner, name, args => { if (args.length > 0) args[0] = assertHtml(args[0]); });
-  }
-  // Declarative closed shadow roots disappear from childNodes after parsing.
-  // Check their inert template markup before that native transformation.
-  for (const name of ['parseHTML', 'parseHTMLUnsafe']) patch(Document, name, args => { if (args.length > 0) args[0] = assertHtml(args[0]); });
-  // Fragments/documents remain usable; actual insertion is checked above.
-  // Parser-stream writes need the accumulated prefix to catch split tags.
-  let written = '';
-  for (const name of ['write', 'writeln']) patch(Document.prototype, name, args => {
-    let next = written;
-    for (let index = 0; index < args.length; index++) {
-      args[index] = domString(args[index]);
-      next += args[index];
-    }
-    assertHtml(next);
-    written = next;
-  });
-  patch(Document.prototype, 'open', () => { written = ''; });
 }
 
 /** Installed before authored code; resolves bytes locally, never via a host service. */
@@ -220,12 +100,30 @@ export function buildArtifactHtmlDocumentV1(bundleInput: ArtifactHtmlBundleV1, o
   externalHttpLinks?: boolean;
   requestedCapabilities?: UiSurfaceCapabilityRequestV1;
   networkOff?: boolean;
+  /** Generated archive scripts are trusted only after the host verifies their bytes. */
+  generatedArtifactNonce?: string;
+  /**
+   * Trusted plugin UI (owner ruling 2026-10-29): no egress ceiling. Artifact
+   * HTML from agents or other people keeps the default ceiling.
+   */
+  pluginAuthored?: boolean;
 }> = {}): string {
-  const bundle = ArtifactHtmlBundleV1Schema.parse(bundleInput);
-  const contentCsp = buildArtifactHtmlContentCspV1(options.networkOff === true ? { network: 'none' }
-    : options.requestedCapabilities ?? bundle.requestedCapabilities);
+  const generatedNonce = options.generatedArtifactNonce;
+  const egressCeiling = options.pluginAuthored !== true;
+  if (generatedNonce !== undefined && !/^[A-Za-z0-9+/_-]+={0,2}$/u.test(generatedNonce)) {
+    throw new Error('Invalid generated Artifact nonce');
+  }
+  const bundle = (generatedNonce === undefined ? ArtifactHtmlBundleV1Schema : GeneratedArtifactHtmlBundleV1Schema).parse(bundleInput);
+  // Local resource data URLs represent the verified archive. Script permission
+  // is narrower: only the host bootstrap/import map and resolved archive srcs.
+  const contentCsp = !egressCeiling && generatedNonce === undefined ? null : generatedNonce === undefined
+    ? buildArtifactHtmlContentCspV1(options.networkOff === true ? { network: 'none' }
+      : options.requestedCapabilities ?? bundle.requestedCapabilities)
+    : `default-src 'none'; script-src 'nonce-${generatedNonce}'; style-src data:; img-src data:; font-src data:; media-src 'none'; connect-src data:; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
   const text = (path: string): string => new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64(bundle.files[path].contentBase64));
-  const virtualUrl = (path: string): string => new URL(path, BUNDLE_ORIGIN + '/').href;
+  // Physical names are not URL references. Escape URL metacharacters exactly
+  // once while retaining the browser's spelling for ordinary path characters.
+  const virtualUrl = (path: string): string => new URL(path.replace(/[%#?]/gu, character => encodeURIComponent(character)), BUNDLE_ORIGIN + '/').href;
   const resolvePath = (reference: string, from: string): string | null => {
     if (reference.startsWith('data:') || reference.startsWith('#')) return null;
     const url = new URL(reference, virtualUrl(from));
@@ -245,21 +143,7 @@ export function buildArtifactHtmlDocumentV1(bundleInput: ArtifactHtmlBundleV1, o
     return path;
   };
   const parsed = parseHtml(text(bundle.entrypoint));
-  const elements: Element[] = [];
-  const collect = (node: DefaultTreeAdapterTypes.ParentNode): void => {
-    for (const child of [...node.childNodes]) {
-      if (!('tagName' in child)) continue;
-      if (['base', 'iframe', 'frame', 'frameset', 'object', 'embed'].includes(child.tagName)
-        || (child.tagName === 'meta' && child.attrs.some(attr => attr.name === 'http-equiv'))) {
-        defaultTreeAdapter.detachNode(child);
-        continue;
-      }
-      elements.push(child);
-      collect(child);
-      if (child.tagName === 'template' && 'content' in child) collect(child.content);
-    }
-  };
-  collect(parsed);
+  const elements = collectFrameElements(parsed, egressCeiling);
   const attr = (element: Element, name: string): string | undefined => element.attrs.find(value => value.name === name)?.value;
   const content = (element: Element): string => element.childNodes.filter((child): child is DefaultTreeAdapterTypes.TextNode => child.nodeName === '#text').map(child => child.value).join('');
   const setContent = (element: Element, value: string): void => { element.childNodes = []; defaultTreeAdapter.insertText(element, value); };
@@ -346,6 +230,18 @@ export function buildArtifactHtmlDocumentV1(bundleInput: ArtifactHtmlBundleV1, o
   // references. Module identities are virtual URLs; maps preserve cycles.
   for (const path of Object.keys(bundle.files)) assetUrl(virtualUrl(path), bundle.entrypoint);
   for (const element of elements) {
+    let scriptNonce: string | undefined;
+    if (generatedNonce !== undefined) {
+      // Authored markup cannot supply execution authority, even if it happens
+      // to contain this mount's nonce. Determine provenance before rewriting.
+      element.attrs = element.attrs.filter(attribute => attribute.name !== 'nonce');
+      // SVG scripts do not use HTML's src attribute, and data: classic scripts
+      // lack the server response's nosniff boundary. Preserve both decisions.
+      const source = element.tagName === 'script' && element.namespaceURI === 'http://www.w3.org/1999/xhtml'
+        ? attr(element, 'src') : undefined;
+      const path = source === undefined ? null : resolvePath(source, bundle.entrypoint);
+      if (path !== null && JAVASCRIPT_MIMES.has(bundle.files[path].mime.toLowerCase())) scriptNonce = generatedNonce;
+    }
     for (const attribute of element.attrs) {
       if (['src', 'poster', 'background'].includes(attribute.name)
         || (attribute.name === 'href' && ['link', 'use', 'image'].includes(element.tagName))) attribute.value = assetUrl(attribute.value, bundle.entrypoint);
@@ -355,6 +251,7 @@ export function buildArtifactHtmlDocumentV1(bundleInput: ArtifactHtmlBundleV1, o
       }).join(', ');
       if (attribute.name === 'style') attribute.value = rewriteCss(attribute.value, bundle.entrypoint);
     }
+    if (scriptNonce !== undefined) element.attrs.push({ name: 'nonce', value: scriptNonce });
     if (element.tagName === 'style') setContent(element, rewriteCss(content(element), bundle.entrypoint));
     if (element.tagName === 'script' && !attr(element, 'src') && (!attr(element, 'type') || attr(element, 'type')?.toLowerCase() === 'module')) {
       setContent(element, rewriteJavaScript(content(element), bundle.entrypoint).replace(/<\/script/giu, '<\\/script'));
@@ -362,16 +259,34 @@ export function buildArtifactHtmlDocumentV1(bundleInput: ArtifactHtmlBundleV1, o
   }
   const html = parsed.childNodes.find((node): node is Element => 'tagName' in node && node.tagName === 'html')!;
   const head = html.childNodes.find((node): node is Element => 'tagName' in node && node.tagName === 'head')!;
-  const prefix = parseHtml(`<meta http-equiv="Content-Security-Policy" content="${contentCsp}"><script></script><script type="importmap"></script>`);
+  // Nonces authorize script requests regardless of their URL, including module
+  // descendants. Intersect with the existing no-network policy: its inline
+  // allowance cannot bypass the first policy's nonce requirement, while its
+  // data-only script source cannot be bypassed by copying the mount nonce.
+  const generatedUrlCeiling = generatedNonce === undefined ? ''
+    : `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_CONTENT_CSP_V1}">`;
+  // The page may follow the viewer's light or dark theme: one that styles `prefers-color-scheme` does, one that sets its
+  // own colours keeps them, and the browser's default ink and controls match the theme. An author's own choice stands.
+  const authoredColorScheme = head.childNodes.some(node => 'tagName' in node && node.tagName === 'meta'
+    && attr(node, 'name')?.toLowerCase() === 'color-scheme');
+  const colorScheme = authoredColorScheme ? '' : '<meta name="color-scheme" content="light dark">';
+  const contentPolicy = contentCsp === null ? '' : `<meta http-equiv="Content-Security-Policy" content="${contentCsp}">`;
+  const prefix = parseHtml(`${contentPolicy}${generatedUrlCeiling}${colorScheme}<script></script><script type="importmap"></script>`);
   const prefixHtml = prefix.childNodes.find((node): node is Element => 'tagName' in node && node.tagName === 'html')!;
   const prefixHead = prefixHtml.childNodes.find((node): node is Element => 'tagName' in node && node.tagName === 'head')!;
-  const bootstrap = prefixHead.childNodes[1] as Element;
+  const scripts = prefixHead.childNodes.filter((node): node is Element => 'tagName' in node && node.tagName === 'script');
+  const bootstrap = scripts[0]!;
+  const importMap = scripts[1]!;
+  if (generatedNonce !== undefined) {
+    bootstrap.attrs.push({ name: 'nonce', value: generatedNonce });
+    importMap.attrs.push({ name: 'nonce', value: generatedNonce });
+  }
   const urlMap = Object.fromEntries([...urls].map(([path, url]) => [virtualUrl(path), url]));
   const config = options.bootstrapConfig === undefined ? '' : `Object.defineProperty(globalThis,"__HAPPIER_UI_FRAME_BOOTSTRAP_V1__",{value:Object.freeze(${scriptJson(options.bootstrapConfig)}),writable:false,configurable:false});`;
   const links = options.externalHttpLinks === true ? 'Object.defineProperty(globalThis,"__HAPPIER_UI_FRAME_EXTERNAL_LINKS_V1__",{value:true,writable:false,configurable:false});' : '';
   const guest = options.guestBootstrapScript?.replace(/<\/script/giu, '<\\/script') ?? '';
-  setContent(bootstrap, `${config}${links}(${installFrameAdmission.toString()})();(${installBundleResources.toString()})(${scriptJson(urlMap)},${scriptJson(virtualUrl(bundle.entrypoint))});${guest}`);
-  setContent(prefixHead.childNodes[2] as Element, scriptJson({ imports: urlMap }));
+  setContent(bootstrap, `${config}${links}${artifactHtmlFrameAdmissionScriptV1(egressCeiling)}(${installBundleResources.toString()})(${scriptJson(urlMap)},${scriptJson(virtualUrl(bundle.entrypoint))});${guest}`);
+  setContent(importMap, scriptJson({ imports: urlMap }));
   for (const node of [...prefixHead.childNodes].reverse()) {
     defaultTreeAdapter.detachNode(node);
     if (head.childNodes[0]) defaultTreeAdapter.insertBefore(head, node, head.childNodes[0]);
