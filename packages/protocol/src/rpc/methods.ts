@@ -8,6 +8,7 @@ export const CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD = 'session.presentat
 export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentation.apply' as const;
 
 export const RPC_METHODS = {
+  DAEMON_DEPLOYMENT_CHILD: 'daemon.deployments.child.v1',
   USAGE_SOURCES_DISCOVER: 'usage.sources.discover',
   USAGE_SOURCES_GET: 'usage.sources.get',
   USAGE_SOURCES_CONSENT_SET: 'usage.sources.consent.set',

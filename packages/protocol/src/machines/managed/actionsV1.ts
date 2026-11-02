@@ -1,3 +1,4 @@
+import { MachineSetupExclusionsV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { z } from 'zod/mini';
 import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
@@ -223,3 +224,19 @@ export type ManagedAdmissionInputV1 = z.infer<typeof ManagedAdmissionInputV1Sche
 export type ManagedBootstrapCredentialCreateV1 = z.infer<typeof ManagedBootstrapCredentialCreateV1Schema>;
 export type ManagedMachineActionInputV1<T extends ManagedMachineActionIdV1> = z.infer<(typeof ManagedMachineActionInputSchemasV1)[T]>;
 export type ManagedMachineActionOutputV1<T extends keyof typeof ManagedMachineActionOutputSchemasV1> = z.infer<(typeof ManagedMachineActionOutputSchemasV1)[T]>;
+
+const removalKeys = () => z.array(id()).check(z.refine(keys => new Set(keys).size === keys.length));
+
+export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), sources: z.optional(MachineSetupSourceV1Schema),
+  exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
+  mode: z.optional(z.enum(['check', 'effects'])),
+  appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
+}));
+export type MachineSetupPlanInputV1 = z.infer<typeof MachineSetupPlanInputV1Schema>;
+
+export const MachineSetupCombinedPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
+  homeId: id(), machineId: id(), selectedMachineId: z.optional(id()), targets: z.array(MachineSetupPlanInputV1Schema).check(z.minLength(1)),
+}).check(z.refine(input => new Set(input.targets.map(target => JSON.stringify([target.homeId, target.machineId]))).size === input.targets.length,
+  { message: 'Setup targets must be unique.' })));
+export type MachineSetupCombinedPlanInputV1 = z.infer<typeof MachineSetupCombinedPlanInputV1Schema>;

@@ -45,6 +45,77 @@ const repository = { provider: { id: 'github', kind: 'github' as const, displayN
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
+  it('allows a Manage grantee filesystem effect after approval without isolation', async () => {
+    const actionId = 'daemon.filesystem.createDirectory';
+    const h = await createHarness(actionId, 'ask', false, 'srv_n2', undefined, false, false,
+      { authentication: 'terminal', machineCustodianAccountId: 'another-account' });
+    const path = join(h.rootPath, 'grantee-folder');
+    try {
+      expect(await h.run({ rootPath: h.rootPath, path: 'grantee-folder' }, 'cli', false, 'present_user', actionId))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect((await h.approval()).executionOriginV1.externalActionExecutionAuthorization?.binding)
+        .toMatchObject({ accountId: 'account', custodianAccountId: 'another-account' });
+      await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+      const decided = await h.decideFromCli();
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true,
+        result: { status: 'executed', execution: { ok: true, result: { success: true } } } });
+      expect((await stat(path)).isDirectory()).toBe(true);
+    } finally { await h.close(); }
+  });
+  it('opens a Manage grantee own terminal without isolation after approval and refuses another person attaching', async () => {
+    const homeId = 'srv_portable_home';
+    const profileId = 'requester-local-profile';
+    const h = await createHarness('machines.terminal.open', 'ask', false, homeId, undefined, false, false,
+      { authentication: 'terminal', machineCustodianAccountId: 'another-account' });
+    try {
+      expect(await h.runOriginalCli({ serverId: profileId, machineId: 'machine', terminalKey: 'grantee-own-terminal' },
+        'machines.terminal.open', { serverId: profileId, authority: 'present_user' }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(h.spawned).toHaveLength(0);
+      const decided = await h.decideFromCli();
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
+        status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
+      expect(h.spawned).toHaveLength(1);
+      const approval = await h.approval();
+      if (!approval.execution?.ok) throw new Error('Missing admitted terminal');
+      const terminal = approval.execution.result;
+      if (!terminal || typeof terminal !== 'object' || !('terminalId' in terminal) || typeof terminal.terminalId !== 'string')
+        throw new Error('Missing terminal identity');
+      expect(await h.readTerminalAs(terminal.terminalId, 'account')).toMatchObject({ ok: true });
+      // Both callers have Manage on the same Machine. Even its custodian may
+      // not attach to this other person's retained live terminal.
+      expect(await h.readTerminalAs(terminal.terminalId, 'another-account'))
+        .toMatchObject({ ok: false, code: 'terminal_forbidden' });
+    } finally { await h.close(); }
+  });
+  it('refuses a Use grantee terminal through approval and installed daemon RPC without spawning', async () => {
+    const h = await createHarness('machines.terminal.open', 'ask', false, 'srv_n2', undefined, false, false,
+      { authentication: 'terminal', machineCustodianAccountId: 'another-account', machineRole: 'use' });
+    try {
+      expect(await h.runOriginalCli({ serverId: 'srv_n2', machineId: 'machine', terminalKey: 'use-terminal',
+        workspace: { serverId: 'srv_n2', workspaceId: h.ref.id, machineId: h.ref.machineId, rootPath: h.rootPath } },
+        'machines.terminal.open', { serverId: 'srv_n2', authority: 'present_user' }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(await h.decideFromCli()).toMatchObject({ ok: true, result: {
+        status: 'failed', execution: { ok: false, effectAttempted: true, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable' } } });
+      expect(h.spawned).toHaveLength(0);
+    } finally { await h.close(); }
+  });
+  it('refuses a terminal target at a different Home through original CLI approval replay', async () => {
+    const h = await createHarness('machines.terminal.open', 'ask', false, 'srv_portable_home');
+    try {
+      const proposed = await h.runOriginalCli({ serverId: 'srv_different_home', machineId: 'machine',
+        terminalKey: 'wrong-home-terminal' }, 'machines.terminal.open',
+        { serverId: 'requester-local-profile', authority: 'present_user' });
+      const result = proposed.ok ? await h.decideFromCli() : proposed;
+      if (result.ok) {
+        expect(result).toMatchObject({ result: { status: 'failed', execution: { ok: false, errorCode: 'server_target_mismatch' } } });
+      } else {
+        expect(result).toMatchObject({ errorCode: 'server_target_mismatch' });
+      }
+      expect(h.spawned).toHaveLength(0);
+    } finally { await h.close(); }
+  });
   it('binds a requester-local terminal target to its portable Home before approval and daemon replay', async () => {
     const homeId = 'srv_portable_home';
     const profileId = 'requester-local-profile';

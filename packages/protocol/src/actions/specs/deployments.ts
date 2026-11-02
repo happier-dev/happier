@@ -97,6 +97,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
 
 /** Storage declarations and real daemon effects share this single Action front door. */
 export const DEPLOYMENT_ACTION_SPECS_V1 = [
+  deploymentSpec('deployments.targets.unlink', 'Unlink deployment target', '/v1/deployments/environments/:environmentId/targets/:targetLinkId/unlink'),
+  deploymentSpec('deployments.publish.prepare', 'Prepare catalog app publishing', undefined, true),
+  deploymentSpec('deployments.environments.delete', 'Delete deployment environment', '/v1/deployments/environments/:environmentId/delete'),
+  deploymentSpec('deployments.domains.add', 'Add or update deployment domain', '/v1/deployments/environments/:environmentId/domains'),
+  deploymentSpec('deployments.domains.remove', 'Remove deployment domain', '/v1/deployments/environments/:environmentId/domains/:domainId/remove'),
+  deploymentSpec('deployments.domains.verify', 'Verify deployment domain', undefined, true),
+  deploymentSpec('deployments.domains.get', 'Read deployment domain', '/v1/deployments/environments/:environmentId/domains/:domainId', true),
+  deploymentSpec('deployments.domains.list', 'List deployment domains', '/v1/deployments/environments/:environmentId/domains', true),
   deploymentSpec('deployments.templates.instantiate', 'Instantiate deployment template', undefined),
   deploymentSpec('deployments.publish', 'Publish reviewed deployment', undefined),
   deploymentSpec('deployments.prepare', 'Ask an agent to prepare deployment', undefined),

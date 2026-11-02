@@ -68,3 +68,20 @@ export const MachineAgentIsolationSetResultV1Schema = lazyZodSchema(() => z.unio
   z.strictObject({ kind: z.literal('failed'), operationId: z.optional(id), code: z.enum(['cancelled', 'denied', 'locked', 'invalid', 'unavailable', 'outcome_unknown']) }),
 ]));
 export type MachineAgentIsolationSetResultV1 = z.infer<typeof MachineAgentIsolationSetResultV1Schema>;
+
+export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ protection: z.literal('shared_user'), status: z.strictObject({
+    kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent'),
+  }) }),
+  z.strictObject({ protection: z.literal('member_separated'), status: z.strictObject({
+    kind: z.literal('effective'), platform: z.literal('linux'),
+  }) }),
+  z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
+    z.strictObject({ kind: z.literal('disabled') }),
+    z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
+    z.strictObject({ kind: z.literal('applying'), phase: z.enum(['account', 'sudoers', 'workspace', 'runtime_replacement']) }),
+  ]) }),
+  z.strictObject({ protection: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema }),
+  z.strictObject({ protection: z.literal('trusted_administrator'), status: MachineAgentIsolationStatusV1Schema }),
+]));
+export type MachineAgentIsolationOwnStatusV1 = z.infer<typeof MachineAgentIsolationOwnStatusV1Schema>;

@@ -24,9 +24,12 @@ export const DeploymentTemplateGeneratedSecretAudienceV1Schema = lazyZodSchema((
   { accountGrants: true, teamGrants: true, groupGrants: true }));
 
 /** The stored vertical has no pretend repository arm. SCM publication remains its own source writer. */
+const deploy = lazyZodSchema(() => z.strictObject({ requestKey: id }));
+
 export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.strictObject({
   mode: z.enum(['preview', 'apply']), serverId: id, machineId: id, projectSourceId: id,
   templateRef: DeploymentTemplateRefV1Schema,
+  deploy: z.optional(deploy),
   environment: z.discriminatedUnion('kind', [existingEnvironment, createEnvironment]),
   target: z.discriminatedUnion('kind', [existingTarget, newTarget]),
   destination: z.union([storedPin, z.strictObject({ kind: z.literal('stored') })]),

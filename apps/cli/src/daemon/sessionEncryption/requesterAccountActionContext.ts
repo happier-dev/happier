@@ -8,6 +8,7 @@ import type { ResolveExternalActionEncryption } from '../externalActions/execute
 /** Finite Account custody at an admitted ingress, never a Session or a credential store. */
 export type RequesterAccountActionContext = Readonly<{
   invocation?: ExternalActionRequesterInvocationV1;
+  deploymentChild?: import('@happier-dev/protocol').DeploymentChildRpcV1;
   credentials: StoredCredentials;
   accountSettingsContext: AccountSettingsContext;
   savedSecretOperationContext: SavedSecretOperationContextV1;

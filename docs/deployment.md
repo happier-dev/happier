@@ -559,6 +559,17 @@ The server package includes scripts for local infrastructure:
 
 Use `.env`/`.env.dev` to load local settings when running `pnpm --filter @happier-dev/server run dev`.
 
+## Host checkout requester authority (0.3 development)
+
+Checkout-backed source acquisition belongs to `readDeploymentSourceIntentForHost`.
+Before opening requester workspace rows or running Git in a local checkout, it
+consumes the existing physical host requester identity decision. The custodian
+and a verified Manage grantee on this Machine qualify for host checkout effects.
+Use and unqualified requesters receive `agent_isolation_unavailable`.
+Native and upload consumers propagate that refusal without another ownership
+check. Stored definitions and workspace-free provider Git paths do not acquire
+a checkout and are unchanged.
+
 ## Implementation references
 - Entrypoint: `apps/server/sources/main.ts`
 - Dockerfile: `Dockerfile`

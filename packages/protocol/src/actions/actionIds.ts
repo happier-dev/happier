@@ -1,3 +1,4 @@
+import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionFamily.js';
 import { z } from 'zod/mini';
@@ -129,6 +130,7 @@ export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoop
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
+  deployments: DEPLOYMENT_ACTION_IDS_V1,
   registries: REGISTRY_ACTION_IDS_V1,
   personal_saved_secrets: PERSONAL_SAVED_SECRET_ACTION_IDS_V1,
   plugin_execution_origin: PLUGIN_EXECUTION_ORIGIN_ACTION_IDS,

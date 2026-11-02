@@ -601,6 +601,8 @@ export type SessionPermissionRemoteActionArgs =
     }>;
 
 export type ActionExecutorContext = Readonly<{
+  invocationServices?: HostReviewedChildInvocationServicesV1;
+  hostReviewedChild?: HostReviewedChildPortV1;
   /** Host-stamped native Realtime input: ordinary Actions only, never approval decisions. Not Action/RPC input. */
   nativeRealtimeInput?: true;
   /** Host-local live delegation check before a request decision is issued; never Action/RPC input. */
@@ -2954,4 +2956,59 @@ export type ActionExecutorDeps = Readonly<{
 
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
+}>;
+
+export type HostReviewedChildInvocationServicesV1 = Readonly<{
+  /** Same host-admitted purpose seed; carried beside, never inside, child operands. */
+  connectedAccountPurposeBinding?: import('../../connect/connectedAccountInvocationPurposeBinding.js').ConnectedAccountInvocationPurposeBinding;
+  /** Exact retained descriptor returned by Home admission; never a child business operand. */
+  managedMachine?: import('../../machines/managed/managedMachineV1.js').ManagedMachineV1;
+  managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+  /** Retained Home creation identity, forwarded only to its existing authorization request. */
+  managedContinuation?: import('../externalActionApi.js').ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+  machineConnectorSecrets?: Readonly<{
+    write(input: Readonly<{
+      token: Uint8Array;
+      subject: Readonly<{
+        provider: import('../../plugins/contributions/accessProviders.js').AccessProviderRefV1;
+        connectorId: string;
+      }>;
+    }>): Promise<Readonly<{ grants: readonly Readonly<{
+      machineId: string; installationId: string; grantRef: string;
+    }>[] }>>;
+  }>;
+}>;
+
+export type HostReviewedChildInvocationV1 = Readonly<{
+  action: ActionId | Readonly<{ pluginId: string; localId: string }>;
+  role: string;
+  input: import('../../json/strictJsonValue.js').JsonValue;
+  /** The existing issuer carries this separately from public child operands. */
+  invocationServices?: HostReviewedChildInvocationServicesV1;
+}>;
+
+/** Domain-produced demanded effects; the executor folds their policy into the parent. */
+export type HostReviewedChildrenPlanV1 = Readonly<{
+  /** Omitted input means the domain supplies its concrete operand only after reservation. */
+  children: readonly (Pick<import('./deploymentRoleChild.js').HostReviewedChildV1, 'action' | 'role'> & Readonly<{
+    input?: import('../../json/strictJsonValue.js').JsonValue;
+    /** Known operands for scope admission; the issuer binds them to the later concrete input. */
+    scopeInput?: Readonly<Record<string, import('../../json/strictJsonValue.js').JsonValue>>;
+  }>)[];
+}>;
+
+export type HostReviewedChildPortV1 = Readonly<{
+  /** Host-only projection of the admitted reviewed parent; data alone grants no authority. */
+  parent?: import('./deploymentRoleChild.js').HostReviewedParentV1;
+  /** Concrete preparation facts only; invoking still requires this port's exact admitted plan. */
+  preparedChildren?: readonly HostReviewedChildInvocationV1[];
+  invoke(request: HostReviewedChildInvocationV1): Promise<ActionExecuteResult>;
+}>;
+
+
+export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
+  role: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerRoleV1;
+  readBootstrapCredential(): Promise<Uint8Array>;
+  readGuestHostCredential?(): Promise<Uint8Array>;
+  isCurrent(): boolean | Promise<boolean>;
 }>;

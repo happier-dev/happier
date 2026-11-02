@@ -30,3 +30,53 @@ export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject
     createdAtMs: timestamp, updatedAtMs: timestamp, deletedAtMs: z.optional(timestamp),
 }));
 export type DeploymentDomainHeaderV1 = z.infer<typeof DeploymentDomainHeaderV1Schema>;
+
+export const DeploymentDomainTopologyV1Schema = lazyZodSchema(() => z.strictObject({
+    members: z.array(z.strictObject({ machineId: id, installationId: id })),
+    machines: z.array(DeploymentDomainMachineTopologyV1Schema),
+    tunnelOrigin: z.optional(z.strictObject({ service: id, members: z.array(z.strictObject({
+        machineId: id, installationId: id, containerId: id, networkName: id, nativeServer: id,
+    })) })),
+}));
+export type DeploymentDomainTopologyV1 = z.infer<typeof DeploymentDomainTopologyV1Schema>;
+
+export const NativeCaddyRoutePlacementV1Schema = lazyZodSchema(() => z.strictObject({
+    serverId: id, accountId: id, environmentId: id, targetLinkId: id, domainId: id,
+    machineId: id, installationId: id, actionOperationId: id, requestId: id, nativeServer: id,
+}));
+export type NativeCaddyRoutePlacement = z.infer<typeof NativeCaddyRoutePlacementV1Schema>;
+
+/** Current desired and unresolved native custody only; removed predecessors are discarded on settlement. */
+export const DeploymentDomainPlacementV1Schema = lazyZodSchema(() => z.strictObject({
+    placement: NativeCaddyRoutePlacementV1Schema, content: DeploymentArtifactContentReferenceV1Schema, desired: z.boolean(),
+    listener: z.enum(['privateOrigin', 'public']), dockerEngineId: z.optional(id),
+    /** Decided once by the Domain owner at removal admission for the Environment's shared tunnel. */
+    retireSharedTunnel: z.optional(z.boolean()),
+    environmentContent: z.optional(DeploymentArtifactContentReferenceV1Schema),
+    targetLinkContent: z.optional(DeploymentArtifactContentReferenceV1Schema),
+}));
+export type DeploymentDomainPlacementV1 = z.infer<typeof DeploymentDomainPlacementV1Schema>;
+
+const environment = { serverId: id, environmentId: id };
+const domain = { ...environment, domainId: id };
+const mutation = { ...domain, expectedRevision: revision, requestKey: id };
+export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...mutation, expectedDomainRevision: z.optional(revision), targetLinkId: id, expectedTargetLinkRevision: revision,
+    ...DeploymentArtifactContentReferenceV1Schema.shape,
+    placements: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id, dockerEngineId: id,
+        listener: z.enum(['privateOrigin', 'public']) })).check(z.minLength(1),
+        z.refine(items => new Set(items.map(item => `${item.machineId}:${item.installationId}:${item.nativeServer}`)).size === items.length,
+            { message: 'Native placements must be unique.' }))),
+}));
+export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainAddInputV1Schema, {
+    actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddInputV1Schema.shape.placements),
+}));
+export const DeploymentDomainRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({ ...mutation, expectedDomainRevision: revision }));
+export const DeploymentDomainRemoveAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainRemoveInputV1Schema, {
+    actionOperationId: id, requestId: id,
+}));
+export const DeploymentDomainGetInputV1Schema = lazyZodSchema(() => z.strictObject(domain));
+export const DeploymentDomainListInputV1Schema = lazyZodSchema(() => z.strictObject({ ...environment,
+    cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())),
+}));
+export const DeploymentDomainVerifyInputV1Schema = DeploymentDomainRemoveInputV1Schema;

@@ -1,3 +1,5 @@
+import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
+  DeploymentDomainVerifyInputV1Schema, DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema } from './deploymentDomainV1.js';
 import { z } from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
@@ -505,7 +507,21 @@ export const DeploymentLogsReadResultV1Schema = lazyZodSchema(() => z.union([Dep
 export type DeploymentHealthReadResultV1 = z.infer<typeof DeploymentHealthReadResultV1Schema>;
 export type DeploymentDriftReadResultV1 = z.infer<typeof DeploymentDriftReadResultV1Schema>;
 export type DeploymentLogsReadResultV1 = z.infer<typeof DeploymentLogsReadResultV1Schema>;
-export const DeploymentActionInputSchemasV1 = {
+export const DeploymentDomainMutationResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema }), DeploymentActionFailureV1Schema,
+]));
+export const DeploymentDomainListResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...result, domains: z.array(DeploymentDomainHeaderV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema) }),
+  DeploymentActionFailureV1Schema,
+]));
+export type DeploymentDomainMutationResultV1 = z.infer<typeof DeploymentDomainMutationResultV1Schema>;
+
+export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
+  'deployments.domains.add': DeploymentDomainAddInputV1Schema,
+  'deployments.domains.remove': DeploymentDomainRemoveInputV1Schema,
+  'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
+  'deployments.domains.get': DeploymentDomainGetInputV1Schema,
+  'deployments.domains.list': DeploymentDomainListInputV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareInputV1Schema,
   'deployments.templates.instantiate': DeploymentTemplateInstantiateInputV1Schema,
   'deployments.health.read': DeploymentHealthReadInputV1Schema,
@@ -529,7 +545,7 @@ export const DeploymentActionInputSchemasV1 = {
   'deployments.bindings.set': DeploymentBindingsSetInputV1Schema,
   'deployments.environments.list': DeploymentEnvironmentListInputV1Schema,
   'deployments.receipts.list': DeploymentReceiptListInputV1Schema,
-} as const;
+} as const));
 /** One-shot values and their review-only origin; no default pointer is saved on the Environment. */
 export const DeploymentEnvironmentCreationReviewV1Schema = lazyZodSchema(() => z.required(z.pick(
   DeploymentTemplateInstantiationReviewV1Schema, { creationDefaults: true, creationDefaultsBasis: true })));
@@ -541,7 +557,12 @@ export type DeploymentEnvironmentCreatePreviewV1 = z.infer<typeof DeploymentEnvi
 export const DeploymentEnvironmentCreateActionResultV1Schema = lazyZodSchema(() => z.union([
   DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreatePreviewV1Schema,
 ]));
-export const DeploymentActionOutputSchemasV1 = {
+export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
+  'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
+  'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
+  'deployments.domains.verify': DeploymentDomainMutationResultV1Schema,
+  'deployments.domains.get': DeploymentDomainMutationResultV1Schema,
+  'deployments.domains.list': DeploymentDomainListResultV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareResultV1Schema,
   'deployments.templates.instantiate': DeploymentTemplateInstantiateResultV1Schema,
   'deployments.health.read': DeploymentHealthReadResultV1Schema,
@@ -565,7 +586,7 @@ export const DeploymentActionOutputSchemasV1 = {
   'deployments.bindings.set': DeploymentEnvironmentCreateResultV1Schema,
   'deployments.environments.list': DeploymentEnvironmentListResultV1Schema,
   'deployments.receipts.list': DeploymentReceiptListResultV1Schema,
-} as const;
+} as const));
 export type DeploymentEnvironmentCreateInputV1 = z.infer<typeof DeploymentEnvironmentCreateInputV1Schema>;
 export type DeploymentEnvironmentCreateIntentInputV1 = z.infer<typeof DeploymentEnvironmentCreateIntentInputV1Schema>;
 export type DeploymentEnvironmentCreateActionInputV1 = z.infer<typeof DeploymentEnvironmentCreateActionInputV1Schema>;
@@ -657,3 +678,9 @@ export function readDeploymentAccountChangeV1(change: Readonly<{ kind: string; e
       ...(projectSourceId === undefined ? {} : { projectSourceId }) };
   } catch { return null; }
 }
+
+export const DeploymentRollbackIntentInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...home, environmentId: DeploymentIdentifierV1Schema, deploymentId: DeploymentIdentifierV1Schema,
+  requestKey: z.optional(DeploymentIdentifierV1Schema), restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
+}));
+export type DeploymentRollbackIntentInputV1 = z.infer<typeof DeploymentRollbackIntentInputV1Schema>;

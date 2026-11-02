@@ -1193,6 +1193,7 @@ export type ExternalActionRequesterHttpProjectionV1 = Readonly<{
     path: string;
     body?: unknown;
     signal?: AbortSignal;
+    reviewedChild?: ReviewedActionChildHttpProofV1;
   }>): Promise<Readonly<Record<string, string>> | null>;
 }>;
 export type ExternalActionExecutionAuthorizationV1 = z.infer<typeof ExternalActionExecutionAuthorizationV1Schema>
@@ -1404,3 +1405,10 @@ export function parseExternalActionDaemonDispatchResult(value: unknown): ParsedE
     return parseExternalActionDaemonDispatchResultV1(value);
   } catch { return null; }
 }
+
+export const ReviewedActionChildHttpProofV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: ExternalActionActionIdV1Schema,
+  role: z.string().check(z.minLength(1)),
+  inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+export type ReviewedActionChildHttpProofV1 = Readonly<z.infer<typeof ReviewedActionChildHttpProofV1Schema>>;

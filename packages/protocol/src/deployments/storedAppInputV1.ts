@@ -1,3 +1,4 @@
+import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -174,3 +175,14 @@ export const StoredAppPresetInputV1Schema = lazyZodSchema(() => z.strictObject({
     bindings: StoredAppPresetBindingsV1Schema,
 }));
 export type StoredAppPresetInputV1 = z.infer<typeof StoredAppPresetInputV1Schema>;
+
+export const DeploymentNewProjectV1Schema = lazyZodSchema(() => z.extend(z.pick(ProjectSourcesCreateInputV1Schema,
+    { name: true, requestKey: true }), { owner: ProjectSourceOwnerV1Schema }));
+export type DeploymentNewProjectV1 = z.infer<typeof DeploymentNewProjectV1Schema>;
+export function hasOneDeploymentProjectV1(source: unknown, newProject: unknown): boolean {
+    return (source === undefined) !== (newProject === undefined);
+}
+/** One catalog operand is shared by presets and ordinary Environment creation. */
+export const DeploymentCatalogAppDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
+    from: z.literal('catalogApp'), templateRef: DeploymentTemplateRefV1Schema,
+}));

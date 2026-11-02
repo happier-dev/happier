@@ -1,3 +1,4 @@
+import type { AuthenticatedLocalRootCustody } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 /**
  * Common RPC types and interfaces for both session and machine clients
  */
@@ -35,6 +36,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     | 'externalActionExecutionAuthorization'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
 >> & {
+    /** Captured authenticated private-root identity; never serialized in an RPC request. */
+    authenticatedLocalRootCustody?: AuthenticatedLocalRootCustody;
     /** Admitted headless Resume invocation, retained only through the in-process native launcher. */
     resumeActionContext?: ActionExecutorContext;
     /** Exact Workflow invocation store, admitted only by an in-process host. */
@@ -113,6 +116,8 @@ export type RpcHandlerContext = Readonly<{
     /** Same current Machine admission owner, independent of a completed/cancelled transport request. */
     verifyMachineAuthorityCurrent?: () => Promise<boolean>;
     localActionContext?: RpcLocalActionContext;
+    /** Exact active common-issuer context; host-only and never accepted from RPC DTOs. */
+    reviewedChildActionContext?: ActionExecutorContext;
 }>;
 
 export type RpcHandler<TRequest = any, TResponse = any> = (

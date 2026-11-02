@@ -7032,3 +7032,5 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     replayApprovedApprovalRequest,
   };
 }
+
+export { readHostReviewedChildReceivingAdmissionV1 } from './executor/deploymentRoleChild.js';

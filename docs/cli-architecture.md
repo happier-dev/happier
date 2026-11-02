@@ -4207,6 +4207,41 @@ matching material.
 - Some plain and encrypted values use base64 on byte-oriented routes; base64 is an
   encoding, not an encryption claim. See `encryption.md`.
 
+### Shared-Machine execution and filesystem custody (unreleased 0.3)
+
+The shared `selectHostRequesterExecutionIdentity` selector qualifies the custodian
+and admitted Manage grantees on the physical Machine for unrestricted execution. A present person consumes
+the existing `owner_person` classification; no native isolation provisioning is
+required for their own terminal or other Machine execution. Use and unknown
+requesters keep their execution protection. Non-Session Account
+automation retains its existing filesystem, SCM and Machine MCP operations; it does
+not become `owner_person` or receive interactive break-glass. Existing local
+caller/attribution, requester bootstrap and signed Session origin survive the
+manager-to-authorizer projection and disqualify Agent/Session execution from
+that owner-automation path. Filesystem and MCP effect owners consume this one
+qualification, rather than deciding ownership independently. Existing Agent
+Bash and person-only interactive-terminal restrictions remain unchanged.
+
+An admitted Manage grantee can open or restart their own unqualified Machine
+shell without an accepted Project checkout or provisioned isolation. Machine
+custody retains the requester; Manage does not permit attaching to another
+person's live terminal.
+An unqualified shell remains Machine intent even when its working directory is
+inside an accepted Project.
+Explicit Project and Session targets keep their requester Account owners.
+Use retains its admitted Project/Workspace Sessions, requester terminals and
+finite Project operations. Machine-level shell, setup scripts, package installs,
+service execution/control, reboot, elevation and firewall configuration require
+Manage. Home decides the role once; the terminal intent/custody owner consumes
+that admitted role to distinguish Machine shells from Project terminals.
+Raw command Actions retain the same Home admission and requester classification
+while preserving captured stdout and stderr. Manage permits host execution;
+requesters without Manage retain their native execution protection. Project package-script terminals
+consume the requester's accepted Project and finite Action owner.
+Machine Manage is full Machine administration, not ownership of another
+Account's Saved Secrets or Sessions on other Machines. Default member separation
+does not restrict a privileged Machine administrator.
+
 ## Terminal hosting (development)
 
 ### Session terminal workspace (0.3 development)
