@@ -26,6 +26,28 @@ export class ApprovalRequestConflict extends Error {
   constructor() { super('approval_request_conflict'); }
 }
 
+type PluginPublicationApprovalSubject = Readonly<{
+  home: string; accountId: string; machineId: string; pluginId: string; contributionLocalId: string;
+  actionId: 'discussion.post' | 'discussion.reply'; localId: string;
+}>;
+
+/** A retained native publication belongs to the obligation, not its executable generation. */
+export function readPluginPublicationApprovalSubject(request: CreationRequest): PluginPublicationApprovalSubject | null {
+  if (isTargetActionRequest(request) || request.v !== 2
+    || request.approval?.flow !== 'blocking'
+    || (request.actionId !== 'discussion.post' && request.actionId !== 'discussion.reply')) return null;
+  const origin = request.executionOriginV1;
+  if (origin.surface !== 'plugin' || origin.authority !== 'account_automation' || origin.caller.kind !== 'plugin'
+    || !origin.accountId || !origin.machineId || !origin.caller.contributionLocalId
+    || origin.externalActionExecutionAuthorization || origin.discussionReplyReturn) return null;
+  const input = request.actionArgs;
+  const localId = input && typeof input === 'object' && 'localId' in input ? input.localId : undefined;
+  if (typeof localId !== 'string' || !localId.trim()) return null;
+  return { home: origin.serverIdentityId ?? origin.serverId, accountId: origin.accountId, machineId: origin.machineId,
+    pluginId: origin.caller.pluginId, contributionLocalId: origin.caller.contributionLocalId,
+    actionId: request.actionId, localId };
+}
+
 /** Identity contains no Action operands, titles, or credential material. */
 function deriveApprovalRequestSourceId(request: CapturedRequest, accountId?: string | null): string {
   const origin = request.executionOriginV1;
@@ -33,11 +55,12 @@ function deriveApprovalRequestSourceId(request: CapturedRequest, accountId?: str
   // Receipt execution placement, not the requesting Session or display header.
   const target = origin.target ?? (origin.machineId ? { kind: 'machine' as const, machineId: origin.machineId }
     : origin.sessionId ? { kind: 'session' as const, sessionId: origin.sessionId } : null);
+  const publication = readPluginPublicationApprovalSubject(request);
   const digest = computeCanonicalDomainSeparatedHexDigest('happier.approval.request-identity.v1', [
     origin.serverIdentityId ?? origin.serverId,
     accountId ?? origin.accountId ?? '',
     request.requesterConfirmation?.requesterAccountId ?? origin.principalId ?? origin.accountId ?? '',
-    origin.requestId,
+    publication ? JSON.stringify(['plugin_publication', publication.pluginId, publication.contributionLocalId, publication.localId]) : origin.requestId,
     isTargetActionRequest(request) ? request.qualifiedActionId : request.actionId,
     target ? encodeExternalActionResolvedTargetV1(target) : '',
   ]);
@@ -55,6 +78,16 @@ function originSubject(executionOrigin: ApprovalRequestV2['executionOriginV1']) 
     ...(externalActionExecutionAuthorization ? { authorization: externalActionExecutionAuthorization.binding } : {}) };
 }
 
+function creationOriginSubject(request: ApprovalRequestV2) {
+  const origin = originSubject(request.executionOriginV1);
+  const publication = readPluginPublicationApprovalSubject(request);
+  if (!publication || origin.caller.kind !== 'plugin') return origin;
+  const { sourceCustody: _sourceCustody, ...caller } = origin.caller;
+  // Creation alone may transfer live custody. The stored origin and the later
+  // decision remain untouched; every other captured fact still compares exactly.
+  return { ...origin, requestId: publication.localId, caller };
+}
+
 /** Domain draft/install identity cannot substitute a captured request's operands. */
 export function assertApprovalRequestCreationBinding(request: ApprovalRequestV2, proposed: ApprovalRequestV2): void {
   // A terminal receipt no longer retains replay-only operands or its original
@@ -65,7 +98,7 @@ export function assertApprovalRequestCreationBinding(request: ApprovalRequestV2,
   if (request.actionId !== proposed.actionId
     || request.requestInputDigest !== proposed.requestInputDigest
     || !sameStrictJsonValue(request.actionArgs, subject.actionArgs)
-    || !sameStrictJsonValue(originSubject(request.executionOriginV1), originSubject(subject.executionOriginV1))
+    || !sameStrictJsonValue(creationOriginSubject(request), creationOriginSubject(subject))
     || !sameStrictJsonValue(request.requesterConfirmation ?? null, proposed.requesterConfirmation ?? null)
     || !sameStrictJsonValue(request.createdBy, proposed.createdBy)) {
     throw new ApprovalRequestConflict();

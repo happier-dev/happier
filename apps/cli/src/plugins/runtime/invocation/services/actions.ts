@@ -558,6 +558,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 actionId, signal: executionSignal, surface: 'plugin',
                 isCurrent: () => !signal.aborted && params.seed.isOccurrenceCurrent()
                     && hasCurrentContributedActionCaller(params.seed, actionCaller),
+                // The composed signal retains its first cause. A caller's own
+                // abort therefore stays withdrawal even if retirement follows.
+                isRetired: () => params.seed.signal.aborted && !params.seed.isOccurrenceCurrent()
+                    && signal.reason === params.seed.signal.reason,
             }) ?? actionExecutor
             : actionExecutor;
         const result = await reportExecutor.execute(actionId, parsedPluginInput.data, {

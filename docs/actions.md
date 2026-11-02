@@ -6071,6 +6071,17 @@ scoped to the mounted Account's own Session store.
 
 ## Approval is decided in one place
 
+In 0.3 development, a retained native plugin `discussion.post` or
+`discussion.reply` keeps its open person approval when its executable generation
+retires. The successor reconstructs the native operands from the existing
+retained obligation and rejoins through the approval creation owner. Account,
+Home, Machine, plugin, contribution, `localId` and canonical input must match;
+generation custody and invocation correlation may change. The original consent
+and decision remain unchanged: approval permits one publication, rejection none.
+Explicit caller withdrawal still cancels; changed input cannot rejoin. The
+successor's live factory-bound custody supplies execution, never a new person
+authority or an executable origin reconstructed from an Artifact.
+
 In unreleased 0.3 Plugin UI source, `Action.Control` binds a host-rendered control
 to an Action reference and controller. Its button is physically owned by the mounted
 host on native and hosted-web, including details panes. A press asks that controller

@@ -63,6 +63,7 @@ import { createBlockingApprovalDecisionResolver } from './executor/blockingAppro
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
 import { readApprovalReplayResult } from './executor/approvalResults.js';
 import { requiresLiveCliApprovalOrigin } from '../approvals/liveCliOrigin.js';
+import { readPluginPublicationApprovalSubject } from '../approvals/creation.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../projects/projectOrganizationV1.js';
 import { deriveWorkflowDiscussionReplyLocalIdV1, deriveWorkflowReplacementId } from '../workflows/workflowInvocationIdentityV1.js';
 import { captureWorkflowDefinitionV1 } from './executor/workflowDefinitionCapture.js';
@@ -1275,6 +1276,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     tokenExecution?: import('./blockingApprovalCoordinator.js').BlockingApprovalTokenExecution;
     /** Restrictive field currentness retained only by the original blocking UI invocation. */
     retainedPluginSettingsIntent?: () => boolean;
+    /** Canonical creation/rejoin matched this native publication's exact subject. */
+    retainedPluginPublication?: boolean;
     /** Page values stay with the original blocking invocation, never durable approval replay. */
     retainedWidgetAreaContext?: ActionExecutorContext['widgetAreaContext'];
     retainedPublicProfileAction?: ActionExecutorContext['publicProfilePreparedAction'];
@@ -1292,10 +1295,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && args.request.v === 2 && args.request.approval?.flow === 'blocking'
       && lifetime.actionId === args.request.actionId && args.ctx.signal === lifetime.signal
       && args.ctx.surface === 'plugin' && args.ctx.actionCaller?.kind === 'plugin'
-      && args.ctx.actionRequestId === args.request.executionOriginV1.requestId
-      && args.ctx.serverId === args.request.executionOriginV1.serverId
-      && args.ctx.runtimeAccountId === args.request.executionOriginV1.accountId
-      && sameStrictJsonValue(projectApprovalExecutionOriginCaller(args.ctx.actionCaller), args.request.executionOriginV1.caller)
+      && (args.retainedPluginPublication || args.ctx.actionRequestId === args.request.executionOriginV1.requestId
+        && args.ctx.serverId === args.request.executionOriginV1.serverId
+        && args.ctx.runtimeAccountId === args.request.executionOriginV1.accountId
+        && sameStrictJsonValue(projectApprovalExecutionOriginCaller(args.ctx.actionCaller), args.request.executionOriginV1.caller))
       && !args.ctx.externalActionExecutionAuthorization && !args.ctx.externalActionCredential
       ? { context: args.ctx, lifetime } : null;
     const isOriginCurrent = async (request: ApprovalRequest, reportStale: (reason: ApprovalStaleReason) => void) => {
@@ -3233,6 +3236,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const artifactId = normalizeId(res.artifactId);
         // Retained native reads keep exact-daemon/deferred replay, but their
         // original host still owns its interest until that recorded result.
+        // Creation matched the immutable subject before a successor can wait.
+        const retainedPluginPublication = readPluginPublicationApprovalSubject(request) !== null;
         if (approvalRouting.flow === 'blocking' || retainHostOperationApproval) {
           if (!deps.approvalsWaitForDecision || !deps.approvalsUpdate) {
             return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
@@ -3265,6 +3270,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               // a decision or effect claim already won the race.
               if (!retainHostOperationApproval || !hostApprovalLifetime || !('actionId' in hostApprovalLifetime)
                   || !ctx.signal?.aborted) throw error;
+              if (retainedPluginPublication && hostApprovalLifetime.surface === 'plugin'
+                && hostApprovalLifetime.isRetired?.()) {
+                // Retirement detaches this waiter. The existing retained
+                // obligation may reconstruct and rejoin; it is not a refusal.
+                return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+              }
               decision = { decision: 'canceled', request };
             }
           } finally {
@@ -3345,6 +3356,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 request: approvedRequest,
                 artifactServerId: effectiveServerId,
                 ctx: continuationContext,
+                retainedPluginPublication,
                 ...liveOnlyCustody,
                 ...(ctx.widgetAreaContext ? { retainedWidgetAreaContext: ctx.widgetAreaContext } : {}),
                 ...(ctx.publicProfilePreparedAction ? { retainedPublicProfileAction: ctx.publicProfilePreparedAction } : {}),
@@ -3361,6 +3373,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             request: approvedRequest,
             artifactServerId: effectiveServerId,
             ctx: continuationContext,
+            retainedPluginPublication,
             ...liveOnlyCustody,
             ...(ctx.widgetAreaContext ? { retainedWidgetAreaContext: ctx.widgetAreaContext } : {}),
             ...(ctx.publicProfilePreparedAction ? { retainedPublicProfileAction: ctx.publicProfilePreparedAction } : {}),

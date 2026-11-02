@@ -2478,7 +2478,9 @@ export type ActionExecutorDeps = Readonly<{
    */
   hostActionApprovalLifetime?: Readonly<{ operationId: string; signal: AbortSignal }>
     | Readonly<{ actionId: ActionId; signal: AbortSignal; surface?: 'cli' | 'ui' }>
-    | Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'plugin'; isCurrent(): boolean | Promise<boolean> }>;
+    | Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'plugin'; isCurrent(): boolean | Promise<boolean>;
+        /** Internal occurrence retirement, distinct from the invoking caller's withdrawal. */
+        isRetired?(): boolean }>;
   approvalsWaitForDecision?: (args: Readonly<{
     artifactId: string;
     request: ApprovalRequest;
