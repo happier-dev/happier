@@ -568,6 +568,8 @@ function widgetRemovalDeletesStoredContent(instance: ReturnType<typeof WidgetIns
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext, options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  /** Trusted client transport continuation only: its ingress already admitted this exact request. */
+  executeAdmittedClientAction: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   continueConfidentialApprovalRequest: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   replayApprovedApprovalRequest: (args: Readonly<{
     artifactId: string;
@@ -7111,6 +7113,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   const execute = (actionId: ActionId, input: unknown, context?: ActionExecutorContext) =>
     executeInvocation(actionId, input, context);
 
+  const executeAdmittedClientAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult> => {
+    const spec = getActionSpec(actionId);
+    if (resolveActionExecutionPlacementForInput(spec, input) !== 'client') {
+      return Promise.resolve(clientActionUnavailable(actionId));
+    }
+    return executeCoreTerminal(actionId, input, context, true, undefined,
+      { actionId, input, context, clientExecutionContinued: true });
+  };
+
   async function isDecidingHumanAdmissionCurrent(ctx: ActionExecutorContext): Promise<boolean> {
     if (ctx.signal?.aborted) return false;
     try {
@@ -7186,6 +7197,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   return {
     prepare,
     execute,
+    executeAdmittedClientAction,
     continueConfidentialApprovalRequest,
     replayApprovedApprovalRequest,
   };

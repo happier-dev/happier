@@ -736,7 +736,14 @@ it('an agent remote relay task retains human SSH trust and passphrase decisions 
     const [{ createDefaultActionExecutor }, { Modal }] = await Promise.all([
         import('@/sync/ops/actions/defaultActionExecutor'), import('@/modal'),
     ]);
-    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+        const onResolve = config.props?.onResolve;
+        if (config.chrome?.testID === 'ssh-host-key-modal' && typeof onResolve === 'function') {
+            queueMicrotask(() => onResolve(true));
+        }
+        return 'ssh-host-key';
+    });
+    const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(false);
     const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('human-key-passphrase');
     const pending = createDefaultActionExecutor().execute('remote_hosts.relay.configure', {
         hostId: host.id, expectedRevision: 4,
@@ -747,12 +754,14 @@ it('an agent remote relay task retains human SSH trust and passphrase decisions 
     await waitForHomeGovernance(() => expect(bridge.listeners.has(taskId)).toBe(true));
     try {
         bridge.listeners.get(taskId)?.onEvent({ protocolVersion: 1, taskId, type: 'prompt', tsMs: 1, data: {
-            kind: 'ssh.trustHost', host: 'private.example', fingerprint: 'SHA256:native-host-key',
+            kind: 'ssh.trustHost', host: 'private.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:native-host-key',
         } });
         expect(getSystemTasksRunner().getSnapshot(taskId)).toMatchObject({ status: 'running', awaitingInput: true });
         expect(getSystemTasksRunner().listPromptContinuations?.().map(task => task.taskId)).toContain(taskId);
         await waitForHomeGovernance(() => expect(bridge.responses).toContainEqual({ taskId, answer: { trusted: true } }));
-        expect(confirm.mock.calls[0]?.[1]).toContain('SHA256:native-host-key');
+        expect(show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+            request: expect.objectContaining({ host: 'private.example', fingerprint: 'SHA256:native-host-key' }),
+        }) }));
         bridge.listeners.get(taskId)?.onEvent({ protocolVersion: 1, taskId, type: 'prompt', tsMs: 2, data: {
             kind: 'ssh.privateKeyPassphrase', host: 'private.example',
         } });
@@ -762,7 +771,7 @@ it('an agent remote relay task retains human SSH trust and passphrase decisions 
         const terminal = { protocolVersion: 1 as const, taskId, ok: false as const, error: { code: 'configure_failed', message: 'Native relay stopped' } };
         bridge.listeners.get(taskId)?.onResult(terminal);
         expect(await pending).toEqual({ ok: true, result: { status: 'completed', taskId, result: terminal } });
-        confirm.mockRestore(); prompt.mockRestore();
+        show.mockRestore(); confirm.mockRestore(); prompt.mockRestore();
     }
 });
 
@@ -898,7 +907,7 @@ it('an agent client open-path Action without an originating Machine opens the ex
 it('the admitted daemon replay reaches the bound client and native OS without creating another approval', async () => {
     const { serverId } = await openRelay({ v: 1 }, { accountId: 'source-account', serverIdentityId: 'srv_client-source' });
     const invoke = vi.fn(async () => undefined);
-    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    installDesktopCommandBoundary(invoke);
     const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
     const receive = createUiClientActionReverseHandler({ serverId, accountId: 'source-account', isCurrent: () => true });
     // The genuine connected-client RPC transport is the only replaced boundary.
@@ -927,6 +936,7 @@ it('the admitted daemon replay reaches the bound client and native OS without cr
         expect(result).toEqual({ ok: true, result: { status: 'completed' } });
         expect(wires).toHaveLength(1);
         expect(UiActionDispatchRequestV1Schema.parse(wires[0]).context).toEqual(admitted);
+        expect(home.requestsFor('/v2/sessions/read-batch')).toEqual([]);
         expect(invoke).toHaveBeenCalledWith('system_tasks_open_log_path', { path: '/home/user/.happier/logs/runtime.log' });
         expect(home.artifacts(serverId).list()).toEqual([]);
     } finally {

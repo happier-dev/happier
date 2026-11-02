@@ -4508,7 +4508,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         } : undefined,
       ...(actionCaller ? { actionCaller } : {}),
       ...(accountContext ? { managedMachineCreationEnabled: accountContext.settings.managedMachineCreationEnabled } : {}),
-      ...(opts?.admittedClientActionId ? { bypassApprovals: actionId === opts.admittedClientActionId } : {}),
       ...((surface === 'ui' || surface === 'voice' || surface === 'plugin') && (credential === 'account' || credential === 'terminal')
         ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
         : {}),
@@ -4534,6 +4533,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
       const resolved = resolveContext(context, input, actionId);
+      if (opts?.admittedClientActionId === actionId) {
+        return await executor.executeAdmittedClientAction(actionId, input, resolved);
+      }
       return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
         ? await executeMachinePluginAtDaemon(actionId, input, resolved)
         : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);

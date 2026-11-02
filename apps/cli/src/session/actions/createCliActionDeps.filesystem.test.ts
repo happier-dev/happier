@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
+import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 import { createCliActionDeps } from './createCliActionDeps';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
@@ -64,7 +65,7 @@ vi.mock('socket.io-client', async importOriginal => {
   return { ...actual, io: (...args: Parameters<typeof actual.io>) => copySocketBoundary.create(...args) ?? actual.io(...args) };
 });
 
-function bindCurrentFilesystemOwner(client: ApiMachineClient, executor: ReturnType<typeof createActionExecutor>): void {
+function bindCurrentFilesystemOwner(client: ApiMachineClient, executor: ExternalActionIngressOwner['executor']): void {
   client.setRPCHandlers({
     // Unused process-lifecycle boundaries; filesystem execution remains real.
     spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: 'Unavailable' } as const),

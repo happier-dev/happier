@@ -2506,8 +2506,6 @@
     "sources/components/stream/renderers/MjpegImageRenderer.native.tsx",
     "sources/components/stream/renderers/MjpegImageRenderer.web.tsx",
     "sources/components/systemTasks/remoteSshBootstrap/nativeTask.web.ts",
-    "sources/components/systemTasks/specs/localControl/buildLocalRelayAccessSystemTaskSpec.ts",
-    "sources/components/systemTasks/specs/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec.ts",
     "sources/components/systemTasks/ssh/useSshSystemTaskPromptModals.ts",
     "sources/components/systemTasks/thisComputerSetup/buildThisComputerSetupStageModel.ts",
     "sources/components/systemTasks/thisComputerSetup/mapThisComputerSetupExecutionToStages.ts",

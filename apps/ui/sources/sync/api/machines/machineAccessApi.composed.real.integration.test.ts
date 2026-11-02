@@ -8,13 +8,15 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createDefaultActionExecutor, isApprovalExecutionOriginCurrentForAccountContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { createSignedAccountContentBinding } from '../../../../../server/sources/testkit/accountEncryption';
+import { makeShareEligibleForTest } from '../../../../../server/sources/testkit/shareEligibility.testkit';
 import { db } from '../../../../../server/sources/storage/db';
 import { machinesRoutes } from '../../../../../server/sources/app/api/routes/machines/machinesRoutes';
 import { artifactsRoutes } from '../../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
@@ -36,6 +38,7 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
         const recipientKeys = nacl.box.keyPair();
         const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(ownerKeys.publicKey), encryptionMode: 'e2ee' } });
         const recipient = await db.account.create({ data: { ...createSignedAccountContentBinding(recipientKeys.publicKey), encryptionMode: 'e2ee' } });
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: encodeBase64(encryptLegacy({ host: 'r34-host', platform: 'linux', happyCliVersion: '0.2',
                 homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }, secret)),
@@ -48,7 +51,8 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
         // routes and disposable SQLite; approval, grant and key lifecycle owners stay real.
         const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://r34-machine-approval.test',
             serverIdentityId: 'srv_r34_home', accountId: owner.id, accountMode: 'e2ee',
-            credentials: { token: 'fixture-subject', secret: encodeBase64(secret) } }],
+            credentials: { token: createServedHomeAccountToken(owner.id), secret: encodeBase64(secret) },
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }) }],
             route: async request => {
                 const response = await app.inject({ method: request.method, url: request.url.pathname + request.url.search,
                     headers: { 'x-test-user-id': request.accountId ?? '', 'x-happier-account-stored-content-protocol': '4' },
@@ -103,8 +107,12 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
             const decided = await createDefaultActionExecutor().execute('approval.request.decide',
                 { artifactId: proposed.result.artifactId, decision: 'approve' }, { surface: 'ui', serverId: home.id });
             if (targetKind === 'other-home' || targetKind === 'other-origin') {
-                expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false,
-                    errorCode: targetKind === 'other-origin' ? 'approval_stale' : 'server_target_mismatch' } } });
+                if (targetKind === 'other-origin') {
+                    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                } else {
+                    expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false,
+                        errorCode: 'server_target_mismatch' } } });
+                }
                 expect(await db.machineAccountGrant.count({ where: { machineId: machine.id } })).toBe(0);
                 expect(await db.machineKeyEnvelope.count({ where: { machineId: machine.id } })).toBe(0);
                 expect(homes.requests.some(request => request.path.endsWith('/access'))).toBe(false);

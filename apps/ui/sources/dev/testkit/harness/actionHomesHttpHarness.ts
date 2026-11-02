@@ -51,7 +51,7 @@ type HomeSpec = Readonly<{
     currentAccount?: boolean;
 }>;
 
-function tokenFor(accountId: string, currentAccount = false): string {
+export function createServedHomeAccountToken(accountId: string, currentAccount = false): string {
     return `header.${Buffer.from(JSON.stringify({ sub: accountId, ...(currentAccount ? {
         provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'account', authority: 'present_user' }), tokenEpoch: 0,
     } : {}) })).toString('base64url')}.signature`;
@@ -194,7 +194,7 @@ export async function serveAccountHomes(params: Readonly<{
             ...(spec?.accountId === accountId ? spec.credentials : undefined),
             token: spec?.accountId === accountId && spec.credentials
                 ? spec.credentials.token
-                : tokenFor(accountId, spec?.accountId === accountId && spec.currentAccount === true),
+                : createServedHomeAccountToken(accountId, spec?.accountId === accountId && spec.currentAccount === true),
         };
         const scopeId = resolveServerProfileScopeIdForIdentifier(home.profileId);
         const previousCredentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl,

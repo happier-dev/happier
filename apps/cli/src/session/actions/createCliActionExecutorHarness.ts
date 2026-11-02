@@ -61,7 +61,7 @@ export function createCliActionExecutorHarness(
   overrides?: Partial<ActionExecutorDeps>,
 ): Readonly<{
   deps: ActionExecutorDeps;
-  executor: ReturnType<typeof createActionExecutor>;
+  executor: Omit<ReturnType<typeof createActionExecutor>, 'executeAdmittedClientAction'>;
   observeRecordedApprovalExecution(args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult>;
 }> {
   const coordinator = getSharedBlockingApprovalCoordinator();
