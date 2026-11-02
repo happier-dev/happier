@@ -1,5 +1,6 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const { selectNativeBundleResponse } = require('./scripts/metroNativeBundleResponse.cjs');
 const { protectMetroDependencyConsumption, processMetroDependencyChanges } = require('./scripts/metroDependencyConsumption.cjs');
 const { builtinModules } = require("node:module");
 const {
@@ -1193,7 +1194,8 @@ config.watcher.unstable_processFileChanges = (processChanges, signal) =>
 const enhanceMiddleware = config.server.enhanceMiddleware;
 config.server.enhanceMiddleware = (middleware, metroServer) => {
   protectMetroDependencyConsumption(metroServer, config.projectRoot);
-  const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
+  const upstream = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
+  let enhanced = upstream;
   if (privatePluginUiInventory) {
     const refresh = import(require('node:url').pathToFileURL(path.join(__dirname, 'scripts/ensureWorkspacePackagesBuilt.mjs')).href)
       .then(({ watchUiSourcePluginInventory }) => watchUiSourcePluginInventory({ metroServer, metroConfig: config, uiPackageDir: __dirname }));
@@ -1202,7 +1204,7 @@ config.server.enhanceMiddleware = (middleware, metroServer) => {
     metroServer.end = async () => {
       try { await (await refresh).close(); } finally { await end(); }
     };
-    return (req, res, next) => {
+    enhanced = (req, res, next) => {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const isArtifactPath = value => artifactOnlyAssetExts.some(ext => value.endsWith(`.${ext}`));
       // Expo serves artifact assets through this query route. Ordinary images
@@ -1210,11 +1212,14 @@ config.server.enhanceMiddleware = (middleware, metroServer) => {
       const assetPath = url.searchParams.get('unstable_path')?.split('?')[0] ?? '';
       const inventoryRequest = isArtifactPath(url.pathname) || url.pathname.endsWith('.assets')
         || (/^\/assets(?:\/|$)/.test(url.pathname) && isArtifactPath(assetPath));
-      if (!inventoryRequest) return enhanced(req, res, next);
-      void refresh.then(owner => owner.ready()).then(() => enhanced(req, res, next), next);
+      if (!inventoryRequest) return upstream(req, res, next);
+      void refresh.then(owner => owner.ready()).then(() => upstream(req, res, next), next);
     };
   }
-  return enhanced;
+  return (req, res, next) => {
+    selectNativeBundleResponse(req);
+    return enhanced(req, res, next);
+  };
 };
 
 module.exports = config;

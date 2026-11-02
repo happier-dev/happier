@@ -212,6 +212,7 @@ const COMMAND_RULES = [
   // These lifecycle/transport fixtures use authored exports only when the
   // caller explicitly selects the existing Happier source runtime contract.
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], sourceCondition: ['1'], nativeTestPath: [
+    'apps/ui/scripts/metroNativeBundleResponse.test.mjs',
     'apps/stack/scripts/utils/dev/expo_dev_crash_supervision.test.mjs',
     'apps/stack/scripts/preferred_execution_launcher.test.mjs',
     'apps/stack/scripts/utils/dev_targets/service_placement.test.mjs',

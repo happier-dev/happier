@@ -1830,6 +1830,7 @@ test('the UI Vitest tool source keepers admit dependencies without emitted works
 
 test('source-condition lifecycle fixtures admit authored exports without Stack publication', () => {
   for (const path of [
+    'apps/ui/scripts/metroNativeBundleResponse.test.mjs',
     'apps/stack/scripts/utils/dev/expo_dev_crash_supervision.test.mjs',
     'apps/stack/scripts/preferred_execution_launcher.test.mjs',
     'apps/stack/scripts/utils/dev_targets/service_placement.test.mjs',
