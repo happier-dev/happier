@@ -37,7 +37,8 @@ test('explicit source daemon restart prepares current source while status retain
   for (const directory of ['packages', 'node_modules']) {
     await symlink(join(canonicalRepo, directory), join(repoDir, directory), process.platform === 'win32' ? 'junction' : 'dir');
   }
-  const oldEntrypoint = fixture.path('incumbent.mjs');
+  const oldEntrypoint = fixture.path('retained/apps/cli/src/incumbent.mjs');
+  await mkdir(join(oldEntrypoint, '..'), { recursive: true });
   await writeFile(oldEntrypoint, 'export const sourceReload = "incumbent";');
   const input = { rootDir: join(canonicalRepo, 'apps/stack'), stackName: 'fixture', identity: 'default',
     env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
@@ -46,9 +47,16 @@ test('explicit source daemon restart prepares current source while status retain
       sourceRuntimeIdentities: { daemon: { selected: 'incumbent', loaded: 'incumbent' } } } };
   const status = await resolveStackDaemonCommandContext({ ...input, argv: ['status', '--runtime=source'] });
   assert.equal(status.cliEntrypoint, oldEntrypoint);
+  // A retained graph without a usable dependency publication cannot launch,
+  // but an explicit reload must prepare its replacement before validating it.
+  await writeFile(fixture.path('retained/source-bundle.json'), JSON.stringify({ dependencyPublication: null }));
   const restart = await resolveStackDaemonCommandContext({ ...input, argv: ['restart', '--runtime=source'] });
   assert.notEqual(restart.cliEntrypoint, oldEntrypoint);
   const emitted = await import(pathToFileURL(restart.cliEntrypoint).href);
   assert.equal(emitted.sourceReload, 'current-source');
+  const recovered = await resolveStackDaemonCommandContext({ ...input, argv: ['restart'],
+    activeRuntimeState: { ...input.activeRuntimeState,
+      sourceRuntimeLaunch: { ...input.activeRuntimeState.sourceRuntimeLaunch, entrypoint: fixture.path('missing.mjs') } } });
+  assert.equal(recovered.cliEntrypoint, restart.cliEntrypoint);
   assert.equal(await readFile(oldEntrypoint, 'utf8'), 'export const sourceReload = "incumbent";');
 });

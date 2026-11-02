@@ -77,6 +77,11 @@ test('runtime dependency identity survives identical installed-file replacement 
     imports: [{ path: 'runtime-input', resolveFrom: fixture.path('package.json') }],
   });
   const before = readIdentity();
+  const uiDependency = fixture.path('node_modules/@tauri-apps/plugin-http');
+  await mkdir(uiDependency, { recursive: true });
+  await writeFile(`${uiDependency}/package.json`, JSON.stringify({ name: '@tauri-apps/plugin-http', main: 'index.cjs' }));
+  await writeFile(`${uiDependency}/index.cjs`, 'exports.uiPatch = true;');
+  assert.equal(readIdentity(), before, 'an unrelated UI package patch must not invalidate the daemon runtime closure');
   await writeFile(`${entry}.replacement`, contents);
   await rename(`${entry}.replacement`, entry);
   assert.equal(readIdentity(), before, 'a dependency refresh replacing identical bytes preserves the retained runtime');

@@ -113,7 +113,8 @@ export async function resolveStackRuntimeLaunchContext({ argv = [], env = proces
   }
   const runtimeMode = resolveStackRuntimeMode({ argv, env, activeRuntimeState });
   if (runtimeMode.mode === 'source-snapshot') {
-    if (purpose === 'deployment') return { stackName, stackBaseDir, runtimeMode, snapshot: null };
+    // Replacement preparation must not consume the incumbent dependency graph.
+    if (purpose === 'deployment' || purpose === 'restart') return { stackName, stackBaseDir, runtimeMode, snapshot: null };
     const statePath = join(stackBaseDir, 'stack.runtime.json');
     const recorded = activeRuntimeState ?? await readStackRuntimeStateFile(statePath);
     let sourceRuntimeLaunch = recorded?.sourceRuntimeLaunch;

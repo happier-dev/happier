@@ -34,7 +34,8 @@ export async function resolveStackDaemonCommandContext({
   argv = [],
   activeRuntimeState = null,
 }) {
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState });
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState,
+    purpose: argv.includes('restart') ? 'restart' : 'cli' });
   let sourceRuntimeLaunchUpdate = null;
   if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && argv.includes('restart')) {
     const { buildSourceRuntimeBundle } = await import('../build/build_source_runtime.mjs');
