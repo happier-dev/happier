@@ -8,9 +8,10 @@ import {
 } from './index.js';
 
 describe('createTailscaleSecureAccessTaskSpec', () => {
-  it('defaults providerId and target to the local relay host for backwards compatibility', () => {
+  it('preserves the selected method and defaults only the local target and native options', () => {
     expect(createTailscaleSecureAccessTaskSpec({
       upstreamUrl: ' http://127.0.0.1:3005 ',
+      providerId: 'tailscaleServe',
     })).toEqual({
       kind: 'secureAccess.tailscale.v1',
       params: {
@@ -23,6 +24,12 @@ describe('createTailscaleSecureAccessTaskSpec', () => {
         mode: 'normalUser',
       },
     });
+  });
+
+  it.each([undefined, 'lan', 'tailscaleFunel'])('refuses a missing or invalid native method (%s) instead of selecting Serve', (providerId) => {
+    expect(() => Reflect.apply(createTailscaleSecureAccessTaskSpec, undefined, [{
+      upstreamUrl: 'http://127.0.0.1:3005', providerId,
+    }])).toThrow();
   });
 
   it('preserves an explicit tailscaleFunnel provider id', () => {

@@ -3600,6 +3600,16 @@ in that relay's lifecycle directory (`--server` alone replaces the URL/profile s
 lifecycle scope). The SSH enrollment approval (`auth approve --home-target-from-request-json`) already
 binds its credentials to the Home target the request names.
 
+In 0.3 development, local and SSH Home relay stores, CLI commands and bootstrap
+tasks consume the cli-common relay-access selection owner. Native executables
+resolve in the addressed host's environment.
+
+The retained `secureAccess.tailscale.v1` native codec shares its Protocol
+contract across bootstrap and UI. Current writers require an explicit Serve or
+Funnel method. Only the incoming 0.2 native-task reader translates an omitted
+method/target to local Serve; remove that translation when 0.2 native-task
+interoperability is retired. It does not import legacy relay configuration.
+
 In current 0.3 development, `home pair-device` also accepts an authenticated
 URL-only profile retained from 0.2 or created by Stack auth seeding. The shared
 terminal enrollment carrier verifies its selected HTTPS or loopback origin;

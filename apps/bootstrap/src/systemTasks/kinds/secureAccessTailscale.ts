@@ -1,5 +1,7 @@
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
 import {
+  isTailscaleSecureAccessProviderId,
+  type TailscaleSecureAccessProviderId,
   type TailscaleSecureAccessTaskResult,
 } from '@happier-dev/cli-common/tailscale';
 import {
@@ -32,7 +34,7 @@ import {
 type SecureAccessTailscaleParams = Readonly<{
   target: RelayAccessTaskTarget;
   upstreamUrl: string;
-  providerId: 'tailscaleServe' | 'tailscaleFunnel';
+  providerId: TailscaleSecureAccessProviderId;
   servePath: string;
   installPolicy: 'skip' | 'installIfMissing';
   loginPolicy: 'skip' | 'interactive';
@@ -366,10 +368,18 @@ function parseSecureAccessTailscaleParams(params: unknown): SecureAccessTailscal
     }
   }
 
+  // The reachable 0.2 native v1 task omitted this field and meant Serve.
+  // Remove this translation when 0.2 native-task interoperability is retired.
+  // Explicit invalid methods never acquire that historical meaning.
+  const providerId = record.providerId === undefined ? 'tailscaleServe' : record.providerId;
+  if (!isTailscaleSecureAccessProviderId(providerId)) {
+    throw new systemTasks.SystemTaskExecutionError('invalid_params', 'Invalid Tailscale access method.');
+  }
+
   return {
     target: parseSecureAccessTailscaleTarget(record.target),
     upstreamUrl: ensureNonEmptyString(record.upstreamUrl, 'upstreamUrl'),
-    providerId: record.providerId === 'tailscaleFunnel' ? 'tailscaleFunnel' : 'tailscaleServe',
+    providerId,
     servePath: normalizeServePath(record.servePath),
     installPolicy: record.installPolicy === 'installIfMissing' ? 'installIfMissing' : 'skip',
     loginPolicy: record.loginPolicy === 'skip' ? 'skip' : 'interactive',

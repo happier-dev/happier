@@ -15,6 +15,10 @@ export type TailscaleSecureAccessInstallPolicy = 'skip' | 'installIfMissing';
 export type TailscaleSecureAccessLoginPolicy = 'skip' | 'interactive';
 export type TailscaleSecureAccessMode = 'normalUser' | 'managedAdmin';
 export type TailscaleSecureAccessProviderId = 'tailscaleServe' | 'tailscaleFunnel';
+
+export function isTailscaleSecureAccessProviderId(value: unknown): value is TailscaleSecureAccessProviderId {
+  return value === 'tailscaleServe' || value === 'tailscaleFunnel';
+}
 export type TailscaleSecureAccessSshConnectionConfig = SystemTaskJsonObject & Readonly<{
   target: string;
   auth: 'agent' | 'keyfile' | 'password';
@@ -34,7 +38,7 @@ export type TailscaleSecureAccessTaskTarget =
 
 export type TailscaleSecureAccessTaskParams = Readonly<{
   upstreamUrl: string;
-  providerId?: TailscaleSecureAccessProviderId;
+  providerId: string;
   servePath?: string;
   installPolicy?: TailscaleSecureAccessInstallPolicy;
   loginPolicy?: TailscaleSecureAccessLoginPolicy;
@@ -66,11 +70,14 @@ export type TailscaleSecureAccessTaskResult = Readonly<{
 export function createTailscaleSecureAccessTaskSpec(
   params: TailscaleSecureAccessTaskParams,
 ): TailscaleSecureAccessTaskSpec {
+  if (!isTailscaleSecureAccessProviderId(params.providerId)) {
+    throw new Error('invalid_tailscale_secure_access_provider');
+  }
   return {
     kind: TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
     params: {
       upstreamUrl: String(params.upstreamUrl ?? '').trim(),
-      providerId: params.providerId === 'tailscaleFunnel' ? 'tailscaleFunnel' : 'tailscaleServe',
+      providerId: params.providerId,
       servePath: String(params.servePath ?? '/').trim() || '/',
       installPolicy: params.installPolicy ?? 'skip',
       loginPolicy: params.loginPolicy ?? 'interactive',

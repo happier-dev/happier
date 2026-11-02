@@ -47,6 +47,7 @@ export {
 export { resolveTailscaleMachineHttpsUrlFromStatusSnapshot } from './publicUrl.js';
 export {
   createTailscaleSecureAccessTaskSpec,
+  isTailscaleSecureAccessProviderId,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_KIND,
   TAILSCALE_SECURE_ACCESS_SYSTEM_TASK_STEP_IDS,
   type TailscaleSecureAccessInstallPolicy,
@@ -58,6 +59,6 @@ export {
   type TailscaleSecureAccessTaskParams,
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
-} from './taskContract.js';
+} from '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract';
 
 export { runTailscaleOperatorObservation } from './commandRunner.js';

@@ -9,9 +9,6 @@ export function buildRelayAccessTailscaleSecureAccessSystemTaskSpec(params: Read
     providerId: string;
     target?: RelayAccessTaskTarget;
 }>): SystemTaskSpec {
-    if (params.providerId !== 'tailscaleServe' && params.providerId !== 'tailscaleFunnel') {
-        throw new Error('invalid_tailscale_secure_access_provider');
-    }
     return {
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
         ...createTailscaleSecureAccessTaskSpec({

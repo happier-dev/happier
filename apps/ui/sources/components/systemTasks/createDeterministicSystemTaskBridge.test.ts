@@ -2,7 +2,7 @@ import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relay
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildLocalRelayRuntimeSystemTaskSpec } from './specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
-import { buildLocalTailscaleSecureAccessSystemTaskSpec } from './specs/localControl/buildLocalTailscaleSecureAccessSystemTaskSpec';
+import { buildRelayAccessTailscaleSecureAccessSystemTaskSpec } from './specs/relayAccess/buildRelayAccessTailscaleSecureAccessSystemTaskSpec';
 import {
     buildRelayAccessConfigureSystemTaskSpec,
     buildRelayAccessStatusSystemTaskSpec,
@@ -57,8 +57,9 @@ describe('createDeterministicSystemTaskBridge', () => {
     it('can simulate tailscale secure access for the deterministic setup runner', async () => {
         const bridge = createDeterministicSystemTaskBridge();
         const runner = createSystemTaskRunner({ bridge, mode: 'dev' });
-        const taskId = await runner.start(buildLocalTailscaleSecureAccessSystemTaskSpec({
+        const taskId = await runner.start(buildRelayAccessTailscaleSecureAccessSystemTaskSpec({
             upstreamUrl: 'https://relay.example.test',
+            providerId: 'tailscaleServe',
         }));
 
         await new Promise((resolve) => setTimeout(resolve, 250));
@@ -94,8 +95,9 @@ describe('createDeterministicSystemTaskBridge', () => {
         try {
             const bridge = createDeterministicSystemTaskBridge();
             const runner = createSystemTaskRunner({ bridge, mode: 'dev' });
-            const taskId = await runner.start(buildLocalTailscaleSecureAccessSystemTaskSpec({
+            const taskId = await runner.start(buildRelayAccessTailscaleSecureAccessSystemTaskSpec({
                 upstreamUrl: 'https://relay.example.test',
+                providerId: 'tailscaleServe',
             }));
 
             await vi.advanceTimersByTimeAsync(250);

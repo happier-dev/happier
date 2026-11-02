@@ -532,6 +532,7 @@ function createRelayAccessDeps(overrides?: Partial<RelayAccessDeps>): RelayAcces
       const ssh = params.target.ssh;
       return {
         ...base,
+        env: { NODE_ENV: process.env.NODE_ENV },
         resolveCommandOnPath: (command: string) => command,
         runCommand: async ({ command, args, env, timeoutMs }: RunCommandParams): Promise<RunCommandResult> => {
           const remoteCommand = [command, ...args].map(shellQuote).join(' ');
