@@ -416,6 +416,7 @@ function RenderBlock(props: {
       );
 
     case 'agent-text':
+      if (props.message.isThinking && props.messageDisplayCommon.sessionThinkingDisplayMode === 'hidden') return null;
       return (
         <AgentTextBlock
           message={props.message}
@@ -1017,9 +1018,6 @@ function AgentTextBlock(props: {
     : isVoiceAgentTurn
       ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
       : props.message.text;
-  if (!unsupportedContentMeta && isVoiceAgentTurn && baseMarkdownText == null) {
-    return null;
-  }
   const markdownSource = baseMarkdownText ?? props.message.text;
   const markdown = (!unsupportedContentMeta && props.message.isThinking)
     ? unwrapLegacyThinkingWrapper(markdownSource)
@@ -1073,10 +1071,6 @@ function AgentTextBlock(props: {
 
   const selectionRow = useOptionalTranscriptSelectionRow(props.message.id);
   const selectionModeActionsVisible = selectionEnabled && selectionRow.isSelectionMode;
-
-  if (props.message.isThinking && sessionThinkingDisplayMode === 'hidden') {
-    return null;
-  }
 
   const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
   const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
