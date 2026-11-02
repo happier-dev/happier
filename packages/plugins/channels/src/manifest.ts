@@ -195,6 +195,7 @@ export const CHANNELS_UI = {
       key: 'plugins.channels.session.title',
       fallback: 'External conversations',
     },
+    icon: 'conversations' as const,
   }, {
     // The Channels destination: a rail entry (hideable through the ordinary
     // destination preferences) whose page is the one owner of conversation
