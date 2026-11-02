@@ -1,7 +1,7 @@
 import { isMachineReachableV1, isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { resolveServerProfileScopeIdForIdentifier, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import type { SessionMachineReachability } from './resolveSessionMachineReachability';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
@@ -10,6 +10,8 @@ export type MachineReachabilityScope = ServerAccountScope;
 export type MachineRequestReachabilityObservation = Readonly<{
     outcome: 'succeeded' | 'failed';
     observedAtMs: number;
+    /** Completed authenticated RPC reply; direct-route OPTIONS is not an answer. */
+    lastAnsweredAtMs?: number;
 }>;
 
 type MachineRequestObservationInput = MachineReachabilityScope & Readonly<{
@@ -50,7 +52,12 @@ export type MachineRequestReachabilityChange = Readonly<{
     /** Absence means the whole Account's observation changed (withdrawal or retirement). */
     machineIds?: readonly string[];
 }>;
-const listeners = new Set<(change: MachineRequestReachabilityChange | null) => void>();
+type ReachabilitySubscription = Readonly<{
+    scope?: MachineReachabilityScope;
+    machineId?: string | null;
+    fact?: 'lastAnsweredAtMs';
+}>;
+const listeners = new Map<(change: MachineRequestReachabilityChange | null) => void, ReachabilitySubscription>();
 const recoveryListeners = new Set<(scope: MachineReachabilityScope, machineId: string) => void>();
 let revision = 0;
 
@@ -85,9 +92,16 @@ function readObservation(state: ScopeReachability | undefined, machineId: string
     return state && id ? (route ? state.direct : state.relay).get(id) ?? null : null;
 }
 
-function publishReachabilityChange(change: MachineRequestReachabilityChange | null): void {
-    revision += 1;
-    for (const listener of listeners) listener(change);
+function publishReachabilityChange(change: MachineRequestReachabilityChange | null,
+    facts: Readonly<{ reachability?: boolean; answer?: boolean }> = {}): void {
+    if (facts.reachability !== false) revision += 1;
+    for (const [listener, demand] of listeners) {
+        if (demand.fact === 'lastAnsweredAtMs' ? !facts.answer : facts.reachability === false) continue;
+        if (demand.scope && change && (!areServerProfileIdentifiersEquivalent(change.scope.serverId, demand.scope.serverId)
+            || demand.scope.accountId !== change.scope.accountId
+            || demand.machineId && change.machineIds && !change.machineIds.includes(demand.machineId))) continue;
+        listener(change);
+    }
 }
 
 /** Called by the existing Account socket's transport-withdrawal edge. Reconnect alone is not a presence observation. */
@@ -126,10 +140,12 @@ function recordMachineRequestObservation(
     const previous = observations.get(id);
     if (previous && previous.observedAtMs > observedAtMs) return;
     if (previous?.outcome === outcome && previous.observedAtMs === observedAtMs) return;
-    observations.set(id, { outcome, observedAtMs });
-    // Retain freshness for late-result ordering without reopening automatic readers.
-    if (previous?.outcome === outcome) return;
-    publishReachabilityChange({ scope: normalized, machineIds: [id] });
+    const lastAnsweredAtMs = outcome === 'succeeded' && !input.route ? observedAtMs : previous?.lastAnsweredAtMs;
+    observations.set(id, { outcome, observedAtMs, ...(lastAnsweredAtMs === undefined ? {} : { lastAnsweredAtMs }) });
+    const reachability = previous?.outcome !== outcome;
+    const answer = previous?.lastAnsweredAtMs !== lastAnsweredAtMs;
+    // Repeated replies update only consumers asking for the answer time, never automatic readers.
+    if (reachability || answer) publishReachabilityChange({ scope: normalized, machineIds: [id] }, { reachability, answer });
 }
 
 export function recordMachineRequestFailed(input: MachineRequestObservationInput): void {
@@ -150,8 +166,15 @@ export function readMachineRequestReachabilityObservation(
     return normalized ? readObservation(readScope(normalized), machineId, route) : null;
 }
 
-export function subscribeMachineRequestReachability(listener: (change: MachineRequestReachabilityChange | null) => void): () => void {
-    listeners.add(listener);
+export function readMachineLastAnsweredAt(scope: MachineReachabilityScope | null | undefined, machineId: string | null | undefined): number | null {
+    return readMachineRequestReachabilityObservation(scope, machineId)?.lastAnsweredAtMs ?? null;
+}
+
+export function subscribeMachineRequestReachability(listener: (change: MachineRequestReachabilityChange | null) => void,
+    demand: ReachabilitySubscription = {}): () => void {
+    const scope = demand.scope ? normalizeScope(demand.scope) : null;
+    if (demand.scope && !scope) return () => {};
+    listeners.set(listener, { ...demand, ...(scope ? { scope } : {}), machineId: demand.machineId?.trim() });
     return () => listeners.delete(listener);
 }
 
@@ -229,11 +252,12 @@ export function clearMachineRequestReachabilityForMachine(scope: MachineReachabi
     const id = String(machineId ?? '').trim();
     if (!normalized || !id) return;
     const state = readScope(normalized);
+    const answer = state?.relay.get(id)?.lastAnsweredAtMs !== undefined;
     const changed = state?.relay.delete(id) ?? false;
     const directChanged = state?.direct.delete(id) ?? false;
     retireEmptyScope(normalized, state);
     if (changed || directChanged) {
-        publishReachabilityChange({ scope: normalized, machineIds: [id] });
+        publishReachabilityChange({ scope: normalized, machineIds: [id] }, { answer });
     }
     for (const listener of recoveryListeners) listener(scope, machineId);
 }
@@ -246,7 +270,7 @@ export function clearMachineRequestReachabilityForScope(scope: MachineReachabili
     state.relay.clear();
     state.direct.clear();
     retireEmptyScope(normalizedScope, state);
-    publishReachabilityChange({ scope: normalizedScope });
+    publishReachabilityChange({ scope: normalizedScope }, { answer: true });
 }
 
 export function clearMachineRequestReachabilityForTest(): void {
@@ -261,7 +285,7 @@ export function clearMachineRequestReachabilityForTest(): void {
     }
     scopes.clear();
     if (!changed) return;
-    publishReachabilityChange(null);
+    publishReachabilityChange(null, { answer: true });
 }
 
 // Each test starts with fresh observations: a prior test's Socket teardown must

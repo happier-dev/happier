@@ -18,6 +18,9 @@ import { useClaimSettingsBack } from '@/components/settings/shell/SettingsModalF
  * stands alone in the same column and returns to the machine. It is never a `PageHeader`: the crumb, the name and
  * the column edge are the same on every one.
  */
+/** A page's leading statement in ink, and the quiet clause that finishes it. */
+export type MachinePageLead = Readonly<{ statement: string; detail: string | null }>;
+
 export function MachineTabSubHead(props: Readonly<{
     /** Null for a page that could not be read (no name to give): the way back stands alone. */
     title: string | null;

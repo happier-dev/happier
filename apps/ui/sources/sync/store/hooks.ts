@@ -1,5 +1,7 @@
 import { readSessionArchivePending, readSessionArchiveOperationsForServers, projectSessionArchiveRow, projectSessionArchiveRowsByServerId } from '../domains/session/listing/sessionArchiveState';
 import React from 'react';
+import type { MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { subscribeMachineField } from './machineFieldSubscription';
 import { useSetting, useLocalSetting } from './settingsReadHooks';
 export {
   useSettings,
@@ -2630,6 +2632,40 @@ export function useMachinePoolAccountIdByServerId(): Record<string, string> {
 
 const noopMachineSubscribe = () => () => {};
 const readNullMachine = () => null;
+
+type MachineFieldContent = {
+  metadata: NonNullable<Machine['metadata']>;
+  daemonState: MachinePublishedDaemonStateV1;
+};
+
+/** Exact admitted content field; identity is retained by applyMachines, never by the reader. */
+export function useMachineField<Section extends keyof MachineFieldContent, Field extends keyof MachineFieldContent[Section]>(
+  machineId: string,
+  section: Section,
+  field: Field,
+  options: Readonly<{ enabled?: boolean; serverId?: string | null }> = {},
+): MachineFieldContent[Section][Field] | null {
+  const store = getStorage();
+  const enabled = options.enabled !== false;
+  const serverId = options.serverId?.trim() || null;
+  const normalizedMachineId = machineId.trim();
+  const getSnapshot = React.useCallback(() => {
+    const state = store.getState();
+    const machine = serverId ? resolveServerScopedMachine(state, serverId, normalizedMachineId) : state.machines[normalizedMachineId];
+    if (!machine || machine.revokedAt || machine.availability?.kind !== 'available'
+      || machine.access && machine.access.accessState !== 'ready') return null;
+    const content = machine[section] as MachineFieldContent[Section] | null;
+    return content?.[field] ?? null;
+  }, [field, normalizedMachineId, section, serverId, store]);
+  const subscribe = React.useCallback((listener: () => void) => subscribeMachineField(store, {
+    machineId: normalizedMachineId, serverId, section, field,
+  }, listener), [store, normalizedMachineId, serverId, section, field]);
+  return React.useSyncExternalStore(
+    enabled ? subscribe : noopMachineSubscribe,
+    enabled ? getSnapshot : readNullMachine,
+    enabled ? getSnapshot : readNullMachine,
+  );
+}
 
 export function useMachine(machineId: string, enabled = true): Machine | null {
   const store = getStorage();
