@@ -4,6 +4,7 @@ import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/ope
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
 import { t } from '@/text';
 import type { SessionSpawnNewActionResult } from './sessionSpawnNewAction';
 
@@ -108,6 +109,8 @@ function sessionSpawnFailureDisplayCode(failure: Readonly<{ errorCode: string; d
 export function resolveSessionSpawnNewResultFailureMessage(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
+    const poolFailure = resolveSessionSpawnNewConnectedAccountFailure(result);
+    if (poolFailure) return poolFailure.message;
     const key = resolveSessionSpawnNewResultFailureMessageKey(result);
     if (result.type !== 'pending' && (key === 'newSession.failedToStart'
         || key === 'connectedServices.diagnostics.body.connected_service_credential_reconnect_required')) {
@@ -120,6 +123,58 @@ export function resolveSessionSpawnNewResultFailureMessage(
             : t('errors.errorWithCode', { message: t(key), code: result.code });
     }
     return t(key);
+}
+
+export type SessionSpawnConnectedAccountRecoveryAction =
+    | Readonly<{ kind: 'reconnect'; serviceId: string; profileId: string }>
+    | Readonly<{ kind: 'select'; serviceId: string }>;
+
+/** Present the producer's exclusions; account eligibility is never re-evaluated here. */
+export function resolveSessionSpawnNewConnectedAccountFailure(
+    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+    serviceTitle?: string | ((serviceId: string) => string),
+): Readonly<{ title: string; reasons: string; message: string; actions: readonly SessionSpawnConnectedAccountRecoveryAction[] }> | null {
+    const pool = result.type === 'error' && 'launchError' in result ? result.launchError?.connectedAccountPool : undefined;
+    if (!pool) return null;
+    const reasons = connectedServicePoolExclusionCountsText(pool.excluded.map(member => member.reason));
+    const reconnect = pool.excluded.find(member => member.reason === 'auth_invalid');
+    const actions: SessionSpawnConnectedAccountRecoveryAction[] = [];
+    if (reconnect) actions.push({ kind: 'reconnect', serviceId: pool.serviceId, profileId: reconnect.profileId });
+    actions.push({ kind: 'select', serviceId: pool.serviceId });
+    const service = serviceTitle ? (typeof serviceTitle === 'function' ? serviceTitle(pool.serviceId) : serviceTitle) : null;
+    const title = service ? t('connectedServicesPool.startUnavailable', { service, reasons: '' })
+        : t('connectedServices.diagnostics.title.no_eligible_group_member');
+    return { title, reasons, message: service ? t('connectedServicesPool.startUnavailable', { service, reasons })
+        : `${title}${reasons ? `: ${reasons}` : ''}`, actions };
+}
+
+export function presentSessionSpawnNewConnectedAccountFailure(
+    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+    resolveServiceTitle: (serviceId: string) => string,
+    onRecover: (action: SessionSpawnConnectedAccountRecoveryAction) => void,
+    alert: typeof import('@/modal').Modal.alert,
+    /** The caller's presented name for a connected account; null when it has none to show. */
+    resolveAccountLabel?: (serviceId: string, profileId: string) => string | null,
+): boolean {
+    const presentation = resolveSessionSpawnNewConnectedAccountFailure(result, resolveServiceTitle);
+    if (!presentation) return false;
+    // The cause is the title; the body counts why as one sentence and says the draft stays. The
+    // recoveries lead (sign-in names the account it reconnects) and Cancel closes the stack.
+    alert(presentation.title, presentation.reasons
+        ? t('connectedServicesPool.startUnavailableBody', { counts: presentation.reasons })
+        : t('connectedServicesPool.startUnavailableDraftKept'), [
+        ...presentation.actions.map(action => {
+            const account = action.kind === 'reconnect' ? resolveAccountLabel?.(action.serviceId, action.profileId) ?? null : null;
+            return {
+                text: action.kind === 'select' ? t('connectedServicesPool.useAnotherAccount')
+                    : account ? t('connectedServicesPool.signInAccount', { account })
+                    : t('connectionStatus.summary.signInAgain'),
+                onPress: () => onRecover(action),
+            };
+        }),
+        { text: t('common.cancel'), style: 'cancel' },
+    ]);
+    return true;
 }
 
 /** Present a terminal operation failure through the same localized spawn-failure owner as the direct Action path. */

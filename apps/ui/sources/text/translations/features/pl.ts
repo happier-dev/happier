@@ -1962,6 +1962,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const pl: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `Żadne konto ${service} nie jest dostępne${reasons ? `: ${reasons}` : ""}`,
+    useAnotherAccount: 'Użyj innego konta',
+    startUnavailableUsedUp: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto jest wykorzystane`, `${count} konta są wykorzystane`, `${count} kont jest wykorzystanych`),
+    startUnavailableSignIn: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto wymaga ponownego logowania`, `${count} konta wymagają ponownego logowania`, `${count} kont wymaga ponownego logowania`),
+    startUnavailableCoolingDown: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto ma przerwę`, `${count} konta mają przerwę`, `${count} kont ma przerwę`),
+    startUnavailableWaitingReset: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto czeka na odnowienie`, `${count} konta czekają na odnowienie`, `${count} kont czeka na odnowienie`),
+    startUnavailableOff: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto jest wyłączone`, `${count} konta są wyłączone`, `${count} kont jest wyłączonych`),
+    startUnavailableAtCapacity: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto osiągnęło limit`, `${count} konta osiągnęły limit`, `${count} kont osiągnęło limit`),
+    startUnavailableUnusable: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto jest teraz niedostępne`, `${count} konta są teraz niedostępne`, `${count} kont jest teraz niedostępnych`),
+    startUnavailableInUse: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto jest już w użyciu`, `${count} konta są już w użyciu`, `${count} kont jest już w użyciu`),
+    startUnavailableBody: ({ counts }) => `${counts}. Twoja wiadomość została zachowana.`,
+    startUnavailableDraftKept: `Twoja wiadomość została zachowana.`,
+    signInAccount: ({ account }) => `Zaloguj się do ${account}`,
     strategyExpiryFirst: "Wygasa wcześniej",
     strategyExpiryFirstDescription: "Najpierw używa konta, które resetuje się lub kończy najwcześniej.",
     leadExpiryFirst: "Najpierw najbliższy termin.",

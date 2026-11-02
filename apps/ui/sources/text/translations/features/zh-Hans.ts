@@ -1946,6 +1946,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const zhHans: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `没有可用的 ${service} 账号${reasons ? `：${reasons}` : ""}`,
+    useAnotherAccount: '使用其他账号',
+    startUnavailableUsedUp: ({ count }) => `${count} 个已用完`,
+    startUnavailableSignIn: ({ count }) => `${count} 个需要重新登录`,
+    startUnavailableCoolingDown: ({ count }) => `${count} 个冷却中`,
+    startUnavailableWaitingReset: ({ count }) => `${count} 个等待重置`,
+    startUnavailableOff: ({ count }) => `${count} 个已关闭`,
+    startUnavailableAtCapacity: ({ count }) => `${count} 个已满载`,
+    startUnavailableUnusable: ({ count }) => `${count} 个暂时不可用`,
+    startUnavailableInUse: ({ count }) => `${count} 个已在使用中`,
+    startUnavailableBody: ({ counts }) => `${counts}。你的消息已保留。`,
+    startUnavailableDraftKept: `你的消息已保留。`,
+    signInAccount: ({ account }) => `登录 ${account}`,
     strategyExpiryFirst: "即将到期优先",
     strategyExpiryFirstDescription: "优先使用最先重置或到期的账号。",
     leadExpiryFirst: "即将到期优先。",

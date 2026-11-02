@@ -1973,6 +1973,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const ru: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `Нет доступных аккаунтов ${service}${reasons ? `: ${reasons}` : ""}`,
+    useAnotherAccount: 'Использовать другой аккаунт',
+    startUnavailableUsedUp: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт исчерпан`, `${count} аккаунта исчерпаны`, `${count} аккаунтов исчерпаны`),
+    startUnavailableSignIn: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт требует повторного входа`, `${count} аккаунта требуют повторного входа`, `${count} аккаунтов требуют повторного входа`),
+    startUnavailableCoolingDown: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт на паузе`, `${count} аккаунта на паузе`, `${count} аккаунтов на паузе`),
+    startUnavailableWaitingReset: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт ждёт сброса`, `${count} аккаунта ждут сброса`, `${count} аккаунтов ждут сброса`),
+    startUnavailableOff: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт выключен`, `${count} аккаунта выключены`, `${count} аккаунтов выключены`),
+    startUnavailableAtCapacity: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт на пределе`, `${count} аккаунта на пределе`, `${count} аккаунтов на пределе`),
+    startUnavailableUnusable: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт сейчас недоступен`, `${count} аккаунта сейчас недоступны`, `${count} аккаунтов сейчас недоступны`),
+    startUnavailableInUse: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт уже используется`, `${count} аккаунта уже используются`, `${count} аккаунтов уже используются`),
+    startUnavailableBody: ({ counts }) => `${counts}. Ваше сообщение сохранено.`,
+    startUnavailableDraftKept: `Ваше сообщение сохранено.`,
+    signInAccount: ({ account }) => `Войти в ${account}`,
     strategyExpiryFirst: "Скорее истекает",
     strategyExpiryFirstDescription: "Сначала используется аккаунт, лимит или подписка которого сбрасывается или заканчивается раньше.",
     leadExpiryFirst: "Сначала ближайший срок.",

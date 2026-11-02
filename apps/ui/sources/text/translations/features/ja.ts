@@ -1951,6 +1951,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const ja: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `${service} の利用可能なアカウントがありません${reasons ? `：${reasons}` : ""}`,
+    useAnotherAccount: '別のアカウントを使う',
+    startUnavailableUsedUp: ({ count }) => `${count}件は使い切り`,
+    startUnavailableSignIn: ({ count }) => `${count}件は再度サインインが必要`,
+    startUnavailableCoolingDown: ({ count }) => `${count}件はクールダウン中`,
+    startUnavailableWaitingReset: ({ count }) => `${count}件はリセット待ち`,
+    startUnavailableOff: ({ count }) => `${count}件はオフ`,
+    startUnavailableAtCapacity: ({ count }) => `${count}件は上限に到達`,
+    startUnavailableUnusable: ({ count }) => `${count}件は現在利用不可`,
+    startUnavailableInUse: ({ count }) => `${count}件はすでに使用中`,
+    startUnavailableBody: ({ counts }) => `${counts}です。メッセージは保持されています。`,
+    startUnavailableDraftKept: `メッセージは保持されています。`,
+    signInAccount: ({ account }) => `${account}にサインイン`,
     strategyExpiryFirst: "期限優先",
     strategyExpiryFirstDescription: "リセットまたは終了が最も早いアカウントを先に使います。",
     leadExpiryFirst: "期限の近いものを優先。",

@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, SCOPED_RPC_SOCKET_CONNECTION_PHASES } from '../../rpc/errors.js';
+import { ConnectedServicePoolSelectionV1Schema } from '../../connect/connectedServicePoolSelection.js';
 import { ConnectedServiceUxDiagnosticV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 
 /** Redacted presentation of a failed launch; never launch or retry authority. */
@@ -11,5 +12,9 @@ export const SessionSpawnLaunchErrorV1Schema = lazyZodSchema(() => z.strictObjec
   rpcErrorCode: z.optional(z.enum([MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES.OUTCOME_UNKNOWN, RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE])),
   connectionPhase: z.optional(z.enum(SCOPED_RPC_SOCKET_CONNECTION_PHASES)),
   uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
+  connectedAccountPool: z.optional(z.strictObject({
+    serviceId: z.string().check(z.minLength(1)),
+    excluded: ConnectedServicePoolSelectionV1Schema.shape.excluded,
+  })),
 }));
 export type SessionSpawnLaunchErrorV1 = z.infer<typeof SessionSpawnLaunchErrorV1Schema>;

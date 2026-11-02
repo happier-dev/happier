@@ -1951,6 +1951,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const it: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `Nessun account ${service} è disponibile${reasons ? `: ${reasons}` : ""}`,
+    useAnotherAccount: 'Usa un altro account',
+    startUnavailableUsedUp: ({ count }) => count === 1 ? `1 è esaurito` : `${count} sono esauriti`,
+    startUnavailableSignIn: ({ count }) => count === 1 ? `1 richiede di accedere di nuovo` : `${count} richiedono di accedere di nuovo`,
+    startUnavailableCoolingDown: ({ count }) => count === 1 ? `1 è in pausa` : `${count} sono in pausa`,
+    startUnavailableWaitingReset: ({ count }) => count === 1 ? `1 attende l'azzeramento` : `${count} attendono l'azzeramento`,
+    startUnavailableOff: ({ count }) => count === 1 ? `1 è disattivato` : `${count} sono disattivati`,
+    startUnavailableAtCapacity: ({ count }) => count === 1 ? `1 è al limite` : `${count} sono al limite`,
+    startUnavailableUnusable: ({ count }) => count === 1 ? `1 non è utilizzabile ora` : `${count} non sono utilizzabili ora`,
+    startUnavailableInUse: ({ count }) => count === 1 ? `1 è già in uso` : `${count} sono già in uso`,
+    startUnavailableBody: ({ counts }) => `${counts}. Il tuo messaggio è conservato.`,
+    startUnavailableDraftKept: `Il tuo messaggio è conservato.`,
+    signInAccount: ({ account }) => `Accedi a ${account}`,
     strategyExpiryFirst: "Scade prima",
     strategyExpiryFirstDescription: "Usa prima l’account che si ripristina o scade per primo.",
     leadExpiryFirst: "Prima ciò che scade prima.",

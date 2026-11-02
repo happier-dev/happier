@@ -1946,6 +1946,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const zhHant: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `沒有可用的 ${service} 帳號${reasons ? `：${reasons}` : ""}`,
+    useAnotherAccount: '使用其他帳號',
+    startUnavailableUsedUp: ({ count }) => `${count} 個已用完`,
+    startUnavailableSignIn: ({ count }) => `${count} 個需要重新登入`,
+    startUnavailableCoolingDown: ({ count }) => `${count} 個冷卻中`,
+    startUnavailableWaitingReset: ({ count }) => `${count} 個等待重設`,
+    startUnavailableOff: ({ count }) => `${count} 個已關閉`,
+    startUnavailableAtCapacity: ({ count }) => `${count} 個已滿載`,
+    startUnavailableUnusable: ({ count }) => `${count} 個暫時無法使用`,
+    startUnavailableInUse: ({ count }) => `${count} 個已在使用中`,
+    startUnavailableBody: ({ counts }) => `${counts}。你的訊息已保留。`,
+    startUnavailableDraftKept: `你的訊息已保留。`,
+    signInAccount: ({ account }) => `登入 ${account}`,
     strategyExpiryFirst: "即將到期優先",
     strategyExpiryFirstDescription: "優先使用最先重設或到期的帳號。",
     leadExpiryFirst: "即將到期優先。",

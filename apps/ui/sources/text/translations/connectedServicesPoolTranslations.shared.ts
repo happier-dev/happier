@@ -5,6 +5,20 @@ export type ConnectedServicesPoolCopy = typeof en;
 
 
 export const en = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `No ${service} account is available${reasons ? `: ${reasons}` : ""}`,
+    useAnotherAccount: 'Use another account',
+    // Why no pool member could start a session, as one sentence of counts ("2 are used up and 3 need you to sign in again").
+    startUnavailableUsedUp: ({ count }: { count: number }) => count === 1 ? '1 is used up' : `${count} are used up`,
+    startUnavailableSignIn: ({ count }: { count: number }) => count === 1 ? '1 needs you to sign in again' : `${count} need you to sign in again`,
+    startUnavailableCoolingDown: ({ count }: { count: number }) => count === 1 ? '1 is cooling down' : `${count} are cooling down`,
+    startUnavailableWaitingReset: ({ count }: { count: number }) => count === 1 ? '1 is waiting for its reset' : `${count} are waiting for their reset`,
+    startUnavailableOff: ({ count }: { count: number }) => count === 1 ? '1 is turned off' : `${count} are turned off`,
+    startUnavailableAtCapacity: ({ count }: { count: number }) => count === 1 ? '1 is at capacity' : `${count} are at capacity`,
+    startUnavailableUnusable: ({ count }: { count: number }) => count === 1 ? "1 can't be used right now" : `${count} can't be used right now`,
+    startUnavailableInUse: ({ count }: { count: number }) => count === 1 ? '1 is already in use' : `${count} are already in use`,
+    startUnavailableBody: ({ counts }: { counts: string }) => `${counts}. Your message is kept.`,
+    startUnavailableDraftKept: 'Your message is kept.',
+    signInAccount: ({ account }: { account: string }) => `Sign in to ${account}`,
     strategyExpiryFirst: "Expiring first",
     strategyExpiryFirstDescription: "Uses the account that resets or ends soonest first.",
     leadExpiryFirst: "Expiring first.",

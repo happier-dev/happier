@@ -1951,6 +1951,19 @@ type ConnectedServicesPoolCopy = Shared_connectedServicesPoolTranslations.Connec
 const en = Shared_connectedServicesPoolTranslations.en;
 
 const fr: ConnectedServicesPoolCopy = {
+    startUnavailable: ({ service, reasons }: { service: string; reasons: string }) => `Aucun compte ${service} n’est disponible${reasons ? ` : ${reasons}` : ""}`,
+    useAnotherAccount: 'Utiliser un autre compte',
+    startUnavailableUsedUp: ({ count }) => count === 1 ? `1 est épuisé` : `${count} sont épuisés`,
+    startUnavailableSignIn: ({ count }) => count === 1 ? `1 demande de te reconnecter` : `${count} demandent de te reconnecter`,
+    startUnavailableCoolingDown: ({ count }) => count === 1 ? `1 est en pause` : `${count} sont en pause`,
+    startUnavailableWaitingReset: ({ count }) => count === 1 ? `1 attend sa réinitialisation` : `${count} attendent leur réinitialisation`,
+    startUnavailableOff: ({ count }) => count === 1 ? `1 est désactivé` : `${count} sont désactivés`,
+    startUnavailableAtCapacity: ({ count }) => count === 1 ? `1 est saturé` : `${count} sont saturés`,
+    startUnavailableUnusable: ({ count }) => count === 1 ? `1 est inutilisable pour le moment` : `${count} sont inutilisables pour le moment`,
+    startUnavailableInUse: ({ count }) => count === 1 ? `1 est déjà utilisé` : `${count} sont déjà utilisés`,
+    startUnavailableBody: ({ counts }) => `${counts}. Ton message est conservé.`,
+    startUnavailableDraftKept: `Ton message est conservé.`,
+    signInAccount: ({ account }) => `Reconnecte-toi à ${account}`,
     strategyExpiryFirst: "Expire bientôt",
     strategyExpiryFirstDescription: "Utilise d’abord le compte qui se réinitialise ou se termine le plus tôt.",
     leadExpiryFirst: "Expiration la plus proche d’abord.",
