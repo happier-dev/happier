@@ -41,6 +41,7 @@ type Entry = {
     observation: Observation | undefined;
     healthObservation: DeploymentEnvironmentHealthObservationV1 | undefined;
     nextCursor: string | null;
+    dirty: boolean;
 };
 type Observation = { abort: AbortController; entries: Set<Entry> };
 const invalidResponse: DeploymentReadFailureV1 = { code: 'invalid_response', retryable: false };
@@ -79,6 +80,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         if (batch.entries.size === 0) batch.abort.abort();
     }
     function stopRead(entry: Entry) {
+        if (entry.request) entry.dirty = true;
         entry.abort?.abort();
         entry.abort = undefined;
         entry.request = undefined;
@@ -104,6 +106,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         }
     }
     function publishValue(entry: Entry, value: unknown) {
+        entry.dirty = false;
         if (entry.resource.kind === 'receipt') {
             const detail = value as DeploymentReceiptDetailV1;
             value = { ...detail, chip: projectDeploymentChipV1(detail.deployment), facts: projectDeploymentReceiptFactsV1(detail) };
@@ -213,7 +216,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         let entry = entries.get(resource.key);
         if (!entry) {
             entry = { resource, projection: createDeploymentProjectionV1(), demands: new Set(), abort: undefined, request: undefined,
-                observation: undefined, healthObservation: undefined, nextCursor: null };
+                observation: undefined, healthObservation: undefined, nextCursor: null, dirty: true };
             entries.set(resource.key, entry);
         }
         const held = entry;
@@ -223,7 +226,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         let released = false;
         held.demands.add(demand);
         if (retired) held.projection.publish(retiredSnapshot);
-        else if (active(held) && (!wasActive || held.projection.getSnapshot().status === 'idle')) void refresh(held);
+        else if (active(held) && ((!wasActive && (held.resource.kind !== 'collection' || held.dirty
+            || held.projection.getSnapshot().status !== 'ready')) || held.projection.getSnapshot().status === 'idle')) void refresh(held);
         syncHealthObservation(held);
         return {
             getSnapshot: () => (released ? releasedSnapshot : held.projection.getSnapshot()) as DeploymentReadSnapshotV1<T>,
@@ -251,7 +255,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     // Deliver the current shared value when presentation resumes,
                     // even if the following read returns an equal ready snapshot.
                     for (const listener of subscriptions.values()) listener();
-                    if (!entryWasActive || held.projection.getSnapshot().status === 'idle') void refresh(held);
+                    if ((!entryWasActive && (held.resource.kind !== 'collection' || held.dirty
+                        || held.projection.getSnapshot().status !== 'ready')) || held.projection.getSnapshot().status === 'idle') void refresh(held);
                 }
             },
             release() {
@@ -262,7 +267,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 held.demands.delete(demand);
                 syncHealthObservation(held);
                 if (!active(held)) { stopRead(held); stopObservation(held); }
-                if (held.demands.size === 0) {
+                if (held.demands.size === 0 && resource.kind !== 'collection') {
                     held.projection.clear(); entries.delete(resource.key);
                     if (resource.kind === 'receipt') refreshMemberVersions(resource.environmentId!);
                 }
@@ -384,10 +389,13 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     : resource.environmentId === hint.environmentId && (hint.deploymentId === undefined
                         ? resource.kind === 'environment' || resource.kind === 'domains'
                         : resource.kind === 'history' || (resource.kind === 'receipt' && resource.deploymentId === hint.deploymentId)));
-                if (affected) { stopRead(entry); stopObservation(entry); void refresh(entry); }
+                if (affected) { entry.dirty = true; stopRead(entry); stopObservation(entry); void refresh(entry); }
             }
         },
-        refreshDemanded: () => Promise.all([...entries.values()].map(entry => refresh(entry, true))).then(() => {}),
+        refreshDemanded: () => Promise.all([...entries.values()].map(entry => {
+            entry.dirty = true;
+            return refresh(entry, true);
+        })).then(() => {}),
         retire() {
             if (retired) return;
             retired = true;

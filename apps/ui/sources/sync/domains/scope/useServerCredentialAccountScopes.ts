@@ -19,6 +19,7 @@ import {
 import {
     resolveAdmittedEmbedServerCredentialAccountScope,
     resolveServerCredentialAccountScope,
+    captureServerCredentialAccountScopeLifetime,
     subscribeServerCredentialAccountScopeRetry,
     type ServerCredentialAccountScopeResolution,
 } from './serverCredentialAccountScope';
@@ -202,6 +203,7 @@ function useCredentialScopeEntries(
                 scope,
                 revision,
                 credentialKey: resolution.credentialKey,
+                accountLifetime: captureServerCredentialAccountScopeLifetime(resolution),
                 isCurrent,
                 onRetire: (cancel) => {
                     if (!isCurrent()) {

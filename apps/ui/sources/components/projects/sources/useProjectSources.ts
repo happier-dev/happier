@@ -60,27 +60,24 @@ const UNAVAILABLE_SOURCE_READ: SourceReadState = Object.freeze({ current: null, 
 /** One accepted Source provenance demands its existing authorized reader, not a catalog scan. */
 export function useProjectSource(lifetime: ServerAccountScopeLifetime | null, sourceId: string | null) {
     const execute = useProjectSourceActionExecute();
-    const controller = React.useMemo(() => lifetime && sourceId
-        ? createProjectSourcesController(lifetime.scope, execute) : null, [execute, lifetime, sourceId]);
+    const owner = React.useMemo(() => lifetime?.isCurrent() && sourceId
+        ? readProjectSourcesCatalog(lifetime, execute).readSource(sourceId) : null, [execute, lifetime, sourceId]);
+    const controller = owner?.controller ?? null;
     const subscribe = React.useCallback((listener: () => void) => {
         const unsubscribe = controller?.subscribe(listener);
-        const retirement = lifetime?.onRetire(() => { controller?.dispose(); listener(); });
+        const retirement = lifetime?.onRetire(listener);
         return () => { unsubscribe?.(); retirement?.dispose(); };
     }, [controller, lifetime]);
     const getSnapshot = React.useCallback((): SourceReadState => lifetime?.isCurrent() && controller
         ? controller.getSnapshot() : UNAVAILABLE_SOURCE_READ, [controller, lifetime]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     React.useEffect(() => {
-        if (!controller || !sourceId || !lifetime?.isCurrent()) return;
-        controller.resume();
-        const stop = observeProjectSources(controller, { detailOnly: true });
-        void controller.select(sourceId);
-        return () => { stop(); controller.dispose(); };
-    }, [controller, lifetime, sourceId]);
+        if (lifetime?.isCurrent()) return owner?.demand();
+    }, [owner, lifetime]);
     // Keep the last admitted presentation during a refresh, as the Source
-    // controller does. An offline/refused read or Account retirement supplies
-    // no Source slot; context values themselves never grant effect authority.
-    const current = lifetime?.isCurrent() && (state.detailStatus === 'ready' || state.detailStatus === 'loading')
+    // controller does, including transient offline failures. Definitive refusal
+    // and Account retirement withdraw it; display grants no effect authority.
+    const current = lifetime?.isCurrent() && (state.detailStatus === 'ready' || state.detailStatus === 'loading' || state.detailStatus === 'offline')
         && state.current?.id === sourceId ? state.current : null;
     const source = React.useMemo(() => current && lifetime ? { serverId: lifetime.scope.serverId, source: current } : null, [current, lifetime]);
     return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source }), [source, state.detailStatus, state.issue]);

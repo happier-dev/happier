@@ -102,6 +102,7 @@ export type NativeComposeActivatedProject = Readonly<{
 
 type Container = ProjectNativeContainerObservation & Readonly<{
     state: string; health: string; ports: Readonly<Record<string, unknown>>; workingDirectory?: string;
+    startedAtMs?: number; healthSince?: number;
 }>;
 const unknown: ManagedServiceNativeObservationV1 = { phase: 'unknown', readiness: 'not_reported', endpoint: null };
 const stopped: ManagedServiceNativeObservationV1 = { phase: 'stopped', readiness: 'not_reported', endpoint: null };
@@ -181,9 +182,13 @@ function containers(stdout: string, project?: string): readonly Container[] | nu
                 || !record(item.NetworkSettings) || item.NetworkSettings.Ports !== null && !record(item.NetworkSettings.Ports)) return null;
             if (item.State.Health !== undefined && (!record(item.State.Health) || typeof item.State.Health.Status !== 'string')) return null;
             const policy = record(item.HostConfig) && record(item.HostConfig.RestartPolicy) ? item.HostConfig.RestartPolicy : undefined;
+            const startedAtMs = typeof item.State.StartedAt === 'string' ? Date.parse(item.State.StartedAt) : NaN;
+            const healthSince = record(item.State.Health) ? item.State.Health.Since : undefined;
             const configurationMatches = typeof item.configurationMatches === 'boolean' ? item.configurationMatches : undefined;
             result.push({ ...(configurationMatches === undefined ? {} : { configurationMatches }), id: item.Id,
                 composeProject: item.Config.Labels['com.docker.compose.project'], service: item.Config.Labels['com.docker.compose.service'], state: item.State.Status,
+                ...(Number.isSafeInteger(startedAtMs) && startedAtMs > 0 && item.State.Status === 'running' ? { startedAtMs } : {}),
+                ...(typeof healthSince === 'number' && Number.isSafeInteger(healthSince) && healthSince > 0 ? { healthSince } : {}),
                 ...(typeof item.Name === 'string' && item.Name.startsWith('/') && item.Name.length > 1
                     ? { containerName: item.Name.slice(1) } : {}),
                 ...(record(item.NetworkSettings.Networks) ? { networkNames: Object.keys(item.NetworkSettings.Networks) } : {}),
@@ -262,8 +267,7 @@ export async function readNativeComposeLogsForHost(input: Readonly<{
     const incomplete = assertRedaction();
     const raw = output.join('\n');
     const masked = input.redactionLease?.isActive() ? input.redactionLease.redact(raw) : raw;
-    const text = incomplete ? `secret masking may be incomplete until the next deploy\n${masked}` : masked;
-    const bytes = Buffer.from(text, 'utf8');
+    const bytes = Buffer.from(masked, 'utf8');
     return { kind: 'page', page: { sourceRevision,
         text: new TextDecoder('utf-8').decode(bytes.subarray(0, options.maxBytes), { stream: true }),
         nextCursor: null, truncated: bytes.byteLength > options.maxBytes,
@@ -1116,6 +1120,8 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         return output;
     };
     const accounting = createManagedServiceAccountingRead(async (signal): Promise<ProjectNativeAccountingResult> => {
+        const startedAtMs = runtimeFacts.accounting?.startedAtMs;
+        runtimeFacts = { ...runtimeFacts, accounting: startedAtMs === undefined ? undefined : { startedAtMs } };
         const selected = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
         if (!selected?.length) return { kind: 'unavailable', reason: 'unavailable' };
         try {
@@ -1125,7 +1131,12 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             if (!current || JSON.stringify(current) !== JSON.stringify(selected) || result.exitCode !== 0) {
                 return { kind: 'unavailable', reason: 'unavailable' };
             }
-            return nativeAccounting(result.stdout, selected);
+            const sampled = nativeAccounting(result.stdout, selected);
+            if (sampled.kind === 'sample' && sampled.samples.length && sampled.samples.every(sample => sample.memoryBytes !== null)) {
+                runtimeFacts = { ...runtimeFacts, accounting: { ...runtimeFacts.accounting,
+                    memoryBytes: sampled.samples.reduce((total, sample) => total + sample.memoryBytes!, 0) } };
+            }
+            return sampled;
         } catch (error) {
             // Unsettled probe custody belongs to the native IO owner;
             // it is not an ordinary missing accounting observation.
@@ -1298,12 +1309,22 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                     engineRows = parsed && parsed.length === ids?.length ? parsed : null;
                     if (engineRows && input.environment && engineRows.some(row => row.service !== target)) engineRows = null;
                     const configuration = input.environment?.facts?.configuration;
+                    // A replicated service has been fully up since its newest member started.
+                    const startedAtMs = engineRows?.length && engineRows.every(row => row.startedAtMs !== undefined)
+                        ? Math.max(...engineRows.map(row => row.startedAtMs!)) : undefined;
+                    const healthSince = engineRows?.length && engineRows.every(row => row.healthSince !== undefined)
+                        ? Math.max(...engineRows.map(row => row.healthSince!)) : undefined;
+                    const memoryBytes = engineRows && runtimeFacts.accounting?.startedAtMs === startedAtMs
+                        ? runtimeFacts.accounting?.memoryBytes : undefined;
                     const ports = engineRows && readNativeComposePublishedPorts(engineRows.map(row => row.ports),
                         value => launch?.secretRedactionLease?.redact(value) ?? value);
                     runtimeFacts = { configuration: engineRows && configuration
                         ? ports ? { ...configuration, ports } : null : runtimeFacts.configuration,
                         observedAt: engineRows ? Date.now() : runtimeFacts.observedAt,
-                        freshness: engineRows ? 'current' : 'unavailable' };
+                        freshness: engineRows ? 'current' : 'unavailable',
+                        ...(startedAtMs === undefined && memoryBytes === undefined ? {} : { accounting: {
+                            ...(startedAtMs === undefined ? {} : { startedAtMs }), ...(memoryBytes === undefined ? {} : { memoryBytes }) } }),
+                        ...(healthSince === undefined ? {} : { healthSince }) };
                     const next = engineRows?.map(({ id, composeProject, service, containerName, networkNames, pid, restartCount, restartPolicy, nativeImageId, configurationMatches }) => {
                         const proof = imageProofs.get(id);
                         return { id, composeProject, service, ...(configurationMatches === undefined ? {} : { configurationMatches }),

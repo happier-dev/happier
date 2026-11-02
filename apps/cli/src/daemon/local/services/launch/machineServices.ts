@@ -179,7 +179,14 @@ export function createMachineServicesRuntime(input: Readonly<{
             const projects = owner.listProjectServices();
             handles.push(...await selectVisibleMachineProjectServices(target, environmentId
                 ? projects.filter(handle => handle.kind === 'environment' && handle.environmentId === environmentId) : projects, request, serviceId));
-            const projectedRows = handles.map(owner.machineServiceRows.read);
+            const readRow = async (handle: ServiceHandle) => {
+                // An explicit list read samples existing native accounting; observation itself never polls.
+                if (request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
+                    await accounting(handle, request.signal);
+                }
+                return owner.machineServiceRows.read(handle);
+            };
+            const projectedRows = await Promise.all(handles.map(readRow));
             if (environmentId) return { rows: projectedRows, handles };
             const current = readIntent();
             if (!current) return null;
@@ -190,7 +197,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const candidate = registry === lease.registry ? adoptedHandles.get(watch.watchId) : undefined;
                 const handle = candidate && sameWatch(candidate.watch, watch) && candidate.isCurrent()
                     && !candidate.retirementSignal.aborted ? candidate : undefined;
-                projectedRows.push(handle ? owner.machineServiceRows.read(handle) : rows.unknown(watch));
+                projectedRows.push(handle ? await readRow(handle) : rows.unknown(watch));
                 if (handle) handles.push(handle);
             }
             return { rows: projectedRows, handles };
@@ -276,7 +283,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                     if (!service || expectedGeneration && service.generation !== expectedGeneration) return unavailable('unavailable');
                     const handle = projection.handles.find(candidate => candidate.serviceId === serviceId);
                     result = { kind: 'service', service, accounting: handle ? await accounting(handle, request.signal) : unavailable(),
-                        ...(handle && handle.kind !== 'adopted' && handle.readNativeRuntimeFacts
+                        ...(handle && handle.readNativeRuntimeFacts
                             ? { runtimeFacts: handle.readNativeRuntimeFacts() } : {}) };
                 }
             } else if (request.actionId === 'machines.services.unwatch' && 'watchId' in parsed.data) {

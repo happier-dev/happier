@@ -103,6 +103,8 @@ function createEngine(retired: () => void) {
     const registrations = new Map<Registration, { ready(): void; value?: string; waiting: Set<() => void> }>();
     const byContainer = new Map<string, Set<Registration>>();
     const pending = new Set<string>();
+    // Docker emits transition time on health_status events, not in Health.Log probes.
+    const healthTransitions = new Map<string, { status: string; since: number }>();
     let stream: Subscription | undefined;
     let streamSource: Registration | undefined;
     let closing = Promise.resolve();
@@ -138,6 +140,7 @@ function createEngine(retired: () => void) {
             void closing.catch(() => {});
         }
         pending.clear();
+        healthTransitions.clear();
         for (const [registration, retained] of registrations) {
             publish(registration, null);
             for (const resolve of retained.waiting) resolve();
@@ -183,14 +186,16 @@ function createEngine(retired: () => void) {
                         const state = record(row.State) ? row.State : {};
                         const host = record(row.HostConfig) ? row.HostConfig : {};
                         const policy = record(host.RestartPolicy) ? host.RestartPolicy : {};
+                        const transition = healthTransitions.get(row.Id);
                         return [[row.Id, { native: row, facts: { Id: row.Id,
                             ...(typeof row.Name === 'string' ? { Name: row.Name } : {}),
                             ...(typeof row.Image === 'string' && /^sha256:[a-f0-9]{64}$/u.test(row.Image) ? { Image: row.Image } : {}),
                             Config: { Labels: {
                             'com.docker.compose.project': labels['com.docker.compose.project'],
                             'com.docker.compose.service': labels['com.docker.compose.service'],
-                        } }, State: { Status: state.Status, Pid: state.Pid,
-                            ...(record(state.Health) ? { Health: { Status: state.Health.Status } } : {}) },
+                        } }, State: { Status: state.Status, Pid: state.Pid, StartedAt: state.StartedAt,
+                            ...(record(state.Health) ? { Health: { Status: state.Health.Status,
+                                ...(transition && transition.status === state.Health.Status ? { Since: transition.since } : {}) } } : {}) },
                         NetworkSettings: { Ports: network.Ports,
                             ...(record(network.Networks) ? { Networks: Object.fromEntries(Object.keys(network.Networks).map(name => [name, {}])) } : {}) },
                         RestartCount: row.RestartCount,
@@ -217,6 +222,13 @@ function createEngine(retired: () => void) {
             && !value.Action.startsWith('health_status:')) return;
         const affected = byContainer.get(value.Actor.ID);
         if (!affected) return;
+        if (value.Action.startsWith('health_status:')) {
+            const status = value.Action.slice('health_status:'.length).trim();
+            const since = typeof value.timeNano === 'number' ? Math.floor(value.timeNano / 1e6)
+                : typeof value.time === 'number' ? value.time * 1000 : NaN;
+            if (Number.isSafeInteger(since) && since > 0) healthTransitions.set(value.Actor.ID, { status, since });
+            else if (healthTransitions.get(value.Actor.ID)?.status !== status) healthTransitions.delete(value.Actor.ID);
+        } else if (['start', 'die', 'restart', 'destroy'].includes(value.Action)) healthTransitions.delete(value.Actor.ID);
         for (const registration of affected) {
             // Do not hide die/restart behind a later running inspect.
             if (['die', 'restart', 'destroy'].includes(value.Action)) publish(registration, null);
@@ -279,7 +291,7 @@ function createEngine(retired: () => void) {
                 for (const id of registration.ids) {
                     const readers = byContainer.get(id);
                     readers?.delete(registration);
-                    if (!readers?.size) { byContainer.delete(id); pending.delete(id); }
+                    if (!readers?.size) { byContainer.delete(id); pending.delete(id); healthTransitions.delete(id); }
                 }
                 ready();
                 if (registrations.size) {

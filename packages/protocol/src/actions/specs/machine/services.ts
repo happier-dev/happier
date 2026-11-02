@@ -33,7 +33,9 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   unavailableReason: z.optional(ManagedServiceUnavailableReasonV1Schema),
   native: z.optional(ManagedServiceNativeStateV1Schema),
   configuration: z.optional(z.nullable(z.pick(DeploymentReviewServiceV1Schema, { ports: true }))),
+  accounting: MachineServiceNativeRuntimeFactsV1Schema.shape.accounting,
   health: z.optional(z.strictObject({
+    since: MachineServiceNativeRuntimeFactsV1Schema.shape.healthSince,
     status: HealthCheckStatusV1Schema,
     observedAtMs: MachineServiceNativeRuntimeFactsV1Schema.shape.observedAt,
     freshness: MachineServiceNativeRuntimeFactsV1Schema.shape.freshness,

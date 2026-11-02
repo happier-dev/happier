@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { canReadIncompleteSecretMaskingForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -6,15 +10,255 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
-import type { ProjectNativeEnvironmentIo } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 
 describe('Compose exact native resource lifetime', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('samples one admitted full-container accounting batch on demand and leaves unknown metrics null', async () => {
+        const ids = ['a'.repeat(64), 'b'.repeat(64)];
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: string[][] = [];
+        let release!: () => void;
+        let entered!: () => void;
+        let pending = new Promise<void>(resolve => { release = resolve; });
+        const sampling = new Promise<void>(resolve => { entered = resolve; });
+        let failure: unknown;
+        let stats: unknown[] = [
+            { ID: ids[0], CPUPerc: '12.5%', MemUsage: '2MiB / 1GiB' },
+            { ID: ids[1], CPUPerc: '--', MemUsage: '-- / --' },
+        ];
+        const capture = createNativeComposeLifecycle({ args, engineId: 'accounting-test',
+            environment: { composeService: 'worker', containerIds: ids }, io: {
+                async events() { return { async dispose() {} }; },
+                async run(request) {
+                    requests.push([...request.args]);
+                    if (request.args.includes('stats')) {
+                        entered(); await pending;
+                        if (failure) throw failure;
+                        return { exitCode: 0, stdout: stats.map(row => JSON.stringify(row)).join('\n') };
+                    }
+                    return { exitCode: 0, stdout: JSON.stringify(ids.map(id => ({ ...container(id[0], 'running'), Id: id }))) };
+                },
+            } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        const observation = await capture.lifecycle.observe!(() => {});
+        try {
+            for (let index = 0; index < 100; index++) await capture.lifecycle.inspect();
+            expect(requests.filter(request => request.includes('stats'))).toHaveLength(0);
+            const first = capture.lifecycle.readAccounting!();
+            const second = capture.lifecycle.readAccounting!();
+            await sampling;
+            expect(requests.filter(request => request.includes('stats'))).toEqual([
+                ['stats', '--no-stream', '--no-trunc', '--format', '{{json .}}', ...ids],
+            ]);
+            release();
+            const expected = { kind: 'sample', samples: [
+                { nativeResourceId: ids[0], cpuPercent: 12.5, memoryBytes: 2097152 },
+                { nativeResourceId: ids[1], cpuPercent: null, memoryBytes: null },
+            ] };
+            expect(await first).toEqual(expected);
+            expect(await second).toEqual(expected);
+            expect(capture.lifecycle.runtimeFacts!().accounting?.memoryBytes).toBeUndefined();
+            pending = Promise.resolve();
+            expect(await capture.lifecycle.readAccounting!()).toEqual(expected);
+            expect(requests.filter(request => request.includes('stats'))).toHaveLength(2);
+            stats = ids.map(id => ({ ID: id, CPUPerc: '0%', MemUsage: '2MiB / 1GiB' }));
+            await capture.lifecycle.readAccounting!();
+            expect(capture.lifecycle.runtimeFacts!().accounting).toMatchObject({ memoryBytes: 4194304 });
+            stats = [{ ID: 'c'.repeat(64), CPUPerc: '99%', MemUsage: '100MiB / 1GiB' }];
+            expect(await capture.lifecycle.readAccounting!()).toEqual({ kind: 'unavailable', reason: 'unavailable' });
+            expect(capture.lifecycle.runtimeFacts!().accounting?.memoryBytes).toBeUndefined();
+            stats = [];
+            expect(await capture.lifecycle.readAccounting!()).toEqual({ kind: 'sample', samples: ids.map(nativeResourceId => ({
+                nativeResourceId, cpuPercent: null, memoryBytes: null,
+            })) });
+            failure = new PluginError({ code: 'plugin_exec_termination_incomplete', message: 'Native query custody is unsettled' });
+            await expect(capture.lifecycle.readAccounting!()).rejects.toMatchObject({ code: 'plugin_exec_termination_incomplete' });
+        } finally { release(); await observation.dispose(); }
+        expect(await capture.lifecycle.readAccounting!()).toEqual({ kind: 'unavailable', reason: 'unavailable' });
+        expect(requests.filter(request => request.includes('stats'))).toHaveLength(6);
+    });
+
+    it('shares one proven engine subscription and outage recovery across 120 admitted services', async () => {
+        vi.useFakeTimers();
+        const requests: string[][] = [];
+        const subscriptions: Array<Readonly<{ event(value: unknown): void; disconnected(): void }>> = [];
+        let available = true;
+        let unhealthy = false;
+        let releases = 0;
+        const ids = Array.from({ length: 120 }, (_, index) => index.toString(16).padStart(64, '0'));
+        const io = { async run(request: Parameters<ProjectNativeToolchainIo['run']>[0]) {
+            requests.push([...request.args]);
+            const selected = ids.filter(id => request.args.includes(id));
+            return { exitCode: 0, stdout: JSON.stringify(selected.map(id => ({
+                ...container('a', 'running'), Id: id,
+                Config: { Labels: { 'com.docker.compose.project': 'happier-test', 'com.docker.compose.service': `service-${ids.indexOf(id)}` } },
+                State: { Status: 'running', StartedAt: '2026-10-30T12:00:00.000Z', Pid: 10000 + ids.indexOf(id), Health: { Status: unhealthy && id === ids[0] ? 'unhealthy' : 'healthy' } },
+                RestartCount: 0, HostConfig: { RestartPolicy: { Name: 'unless-stopped', MaximumRetryCount: 0 } },
+            }))) };
+        } };
+        const events = async (request: Readonly<{ event(value: unknown): void; disconnected(): void; signal: AbortSignal }>) => {
+            subscriptions.push(request);
+            if (!available) throw new Error('engine disconnected');
+            return { async dispose() { releases += 1; } };
+        };
+        const host = createManagedServiceProcessSupervisorHost({});
+        const supervisor = host.bind({ kind: 'project', isOccurrenceCurrent: () => true });
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const captures = ids.map((id, index) => {
+            const input = { args, io: { ...io, events }, engineId: 'engine-shared-count-test', environment: { composeService: `service-${index}`, containerIds: [id] } };
+            const capture = createNativeComposeLifecycle(input);
+            capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {},
+                secretRedactionLease: createProviderRedactionLease({ values: [] }), release() {} });
+            return capture;
+        });
+        const handles = await Promise.all(captures.map((capture, index) => supervisor.supervise({
+            id: `engine-service-${index}`, watchdog: { intervalMs: 5000, missedIntervals: 2 },
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: capture.lifecycle, releaseObservation: async () => {} },
+        })));
+        try {
+            expect(subscriptions).toHaveLength(1);
+            expect(captures[0].lifecycle.runtimeFacts!().accounting).toEqual({ startedAtMs: Date.parse('2026-10-30T12:00:00.000Z') });
+            expect(captures[0].lifecycle.runtimeFacts!().healthSince).toBeUndefined();
+            expect(requests).toHaveLength(1);
+            expect(requests[0].filter(arg => ids.includes(arg))).toHaveLength(120);
+            const evidence = captures[0].lifecycle.nativeContainers?.();
+            expect(evidence).toEqual([{ id: ids[0], composeProject: 'happier-test', service: 'service-0', pid: 10000,
+                restartCount: 0, restartPolicy: { name: 'unless-stopped', maximumRetryCount: 0 } }]);
+            for (let index = 0; index < 100; index += 1) expect(captures[0].lifecycle.nativeContainers?.()).toBe(evidence);
+            expect(requests).toHaveLength(1);
+            expect(handles.every(handle => handle.snapshot().state === 'healthy')).toBe(true);
+            expect(vi.getTimerCount()).toBe(0);
+            requests.length = 0;
+            subscriptions[0].event({ Type: 'container', Action: 'start', Actor: { ID: 'f'.repeat(64) } });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(requests).toHaveLength(0);
+            unhealthy = true;
+            for (let index = 0; index < 100; index += 1) subscriptions[0].event({ Type: 'container', Action: 'health_status: unhealthy', time: 1793361605, timeNano: 1793361605123000000, Actor: { ID: ids[0] } });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(requests.filter(request => request.includes('inspect'))).toHaveLength(1);
+            expect(handles[0].snapshot().state).toBe('unhealthy');
+            expect(captures[0].lifecycle.runtimeFacts!().healthSince).toBe(1793361605123);
+            expect(requests.filter(request => request.includes('logs'))).toHaveLength(1);
+            expect(handles.slice(1).every(handle => handle.snapshot().state === 'healthy')).toBe(true);
+            const failed = handles[0].snapshot();
+            const unchanged = handles[1].snapshot();
+            requests.length = 0;
+            subscriptions[0].event({ Type: 'container', Action: 'health_status: unhealthy', Actor: { ID: ids[0] } });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(requests.filter(request => request.includes('inspect'))).toHaveLength(1);
+            expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+            expect(handles[0].snapshot()).toBe(failed);
+            expect(handles[1].snapshot()).toBe(unchanged);
+            unhealthy = false;
+            subscriptions[0].event({ Type: 'container', Action: 'health_status: healthy', Actor: { ID: ids[0] } });
+            await vi.advanceTimersByTimeAsync(0);
+            const transitions: string[] = [];
+            const listener = handles[0].observe!(snapshot => { transitions.push(`${snapshot.nativePhase}:${snapshot.state}`); });
+            transitions.length = 0;
+            requests.length = 0;
+            try {
+                // A quick native restart cannot disappear behind its later
+                // healthy inspect; the supervisor consumes both facts in order.
+                subscriptions[0].event({ Type: 'container', Action: 'restart', Actor: { ID: ids[0] } });
+                await vi.advanceTimersByTimeAsync(0);
+                expect(transitions.filter((value, index) => value !== transitions[index - 1]))
+                    .toEqual(['unknown:unhealthy', 'running:healthy']);
+                expect(requests.filter(request => request.includes('inspect'))).toHaveLength(1);
+                expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+                expect(vi.getTimerCount()).toBe(0);
+            } finally { listener.dispose(); }
+            requests.length = 0;
+            available = false;
+            subscriptions[0].disconnected();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(handles.every(handle => handle.snapshot().nativePhase === 'unknown')).toBe(true);
+            expect(captures[0].lifecycle.nativeContainers?.()).toBeNull();
+            expect(captures[0].lifecycle.runtimeFacts!().healthSince).toBeUndefined();
+            expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+            requests.length = 0;
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(subscriptions).toHaveLength(4);
+            expect(requests).toHaveLength(0);
+            expect(vi.getTimerCount()).toBe(1);
+            available = true;
+            unhealthy = false;
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(subscriptions).toHaveLength(5);
+            expect(requests.filter(request => request.includes('inspect'))).toHaveLength(1);
+            expect(handles.every(handle => handle.snapshot().state === 'healthy')).toBe(true);
+            expect(vi.getTimerCount()).toBe(0);
+            available = false;
+            subscriptions[4].disconnected();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(vi.getTimerCount()).toBe(1);
+        } finally {
+            await Promise.all(handles.map(handle => handle.dispose()));
+        }
+        expect(releases).toBe(2);
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(subscriptions).toHaveLength(5);
+    });
+
+    it('keeps person Environment logs readable with incomplete masking while automation refuses and the app keeps running', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: string[][] = [];
+        let diagnostic = 'retired-secret-sentinel PORT=3000';
+        const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
+            requests.push([...request.args]);
+            return { exitCode: 0, stdout: request.args.includes('ps') ? 'a'.repeat(64)
+                : request.args.includes('inspect') ? JSON.stringify([container('a', 'running')])
+                    : diagnostic };
+        } };
+        const control = createNativeComposeLifecycle({ args, io,
+            environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] } });
+        const launch = { command: '/docker', args, cwd: '/release', env: {}, release() {} };
+        control.bindLaunch(launch);
+
+        expect(await control.lifecycle.inspect()).toMatchObject({ phase: 'running' });
+        await expect(control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 }))
+            .rejects.toMatchObject({ code: 'secret_redaction_unavailable' });
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+        // A plugin claiming person authority is not the person's own host read.
+        await expect(control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192,
+            ...(canReadIncompleteSecretMaskingForHost({ surface: 'plugin', authority: 'present_user' })
+                ? { allowIncompleteSecretMasking: true as const } : {}) }))
+            .rejects.toMatchObject({ code: 'secret_redaction_unavailable' });
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+        const personPage = await control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192,
+            ...(canReadIncompleteSecretMaskingForHost({ surface: 'cli', authority: 'present_user' })
+                ? { allowIncompleteSecretMasking: true as const } : {}) });
+        expect(personPage).toMatchObject({ kind: 'page', page: { secretMasking: 'incomplete',
+            text: diagnostic } });
+        expect(JSON.stringify(personPage)).toContain('retired-secret-sentinel PORT=3000');
+        const readsAfterPerson = requests.filter(request => request.includes('logs')).length;
+        await expect(control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 }))
+            .rejects.toMatchObject({ code: 'secret_redaction_unavailable' });
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(readsAfterPerson);
+        expect(await control.lifecycle.inspect()).toMatchObject({ phase: 'running' });
+        expect(requests.some(request => request.includes('stop') || request.includes('down'))).toBe(false);
+
+        // Explicit empty custody proves this generation had no delivered secrets.
+        diagnostic = 'plain diagnostic PORT=3000';
+        const secretRedactionLease = createProviderRedactionLease({ values: [] });
+        control.bindLaunch({ ...launch, secretRedactionLease });
+        expect(await control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 }))
+            .toMatchObject({ kind: 'page', page: { text: 'plain diagnostic PORT=3000' } });
+        secretRedactionLease.close();
+        const reads = requests.filter(request => request.includes('logs')).length;
+        await expect(control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 }))
+            .rejects.toMatchObject({ code: 'secret_redaction_unavailable' });
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(reads);
+    });
+
     function fixture() {
         let rows: unknown = [container('a', 'running')];
         let code = 0;
         const requests: string[][] = [];
         // Docker process IO is the system boundary; codec and native decisions remain real.
-        const io: Pick<ProjectNativeEnvironmentIo, 'run'> = { async run(request) {
+        const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
             requests.push([...request.args]);
             return { exitCode: code, stdout: request.args.includes('ps') ? Array.isArray(rows) ? rows.map(row => row.Id).join('\n') : ''
                 : request.args.includes('inspect') ? JSON.stringify(rows) : 'native output' };
@@ -124,7 +368,7 @@ describe('Compose exact native resource lifetime', () => {
         if (!Array.isArray(prefix) || !prefix.every((arg): arg is string => typeof arg === 'string')) throw new Error('Invalid Docker fixture prefix');
         const execute = promisify(execFile);
         // Installed OS process IO is the boundary. Native codec/control remain production code.
-        const io: Pick<ProjectNativeEnvironmentIo, 'run'> = { async run(request) {
+        const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
             try {
                 const result = await execute(request.command, [...request.args], { cwd: request.cwd, env: { ...process.env, ...request.env }, signal: request.signal });
                 return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };

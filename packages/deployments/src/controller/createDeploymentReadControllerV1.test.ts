@@ -27,6 +27,33 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it('retains current headers across released demand and reads only invalidated headers on return', async () => {
+        const base = networkBoundary();
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        let lease = controller.acquireCollection({ environmentIds: [base.environment.id] }, active);
+        try {
+            await lease.refresh();
+            const retained = lease.getSnapshot();
+            lease.release();
+            lease = controller.acquireCollection({ environmentIds: [base.environment.id] }, active);
+            expect(lease.getSnapshot()).toBe(retained);
+            expect(base.transport.listEnvironments, 'current header remount adds zero reads').toHaveBeenCalledTimes(1);
+            lease.release();
+            controller.invalidate({ environmentId: 'unrelated-environment' });
+            expect(base.transport.listEnvironments).toHaveBeenCalledTimes(1);
+            base.transport.listEnvironments.mockResolvedValue({ ok: true, value: createDeploymentEnvironmentCollectionV1({
+                items: [{ environment: { ...base.environment, revision: 2 }, title: 'Renamed' }],
+            }) });
+            controller.invalidate({ environmentId: base.environment.id });
+            expect(base.transport.listEnvironments, 'inactive invalidation never fetches').toHaveBeenCalledTimes(1);
+            lease = controller.acquireCollection({ environmentIds: [base.environment.id] }, active);
+            await vi.waitFor(() => expect(lease.getSnapshot().value?.items[0]?.title).toBe('Renamed'));
+            expect(base.transport.listEnvironments).toHaveBeenCalledTimes(2);
+            controller.retire();
+            expect(lease.getSnapshot().value).toBeNull();
+        } finally { lease.release(); controller.retire(); }
+    });
+
     it('isolates template-selected preview pages and refuses another template in the selected response', async () => {
         const base = networkBoundary();
         const preview = createDeploymentEnvironmentHeaderV1({ purpose: 'preview', previewTemplateEnvironmentId: 'template-b',

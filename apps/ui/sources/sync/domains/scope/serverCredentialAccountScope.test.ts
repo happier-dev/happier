@@ -24,7 +24,7 @@ vi.mock('@/utils/system/sentry', async (importOriginal) => ({
 // registered; their cold transform is not the contract under test.
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
-const { resolveServerCredentialAccountScope } = await import('./serverCredentialAccountScope');
+const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('./serverCredentialAccountScope');
 
 describe('resolveServerCredentialAccountScope', () => {
     let localStorage: LocalStorageMockHandle | null = null;
@@ -51,6 +51,31 @@ describe('resolveServerCredentialAccountScope', () => {
     afterAll(() => {
         restoreWebLocks?.();
         restoreWebLocks = null;
+    });
+
+    it('retains one exact credential lifetime between readers and retires it on a hidden credential replacement', async () => {
+        const home = await upsertServerProfile({ name: 'Retained Account', serverUrl: 'https://retained-credential.test' });
+        const token = (subject: string) => `e30.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.signature`;
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: token('original') });
+        const first = await resolveServerCredentialAccountScope(home.id);
+        if (first.kind !== 'bound') throw new Error('Expected original credential');
+        const lifetime = captureServerCredentialAccountScopeLifetime(first);
+        const retire = vi.fn();
+        lifetime.onRetire(retire);
+        const nextReader = await resolveServerCredentialAccountScope(home.id);
+        if (nextReader.kind !== 'bound') throw new Error('Expected retained credential');
+        expect(captureServerCredentialAccountScopeLifetime(nextReader)).toBe(lifetime);
+        expect(lifetime.isCurrent()).toBe(true);
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: token('replacement') });
+        expect(lifetime.isCurrent()).toBe(false);
+        expect(retire).toHaveBeenCalledTimes(1);
+        const replacement = await resolveServerCredentialAccountScope(home.id);
+        if (replacement.kind !== 'bound') throw new Error('Expected replacement credential');
+        const replaced = captureServerCredentialAccountScopeLifetime(replacement);
+        expect(replaced).not.toBe(lifetime);
+        expect(replaced.scope.accountId).toBe('replacement');
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        expect(replaced.isCurrent()).toBe(false);
     });
 
     it('reports an unreadable credential store as unavailable, never as a sign-out', async () => {

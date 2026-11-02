@@ -39,7 +39,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             const native = snapshot.mode === 'native'
                 ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported' } as const
                 : undefined;
-            const facts = handle.kind !== 'adopted' ? handle.readNativeRuntimeFacts?.() : undefined;
+            const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' : 'unavailable';
             const status = freshness !== 'current' ? 'unknown'
                 : snapshot.state === 'unhealthy' || snapshot.state === 'stopped' || snapshot.nativePhase === 'stopped'
@@ -49,6 +49,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 : snapshot.nativePhase === 'stopped' ? 'stopped' : snapshot.readiness === 'not_ready' ? 'not_ready' : undefined;
             const health: NonNullable<MachineServiceRowV1['health']> = {
                 status, observedAtMs: facts?.observedAt ?? null, freshness,
+                ...(facts?.healthSince === undefined ? {} : { since: facts.healthSince }),
                 ...(reason ? { reason } : {}),
                 ...(handle.readHealthSnapshot?.().expectedDown ? { expectedDown: 'stop' } : {}),
             };
@@ -56,7 +57,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             // native refresh. Explicit detail reads retain the latest raw clock.
             const prior = previous?.health;
             const stableHealth = prior && prior.status === health.status && prior.freshness === health.freshness
-                && prior.reason === health.reason && prior.expectedDown === health.expectedDown ? prior : Object.freeze(health);
+                && prior.reason === health.reason && prior.expectedDown === health.expectedDown && prior.since === health.since ? prior : Object.freeze(health);
             const configuration = facts ? facts.configuration ? { ports: facts.configuration.ports } : null : undefined;
             const capabilities = handle.kind === 'adopted' ? handle.capabilities : {
                 start: Boolean(handle.controlNative), stop: true, restart: Boolean(handle.controlNative),
@@ -71,6 +72,8 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 port: endpoint.ok ? endpoint.endpoint.port : null,
                 ...(native ? { native: sameStrictJsonValue(previous?.native, native) ? previous!.native : Object.freeze(native) } : {}),
                 ...(native ? { health: stableHealth } : {}),
+                ...(facts?.accounting ? { accounting: sameStrictJsonValue(previous?.accounting, facts.accounting)
+                    ? previous!.accounting : Object.freeze({ ...facts.accounting }) } : {}),
                 ...(facts ? { configuration: sameStrictJsonValue(previous?.configuration, configuration)
                     ? previous!.configuration : configuration } : {}),
                 ...(handle.kind === 'environment' ? { environmentId: handle.environmentId } : {}),

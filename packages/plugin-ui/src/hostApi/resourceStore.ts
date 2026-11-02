@@ -806,6 +806,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       publish(entry, { ...entry.snapshot, subscription: 'unsupported' });
       return;
     }
+    const retainedBaseline = entry.snapshot.value !== undefined && entry.snapshot.freshness === 'fresh';
     entry.watchEstablishing = true;
     publish(entry, { ...entry.snapshot, subscription: 'establishing' });
     const controller = new AbortController();
@@ -874,6 +875,10 @@ export function createPluginUiResourceStore(input: Readonly<{
         // admission. Do not queue a second read merely because opening the
         // invalidation channel failed: if that baseline is still pending it
         // remains current, and if it has settled it is already authoritative.
+        if (retainedBaseline && !entry.reading && (failure.unsupported || failure.retryable)
+          && !hasLostResourceReadAuthority(resourceError)) {
+          requestRead(entry, entry.snapshot.value === undefined ? 'initial' : 'refresh');
+        }
         if (failure.unsupported || !failure.retryable || hasLostResourceReadAuthority(resourceError)) return;
         // A transient live transport failure never makes Resource bytes
         // unavailable. Keep one LKG owner, refresh it canonically, and retry
@@ -941,11 +946,14 @@ export function createPluginUiResourceStore(input: Readonly<{
               if (!entry!.watchUnsupported && !entry!.watchFailureTerminal) {
                 startWatch(entry!);
               }
-              // A paused exact store retains its capability/terminal fact,
-              // but a remount is still a new read-through observation. The
-              // snapshot owner starts this read; watch admission never becomes
-              // a competing route to Resource bytes.
-              requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
+              // An admitted snapshot can wait for the watch's current digest.
+              // Matching admission reuses its bytes; changed or generic watch
+              // admission refreshes through startWatch's canonical read path.
+              // Cold reads and unavailable watches still start independently.
+              if (entry!.snapshot.value === undefined || entry!.snapshot.freshness !== 'fresh'
+                || !entry!.watchEstablishing) {
+                requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
+              }
             } else if (!entry!.reading) {
               // A static subscriber may retain a read already requested by an
               // Action. That current read supplies its baseline; joining it

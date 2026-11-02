@@ -25,9 +25,17 @@ export const DeploymentReviewServiceV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export type DeploymentReviewServiceV1 = z.infer<typeof DeploymentReviewServiceV1Schema>;
 
+/** Observed native values only. Missing counters and start clocks stay absent. */
+export const MachineServiceObservedAccountingV1Schema = lazyZodSchema(() => z.strictObject({
+  memoryBytes: z.optional(z.number().check(z.int(), z.minimum(0))),
+  startedAtMs: z.optional(z.number().check(z.int(), z.minimum(1))),
+}));
+
 /** The existing capture's facts; unavailable retains its last admitted observation. */
 export const MachineServiceNativeRuntimeFactsV1Schema = lazyZodSchema(() => z.strictObject({
   configuration: z.nullable(DeploymentReviewServiceV1Schema),
+  accounting: z.optional(MachineServiceObservedAccountingV1Schema),
+  healthSince: z.optional(z.number().check(z.int(), z.minimum(1))),
   observedAt: z.nullable(z.number()),
   freshness: z.enum(['current', 'unavailable']),
 }));

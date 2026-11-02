@@ -1,10 +1,12 @@
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
     getServerProfileById,
+    areServerProfileIdentifiersEquivalent,
     resolveServerProfileScopeIdForIdentifier,
+    subscribeServerProfiles,
 } from '@/sync/domains/server/serverProfiles';
 import { parseToken } from '@/utils/auth/parseToken';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
@@ -19,6 +21,55 @@ export type ServerCredentialAccountScopeResolution =
 
 type RetryListener = (serverId: string) => void;
 const retryListeners = new Set<RetryListener>();
+
+const accountLifetimes = new Map<string, Readonly<{
+    credentialKey: string | undefined;
+    lifetime: ServerAccountScopeLifetime;
+    retire(): void;
+}>>();
+
+/** A resolved credential owns retained projections until its material or Home target changes. */
+export function captureServerCredentialAccountScopeLifetime(
+    resolution: Extract<ServerCredentialAccountScopeResolution, { kind: 'bound' }>,
+): ServerAccountScopeLifetime {
+    if (resolution.lifetime) return resolution.lifetime;
+    const { scope, credentialKey } = resolution;
+    const previous = accountLifetimes.get(scope.serverId);
+    if (previous && previous.credentialKey === credentialKey && previous.lifetime.isCurrent()) return previous.lifetime;
+    previous?.retire();
+    const serverUrl = getServerProfileById(scope.serverId)?.serverUrl;
+    const callbacks = new Set<() => void>();
+    let retired = false;
+    function retire() {
+        if (retired) return;
+        retired = true;
+        stopCredentials(); stopProfiles();
+        if (accountLifetimes.get(scope.serverId)?.lifetime === lifetime) accountLifetimes.delete(scope.serverId);
+        for (const callback of [...callbacks]) {
+            try { callback(); } catch { /* One projection cannot prevent sibling retirement. */ }
+        }
+        callbacks.clear();
+    }
+    const lifetime: ServerAccountScopeLifetime = Object.freeze({
+        scope,
+        isCurrent: () => !retired,
+        onRetire(callback: () => void) {
+            if (retired) { callback(); return { dispose() {} }; }
+            callbacks.add(callback);
+            return { dispose() { callbacks.delete(callback); } };
+        },
+    });
+    const stopCredentials = subscribeHomeCredentialMutations(event => {
+        if (!areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)) return;
+        if (event.kind === 'credentials_removed' || !event.credentials
+            || resolveAuthCredentialsScopeKey(event.credentials) !== credentialKey) retire();
+    });
+    const stopProfiles = subscribeServerProfiles(() => {
+        if (getServerProfileById(scope.serverId)?.serverUrl !== serverUrl) retire();
+    });
+    accountLifetimes.set(scope.serverId, { credentialKey, lifetime, retire });
+    return lifetime;
+}
 
 /**
  * Asks every live consumer of this Home's credential identity to read it again.

@@ -6,9 +6,16 @@ export type ServerAccountScope = Readonly<{
 /** Currentness and synchronous retirement for one exact Home/Account scope. */
 export type ServerAccountScopeLifetime = Readonly<{
     scope: ServerAccountScope;
+    /** Credential-owned display lifetime when this binding itself belongs to a mounted reader. */
+    accountLifetime?: ServerAccountScopeLifetime;
     isCurrent(): boolean;
     onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
 }>;
+
+/** Retained projections follow the Account, while effects keep their captured reader lifetime. */
+export function readServerAccountScopeOwnerLifetime(lifetime: ServerAccountScopeLifetime): ServerAccountScopeLifetime {
+    return lifetime.accountLifetime ?? lifetime;
+}
 
 function normalizeServerAccountScopePart(value: unknown): string | null {
     if (typeof value !== 'string') return null;

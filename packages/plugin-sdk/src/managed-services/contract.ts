@@ -325,6 +325,9 @@ export type ManagedServiceNativeObservationV1 = Readonly<{
     phase: 'running' | 'stopped' | 'unknown';
     readiness: 'ready' | 'not_ready' | 'not_reported';
     endpoint: string | null;
+    /** Source-reported clocks/counters, never host process totals or synthesized uptime. */
+    accounting?: import('@happier-dev/protocol').MachineServiceNativeRuntimeFactsV1['accounting'];
+    healthSince?: import('@happier-dev/protocol').MachineServiceNativeRuntimeFactsV1['healthSince'];
 }>;
 
 export type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogPageV1, ManagedServiceNativeLogReadV1,

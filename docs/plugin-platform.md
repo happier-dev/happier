@@ -5701,6 +5701,74 @@ tool resolution, secret materialization, effect review, final authorization and
 process custody. Native service lifecycle uses the existing managed-services
 contract rather than another supervisor.
 
+The development SDK captures optional `discover`, `start`, `restart` and
+`accounting` callbacks on that same lifecycle. Discovery receives an exact
+Home/Machine, not a fabricated Project; native-adapter failures stay typed and
+unobserved accounting facts stay null. Registration does no native reads and
+keeps absent callbacks absent. Host capture accepts an exact Machine target
+without a Workspace root. A null instance captures adapter-wide discovery;
+an instance-bound capture confines controls and accounting to that qualified
+native identity. Workspace filesystem access remains unavailable in a
+Machine-only invocation. The Machine Action/Resource consumers remain under
+integration; this SDK contract alone does not establish their readiness or
+built-in adapter availability.
+
+The development Machine service row carries optional `nativeInstance`
+(`adapter`, `nativeResourceId`) facts for an adopted native watch, including
+retained intent whose adapter is unavailable. A current handle carries nullable
+`baseUrl` and `port` facts from the same canonical endpoint-URL owner used by
+supervision: one admitted service endpoint, not a complete listener inventory.
+An unavailable watch omits those unobserved endpoint facts. These are pure
+list/detail projections. An explicit list read samples each visible service through
+its existing native accounting reader; it adds no polling. Optional row
+`accounting.memoryBytes` is the total reported memory only when every replica
+reports a value, and `accounting.startedAtMs` comes from the native start clock
+(the newest member for a replicated service), never supervisor startup. Missing
+counters and clocks stay absent. Optional `health.since` is a source-reported
+transition: Docker health events supply their event time, while systemd supplies
+`ActiveEnterTimestamp`. Docker probe-log times are not transitions; a missed event
+or unavailable source timestamp leaves the field absent.
+
+The development `machines.services.detail` result also carries optional
+`runtimeFacts` from the selected native capture: `configuration`, `observedAt`
+and `freshness` (`current` or `unavailable`), with optional native `accounting`
+and `healthSince` facts used by the row projection. Configuration uses the same strict,
+redacted service schema as deployment review, preserving every reported port's
+`target`, `published`, `bindAddress` and `protocol`, plus its existing mount and
+resource facts. Unavailable observations retain their last admitted facts and
+timestamp; missing captures do not invent them. Lists carry only the configuration's port projection; detail retains the full
+redacted structure for every Compose service, including services without a
+healthcheck. Detail accounting uses the same explicit native reader as the list.
+A person's log page carries `secretMasking: 'incomplete'` when masking custody
+is unavailable until redeploy; that notice is metadata, never a synthetic log
+line. The existing automation refusal remains unchanged.
+
+Current Machine Services Resources retain their last-known bytes across a
+consumer remount through the existing Account-scoped Resource store. A resumed
+watch confirms the retained digest; matching admission performs zero Resource
+READs, while a changed or unavailable admission refreshes through the same
+reader. Watch OPEN remains one separate subscription operation and does not
+sample native accounting. Environment headers and Source names likewise retain
+their existing controller/catalog values; hidden relevant changes mark them
+stale without fetching. Credential replacement retires retained projections.
+
+The first-party Machine services source declares `happier.machine.services/systemd`
+through this same family and activation ABI. On Linux, explicit discovery reads
+visible user and system service units with finite
+[`systemctl list-units`](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html) calls;
+inspection reads `LoadState`, `ActiveState`, `SubState`, `MemoryCurrent`,
+`ExecMainStartTimestamp` and `ActiveEnterTimestamp` in the same `show` request.
+Unknown counters and unparseable timestamps remain absent. The adapter maps those facts conservatively to native phase and
+readiness: active liveness alone does not establish application readiness.
+Discovery preserves a healthy manager's candidates when the other manager
+refuses its query. Watch and unwatch change retained intent, not native state.
+User-unit start, restart and stop run as the daemon user with
+`--user --no-ask-password`; system-unit mutations return unsupported until an
+actual host elevation admission exists. Other native platforms return typed
+unsupported results. Row counters come from `show`; a separate accounting
+callback is not advertised. Source
+declaration alone does not establish bundled publication or loaded availability.
+
 In 0.3 development, the exec host applies `HAPPIER_PROCESS_OWNER` after all
 plugin/native/Provider environment layers. Plugins cannot override or unset this
 host-private marker; child ownership is resolved by the canonical daemon process

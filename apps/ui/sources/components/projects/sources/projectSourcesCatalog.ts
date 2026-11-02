@@ -1,4 +1,4 @@
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { observeProjectSources } from './observeProjectSources';
 import { createProjectSourcesController, type ProjectSourcesCatalog, type ReadProjectSourcesCatalog } from './projectSourcesController';
 
@@ -14,6 +14,8 @@ type Query = {
 /** One authorized query owner per Account lifetime; editors never own its list transport. */
 export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime, execute: Execute) {
     const queries = new Map<string, Query>();
+    const sources = new Map<string, Readonly<{ controller: ReturnType<typeof createProjectSourcesController>;
+        demand(): () => void; dispose(): void }>>();
     const defaultKey = JSON.stringify(['', null]);
     let demand = 0;
     function observe(entry: Query) {
@@ -25,6 +27,8 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
             entry.controller.retireCatalog(); entry.controller.dispose();
         }
         queries.clear();
+        for (const source of sources.values()) source.dispose();
+        sources.clear();
     }
     const read: ReadProjectSourcesCatalog = (query, audience) => {
         const key = JSON.stringify([query, audience ?? null]);
@@ -79,6 +83,36 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
     const retirement = lifetime.onRetire(disposeQueries);
     return {
         read,
+        /** Exact Source details share the Account owner without demanding its inventory. */
+        readSource(sourceId: string) {
+            const previous = sources.get(sourceId);
+            if (previous) return previous;
+            const controller = createProjectSourcesController(lifetime.scope, execute);
+            let readers = 0;
+            let dirty = true;
+            const load = () => {
+                if (!dirty || !lifetime.isCurrent()) return;
+                dirty = false;
+                void controller.select(sourceId);
+            };
+            const stop = observeProjectSources(controller, { detailOnly: true }, () => {
+                dirty = true;
+                if (readers > 0) load();
+            });
+            const owner = {
+                controller,
+                demand() {
+                    readers += 1;
+                    const status = controller.getSnapshot().detailStatus;
+                    if (status === 'offline' || status === 'refused') dirty = true;
+                    load();
+                    return () => { readers -= 1; };
+                },
+                dispose() { stop(); controller.retireCatalog(); controller.dispose(); },
+            };
+            sources.set(sourceId, owner);
+            return owner;
+        },
         demand() {
             if (!lifetime.isCurrent()) return () => {};
             demand += 1;
@@ -97,6 +131,7 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
 
 const catalogs = new WeakMap<ServerAccountScopeLifetime, ReturnType<typeof createProjectSourcesCatalog>>();
 export function readProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime, execute: Execute) {
+    lifetime = readServerAccountScopeOwnerLifetime(lifetime);
     let catalog = catalogs.get(lifetime);
     if (!catalog) { catalog = createProjectSourcesCatalog(lifetime, execute); catalogs.set(lifetime, catalog); }
     return catalog;

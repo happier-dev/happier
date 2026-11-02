@@ -1,9 +1,9 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { MachineServiceWatchV1Schema, MachineServiceWatchesFieldV1, machineServiceNativeIdentityKeyV1,
-    type MachineServiceWatchV1, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+    type MachineServiceWatchV1, type ManagedServiceNativeLogResultV1, type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
 import type { ManagedServiceHandle, ManagedServiceNativeInstanceV1, ManagedServiceNativeLifecycleV1,
-    ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
+    ManagedServiceSnapshot, ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineNativeEffectKey, MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { runManagedServiceNativeControl, type ManagedServiceNativeControlResult } from './managedServiceNativeControl';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
@@ -36,6 +36,7 @@ export type MachineManagedServiceHandle = ManagedServiceHandle & Readonly<{
     }>): Promise<ManagedServiceNativeControlResult>;
     observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void): Readonly<{ dispose(): void }>;
     readHealthSnapshot?(): ManagedServiceProcessHealthSnapshot;
+    readNativeRuntimeFacts(): MachineServiceNativeRuntimeFactsV1;
     readLogs(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchLogs: NonNullable<ManagedServiceProcessHandle['watchNativeLogs']>;
     readAccounting?(options?: Readonly<{ signal?: AbortSignal }>): ReturnType<NonNullable<ManagedServiceNativeLifecycleV1['accounting']>>;
@@ -160,17 +161,42 @@ export function createMachineManagedServices(input: Readonly<{
                 establishmentCleanup: null, credentialCleanup: null, retirement: null, observationRelease: request.releaseObservation,
             };
             const native = request.lifecycle;
+            let runtimeFacts: MachineServiceNativeRuntimeFactsV1 = { configuration: null, observedAt: null, freshness: 'unavailable' };
+            const retainObservation = (observation: ManagedServiceNativeObservationV1) => {
+                runtimeFacts = observation.phase === 'unknown'
+                    ? { configuration: null, observedAt: null, freshness: 'unavailable' }
+                    : { configuration: null, observedAt: Date.now(), freshness: 'current',
+                        ...(observation.accounting ? { accounting: observation.accounting } : {}),
+                        ...(observation.healthSince !== undefined ? { healthSince: observation.healthSince } : {}),
+                    };
+                return observation;
+            };
             const control = async (operation: 'start' | 'restart', options?: Readonly<{ signal?: AbortSignal }>) => {
                 assertCurrent();
                 const method = native[operation];
                 if (!method) unavailable();
                 const result = await method.call(native, instance, options);
                 if ('kind' in result) throw new PluginError({ code: result.code, message: 'Native service control was refused' });
-                return result;
+                return retainObservation(result);
             };
             const lifecycle: ProjectBuiltinNativeLifecycle = {
-                async inspect(options) { assertCurrent(); const result = await native.inspect(instance, options); assertCurrent(); return result; },
-                stop: options => native.stop(instance, options),
+                async inspect(options) {
+                    assertCurrent();
+                    try {
+                        const result = await native.inspect(instance, options);
+                        assertCurrent();
+                        return retainObservation(result);
+                    } catch (error) {
+                        runtimeFacts = { configuration: null, observedAt: null, freshness: 'unavailable' };
+                        throw error;
+                    }
+                },
+                async stop(options) {
+                    const result = await native.stop(instance, options);
+                    // The confirmed stop is the existing witness; no extra native read.
+                    if (result.status === 'stopped') retainObservation({ phase: 'stopped', readiness: 'not_reported', endpoint: null });
+                    return result;
+                },
                 ...(native.start ? { start: (options?: Readonly<{ signal?: AbortSignal }>) => control('start', options) } : {}),
                 ...(native.restart ? { restart: (options?: Readonly<{ signal?: AbortSignal }>) => control('restart', options) } : {}),
                 ...(native.logs ? { logs: (options: Parameters<NonNullable<ProjectBuiltinNativeLifecycle['logs']>>[0]) => {
@@ -223,6 +249,7 @@ export function createMachineManagedServices(input: Readonly<{
                         await process.inspectCurrentOccurrence(); assertCurrent(); return wrapped.snapshot(); },
                     observeHealth(listener) { assertCurrent(); if (!process.observeHealth) unavailable(); return process.observeHealth(listener); },
                     readHealthSnapshot: () => process.snapshot(),
+                    readNativeRuntimeFacts: () => runtimeFacts,
                     async readLogs(options) { assertCurrent();
                         const result = process.readNativeLogs ? await process.readNativeLogs(options) : { kind: 'unavailable' as const, reason: 'unsupported' as const };
                         assertCurrent(); return result;

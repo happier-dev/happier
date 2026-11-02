@@ -27,6 +27,11 @@ function observation(load: string | undefined, active: string | undefined, sub: 
     return { phase: 'unknown', readiness: 'not_ready', endpoint: null };
 }
 
+function sourceTimestamp(value: string | undefined): number | undefined {
+    const timestamp = value ? Date.parse(value) : NaN;
+    return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : undefined;
+}
+
 async function command(scope: Scope, args: readonly string[], options: PluginCancellationOptions | undefined, context: PluginInvocationContext | undefined) {
     if (!context) throw new PluginError({ code: 'systemd_invocation_unavailable', message: 'Native service invocation is unavailable' });
     const env = Object.fromEntries(['DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR'].flatMap(key => {
@@ -46,13 +51,24 @@ async function command(scope: Scope, args: readonly string[], options: PluginCan
 async function inspect(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext) {
     const selected = parseInstance(instance);
     if (process.platform !== 'linux') return observation(undefined, undefined, undefined);
-    const result = await command(selected.scope, ['show', '--no-pager', '--property=LoadState,ActiveState,SubState', '--', selected.unit], options, context);
+    const result = await command(selected.scope, ['show', '--no-pager', '--property=LoadState,ActiveState,SubState,MemoryCurrent,ExecMainStartTimestamp,ActiveEnterTimestamp', '--', selected.unit], options, context);
     if (!result.complete) return observation(undefined, undefined, undefined);
     const properties = new Map(result.output.split(/\r?\n/u).flatMap(line => {
         const separator = line.indexOf('=');
         return separator < 0 ? [] : [[line.slice(0, separator), line.slice(separator + 1)] as const];
     }));
-    return observation(properties.get('LoadState'), properties.get('ActiveState'), properties.get('SubState'));
+    const current = observation(properties.get('LoadState'), properties.get('ActiveState'), properties.get('SubState'));
+    if (current.phase !== 'running') return current;
+    const memory = properties.get('MemoryCurrent');
+    const memoryBytes = memory && /^\d+$/u.test(memory) && Number.isSafeInteger(Number(memory)) ? Number(memory) : undefined;
+    const startedAtMs = sourceTimestamp(properties.get('ExecMainStartTimestamp'));
+    const healthSince = sourceTimestamp(properties.get('ActiveEnterTimestamp'));
+    return { ...current,
+        ...(memoryBytes !== undefined || startedAtMs !== undefined ? { accounting: {
+            ...(memoryBytes !== undefined ? { memoryBytes } : {}), ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+        } } : {}),
+        ...(healthSince !== undefined ? { healthSince } : {}),
+    };
 }
 
 async function control(verb: 'start' | 'restart', instance: ManagedServiceNativeInstanceV1,
