@@ -4,11 +4,13 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 
 import * as stackEnvRunner from './stack/run_script_with_stack_env.mjs';
+import { SOURCE_START_SUPERSEDED_MARKER } from './runtime/shared/pending_source_start.mjs';
 
 for (const scriptPath of ['run.mjs', 'dev.mjs']) {
   test(`${scriptPath} restart refuses unavailable placement/sync before replacing incumbent state`, async t => {
@@ -411,3 +413,42 @@ test('inspectExistingStartLikeRuntime treats --expo-tailscale as a mobile reques
 
   assert.equal(result.wantsMobile, true);
 });
+
+for (const pinned of [false, true]) {
+  test(`background source runner preserves terminal supersession (pinned=${pinned})`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-background-superseded-' });
+    const stackName = 'superseded-source';
+    const storageDir = fixture.path('stacks');
+    const baseDir = join(storageDir, stackName);
+    const env = {
+      HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+      HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_RUNTIME_MODE: 'source',
+      HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '0',
+      HAPPIER_STACK_STOP_AUTO_SWEEP: '0',
+      ...(pinned ? { HAPPIER_STACK_SERVER_PORT: String(await pickNextFreeTcpPort(40000)) } : {}),
+    };
+    withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_REPO_DIR: fixture.root });
+    for (const directory of [baseDir, join(baseDir, 'cli'), fixture.path('scripts'),
+      ...['cli', 'server', 'ui'].map(app => fixture.path('apps', app))]) await mkdir(directory, { recursive: true });
+    await writeFile(fixture.path('package.json'), '{"private":true}');
+    for (const app of ['cli', 'server', 'ui']) await writeFile(fixture.path('apps', app, 'package.json'), '{}');
+    await writeFile(join(baseDir, 'env'), Object.entries(env).map(([name, value]) => `${name}=${value}`).join('\n'));
+    // The subprocess emits the canonical runner terminal result before any
+    // service exists. The background wrapper and error propagation stay real.
+    await writeFile(fixture.path('scripts', 'run.mjs'), `process.stdout.write(${JSON.stringify(SOURCE_START_SUPERSEDED_MARKER + '\n')});`);
+    const result = await runNodeCapture(['--input-type=module', '-e', `
+      import { runStackScriptWithStackEnv } from ${JSON.stringify(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url).href)};
+      try {
+        await runStackScriptWithStackEnv(${JSON.stringify({ rootDir: fixture.root, stackName, scriptPath: 'run.mjs', background: true,
+          args: ['--runtime=source', '--reuse-source-runtime', '--no-daemon', '--no-ui', '--no-browser'], extraEnv: env })});
+        process.exit(0);
+      } catch (error) {
+        console.log('WRAPPER_RESULT=' + JSON.stringify({ code: error.code ?? null }));
+        process.exit(1);
+      }
+    `], { env: process.env });
+    assert.equal(result.code, 1, result.stderr);
+    const terminal = JSON.parse(result.stdout.split('\n').find(line => line.startsWith('WRAPPER_RESULT=')).slice('WRAPPER_RESULT='.length));
+    assert.equal(terminal.code, 'ESOURCESTARTSUPERSEDED', 'background launch must retain the terminal source-start result');
+  });
+}

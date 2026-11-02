@@ -16,7 +16,7 @@ import { readLastLines } from '../utils/fs/tail.mjs';
 import { isTcpPortFree, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
 import { getComponentDir, getRepoDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { resolveLocalhostHost } from '../utils/paths/localhost_host.mjs';
-import { killProcessTree, run, runCaptureResult } from '../utils/proc/proc.mjs';
+import { killProcessTree, redactFailureDiagnostic, run, runCaptureResult } from '../utils/proc/proc.mjs';
 import {
   DEFAULT_CLI_DIST_BUILD_LOCK_TIMEOUT_MS,
   observeCliDistBuildLock,
@@ -44,13 +44,14 @@ import {
 } from '../utils/stack/runtime_state.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from '../utils/stack/runtime_owner_incarnation.mjs';
 import { listAllStackNames } from '../utils/stack/stacks.mjs';
-import { completeInterruptedStackStopBeforeStart, stopStackWithEnv } from '../utils/stack/stop.mjs';
+import { completeInterruptedStackStopBeforeStart, createStackRuntimeCleanupIncompleteError, stopStackWithEnv } from '../utils/stack/stop.mjs';
 import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
+import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
 import { isBorrowedExpoConsumer, projectBorrowedExpoWebappEnv, resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
 import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from '../utils/dev_targets/config.mjs';
@@ -58,6 +59,25 @@ import { resolveControlledRuntimePlacement, resolveDevTargetServicePlans } from 
 import { ensureDevTargetSyncProject, flushDevTargetSync, runDevTargetControlProcess } from '../utils/dev_targets/sync_project.mjs';
 
 const DEFAULT_BACKGROUND_READY_TIMEOUT_MS = 600_000;
+
+async function readBackgroundRunnerFailure(error, { logPath, sourceSnapshot, env }) {
+  // Keep the original outcome on its own line before attaching a runner tail.
+  console.error(`[stack] readiness failed${error?.code ? ` reason=${error.code}` : ''}${error?.phase ? ` phase=${error.phase}` : ''}`);
+  console.error(`[stack] readiness error: ${
+    redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env)
+  }`);
+  try {
+    const tail = await readLastLines(logPath, 160);
+    // Background runners write their canonical terminal marker to their log.
+    // Restore its typed result so the existing CLI emitter can carry it over
+    // stdout without letting an obsolete controller retry or retire a successor.
+    if (sourceSnapshot && tail?.split(/\r?\n/).includes(SOURCE_START_SUPERSEDED_MARKER)) return supersededError();
+    if (tail && error instanceof Error) error.message = `${error.message}\n\n[stack] last runner log lines:\n${tail}`;
+  } catch {
+    // Diagnostic I/O must not replace the runner's original failure.
+  }
+  return error;
+}
 
 function createStackReadinessPendingError(message) {
   const error = new Error(message);
@@ -647,9 +667,9 @@ export async function stopObservedStackForRestart({
   json = false,
   preserveDaemon = true,
 } = {}) {
-  const expectedOwnerPid = Number(incumbentRuntimeState?.ownerPid);
+  const expectedOwnerPid = incumbentRuntimeState?.ownerPid == null ? null : Number(incumbentRuntimeState.ownerPid);
   const expectedOwnerStartedAt = normalizeStackRuntimeOwnerStartedAt(incumbentRuntimeState?.startedAt);
-  if (!Number.isFinite(expectedOwnerPid) || expectedOwnerPid <= 1 || !expectedOwnerStartedAt) {
+  if ((expectedOwnerPid !== null && (!Number.isFinite(expectedOwnerPid) || expectedOwnerPid <= 1)) || !expectedOwnerStartedAt) {
     return {
       stopAuthorization: {
         authorized: false,
@@ -658,7 +678,7 @@ export async function stopObservedStackForRestart({
     };
   }
 
-  return await stopStackWithEnv({
+  const input = {
     rootDir,
     stackName,
     baseDir,
@@ -670,7 +690,29 @@ export async function stopObservedStackForRestart({
     preserveDaemon,
     expectedOwnerPid,
     expectedOwnerStartedAt,
-  });
+  };
+  // Restart depends on terminal cleanup, not the standalone Stop command's
+  // lock-acquisition deadline. Reuse the executor's file-change completion signal.
+  const dependencies = { cleanupExecutorLockOptions: { timeoutMs: Number.POSITIVE_INFINITY } };
+  const stopped = await stopStackWithEnv(input, dependencies);
+  if (stopped.stopAuthorization?.authorized === true && stopped.finalization?.finalized !== true) {
+    const reusePreparedSource = env?.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
+    // A confirmed cleanup failure is not a late lifecycle projection. Retain
+    // incumbent custody and prepared source; only an explicit recovery retries it.
+    if (['session_cleanup_incomplete', 'remote_cleanup_incomplete', 'browser_cleanup_incomplete'].includes(stopped.finalization?.reason)) {
+      throw createStackRuntimeCleanupIncompleteError(stopped, { stackName, restart: reusePreparedSource });
+    }
+    // Shutdown projections can advance after Stop captures its snapshot. Continue
+    // that same incarnation; a successor's stop marker must remain fenced.
+    try {
+      const completion = await completeInterruptedStackStopBeforeStart(input, dependencies);
+      if (completion.finalization) return completion;
+    } catch (error) {
+      if (error?.code !== 'ESTACKRUNTIMECLEANUPINCOMPLETE') throw error;
+      throw createStackRuntimeCleanupIncompleteError(error.actions, { stackName, restart: reusePreparedSource });
+    }
+  }
+  return stopped;
 }
 
 export function shouldPreserveDaemonForRestart({
@@ -870,20 +912,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             // replacement publication can touch the incumbent lifecycle.
             await preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptPath, args, env,
               runtimeMode: runtimeLaunchContext.runtimeMode }, { runCaptureResult: capture, runProcess });
-            try {
-              const stopResult = await stopObservedStackForRestart({
-                rootDir,
-                stackName,
-                baseDir,
-                env,
-                incumbentRuntimeState: runtimeState,
-                preserveDaemon: preserveDaemonForRestart,
-              });
-              preservedDaemonForRestart = preserveDaemonForRestart
-                && stopResult?.stopAuthorization?.authorized === true;
-            } catch {
-              // ignore (fail-closed below on port checks)
-            }
+            const stopResult = await stopObservedStackForRestart({
+              rootDir,
+              stackName,
+              baseDir,
+              env,
+              incumbentRuntimeState: runtimeState,
+              preserveDaemon: preserveDaemonForRestart,
+            });
+            preservedDaemonForRestart = preserveDaemonForRestart
+              && stopResult?.stopAuthorization?.authorized === true;
           }
         }
         if (shouldAttachToLiveBackgroundRuntime({ background, wantsRestart, existingRuntimeStatus })) {
@@ -1027,20 +1065,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               }
               if (isTrueRestart && !wantsJson) {
                 // Try one more safe cleanup of stack-owned processes and re-check.
-                try {
-                  const stopResult = await stopObservedStackForRestart({
-                    rootDir,
-                    stackName,
-                    baseDir,
-                    env,
-                    incumbentRuntimeState: runtimeState,
-                    preserveDaemon: preserveDaemonForRestart,
-                  });
-                  preservedDaemonForRestart = preservedDaemonForRestart || (preserveDaemonForRestart
-                    && stopResult?.stopAuthorization?.authorized === true);
-                } catch {
-                  // ignore
-                }
+                const stopResult = await stopObservedStackForRestart({
+                  rootDir,
+                  stackName,
+                  baseDir,
+                  env,
+                  incumbentRuntimeState: runtimeState,
+                  preserveDaemon: preserveDaemonForRestart,
+                });
+                preservedDaemonForRestart = preservedDaemonForRestart || (preserveDaemonForRestart
+                  && stopResult?.stopAuthorization?.authorized === true);
                 // eslint-disable-next-line no-await-in-loop
                 if (await isTcpPortFree(p)) {
                   continue;
@@ -1257,14 +1291,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           } catch (e) {
             // Attach some log context so failures are debuggable even when a higher-level
             // command cleans up the sandbox directory afterwards.
-            try {
-              const tail = await readLastLines(logPath, 160);
-              if (tail && e instanceof Error) {
-                e.message = `${e.message}\n\n[stack] last runner log lines:\n${tail}`;
-              }
-            } catch {
-              // ignore
-            }
+            e = await readBackgroundRunnerFailure(e, { logPath, env: childEnv,
+              sourceSnapshot: runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot' });
             if (shouldPreserveBackgroundRunnerAfterReadinessFailure(e, {
               runnerAlive: isPidAlive(child.pid),
             })) {
@@ -1446,14 +1474,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             );
           }
         } catch (e) {
-          try {
-            const tail = await readLastLines(logPath, 160);
-            if (tail && e instanceof Error) {
-              e.message = `${e.message}\n\n[stack] last runner log lines:\n${tail}`;
-            }
-          } catch {
-            // ignore
-          }
+          e = await readBackgroundRunnerFailure(e, { logPath, env,
+              sourceSnapshot: runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot' });
           if (shouldPreserveBackgroundRunnerAfterReadinessFailure(e, {
             runnerAlive: isPidAlive(child.pid),
           })) {

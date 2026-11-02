@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
+import { stopObservedStackForRestart } from './stack/run_script_with_stack_env.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
@@ -62,6 +63,10 @@ async function startDaemonControlServer({ token, stopResult = { status: 'stopped
 
     if (url === '/stop') {
       assert.equal((await readJson(req)).stopSessions, true);
+      if (stopResult.status === 'disconnected') {
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ status: stopResult.status === 'stopped' ? 'stopping' : 'session_cleanup_incomplete' }));
       return;
@@ -169,6 +174,57 @@ test(`explicit child stop handles ${stopResult.status} before signaling the life
   assert.equal(listCalls.length, 0);
   assert.equal(stopSessionCalls.length, 0);
   assert.ok(daemon.calls.every((call) => call.token === token));
+});
+}
+
+for (const [status, preparedSource] of [['incomplete', true], ['disconnected', true], ['incomplete', false]]) {
+test(`restart retains incumbent custody when daemon stop is ${status} (prepared=${preparedSource})`, async t => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-restart-retirement-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const daemon = await startDaemonControlServer({ token: 'restart-retirement-fixture', stopResult: { status } });
+  t.after(() => daemon.close());
+  const baseDir = join(tmp, 'stack');
+  const cliHomeDir = join(baseDir, 'cli');
+  const stackName = 'restart-retirement';
+  const env = {
+    ...process.env, HAPPIER_STACK_REPO_DIR: tmp, HAPPIER_STACK_STACK: stackName,
+    HAPPIER_STACK_ENV_FILE: join(baseDir, 'env'), HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+    HAPPIER_HOME_DIR: cliHomeDir, HAPPIER_STACK_PROCESS_KIND: 'infra',
+    HAPPIER_STACK_STOP_AUTO_SWEEP: '0',
+    HAPPIER_STACK_PREPARED_SOURCE_RELOAD: preparedSource ? '1' : '',
+    HAPPIER_SERVER_URL: 'http://127.0.0.1:4101',
+  };
+  for (const path of [cliHomeDir, join(baseDir, 'source-runtime'),
+    ...['cli', 'server', 'ui'].map(app => join(tmp, 'apps', app))]) await mkdir(path, { recursive: true });
+  const child = spawnOwnedSleep({ env });
+  t.after(() => { try { child.kill('SIGKILL'); } catch {} });
+  await waitForProcessAlive({ pid: child.pid });
+  const scopedEnv = applyStackDaemonLifecycleScopeEnv({ env, stackName, cliIdentity: 'default' });
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: env.HAPPIER_SERVER_URL, env: scopedEnv });
+  await mkdir(join(statePath, '..'), { recursive: true });
+  await writeFile(statePath, JSON.stringify({ pid: child.pid, httpPort: daemon.port, controlToken: 'restart-retirement-fixture' }));
+  const incumbent = { ownerPid: child.pid, startedAt: new Date().toISOString(), processes: {},
+    sourceRuntimeIdentities: { server: { selected: 'incumbent', loaded: 'incumbent' } } };
+  const runtimePath = join(baseDir, 'stack.runtime.json');
+  await writeFile(runtimePath, JSON.stringify(incumbent));
+  const selectedPath = join(baseDir, 'source-runtime', 'selected-server.json');
+  const prepared = { identity: 'prepared-replacement', entrypoint: join(tmp, 'prepared', 'server.mjs') };
+  await writeFile(selectedPath, JSON.stringify(prepared));
+  await assert.rejects(stopObservedStackForRestart({ rootDir: tmp, stackName, baseDir, env,
+    incumbentRuntimeState: incumbent, json: true, preserveDaemon: false }), error => {
+    assert.equal(error.code, 'ESTACKRUNTIMECLEANUPINCOMPLETE');
+    assert.equal(error.phase, 'stop');
+    assert.equal(error.retryable, false);
+    assert.equal(error.actions.finalization.reason, 'session_cleanup_incomplete');
+    return true;
+  });
+  const retained = JSON.parse(await readFile(runtimePath, 'utf8'));
+  assert.equal(retained.ownerPid, child.pid);
+  assert.deepEqual(retained.sourceRuntimeIdentities, incumbent.sourceRuntimeIdentities);
+  assert.ok(retained.stopRequest);
+  assert.deepEqual(JSON.parse(await readFile(selectedPath, 'utf8')), prepared);
+  assert.deepEqual(daemon.calls.map(call => call.url), ['/ping', '/stop'], 'a settled cleanup failure must not repeat shutdown');
+  await waitForProcessAlive({ pid: child.pid });
 });
 }
 

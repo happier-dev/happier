@@ -39,6 +39,7 @@ import { coercePort } from '../server/port.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { daemonControlPost, pingDaemon } from './daemonControlClient.mjs';
+export { createStackRuntimeCleanupIncompleteError } from './stop_failure.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
