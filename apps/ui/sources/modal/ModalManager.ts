@@ -26,6 +26,23 @@ class ModalManagerClass implements IModal {
     private promptResolvers: Map<string, (value: string | null) => void> = new Map();
     private alertResolvers: Map<string, () => void> = new Map();
 
+    constructor() {
+        // Public methods are also passed directly as callbacks (for example Modal.alert).
+        this.setFunctions = this.setFunctions.bind(this);
+        this.registerProvider = this.registerProvider.bind(this);
+        this.alert = this.alert.bind(this);
+        this.alertAsync = this.alertAsync.bind(this);
+        this.confirm = this.confirm.bind(this);
+        this.prompt = this.prompt.bind(this);
+        this.show = this.show.bind(this);
+        this.update = this.update.bind(this);
+        this.hide = this.hide.bind(this);
+        this.hideAll = this.hideAll.bind(this);
+        this.resolveConfirm = this.resolveConfirm.bind(this);
+        this.resolveAlert = this.resolveAlert.bind(this);
+        this.resolvePrompt = this.resolvePrompt.bind(this);
+    }
+
     setFunctions(
         showModal: (config: Omit<ModalConfig, 'id'>) => string,
         hideModal: (id: string) => void,

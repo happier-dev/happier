@@ -48,12 +48,13 @@ describe('Modal.prompt', () => {
             () => {},
         );
 
-        const promise = Modal.prompt('Title', 'Message');
+        const { prompt, resolvePrompt } = Modal;
+        const promise = prompt('Title', 'Message');
 
         expect((Alert as any).prompt).not.toHaveBeenCalled();
         expect(lastModalConfig?.type).toBe('prompt');
 
-        Modal.resolvePrompt('prompt-1', 'hello');
+        resolvePrompt('prompt-1', 'hello');
         await expect(promise).resolves.toBe('hello');
     });
 
@@ -104,13 +105,14 @@ describe('Modal.prompt', () => {
         const hideModal = vi.fn();
         const unregister = Modal.registerProvider({ showModal, hideModal, hideAllModals: () => {}, updateCustomModalProps: () => {} });
         try {
+            const { confirm, resolveConfirm } = Modal;
             const retired = new AbortController();
             retired.abort();
-            await expect(Modal.confirm('Install agent', '', { signal: retired.signal })).resolves.toBe(false);
+            await expect(confirm('Install agent', '', { signal: retired.signal })).resolves.toBe(false);
             expect(showModal).not.toHaveBeenCalled();
             const controller = new AbortController();
-            const pending = Modal.confirm('Install agent', '', { signal: controller.signal });
-            Modal.resolveConfirm('accepted-confirm', true);
+            const pending = confirm('Install agent', '', { signal: controller.signal });
+            resolveConfirm('accepted-confirm', true);
             await expect(pending).resolves.toBe(true);
             controller.abort();
             expect(hideModal).not.toHaveBeenCalled();
@@ -133,7 +135,7 @@ describe('Modal.prompt', () => {
         await expect(promise).resolves.toBe(false);
     });
 
-    it('uses custom modal alert path on web', async () => {
+    it('supports detached alerts through the registered web modal provider', async () => {
         platformState.os = 'web';
 
         const { Modal } = await import('./ModalManager');
@@ -152,7 +154,8 @@ describe('Modal.prompt', () => {
             () => {},
         );
 
-        Modal.alert('Title', 'Message');
+        const { alert } = Modal;
+        alert('Title', 'Message');
 
         expect(alertSpy).not.toHaveBeenCalled();
         expect(modalType).toBe('alert');
@@ -177,12 +180,13 @@ describe('Modal.prompt', () => {
             () => {},
         );
 
-        const promise = (Modal as any).alertAsync('Title', 'Message');
+        const { alertAsync, resolveAlert } = Modal;
+        const promise = alertAsync('Title', 'Message');
 
         expect(alertSpy).not.toHaveBeenCalled();
         expect(modalType).toBe('alert');
 
-        (Modal as any).resolveAlert('alert-async-1');
+        resolveAlert('alert-async-1');
         await expect(promise).resolves.toBeUndefined();
     });
 
@@ -203,6 +207,33 @@ describe('Modal.prompt', () => {
 
         expect(onPressSpy).toHaveBeenCalledTimes(1);
         await expect(promise).resolves.toBeUndefined();
+    });
+
+    it('supports detached provider registration and dismissal methods', async () => {
+        platformState.os = 'web';
+        const { Modal } = await import('./ModalManager');
+        const { setFunctions, registerProvider, alert, hide, hideAll } = Modal;
+        const visible = new Set<string>();
+        setFunctions(() => { visible.add('fallback'); return 'fallback'; }, () => {}, () => {});
+        const unregister = registerProvider({
+            showModal: () => { visible.add('registered'); return 'registered'; },
+            hideModal: id => { visible.delete(id); },
+            hideAllModals: () => { visible.clear(); },
+            updateCustomModalProps: () => {},
+        });
+        try {
+            alert('Registered provider');
+            expect([...visible]).toEqual(['registered']);
+            hide('registered');
+            expect(visible.size).toBe(0);
+            alert('Registered provider again');
+            hideAll();
+            expect(visible.size).toBe(0);
+        } finally {
+            unregister();
+        }
+        alert('Restored provider');
+        expect([...visible]).toEqual(['fallback']);
     });
 
     it('accepts chrome-backed custom modal props and keeps typed updates intact', async () => {
@@ -226,7 +257,8 @@ describe('Modal.prompt', () => {
             () => {},
         );
 
-        const modalId = Modal.show({
+        const { show, update } = Modal;
+        const modalId = show({
             component: ChromeModal,
             props: {
                 mode: 'label',
@@ -247,15 +279,15 @@ describe('Modal.prompt', () => {
         expect(lastConfig?.chrome?.title).toBe('Browse provider sessions');
         expect(lastConfig?.chrome?.dimensions?.size).toBe('lg');
 
-        Modal.update<ChromeModalProps>(modalId, { label: 'updated' });
-        Modal.show({ component: ChromeModal, props: { mode: 'count', count: 2 } });
+        update<ChromeModalProps>(modalId, { label: 'updated' });
+        show({ component: ChromeModal, props: { mode: 'count', count: 2 } });
         expect(lastConfig?.props).toEqual({ mode: 'count', count: 2 });
 
         // @ts-expect-error -- union arms remain exclusive after removing injected props.
-        Modal.update<ChromeModalProps>(modalId, { mode: 'count', label: 'invalid' });
+        update<ChromeModalProps>(modalId, { mode: 'count', label: 'invalid' });
 
         // @ts-expect-error - invalid props must remain rejected by the type surface.
-        Modal.update<ChromeModalProps>(modalId, { missing: true });
+        update<ChromeModalProps>(modalId, { missing: true });
 
         act(() => {});
     });
