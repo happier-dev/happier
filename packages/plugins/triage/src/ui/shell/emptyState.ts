@@ -52,6 +52,8 @@ export type TriageListEmptyStateV1 = Readonly<{
         | 'healthy';
     title: string;
     description: string;
+    /** Invocation diagnostics preserved for the failure state's Details disclosure. */
+    details?: string;
     /**
      * The ways out of a state the reader's own lens narrowed, in the order they are
      * offered (the first is primary). The shell draws one control per step, so the
@@ -231,13 +233,15 @@ export function resolveTriageListEmptyState(input: Readonly<{
      * nothing is cleared from the rail.
      */
     narrowing: TriageLensNarrowingV1;
+    /** The reader's locale, for the list of connections a shared failure names. */
+    locale?: string;
 }>, text: TriageTextResolverV1 = ENGLISH_TEXT): TriageListEmptyStateV1 {
     if (input.failure !== null) {
         // The one failure notice, so the empty slot and the banner beside a
         // non-empty list cannot end up naming different things.
         return Object.freeze({
             kind: 'sourceFailure',
-            ...readTriageListFailureNotice(input.failure, text),
+            ...readTriageListFailureNotice(input.failure, text, input.locale),
             next: NO_NEXT_STEPS,
         });
     }
@@ -267,7 +271,7 @@ export function resolveTriageListEmptyState(input: Readonly<{
 export function readTriageListEmptyState(
     state: TriageListShellStateV1,
     rowCount: number,
-    options: Readonly<{ narrowing: TriageLensNarrowingV1; text?: TriageTextResolverV1 }>,
+    options: Readonly<{ narrowing: TriageLensNarrowingV1; text?: TriageTextResolverV1; locale?: string }>,
 ): TriageListEmptyStateV1 | null {
     if (state.kind !== 'window' || rowCount > 0) return null;
     return resolveTriageListEmptyState({
@@ -275,5 +279,6 @@ export function readTriageListEmptyState(
         failure: state.failure,
         refreshing: state.refreshing,
         narrowing: options.narrowing,
+        ...(options.locale === undefined ? {} : { locale: options.locale }),
     }, options.text ?? ENGLISH_TEXT);
 }

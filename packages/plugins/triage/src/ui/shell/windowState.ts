@@ -4,7 +4,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
-import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { createTriageNameListFormatter } from './nameList.js';
 import {
   projectTriageFailedSourceHealth,
   projectTriageUnreadableSourceHealth,
@@ -57,6 +58,11 @@ export type TriageListSourceFailureV1 = Readonly<{
   /** Non-secret invocation diagnostic; separate from the translated reason. */
   code?: string;
   retryable?: boolean;
+  /**
+   * Present only for an invocation the host could not make (an offline Machine, a broken transport): its typed
+   * code and the reason together. Connections that all carry one key failed for one cause, which is said once.
+   */
+  sharedCauseKey?: string;
 }>;
 
 /**
@@ -66,8 +72,8 @@ export type TriageListSourceFailureV1 = Readonly<{
  * There is no anonymous arm, and that is the point. A failure rendered beside a
  * populated list was three times titled "The list could not be read" — a
  * sentence the reader can see is false, because the list is right there. The
- * aggregate list read failing is a different state entirely (`sourcesUnreachable`
- * / `unavailable`), reachable only when no window was ever assembled, and
+ * aggregate list read failing is a different state entirely (`readFailed`,
+ * `sourcesUnreachable` or `unavailable`), reachable only when no window was ever assembled, and
  * `projection/listWindowStore.ts` will not publish its error beside a retained
  * window. An aggregate read that fails over rows names the connections it could
  * not read, which is what `core/SURFACE.md` §6.2 row 4 asks for.
@@ -113,6 +119,8 @@ export type TriageListShellStateV1 =
    * them nothing is there.
    */
   | Readonly<{ kind: 'sourcesUnreachable' } & TriageListShellReadFailureV1>
+  /** The list Action failed without establishing a Machine outage; pins remain available. */
+  | Readonly<{ kind: 'readFailed' } & TriageListShellReadFailureV1>
   /**
    * No window was ever assembled and the reader's durable state is unreachable
    * too (`core/SURFACE.md` §6.2, reachability state 6) — the whole surface is
@@ -143,44 +151,46 @@ export type TriageListShellStateV1 =
  * failing, which no single source owns.
  */
 function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShellFailureV1 | null {
+  const unavailableSourceIds = new Set(snapshot.configuredSources
+    .filter((source) => !source.available).map((source) => source.sourceInstanceId));
   // Every distinct connection is kept. A reader with three broken ones needs
   // all three names, not the first.
   const sources: TriageListSourceFailureV1[] = projectTriageFailedSourceHealth(snapshot)
+    .filter((entry) => !unavailableSourceIds.has(entry.sourceInstance.sourceInstanceId))
     .map((entry) => Object.freeze({
       sourceInstanceId: entry.sourceInstance.sourceInstanceId,
       displayName: entry.displayName,
       reason: entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class],
+      code: entry.failure.code,
     }));
   // A connection the pass could not read at all is the same kind of fact as one
   // that failed with provider evidence — one named connection the reader can go
   // and look at. Only the reason differs, and neither is the aggregate read.
-  // The store's sentence for such a connection is its own diagnostic, worded about its pass; the reader is
-  // told the shell's translated reason for a connection that could not be reached.
+  // A host's classified refusal leads with its own sentence, because it can name what the shell cannot: the
+  // Machine it could not reach ("…unavailable on MacBook Pro. Reconnect it…"). The store's sentence for a pass
+  // that never reached the connection, and an unclassified exception's text, are diagnostics, not reader copy;
+  // the reader is told the shell's translated reason instead.
   for (const entry of projectTriageUnreadableSourceHealth(snapshot)) {
+    if (unavailableSourceIds.has(entry.sourceInstance.sourceInstanceId)) continue;
+    // `plugin_action_failed` is the store's code for an exception no host classified.
+    const hostWorded = entry.code !== undefined && entry.code !== 'plugin_action_failed'
+      && entry.reason !== UNREADABLE_IN_THIS_PASS_V1.message;
+    const reason = (hostWorded ? readHostSentence(entry.reason) : undefined) ?? SOURCE_FAILURE_COPY_V1.transient;
     sources.push(Object.freeze({
       sourceInstanceId: entry.sourceInstance.sourceInstanceId,
       displayName: entry.displayName,
-      reason: SOURCE_FAILURE_COPY_V1.transient,
+      reason,
       ...(entry.code === undefined ? {} : { code: entry.code }),
       ...(entry.retryable === undefined ? {} : { retryable: entry.retryable }),
+      sharedCauseKey: `${entry.code ?? ''}\n${entry.retryable ?? ''}\n${reason}`,
     }));
   }
-  // A connection whose source is not admitted is never asked, so it has no lane
-  // and never reaches `unreadableSources` — both projections above miss it by
-  // construction. The freshness owner still refuses to call the window current,
-  // which is right, and without this the reader is told the list is not current
-  // while no connection is named and no Refresh can change it. Being unread is
-  // only actionable once the reader knows WHICH connection.
-  const lanesBySource = new Set((snapshot.window?.lanes ?? []).map((lane) => lane.sourceInstanceId));
+  // Configuration admission, not the presence of a coverage lane, establishes
+  // which contributions cannot be asked. Name that state once, superseding any
+  // retained read failure from before admission was lost. An available lane
+  // the pass has not reached is still only unfinished coverage.
   for (const configured of snapshot.configuredSources) {
-    if (configured.available !== false) continue;
-    // Unavailable AND never given a lane. The lane is the discriminator between
-    // the two states that share this flag: a source the cycle SKIPPED because it
-    // cannot be asked at all (no lane, permanent, nothing the reader can retry)
-    // and one a running pass has simply not reached yet (a lane, `unavailable`,
-    // an unfinished walk). Naming the second would accuse a connection nothing
-    // has tried — the failure `sourceHealth.ts` documents and refuses.
-    if (lanesBySource.has(configured.sourceInstanceId)) continue;
+    if (!unavailableSourceIds.has(configured.sourceInstanceId)) continue;
     const sourceInstance = {
       source: configured.source,
       sourceInstanceId: configured.sourceInstanceId,
@@ -197,10 +207,19 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
 }
 
 /** What a reader is told, in one place, so the two surfaces cannot drift. */
-export type TriageListFailureNoticeV1 = Readonly<{ title: string; description: string }>;
+export type TriageListFailureNoticeV1 = Readonly<{ title: string; description: string; details?: string }>;
 export type TriageTextResolverV1 = (key: string, fallback?: string) => string;
 
 const ENGLISH_TEXT: TriageTextResolverV1 = (_key, fallback = '') => fallback;
+
+/**
+ * A host recovery sentence, or `undefined` when the message is empty or only the
+ * machine-readable code the SDK uses as its default message.
+ */
+function readHostSentence(message: string): string | undefined {
+  const sentence = message.trim();
+  return sentence.length > 0 && !/^[a-z][a-z0-9_.:-]*$/i.test(sentence) ? sentence : undefined;
+}
 
 /**
  * A configured connection whose contributing source is not admitted on this
@@ -235,17 +254,32 @@ function resolveSourceFailureReason(
  * the reader acts on and burying it in a body under a plural heading is how
  * attribution gets lost again. Several are listed, one line each, rather than
  * summarized into a count the reader cannot use.
+ *
+ * Several that failed for one shared cause (owner ruling 2026-11-02: one offline
+ * Machine) are all named in the one heading and the cause is said once, instead
+ * of the same sentence repeated on every line.
  */
 export function readTriageListFailureNotice(
   failure: TriageListShellFailureV1,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
+  locale?: string,
 ): TriageListFailureNoticeV1 {
-  const describe = (source: TriageListSourceFailureV1) => resolveSourceFailureReason(text, source.reason);
-  const only = failure.sources.length === 1 ? failure.sources[0] : undefined;
-  if (only !== undefined) {
+  const describe = (source: TriageListSourceFailureV1) => source.retryable === false
+    && source.reason === SOURCE_FAILURE_COPY_V1.transient
+    ? text('plugins.triage.surface.listFailed.permanent', 'Trying again will not fix this. The details below can help support find out why.')
+    : resolveSourceFailureReason(text, source.reason);
+  const details = failure.sources.flatMap((source) => source.code === undefined ? [] : [
+    `${source.displayName} — ${source.code}${source.retryable === undefined ? '' : ` · retryable=${source.retryable}`}`,
+  ]).join('\n');
+  const first = failure.sources[0];
+  const sharedCause = first?.sharedCauseKey !== undefined
+    && failure.sources.every((source) => source.sharedCauseKey === first.sharedCauseKey);
+  if (first !== undefined && (failure.sources.length === 1 || sharedCause)) {
+    const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
     return Object.freeze({
-      title: `${only.displayName} ${text('plugins.triage.surface.failure.suffix', 'could not be read')}`,
-      description: describe(only),
+      title: `${names} ${text('plugins.triage.surface.failure.suffix', 'could not be read')}`,
+      description: describe(first),
+      ...(details.length === 0 ? {} : { details }),
     });
   }
   return Object.freeze({
@@ -253,28 +287,34 @@ export function readTriageListFailureNotice(
     description: failure.sources
       .map((source) => `${source.displayName} — ${describe(source)}`)
       .join('\n'),
+    ...(details.length === 0 ? {} : { details }),
   });
 }
 
 /**
- * No machine could read the sources, but the reader's own state is still here.
+ * Explain the list read's classified cause while the reader's own state stays available.
  *
- * The failure's own words lead when it has them: the host says which Machine
+ * The failure's own words lead when it has them: the host may say which Machine
  * could not answer and what to do ("…unavailable on studio-mac. Reconnect it
  * or choose another machine with Run on."), which the general sentence cannot.
  */
-export function readTriageSourcesUnreachableNotice(
-  state: Readonly<{ kind: 'sourcesUnreachable' } & TriageListShellReadFailureV1>,
+export function readTriageListReadFailureNotice(
+  state: Readonly<{ kind: 'sourcesUnreachable' | 'readFailed' } & TriageListShellReadFailureV1>,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
 ): TriageListFailureNoticeV1 {
-  const reason = state.message.trim();
+  const reason = readHostSentence(state.message);
+  const machineUnavailable = state.kind === 'sourcesUnreachable';
   return Object.freeze({
-    title: text('plugins.triage.surface.sourcesUnreachable.title', 'Your sources could not be reached'),
+    title: machineUnavailable
+      ? text('plugins.triage.surface.sourcesUnreachable.title', 'Your sources could not be reached')
+      : text('plugins.triage.surface.listFailed', 'The list could not be read'),
     // The SDK may use the machine-readable code as its default message. Keep
     // host recovery sentences, but use our translated explanation for bare codes.
-    description: reason.length > 0 && !/^[a-z][a-z0-9_.:-]*$/i.test(reason)
+    description: reason !== undefined
       ? reason
-      : text('plugins.triage.surface.sourcesUnreachable.description', 'Happier could not reach a machine for these sources, so nothing has been read yet. Your pins are still here, and Refresh tries again.'),
+      : machineUnavailable
+        ? text('plugins.triage.surface.sourcesUnreachable.description', 'Happier could not reach a machine for these sources, so nothing has been read yet. Your pins are still here, and Refresh tries again.')
+        : text('plugins.triage.surface.listFailed.pinsAvailable', 'Happier could not read this list just now. Your pins are still here.'),
   });
 }
 
@@ -392,8 +432,11 @@ export function resolveTriageListShellState(
   // looked. Claiming it earlier would accuse the user of not configuring
   // something we have not yet read.
   if (snapshot.error !== undefined) {
+    const machineUnavailable = [snapshot.error.code, ...(snapshot.error.diagnostics ?? [])].some(code =>
+      code === 'plugin_action_machine_required');
     return Object.freeze({
-      kind: options.durableStateReachable === true ? 'sourcesUnreachable' : 'unavailable',
+      kind: options.durableStateReachable !== true ? 'unavailable'
+        : machineUnavailable ? 'sourcesUnreachable' : 'readFailed',
       message: snapshot.error.message,
       retryable: snapshot.error.retryable !== false,
       ...(snapshot.error.detail === undefined ? {} : { detail: snapshot.error.detail }),

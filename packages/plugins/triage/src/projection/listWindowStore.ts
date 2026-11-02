@@ -60,6 +60,8 @@ import {
 export type TriageListWindowErrorV1 = Readonly<{
     code: string;
     message: string;
+    /** Structured host reasons; presentation never parses the diagnostic disclosure. */
+    diagnostics?: readonly string[];
     /**
      * Whether another read can succeed, as the host classified the failure. A
      * failure nobody classified is worth one more try; absent means that.
@@ -311,6 +313,7 @@ function errorFrom(cause: unknown): TriageListWindowErrorV1 {
             // The host's own verdict: `unsupported_method` or `denied` will
             // fail the same way however often the reader presses Refresh.
             retryable: cause.retryable,
+            ...(cause.diagnostics?.length ? { diagnostics: cause.diagnostics.map(diagnostic => diagnostic.code) } : {}),
             detail: [cause.code, ...(cause.diagnostics ?? []).map((diagnostic) => diagnostic.code)].join(' · '),
         };
     }
@@ -329,7 +332,7 @@ function errorFrom(cause: unknown): TriageListWindowErrorV1 {
  * not reach them. The cause is not discarded from the aggregate arm: it is what
  * `error` carries when no window exists at all.
  */
-const UNREADABLE_IN_THIS_PASS_V1: TriageListWindowErrorV1 = Object.freeze({
+export const UNREADABLE_IN_THIS_PASS_V1: TriageListWindowErrorV1 = Object.freeze({
     code: 'source_unavailable',
     message: 'The source could not be read in this pass.',
 });

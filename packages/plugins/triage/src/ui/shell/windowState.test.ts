@@ -6,7 +6,7 @@ import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStor
 import {
   readTriageListFailureNotice,
   readTriageRefreshPacingNotice,
-  readTriageSourcesUnreachableNotice,
+  readTriageListReadFailureNotice,
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
 } from './windowState.js';
@@ -39,12 +39,37 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
 }
 
 describe('resolveTriageListShellState', () => {
-  it('translates source failures without disclosing diagnostic codes in the notice', () => {
+  it('keeps source invocation codes in details rather than the translated explanation', () => {
     const failure = { kind: 'sources' as const, sources: [{ sourceInstanceId: INSTANCE, displayName: 'Personal tasks',
       reason: 'Could not be reached just now.', code: 'source_unavailable' }] };
     const notice = readTriageListFailureNotice(failure, (key, fallback) => key.endsWith('.transient') ? 'Try again later' : fallback ?? key);
     expect(notice.description).not.toContain('source_unavailable');
+    expect(notice).toMatchObject({ details: 'Personal tasks — source_unavailable' });
     expect(failure.sources[0]!.code).toBe('source_unavailable');
+  });
+  it('does not describe a non-retryable invocation refusal as a transient outage', () => {
+    const state = resolveTriageListShellState(snapshot({
+      window: window({ lanes: [{ sourceInstanceId: INSTANCE, source: SOURCE,
+        health: { kind: 'unavailable' }, exhausted: false }] }),
+      unreadableSources: [{ sourceInstanceId: INSTANCE, message: 'The source could not be read in this pass.',
+        code: 'plugin_activation_failed', retryable: false }],
+    }));
+    expect(state.kind).toBe('window');
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a named source failure');
+    const notice = readTriageListFailureNotice(state.failure, (key, fallback) =>
+      key === 'plugins.triage.surface.listFailed.permanent' ? 'Recovery needs a change' : fallback ?? key);
+    expect(notice.description).toBe('Recovery needs a change');
+    expect(notice).toMatchObject({ details: expect.stringContaining('plugin_activation_failed') });
+  });
+  it('preserves the provider refusal code as well as its readable failure class', () => {
+    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+      sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
+      health: { kind: 'failed', failure: { class: 'authentication', code: 'github_credential_mismatch' } },
+    }] }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a named source failure');
+    expect(readTriageListFailureNotice(state.failure)).toMatchObject({
+      description: 'Needs you to sign in again.', details: expect.stringContaining('github_credential_mismatch'),
+    });
   });
   it('keeps age-only staleness truthful without a list read warning', () => {
     const aged = snapshot({
@@ -147,7 +172,7 @@ describe('resolveTriageListShellState', () => {
   it('keeps durable user state its own reachability answer', () => {
     const unread = snapshot({
       freshness: 'unknown',
-      error: { code: 'plugin_action_failed', message: 'The list could not be read.' },
+      error: { code: 'plugin_action_machine_required', message: 'The list could not be read.' },
     });
 
     // `core/SURFACE.md` §6.2 states 5 and 6 are two different answers. With the
@@ -160,6 +185,27 @@ describe('resolveTriageListShellState', () => {
       .toEqual({ kind: 'unavailable', message: 'The list could not be read.', retryable: true });
     // Fails closed: a caller that cannot answer promises the reader nothing.
     expect(resolveTriageListShellState(unread).kind).toBe('unavailable');
+  });
+
+  it.each(['plugin_surface_client_action_unavailable', 'plugin_surface_contributed_action_unavailable', 'plugin_action_failed', 'unavailable'])(
+    'does not classify an Action read failure as machine unreachability (%s)', code => {
+      const state = resolveTriageListShellState(snapshot({ freshness: 'unknown',
+        error: { code, message: code, retryable: false } }), { durableStateReachable: true });
+      expect(state).toEqual({ kind: 'readFailed', message: code, retryable: false });
+    },
+  );
+
+  it('uses the structured host reason to distinguish an unreachable Machine from an Action refusal', () => {
+    const error = { code: 'unavailable', message: 'unavailable',
+      diagnostics: ['plugin_action_machine_required'] };
+    expect(resolveTriageListShellState(snapshot({ error }), { durableStateReachable: true }).kind)
+      .toBe('sourcesUnreachable');
+    expect(resolveTriageListShellState(snapshot({ error: { ...error,
+      diagnostics: ['plugin_surface_client_action_unavailable'] } }), { durableStateReachable: true }).kind)
+      .toBe('readFailed');
+    expect(resolveTriageListShellState(snapshot({ error: { ...error,
+      diagnostics: ['plugin_surface_contributed_action_unavailable'] } }), { durableStateReachable: true }).kind)
+      .toBe('readFailed');
   });
 
   it('keeps a failed refresh beside the rows instead of replacing them', () => {
@@ -237,6 +283,7 @@ describe('resolveTriageListShellState', () => {
           sourceInstanceId: OTHER_INSTANCE,
           displayName: 'globex/service',
           reason: 'Refused this account access.',
+          code: 'forbidden',
         }],
       },
     });
@@ -425,7 +472,7 @@ describe('resolveTriageListShellState', () => {
     });
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
-        { sourceInstanceId: OTHER_INSTANCE, source: OTHER_SOURCE, available: false },
+        { sourceInstanceId: OTHER_INSTANCE, source: OTHER_SOURCE, available: true },
       ],
       window: partial,
       freshness: 'stale',
@@ -447,12 +494,8 @@ describe('resolveTriageListShellState', () => {
   });
 
   it('names a configured connection whose source is not installed on this machine', () => {
-    // A connection whose contributing plugin is not admitted is never asked, so
-    // it gets no lane and never enters `unreadableSources` — the two existing
-    // projections both miss it. The freshness owner still (correctly) refuses to
-    // call the window current, so the reader was left with a permanent "showing
-    // the last known list" naming no connection and offering nothing to click.
-    // Being unread is only actionable once the reader knows WHICH connection.
+    // Configuration admission identifies an unavailable contribution even when
+    // the fold supplies a coverage lane; this is separate from read freshness.
     const state = resolveTriageListShellState(snapshot({
       configuredSources: [
         { sourceInstanceId: INSTANCE, source: SOURCE, displayLabel: 'acme/widgets', available: true },
@@ -478,9 +521,9 @@ describe('resolveTriageListShellState', () => {
   });
 });
 
-describe('readTriageSourcesUnreachableNotice', () => {
+describe('readTriageListReadFailureNotice', () => {
   it.each(['unavailable', 'plugin_action_failed', 'plugin.mounted-caller:unavailable'])('localizes a diagnostic token instead of presenting %s as the explanation', (message) => {
-    const notice = readTriageSourcesUnreachableNotice({ kind: 'sourcesUnreachable', message, retryable: true },
+    const notice = readTriageListReadFailureNotice({ kind: 'sourcesUnreachable', message, retryable: true },
       (key, fallback) => key === 'plugins.triage.surface.sourcesUnreachable.description' ? 'Localized recovery explanation' : fallback);
     expect(notice.description).toBe('Localized recovery explanation');
   });
@@ -489,7 +532,7 @@ describe('readTriageSourcesUnreachableNotice', () => {
     // D1: when this device's Run-on Machine cannot answer, the page stays and only its Machine data
     // is unavailable. The host's reason is the one sentence that names that Machine; the generic
     // "a machine" copy hid which one and what to do.
-    const notice = readTriageSourcesUnreachableNotice({
+    const notice = readTriageListReadFailureNotice({
       kind: 'sourcesUnreachable',
       message: 'This operation is unavailable on studio-mac. Reconnect it or choose another machine with Run on.',
       retryable: true,
@@ -499,7 +542,7 @@ describe('readTriageSourcesUnreachableNotice', () => {
   });
 
   it('keeps the general explanation when the failure carried no words', () => {
-    const notice = readTriageSourcesUnreachableNotice({ kind: 'sourcesUnreachable', message: ' ', retryable: true });
+    const notice = readTriageListReadFailureNotice({ kind: 'sourcesUnreachable', message: ' ', retryable: true });
     expect(notice.description).toContain('Refresh tries again');
   });
 });

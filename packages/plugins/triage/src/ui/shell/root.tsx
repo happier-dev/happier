@@ -42,6 +42,7 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
+import { TriageListFailureStatus } from './sourceFailure.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 import { parseCorpusSmartPolicy, type CorpusSmartPolicyV1 } from '../../corpus/query/smartPolicy.js';
 import {
@@ -171,8 +172,7 @@ import {
 } from './layout.js';
 import { readTriageWindowLensV1 } from './lens.js';
 import {
-  readTriageListFailureNotice,
-  readTriageSourcesUnreachableNotice,
+  readTriageListReadFailureNotice,
   readTriageRefreshPacingNotice,
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
@@ -1879,6 +1879,18 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (await configuredSources.remove(sourceInstanceId)) refresh();
   }, [configuredSources, refresh]);
 
+  // Admission already says which sources cannot run here. Their recovery belongs to the list,
+  // through the existing source panel and its admitted Remove action, including when no rows remain.
+  const sourceManagementAction = window.snapshot.configuredSources.some(source => !source.available) ? (
+    <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary"
+      onPress={() => setEditingSources(true)} />
+  ) : undefined;
+  // Beside a status line the same fix is a plain action, as Retry is beside its sentence.
+  const sourceManagementStatusAction = sourceManagementAction === undefined ? undefined : (
+    <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="plain" size="small"
+      onPress={() => setEditingSources(true)} />
+  );
+
   /*
     `core/SURFACE.md` §6.5. The compact Views control names the lens the reader
     is looking through; its naming draft and notices sit under the toolbar.
@@ -2097,7 +2109,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * and there is no window to make a freshness claim about.
    */
   const listWindow = state.kind === 'window' ? state : null;
-  const empty = readTriageListEmptyState(state, rowCount, { narrowing, text });
+  const empty = readTriageListEmptyState(state, rowCount, { narrowing, text, locale: surfaceContext.locale });
   /**
    * The empty narrowed list's ways out, drawn from the one decision (`empty.next`): the first is the
    * primary control and the rest follow it quietly. Read-further is the entries continuation the
@@ -2431,14 +2443,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           )}
 
           {/*
-            `core/SURFACE.md` §6.2, reachability state 5. No machine could be
-            reached for the sources, so there is no window and no freshness claim
-            to make — but the reader's own durable state is still live, which is
+            The list read failed, so there is no window or freshness claim.
+            Only a classified Machine failure claims source unreachability.
+            The reader's own durable state is still live, which is
             why this is a notice above their pins rather than a screen instead of
             them.
           */}
-          {state.kind !== 'sourcesUnreachable' ? null : (
-            <Banner tone="warning" {...readTriageSourcesUnreachableNotice(state, text)}
+          {state.kind !== 'sourcesUnreachable' && state.kind !== 'readFailed' ? null : (
+            <Banner tone="warning" {...readTriageListReadFailureNotice(state, text)}
               action={state.retryable ? (
                 <Button titleKey="plugins.triage.surface.tryAgain" title="Try again" variant="secondary"
                   busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refresh} />
@@ -2571,7 +2583,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             cannot act on health that will not say whose it is.
           */}
           {listWindow?.failure == null || rowCount === 0 ? null : (
-            <Banner tone="warning" {...readTriageListFailureNotice(listWindow.failure, text)} />
+            <TriageListFailureStatus failure={listWindow.failure} action={sourceManagementStatusAction} />
           )}
 
           {/*
@@ -2657,6 +2669,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             <ErrorState
               title={empty.title}
               description={empty.description}
+              {...(empty.details === undefined ? {} : { details: empty.details })}
               /*
                 The same one control, in the state that has no rows to put
                 it beside. It reads the same eligibility answer as the
@@ -2665,7 +2678,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 stayed enabled was a press the coordinator silently refused
                 — the exact failure `core/CORPUS.md` §4.2 names.
               */
-              action={(
+              action={sourceManagementAction ?? (
                 <Button
                   titleKey="plugins.triage.surface.refresh"
                   title="Refresh"
