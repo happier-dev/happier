@@ -198,6 +198,7 @@ export { DragSource, DropTarget, type DragSourceProps, type DropTargetProps } fr
 export {
   WidgetPresentationProvider,
   useWidgetPresentation,
+  widgetFootprintBodyRows,
   type WidgetPresentation,
   type WidgetPresentationProviderProps,
 } from './WidgetPresentation.js';

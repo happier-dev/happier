@@ -17,7 +17,8 @@ import { createPluginEntityDragDropBinding, executeMountedPluginEntityDropAction
 import { PluginEntityDragSourceView, PluginEntityDropTargetView } from './entityDragDrop/PluginEntityDragDropView';
 import { PluginLiveStreamViewer } from './PluginLiveStreamViewer';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
-import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from '@/components/ui/surfaces/surfaceStateSize';
+import { useWidgetFrameHeaderBinding } from '@/components/widgets/frame/widgetFrameHeaderBinding';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -1696,10 +1697,14 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     const presented = useLayoutPresentationActive();
     // The pane header of the tab this mount fills: a plugin's `PaneHeaderContent` lands there, beside the
     // tab's title, exactly where built-in tabs put their "+" and live line.
-    const paneHeaderBinding = usePaneHeaderSlotBinding();
+    const widgetHeaderBinding = useWidgetFrameHeaderBinding();
+    const tabHeaderBinding = usePaneHeaderSlotBinding();
+    const paneHeaderBinding = widgetHeaderBinding ?? tabHeaderBinding;
     // The container the mount sits in (a session sidebar tab is a `pane`, a phone surface `phone`), so
     // a plugin's unsized states size themselves like the host's own states around them.
-    const hostStateSize = useSurfaceStateSize();
+    const hostStateSize = useSurfaceStateCardSize();
+    // A widget card never owns its page's primary: its plugin states offer their way forward quiet, like the host's.
+    const hostQuietStateActions = useSurfaceStateQuietActions();
     const destinationRowRenderer = usePluginDestinationRowRenderer();
     const findRegistrationHost = useFindSurfaceRegistrationHost();
     const mediaStage = usePluginUiMediaStage();
@@ -1760,6 +1765,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 resolveMaterialColor,
                 pageChrome: hostPageChrome,
                 ...(hostStateSize === undefined ? {} : { stateSize: hostStateSize }),
+                ...(hostQuietStateActions ? { stateActions: 'quiet' as const } : {}),
                 ...(detailsPaneBinding === null ? {} : { detailsPane: detailsPaneBinding }),
                 ...(paneHeaderBinding === null ? {} : { paneHeader: paneHeaderBinding }),
             },
@@ -1771,6 +1777,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             mediaStage,
             props.entityDragBinding,
             hostStateSize,
+            hostQuietStateActions,
             detailsPaneBinding,
             paneHeaderBinding,
             hostPalette,

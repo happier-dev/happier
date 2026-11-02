@@ -369,7 +369,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
             {bindings.renderButton({
               action,
               emphasis: index === 0 ? 'primary' : 'secondary',
-              tone: index === 0 ? (action.invitation ? 'filled' : tone) : 'secondary',
+              tone: index === 0 ? (action.invitation === undefined ? tone : action.invitation ? 'filled' : 'secondary') : 'secondary',
               compact,
               fullWidth,
               testID:

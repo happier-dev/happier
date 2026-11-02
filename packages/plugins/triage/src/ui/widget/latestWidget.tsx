@@ -2,13 +2,15 @@ import * as React from 'react';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
   Button,
-  Banner,
   EmptyState,
   ErrorState,
   Icon,
+  IconButton,
   Item,
   ItemGroup,
   LoadingState,
+  PaneHeaderContent,
+  Status,
   TaskStatusGlyph,
   defineUiSurface,
   usePluginHostApi,
@@ -16,6 +18,8 @@ import {
   usePluginUiEphemeralSharedScope,
   useSurfaceContext,
   usePluginSurfaceActivity,
+  useWidgetPresentation,
+  widgetFootprintBodyRows,
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
@@ -33,6 +37,9 @@ import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { useTriageListWindowViewDemand } from '../window/useTriageListWindowViewDemand.js';
 import { planTriageListItemsV1 } from '../list/sections.js';
 import { TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
+import { readTriageListFailureNotice, resolveTriageListShellState } from '../shell/windowState.js';
+import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
+import { stageTriageTaskDraft } from '../taskDraftHandoff.js';
 
 /**
  * How many of the newest entries the Home widget shows. Home is a glance, not the list: the page
@@ -76,6 +83,16 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   } }), [mountId, tasksOnly]);
   useTriageCurrentUiContextPublication(hostApi, currentUiContext);
 
+  // The page's one rule (`ui/shell/windowState.ts`): an old list that read cleanly stays quiet; only a failed or
+  // unreachable read says the rows are the last known ones.
+  const shellState = resolveTriageListShellState(snapshot);
+  const degraded = shellState.kind === 'window'
+    && (shellState.showReadWarning || tasksOnly && snapshot.window?.coverage === 'partial');
+  // A glance shows only the whole rows its frame has room for (two per grid row), never a row cut at the card foot;
+  // its one degraded line takes a row's room, so the line naming the failed source is never the part cut off.
+  const footprint = useWidgetPresentation()?.footprint;
+  const roomRows = footprint ? Math.min(TRIAGE_LATEST_WIDGET_ROWS_V1, widgetFootprintBodyRows(footprint)) : TRIAGE_LATEST_WIDGET_ROWS_V1;
+  const shownRows = Math.max(1, roomRows - (footprint && degraded ? 1 : 0));
   const rows = React.useMemo(
     () => {
       if (snapshot.window === undefined) return undefined;
@@ -93,15 +110,36 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     void hostApi.openSurface(tasksOnly ? TRIAGE_TASK_DETAIL_DESTINATION_V1 : TRIAGE_ENTRY_DETAIL_DESTINATION_V1,
       undefined, { subPath: tasksOnly ? 'tasks,mine' : '' }).catch(() => undefined);
   }, [hostApi, tasksOnly]);
-  const taskCoverageNotice = !tasksOnly ? null : snapshot.freshness === 'stale'
-    ? <Banner tone="warning" title={text('plugins.triage.surface.lastKnown', 'Showing the last known list')} />
-    : snapshot.window?.coverage === 'partial'
-      ? <Banner tone="info" title={text('plugins.triage.surface.empty.incomplete.title', 'This list is not complete yet')} /> : null;
+  const createTask = React.useCallback(() => {
+    const handoff = stageTriageTaskDraft(sharedScope, {});
+    if (handoff === null) return;
+    void hostApi.openSurface(TRIAGE_TASK_DETAIL_DESTINATION_V1, handoff.input, { subPath: 'tasks,mine' })
+      .catch(() => { handoff.discard(); });
+  }, [hostApi, sharedScope]);
+  // My tasks lends its frame header what the lab draws there: how many are in progress, and the plus that
+  // starts a new task (lab `tasks-widget`). The host puts it in the frame's header; elsewhere it draws nothing.
+  const newTaskLabel = text('plugins.triage.tasks.new', 'New task');
+  const headerActions = React.useMemo(() => (tasksOnly
+    ? <IconButton icon={<Icon name="add" size="small" />} accessibilityLabel={newTaskLabel} onPress={createTask}
+      testID="triage-tasks-widget.new" />
+    : null), [createTask, newTaskLabel, tasksOnly]);
+  const header = <PaneHeaderContent
+    caption={tasksOnly ? text('plugins.triage.tasks.title', 'Tasks') : TRIAGE_DISPLAY_NAME}
+    {...(headerActions === null ? {} : { actions: headerActions })}
+    // The frame's one footer link, "Open Tasks": the way to every row this glance leaves out.
+    onOpen={openPage} />;
+  const degradedLine = shellState.kind !== 'window' ? null : shellState.showReadWarning
+    ? <Status testID="triage-latest-widget.degraded" tone="warning" presentation="inline" label={shellState.failure === null
+      ? text('plugins.triage.surface.lastKnown', 'Showing the last known list')
+      : readTriageListFailureNotice(shellState.failure, text).title} />
+    : tasksOnly && snapshot.window?.coverage === 'partial'
+      ? <Status testID="triage-latest-widget.degraded" tone="muted" presentation="inline"
+        label={text('plugins.triage.surface.empty.incomplete.title', 'This list is not complete yet')} /> : null;
 
   if (rows === undefined) {
     if (snapshot.error !== undefined) {
       return (
-        <ErrorState
+        <>{header}<ErrorState
           testID="triage-latest-widget.error"
           titleKey="plugins.triage.widget.error"
           title="The latest entries could not be read"
@@ -116,46 +154,46 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
               />
             ),
           })}
-        />
+        /></>
       );
     }
     return (
-      <LoadingState
+      <>{header}<LoadingState
         testID="triage-latest-widget.loading"
         titleKey="plugins.triage.widget.loading"
         title="Loading the latest entries"
         rows={3}
-      />
+      /></>
     );
   }
 
   if (rows.length === 0) {
-    if (tasksOnly) return <>{taskCoverageNotice}<EmptyState layout="line" title={text('plugins.triage.tasks.myTasks', 'My tasks')}
+    if (tasksOnly) return <>{header}<EmptyState layout="line" title={text('plugins.triage.tasks.myTasks', 'My tasks')}
       description={text('plugins.triage.tasks.description', 'Your work, and the agents working with you.')}
-      action={<Button title={text('plugins.triage.tasks.title', 'Tasks')} variant="plain" onPress={openPage} />} /></>;
+      action={<Button title={text('plugins.triage.tasks.title', 'Tasks')} variant="plain" onPress={openPage} />} />{degradedLine}</>;
     return snapshot.configuredSources.length === 0 ? (
-      <EmptyState
+      <>{header}<EmptyState
         testID="triage-latest-widget.noSources"
         layout="line"
         titleKey="plugins.triage.widget.noSources"
         title="Connect a source to see new pull requests and issues here."
-        action={<Button variant="secondary" titleKey="plugins.triage.widget.setUp" title="Set up" onPress={openPage} />}
-      />
+        action={<Button titleKey="plugins.triage.widget.setUp" title="Set up" onPress={openPage} />}
+      />{degradedLine}</>
     ) : (
-      <EmptyState
+      <>{header}<EmptyState
         testID="triage-latest-widget.empty"
         layout="line"
         titleKey="plugins.triage.widget.empty"
         title="Nothing new right now"
-      />
+      />{degradedLine}</>
     );
   }
 
   return (
     <>
-    {taskCoverageNotice}
+    {header}
     <ItemGroup testID="triage-latest-widget.rows">
-      {rows.map((row) => {
+      {rows.slice(0, shownRows).map((row) => {
         const display = projectTriageEntryDisplay(row, text);
         // The page's row mark and detail tone (one owner): the entry's kind glyph, loud only when it
         // needs the reader.
@@ -207,6 +245,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         );
       })}
     </ItemGroup>
+    {degradedLine}
     </>
   );
 }

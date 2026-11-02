@@ -1,4 +1,4 @@
-import { useContext, type ReactElement, type ReactNode } from 'react';
+import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { HappierSurfaceGradientLayer } from '../presentation/layout/SurfaceGradientLayer.js';
 import { HappierSectionActionStackedContext } from '../presentation/layout/PageSection.js';
@@ -18,6 +18,11 @@ import { HappierSpinner, iconMatchedSpinnerSize } from '../presentation/feedback
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_ICON_BUTTON_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
 import { PluginUiLeadingGlyphInkContext } from './Icon.js';
+/**
+ * A state's action in a container that never owns its page's primary (the host's `stateActions: 'quiet'`): a
+ * primary Button there draws quiet. Set by the shared state owner around its action slots, never a public prop.
+ */
+export const PluginUiQuietStateActionContext = createContext(false);
 import {
   type PluginUiFocusTarget,
   usePluginUiFocusTargetBindingInternal,
@@ -125,7 +130,8 @@ export function Button({
   );
   const accessibleName = requireAccessibleButtonName(resolvedAccessibilityLabel, label);
   const focusBinding = usePluginUiFocusTargetBindingInternal(focusTarget);
-  const face = useButtonFace(variant, size, disabled === true);
+  const quietState = useContext(PluginUiQuietStateActionContext);
+  const face = useButtonFace(quietState && variant === 'primary' ? 'secondary' : variant, size, disabled === true);
 
   return (
     <HappierPressable

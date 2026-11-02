@@ -47,7 +47,7 @@ import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { Spinner } from './Spinner.js';
-import { Button } from './Button.js';
+import { Button, PluginUiQuietStateActionContext } from './Button.js';
 import { HappierSpinner } from '../presentation/feedback/Spinner.js';
 
 const STATE_LOADING_TRANSLATION_KEY = 'happier.plugin-ui.state.loading';
@@ -219,6 +219,20 @@ function SpinnerLoadingState(props: LoadingStateProps): ReactElement {
  * content column, a centred pane state, or one quiet line among rows.
  */
 export function EmptyState(props: EmptyStateProps): ReactElement {
+  return <QuietStateActions><EmptyStateView {...props} /></QuietStateActions>;
+}
+
+/**
+ * In a container that never owns its page's primary (the host's `stateActions: 'quiet'`, a widget card), the
+ * author's own action Buttons inside a state draw quiet, as the host's states there do: one frame decision,
+ * never a variant restated per widget.
+ */
+function QuietStateActions(props: Readonly<{ children: ReactNode }>): ReactElement {
+  const quiet = useOptionalPluginUiPresentationHost()?.stateActions === 'quiet';
+  return quiet ? <PluginUiQuietStateActionContext.Provider value>{props.children}</PluginUiQuietStateActionContext.Provider> : <>{props.children}</>;
+}
+
+function EmptyStateView(props: EmptyStateProps): ReactElement {
   const { translate, title, description } = useResolvedCopy(props);
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme);
@@ -495,6 +509,10 @@ const UNSIZED_STATE_GLYPH_PX = 32;
 const UNSIZED_STATE_GLYPH_GAP_PX = 8;
 
 function SurfaceStateAdapter(authored: SurfaceStateProps & Readonly<{ actionSlot?: ReactNode }>): ReactElement {
+  return <QuietStateActions><SurfaceStateAdapterView {...authored} /></QuietStateActions>;
+}
+
+function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ actionSlot?: ReactNode }>): ReactElement {
   // While the host has one sentence about a part that cannot run now (its Machine cannot be reached), a
   // failure state says that sentence in its own place, with its own action, instead of its own copy:
   // the cause is said once, where it failed, and the host draws nothing of its own beside it.
@@ -514,10 +532,12 @@ function SurfaceStateAdapter(authored: SurfaceStateProps & Readonly<{ actionSlot
   const title = resolveAuthorText(translate, props.title, props.titleKey);
   const description = resolveAuthorText(translate, props.description, props.descriptionKey);
   const note = resolveAuthorText(translate, props.note, props.noteKey);
+  const quietActions = useContext(PluginUiQuietStateActionContext);
   const resolveAction = (action: SurfaceStateAction | undefined): HappierSurfaceStateAction | undefined => {
     if (!action) return undefined;
     const label = resolveAuthorText(translate, action.label, action.labelKey) ?? '';
-    return { label, onPress: () => action.onPress() as void | Promise<unknown>, disabled: action.disabled, busy: action.busy, testID: action.testID };
+    return { label, onPress: () => action.onPress() as void | Promise<unknown>, disabled: action.disabled, busy: action.busy, testID: action.testID,
+      ...(quietActions ? { invitation: false } : {}) };
   };
   const line = size === 'line';
   const metrics = size && size !== 'line' ? HAPPIER_STATE_SIZE_METRICS[size] : null;

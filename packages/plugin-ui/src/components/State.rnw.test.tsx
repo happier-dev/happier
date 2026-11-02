@@ -557,6 +557,25 @@ describe('plugin states take the container they are mounted in (lab 5 host primi
     mount.unmount();
   });
 
+  it('offers every state\'s way forward quiet in a container that never owns its page\'s primary (a widget card)', () => {
+    const fillOf = (element: ReactNode, host: Partial<PluginUiPresentationHost>) => {
+      const mount = mountInHost(element, host);
+      const fill = getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="next"]')!).backgroundColor;
+      mount.unmount();
+      return fill;
+    };
+    const authored = (variant?: 'secondary') => <EmptyState title="No tasks here"
+      action={<Button testID="next" title="New task" {...(variant ? { variant } : {})} onPress={() => {}} />} />;
+    const structured = <SurfaceState kind="empty" title="No tasks here" action={{ testID: 'next', label: 'New task', onPress: () => {} }} />;
+    const quietFill = fillOf(authored('secondary'), { stateSize: 'pane' });
+    // Outside such a container an empty state's one step stays its invitation.
+    expect(fillOf(authored(), { stateSize: 'pane' })).not.toBe(quietFill);
+    expect(fillOf(structured, { stateSize: 'pane' })).not.toBe(quietFill);
+    // Inside it, the author's own primary and the structured step both draw quiet, with no per-widget variant.
+    expect(fillOf(authored(), { stateSize: 'pane', stateActions: 'quiet' })).toBe(quietFill);
+    expect(fillOf(structured, { stateSize: 'pane', stateActions: 'quiet' })).toBe(quietFill);
+  });
+
   it('sizes an unsized state by the host container, and an explicit size still wins', () => {
     const inPane = mountInHost(<EmptyState title="No conversations" />, { stateSize: 'pane' });
     expect(measureOf(inPane, 'No conversations')).toBe('272px');

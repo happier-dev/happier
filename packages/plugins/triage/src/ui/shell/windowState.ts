@@ -380,11 +380,10 @@ export function resolveTriageListShellState(
       window,
       refreshing: snapshot.pending !== 'idle',
       stale,
-      showReadWarning: stale && (
-        failure !== null
-        || snapshot.error !== undefined
+      showReadWarning: failure !== null || (stale && (
+        snapshot.error !== undefined
         || window.lanes.some((lane) => lane.health.kind === 'unavailable')
-      ),
+      )),
       failure,
     });
   }

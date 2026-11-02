@@ -225,7 +225,9 @@ export type PluginUiPrivatePresentationHostOptions = Readonly<{
     /** The navigation chrome the mount sits in (title shown, back control, content column). */
     pageChrome?: PluginUiPrivatePageChrome;
     /** The container's state size (`SurfaceStateSizeProvider`): a plugin's unsized states take it. */
-    stateSize?: HappierStateSize;
+    stateSize?: HappierStateSize | 'line';
+    /** The container's state actions (`SurfaceStateSizeProvider`): `quiet` in a widget card. */
+    stateActions?: 'quiet';
     /** The page's app details pane, when the mount sits in a page that has one (`DetailsPaneSlotHost`). */
     detailsPane?: DetailsPaneSlotBinding;
     /** The pane header of the tab the mount fills (the session sidebar, a phone surface), when it has one. */
@@ -525,7 +527,8 @@ export type PluginUiPrivatePresentationHost = Readonly<
         panelSizing?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['panelSizing'];
         find?: FindSurfaceRegistrationHost;
         pageChrome?: PluginUiPrivatePageChrome;
-        stateSize?: HappierStateSize;
+        stateSize?: HappierStateSize | 'line';
+        stateActions?: 'quiet';
         detailsPane?: DetailsPaneSlotBinding;
         paneHeader?: NonNullable<ReturnType<typeof usePaneHeaderSlotBinding>>;
         renderDestinationRow?: (input: PluginDestinationRowInput) => React.ReactNode;
@@ -702,6 +705,7 @@ export function createPluginUiPrivatePresentationHost(
         ...(options?.resolveMaterialColor === undefined ? {} : { resolveMaterialColor: options.resolveMaterialColor }),
         ...(options?.pageChrome === undefined ? {} : { pageChrome: options.pageChrome }),
         ...(options?.stateSize === undefined ? {} : { stateSize: options.stateSize }),
+        ...(options?.stateActions === undefined ? {} : { stateActions: options.stateActions }),
         ...(options?.detailsPane === undefined ? {} : { detailsPane: options.detailsPane }),
         ...(options?.paneHeader === undefined ? {} : { paneHeader: options.paneHeader }),
         ...(options?.renderDestinationRow === undefined ? {} : { renderDestinationRow: options.renderDestinationRow }),

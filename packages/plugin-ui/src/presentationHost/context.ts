@@ -159,6 +159,10 @@ export type PluginUiPaneHeaderPresentation = Readonly<{
   line: readonly PluginUiPaneHeaderLineSegment[] | null;
   /** The trailing actions (a "+" and its menu), rendered in the header with this plugin's context. */
   actions: ReactNode | null;
+  /** A widget frame's quiet source beside its title, in place of the plugin's name; tab headers ignore it. */
+  caption?: string | null;
+  /** A widget frame's footer link, "Open <caption>": the page the glance comes from. Tab headers ignore it. */
+  open?: (() => void) | null;
 }>;
 
 /** Bounded presentation facts: attention styles the fact, never grants authority. */
@@ -261,6 +265,11 @@ export type PluginUiPresentationHost = Readonly<{
    * (a section of an inspector such as Session Info, a narrow companion column).
    */
   stateSize?: HappierStateSize | 'line';
+  /**
+   * `quiet`: the container never owns its page's one primary action (a widget card among cards), so every state
+   * inside it offers its way forward quiet, as Happier's own states there do. Absent, a state's step keeps its tone.
+   */
+  stateActions?: 'quiet';
   /** The page's app details pane; absent where the surface is not placed in a pane host. */
   detailsPane?: PluginUiDetailsPaneHost;
   /** The pane header of the tab this surface fills; absent where it has none. */

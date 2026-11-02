@@ -30,7 +30,6 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard, SurfaceStateContentContext, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -44,7 +43,8 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { isWidgetResourceQuietRefresh, WidgetFrameResourceActivityContext } from './widgetFrameResourceActivity';
-import { WidgetFrameBodyRowsContext } from './widgetFrameBody';
+import { useWidgetBodyRowHeight, WidgetFrameBodyRowsContext, widgetFootprintBodyRows } from './widgetFrameBody';
+import { WidgetFrameBodyOpenContext, type WidgetFrameBodyOpen } from './widgetFrameBodyCaption';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 
@@ -231,7 +231,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const bodyFootprint = props.widgetPresentation ? projectWidgetGroupCellContent(
         { id: props.testID, ...props.widgetPresentation.footprint }, props.grouped && emptyBody ? 'empty' : undefined,
     ) : undefined;
-    const rows = bodyFootprint ? bodyFootprint.rowSpan * 2
+    const rows = bodyFootprint ? widgetFootprintBodyRows(bodyFootprint)
         : props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
     const rowHeight = useWidgetBodyRowHeight();
     const inheritedPresentation = useWidgetPresentation();
@@ -286,7 +286,16 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         bodyFades.onContentSizeChange(event.nativeEvent.layout.width, event.nativeEvent.layout.height);
     }, [bodyFades.onContentSizeChange]);
     const bodyFadeMask = Platform.OS === 'web' ? resolveVerticalScrollEdgeMaskStyle(bodyFades.visibility) : null;
-    const footer = props.footer ?? null;
+    // The one footer row: a failed refresh or a pending change says so first; else the page a plugin body names
+    // ("Open Tasks", lent through `PaneHeaderContent onOpen`) leads past whatever its glance left out, in place of
+    // the placement's generic Open. A headerless frame belongs to a page section that draws its own link row.
+    const [lentOpen, setLentOpen] = React.useState<WidgetFrameBodyOpen | null>(null);
+    const placementFooter = props.footer ?? null;
+    const footer = React.useMemo<WidgetFrameFooter | null>(() => (
+        lentOpen === null || props.title === null || placementFooter?.kind === 'refreshFailed' || placementFooter?.kind === 'pending'
+            ? placementFooter
+            : { kind: 'open', label: t('homeWidgets.open', { destination: lentOpen.destination }), onPress: lentOpen.onPress }
+    ), [lentOpen, placementFooter, props.title]);
     const [refreshingResources, setRefreshingResources] = React.useState<ReadonlySet<symbol>>(() => new Set());
     const reportResourceActivity = React.useCallback((key: symbol, refreshing: boolean) => {
         setRefreshingResources(previous => {
@@ -332,7 +341,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         : props.grouped && emptyBody && props.widgetPresentation?.footprint.columnSpan === 1 ? 'line'
         // A compact footprint (Small, Wide) has one row of room: its state is the line, balanced in that row.
         : props.widgetPresentation?.footprint.height === 'compact' ? 'line'
-        : props.placement === 'companion' ? 'line' : 'pane';
+        : props.placement === 'companion' ? 'line'
+        // A card spanning the whole band has a drawer's room: its state reads at that measure, not a side pane's.
+        : props.widgetPresentation?.footprint.width === 'full' ? 'details' : 'pane';
 
     // A source names what the widget is bound to ("devbox · 3ad2"): a narrow header gives up its middle, never the
     // suffix that tells near-identical names apart. A title keeps its tail ellipsis.
@@ -353,6 +364,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             ? <Icon name={props.mark} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
             : props.mark;
 
+    // A card's footer stands on the inset its frame already gives its facts, so the link keeps the title's edge;
+    // plain has no card inset and pads its link itself.
+    const footerInset = props.frameStyle === 'plain' ? inset : 0;
     const footerNode = footer?.kind === 'open' ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
         <HappierPressable
@@ -362,7 +376,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             onPress={footer.onPress}
             style={(state) => [
                 styles.footer, { flexGrow: 1 },
-                { paddingHorizontal: inset, minHeight: props.frameStyle === 'plain' ? undefined : FOOTER_MIN_TARGET_PX },
+                { paddingHorizontal: footerInset, minHeight: props.frameStyle === 'plain' ? undefined : FOOTER_MIN_TARGET_PX },
                 state.pressed ? styles.footerPressed : null,
                 focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
             ]}
@@ -377,7 +391,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 accessibilityLabel={footer.secondary.label}
                 onPress={footer.secondary.onPress}
                 style={(state) => [styles.footer,
-                    { paddingHorizontal: inset, minHeight: FOOTER_MIN_TARGET_PX },
+                    { paddingHorizontal: footerInset, minHeight: FOOTER_MIN_TARGET_PX },
                     state.pressed ? styles.footerPressed : null,
                     focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
             >
@@ -401,8 +415,10 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     ) : null;
 
     if (props.presentation === 'body') {
-        return <>{props.meta}<SurfaceStateSizeProvider size={stateSize}>
+        return <>{props.meta}<SurfaceStateSizeProvider size={stateSize} actions="quiet">
+            <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
             <WidgetFrameBodyView testID={props.testID} body={props.body} rows={0} />
+            </WidgetFrameBodyOpenContext.Provider>
         </SurfaceStateSizeProvider>{footerNode}</>;
     }
     return (
@@ -450,8 +466,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
             overlay={props.fresh ? <WidgetFrameArrivalRing key={String(props.fresh)} frameStyle={props.frameStyle} /> : null}
         >
-            <SurfaceStateSizeProvider size={stateSize}>
+            <SurfaceStateSizeProvider size={stateSize} actions="quiet">
                 <WidgetFrameBodyRowsContext.Provider value={rows}>
+                <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
                 <WidgetPresentationProvider value={widgetPresentation}>
                 {props.widgetPresentation && bodyHeight !== 'fixed' ? (
                     // Nothing clips or scrolls here: the body is measured (its size and width still
@@ -483,6 +500,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                     <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
                 )}
                 </WidgetPresentationProvider>
+                </WidgetFrameBodyOpenContext.Provider>
                 </WidgetFrameBodyRowsContext.Provider>
             </SurfaceStateSizeProvider>
         </HappierWidgetFrame>
@@ -496,16 +514,6 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
  * below moves when data arrives. Rows are two-line rows of a compact list at the reader's density
  * (widget rows are list rows), so the reserve matches the real rows' box.
  */
-function useWidgetBodyRowHeight(): number {
-    const rowMetrics = usePageRowMetrics('list');
-    return Math.max(
-        rowMetrics.minHeightPx,
-        2 * rowMetrics.paddingVerticalPx
-            + rowMetrics.title.lineHeight
-            + rowMetrics.subtitle.marginTop
-            + rowMetrics.subtitle.lineHeight,
-    );
-}
 
 /** A state (loading, empty, failed) sits centred in the reserved room; rows start at its top, like any list. */
 function WidgetFrameReservedRows(props: Readonly<{ rows: number; rowHeight: number; centered: boolean; children: React.ReactNode }>) {

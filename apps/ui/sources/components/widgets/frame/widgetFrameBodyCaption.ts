@@ -34,6 +34,25 @@ export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
 }
 
 /**
+ * The same lending for the footer: a mounted body names the page it comes from and opens it ("Tasks"), so the
+ * frame's one footer link reads "Open Tasks" and leads to everything the glance leaves out. The frame itself
+ * provides it, on every placement, and keeps a failed refresh or a pending change in that row first. Pass an
+ * identity-stable value: a new one re-lends it.
+ */
+export type WidgetFrameBodyOpen = Readonly<{ destination: string; onPress: () => void }>;
+export const WidgetFrameBodyOpenContext = React.createContext<
+  ((open: WidgetFrameBodyOpen | null) => void) | null
+>(null);
+
+export function useWidgetFrameBodyOpen(open: WidgetFrameBodyOpen | null): void {
+  const lend = React.useContext(WidgetFrameBodyOpenContext);
+  React.useEffect(() => {
+    lend?.(open);
+    return () => lend?.(null);
+  }, [open, lend]);
+}
+
+/**
  * The host's one sentence (and, when no Machine exists, its next step) about a body that cannot reach the Machine it runs on ("This operation is
  * unavailable on Studio Mac. Reconnect it or choose another machine with Run on."). The mount that
  * was refused lends how to word it now (`undefined` once the Machine answers again), and the shared

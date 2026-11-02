@@ -14,7 +14,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { t } from '@/text';
 
-import { useSurfaceStateCardSize } from './surfaceStateSize';
+import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from './surfaceStateSize';
 import { useSurfaceStateElapsedSeconds } from './useSurfaceStateElapsedSeconds';
 
 export type SurfaceStateKind = HappierSurfaceStateKind;
@@ -197,10 +197,14 @@ export function SurfaceStateCard(props: Readonly<{
     }, [accessibilityAnnouncement, props.accessibilitySemantics]);
 
     const bindings = useSurfaceStateBindings(props.testID, animationEnabled);
+    // A container that never owns its page's primary (a widget card) offers every state's way forward quiet:
+    // the shared composition draws a step that is not an invitation in the secondary tone.
+    const quietActions = useSurfaceStateQuietActions();
+    const action = quietActions && props.action ? { ...props.action, invitation: false } : props.action;
     const shared = {
         testID: props.testID,
         kind: props.kind,
-        action: props.action,
+        action,
         secondaryAction: props.secondaryAction,
         diagnosticCode: props.diagnosticCode,
         accessibilitySemantics: props.accessibilitySemantics,
