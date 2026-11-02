@@ -122,6 +122,7 @@ it('snapshots an explicit Account purpose binding without Voice fields or mutabl
 
 describe('finite HTTP admission lifetime', () => {
     it('finishes an admitted streamed body after configuration withdrawal with no step authority reads', async () => {
+        const revocation = new AbortController();
         let current = true;
         const isOccurrenceCurrent = vi.fn(() => current);
         const disposed = vi.fn(async () => {});
@@ -136,12 +137,13 @@ describe('finite HTTP admission lifetime', () => {
             contribution: { id: 'read', qualifiedId: 'acme.stream/actions/read' },
             occurrenceId: 'stream', correlationId: 'stream-request', surface: 'cli',
             signal: new AbortController().signal, isOccurrenceCurrent,
-        }, createPluginInvocationServiceBinding('stream', 'stream'));
+        }, { ...createPluginInvocationServiceBinding('stream', 'stream'), networkRevocationSignal: revocation.signal });
         const response = await service.requestStream({ url: 'https://example.test/body', redirect: 'error' });
         const chunks = response.chunks[Symbol.asyncIterator]();
         expect(new TextDecoder().decode((await chunks.next()).value)).toBe('first');
         const readsAtAdmission = isOccurrenceCurrent.mock.calls.length;
         current = false;
+        revocation.abort();
         expect(new TextDecoder().decode((await chunks.next()).value)).toBe('last');
         expect(await chunks.next()).toMatchObject({ done: true });
         expect(isOccurrenceCurrent).toHaveBeenCalledTimes(readsAtAdmission);
