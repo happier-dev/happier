@@ -168,6 +168,116 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it.each(['in-progress', 'once', 'held-upgrade', 'again', 'cancelled', 'retired'] as const)('finishes projection sections or re-establishes a superseded manifest (%s)', async scenario => {
+        const { RpcHandlerManager } = await import(new URL('../../../../cli/src/api/rpc/RpcHandlerManager.ts', import.meta.url).href);
+        const { registerDaemonContributionRegistryProjectionHandler } = await import(new URL('../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection.ts', import.meta.url).href);
+        const { getResolvedContributionRegistry } = await import(new URL('../../../../cli/src/plugins/projection/registry/builtIn/snapshot.ts', import.meta.url).href);
+        const { resolveExecutablePluginRuntimeRegistry } = await import(new URL('../../../../cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts', import.meta.url).href);
+        const { socketRpcCodec } = await import('@happier-dev/sync-client');
+        const { mkdtemp } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const { loadDaemonMergedProjectionCacheEntry, readDaemonMergedProjectionRetryDelayMs } = await import('./loadDaemonMergedProjectionInputs');
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+        onTestFinished(() => clock.mockRestore());
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'projection-authority-transition-'));
+        const runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes: getResolvedContributionRegistry(), generation: 41,
+            resolveServerFeaturesSnapshot: () => undefined,
+            resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }: Readonly<{ pluginId: string; rootPath: string }>) => ({
+                kind: 'development', registeredRootId: `authority-transition:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1,
+            }),
+        });
+        let serverIdentityId = 'srv_before';
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger: () => {} });
+        registerDaemonContributionRegistryProjectionHandler(rpc, {
+            resolveRuntimeRegistry: async () => runtime, resolveGeneration: async () => 41,
+            resolveInstalledPackages: async () => [], resolveServerFeaturesSnapshot: () => undefined,
+            resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId, machineId: 'machine-1' }),
+        });
+        const account = createAccountLifetime('account-a');
+        const abort = new AbortController();
+        const manifests: ReturnType<typeof DaemonProjectionDeferredSectionsResponseSchema.parse>[] = [];
+        const codes: unknown[] = [];
+        const frames: number[] = [];
+        const requests: Record<string, unknown>[] = [];
+        network.setRpcAckResponder(async request => {
+            const payload = request.payload as Record<string, unknown>;
+            requests.push(payload);
+            // Exercise the daemon's real transport error serialization as well
+            // as the UI socket codec, admission, hydration and loader.
+            const content = { mode: 'plain' as const };
+            const method = `${request.targetId}:${request.method}`;
+            const callId = '0123456789abcdef0123456789abcdef';
+            const encoded = await socketRpcCodec.encodeParams(content, payload, { method, callId });
+            const result: unknown = await rpc.handleRequest({ method, params: encoded });
+            const reply = await socketRpcCodec.decodeResult(content, { ok: true, result }, callId);
+            frames.push(new TextEncoder().encode(JSON.stringify(reply)).length);
+            const manifest = DaemonProjectionDeferredSectionsResponseSchema.safeParse(reply);
+            if (manifest.success) {
+                manifests.push(manifest.data);
+                if ((manifests.length === 1 && scenario !== 'held-upgrade') || scenario === 'again') {
+                    serverIdentityId = `srv_after_${manifests.length}`;
+                    // A separate manifest request can supersede an advertised
+                    // build; page reads alone finish the last complete build.
+                    if (scenario !== 'in-progress') await rpc.invokeLocal(
+                        RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, payload);
+                }
+            }
+            if (payload.sectionRead && !DaemonProjectionSectionBodyResponseSchema.safeParse(reply).success) {
+                codes.push(reply && typeof reply === 'object' && 'errorCode' in reply ? reply.errorCode : undefined);
+                if (scenario === 'cancelled') abort.abort();
+                if (scenario === 'retired') account.retire();
+            }
+            return { ok: true, result: reply };
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime, signal: abort.signal, sections: ['actionsById'] };
+        try {
+            if (scenario === 'held-upgrade') {
+                expect(await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'] })).toMatchObject({ kind: 'ready' });
+                expect(manifests).toHaveLength(1);
+                serverIdentityId = 'srv_after_1';
+                await rpc.invokeLocal(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, requests[0]!);
+            }
+            const result = await loadDaemonMergedProjectionCacheEntry({ ...params, reuseFreshReady: scenario === 'held-upgrade' });
+            if (scenario === 'in-progress') {
+                expect(codes).toEqual([]);
+                expect(manifests).toHaveLength(1);
+                expect(result).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 41 } } });
+                if (result?.kind !== 'ready') throw new Error('Expected the advertised complete projection');
+                const origins = Object.values(result.inputs.pluginProjectionV2!.actionsById).flatMap(action => action.executionOrigin ?? []);
+                expect(origins.length).toBeGreaterThan(0);
+                expect(origins.every(origin => origin.serverIdentityId === 'srv_before')).toBe(true);
+                return;
+            }
+            // Independent frames can report the same retired build. Recovery
+            // is bounded by manifest attempts, not by one physical stale frame.
+            expect([...new Set(codes)]).toEqual(['plugin_projection_section_stale']);
+            expect(manifests).toHaveLength(scenario === 'cancelled' || scenario === 'retired' ? 1 : 2);
+            expect(requests.every(request => request.deferredSections === true)).toBe(true);
+            expect(Math.max(...frames)).toBeLessThanOrEqual(49_152);
+            if (scenario === 'cancelled' || scenario === 'retired') {
+                expect(result).toBeNull();
+                return;
+            }
+            expect(manifests[1]!.projectionDigest).not.toBe(manifests[0]!.projectionDigest);
+            const refresh = requests.filter(request => !request.sectionRead)[1]!;
+            expect(refresh).not.toHaveProperty('knownProjectionDigest');
+            if (scenario === 'again') {
+                expect(result).toMatchObject({ kind: 'error', reason: 'projection-stale', retryAtMs: null });
+                expect(readDaemonMergedProjectionRetryDelayMs(result)).toBeNull();
+                const settled = requests.length;
+                expect(await loadDaemonMergedProjectionCacheEntry({ ...params, shareRetryCadence: true })).toBe(result);
+                expect(requests).toHaveLength(settled);
+            } else {
+                expect(result).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 41 } } });
+                if (result?.kind !== 'ready') throw new Error('Expected the current projection');
+                const origins = Object.values(result.inputs.pluginProjectionV2!.actionsById).flatMap(action => action.executionOrigin ?? []);
+                expect(origins.length).toBeGreaterThan(0);
+                expect(origins.every(origin => origin.serverIdentityId === 'srv_after_1')).toBe(true);
+            }
+        } finally { abort.abort(); account.retire(); }
+    });
+
     it('shares one slow cold describe and starts freshness when the daemon returns', async () => {
         const { loadDaemonMergedProjectionCacheEntry, readReusableDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         const account = createAccountLifetime('account-a');
