@@ -12,6 +12,8 @@ import { PeerLoopbackEndpointCandidateV1Schema } from './peer/mediation/loopback
 import { MachineFinitePolicyV1Schema } from './machineFinitePolicyV1.js';
 import { MachineResourcesPolicyV1Schema } from './resources/machineResourcesPolicyV1.js';
 import { MachinePublishedResourceSummaryV1Schema } from './resources/machineResourceSummaryV1.js';
+import { MachineSetupObservationV1Schema } from './setup/machineSetupObservationV1.js';
+import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
 import { ActivityDecisionV1Schema } from './managed/managedIntentV1.js';
 import { DevcontainerChildProjectionV1Schema, managedDevcontainerChildProjectionsEqualV1, type DevcontainerChildProjectionV1 } from './managed/devcontainerV1.js';
 
@@ -23,6 +25,7 @@ export const MachinePublishedAgentInventoryV1Schema = lazyZodSchema(() => z.stri
 
 /** One share-wide projection: neither owner nor recipient receives private work here. */
 export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObject({
+  setup: z.optional(MachineSetupDesiredV1Schema),
   devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
   finitePolicyV1: z.optional(MachineFinitePolicyV1Schema),
   resourcesPolicyV1: z.optional(MachineResourcesPolicyV1Schema),
@@ -66,6 +69,7 @@ export const MachinePublishedWorkspaceSyncV1Schema = WorkspaceSyncRuntimeEventV1
 const PeerFlowSchema = lazyZodSchema(() => z.strictObject({ active: z.boolean() }));
 
 export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictObject({
+  setup: z.optional(MachineSetupObservationV1Schema),
   status: z.string(),
   pid: z.optional(z.number()),
   httpPort: z.optional(z.number()),

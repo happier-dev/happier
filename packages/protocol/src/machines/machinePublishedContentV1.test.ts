@@ -15,6 +15,38 @@ const metadata = {
 const readiness = { engine: { state: 'ready' }, carrier: { state: 'ready' } };
 
 describe('whole Machine publication', () => {
+  it('publishes compact exact software package observations without private manager output', () => {
+    const setup = { version: 1, desiredRevision: 1, status: 'drifted', recipes: [{
+      ref: { pluginId: 'example.machine', recipeId: 'software', revision: '1' }, status: 'drifted', steps: [
+        { stepId: 'brew', status: 'satisfied', packages: [{ manager: 'brew', name: 'example-app', kind: 'cask',
+          present: true, version: '1.2.3-a45,ccdd88' }] },
+        { stepId: 'winget', status: 'drifted', packages: [{ manager: 'winget', name: 'Google.Chrome',
+          source: 'winget', scope: 'user', present: false }] },
+      ],
+    }] };
+    expect(parseMachinePublishedDaemonStateV1({ status: 'running', setup })).toMatchObject({ setup });
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse({ status: 'running', setup })).toMatchObject({ setup });
+    const step = setup.recipes[0]!.steps[1]!;
+    for (const packages of [[{ ...step.packages[0], scope: 'all' }],
+      [{ ...step.packages[0], stdout: 'private native output' }], [{ ...step.packages[0], present: false, version: 'not-installed' }]]) {
+      expect(() => parseMachinePublishedDaemonStateV1({ status: 'running', setup: {
+        ...setup, recipes: [{ ...setup.recipes[0], steps: [{ ...step, packages }] }],
+      } })).toThrow();
+    }
+  });
+
+  it('publishes compact setup observations and rejects native bags, scripts and secret material', () => {
+    const setup = { version: 1, desiredRevision: 2, status: 'drifted', recipes: [{
+      ref: { pluginId: 'example.machine', recipeId: 'ssh-hardening', revision: '1' }, status: 'drifted',
+      steps: [{ stepId: 'sshd-policy', status: 'drifted', backend: 'openssh', reason: 'required_fact_unavailable' }],
+    }], updates: { status: 'satisfied', pendingSecurity: 2, pendingAll: 4, rebootNeeded: true } };
+    expect(parseMachinePublishedDaemonStateV1({ status: 'running', setup })).toMatchObject({ setup });
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse({ status: 'running', setup })).toMatchObject({ setup });
+    for (const unsafe of [{ ...setup, script: 'echo private' }, { ...setup, secretRefs: {} },
+      { ...setup, recipes: [{ ...setup.recipes[0], steps: [{ ...setup.recipes[0]!.steps[0], facts: { stdout: 'private' } }] }] }]) {
+      expect(() => parseMachinePublishedDaemonStateV1({ status: 'running', setup: unsafe })).toThrow();
+    }
+  });
   it('publishes only installed Agent identities and their observation time', () => {
     const agentInventory = { checkedAt: 20, installedAgentIds: ['codex', 'claude'] };
     expect(isMachinePublishedContentSafeV1({ metadata: { ...metadata, agentInventory }, daemonState: null })).toBe(true);

@@ -7,6 +7,7 @@ export * from './account/publicProfileEmbeds.js';
 export * from './account/projectPublicProfile.js';
 export * from './widgets/widgetPublicSnapshotV1.js';
 export * from './machines/machineMetadataFieldV1.js';
+export * from './machines/setup/machineSetupObservationV1.js';
 export * from './machines/resources/machineResourcesPolicyV1.js';
 export * from './machines/vitals/machineVitalsAlertsV1.js';
 export * from './machines/vitals/machineVitalsSampleV1.js';
