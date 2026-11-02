@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
-  resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
@@ -12,26 +12,6 @@ import {
   isRunnerSnapshotRuntimeRoot,
   resolveRuntimeRootsFromLaunchedProcess,
 } from '@/runtime/resolveRuntimeEntrypointArgv';
-
-const MANAGED_CLI_SHIM_INSTALLS = new Map(
-  (['stable', 'preview', 'publicdev'] as const).flatMap((channel) => {
-    const variant = resolveFirstPartyComponentPublicReleaseVariant({
-      componentId: 'happier-cli',
-      channel,
-    });
-    const legacyShimAliases =
-      channel === 'preview'
-        ? ['happier-preview']
-        : channel === 'publicdev'
-          ? ['happier-dev']
-          : [];
-    const shimNames = [...variant.installShims, ...legacyShimAliases];
-    return shimNames.map((shimName) => [
-      normalizeExecutableBase(shimName),
-      { channel, installRootName: variant.installRootName },
-    ] as const);
-  }),
-);
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
@@ -55,7 +35,7 @@ function resolveRuntimeRootFromBinaryPath(pathLike: string): string | null {
 }
 
 function resolveManagedInstalledCliProjectRootForChannel(
-  channel: 'stable' | 'preview' | 'publicdev',
+  channel: PublicReleaseRingId,
 ): string | null {
   try {
     const paths = resolveInstalledFirstPartyComponentPaths({
@@ -78,34 +58,14 @@ function resolveManagedInstalledCliProjectRootForChannel(
   return null;
 }
 
-function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | null {
-  const normalized = normalizePathLike(pathLike);
-  if (!normalized || isEmbeddedBunBundlePath(normalized) || isJavaScriptRuntimeExecutable(normalized)) {
-    return null;
-  }
-
-  const shimInstall = MANAGED_CLI_SHIM_INSTALLS.get(normalizeExecutableBase(normalized));
-  if (!shimInstall) {
-    return null;
-  }
-
-  const binaryDir = dirname(normalized);
-  if (basename(binaryDir).toLowerCase() !== 'bin') {
-    return null;
-  }
-
-  return resolveManagedInstalledCliProjectRootForChannel(shimInstall.channel)
-    ?? join(dirname(binaryDir), shimInstall.installRootName, 'current');
-}
-
 function resolveManagedInstalledCliProjectRoot(): string | null {
-  const channels: Array<'stable' | 'preview' | 'publicdev'> = [];
+  const channels: PublicReleaseRingId[] = [];
   try {
     channels.push(readDefaultManagedReleaseChannelSync());
   } catch {
     // fall through to canonical channel sweep
   }
-  for (const channel of ['stable', 'preview', 'publicdev'] as const) {
+  for (const channel of PUBLIC_RELEASE_RING_IDS) {
     if (!channels.includes(channel)) {
       channels.push(channel);
     }
@@ -128,8 +88,6 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
     // The bin wrapper imports its runtime without changing argv. Under Node/Bun the
     // loaded module therefore identifies this checkout/npm install (or runner snapshot).
     isJavaScriptRuntimeExecutable(process.execPath) ? moduleRoot : null,
-    resolveRuntimeRootFromInstalledShimPath(process.execPath),
-    resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),

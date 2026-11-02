@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -86,7 +86,10 @@ describe('Windows service launcher asset', () => {
     // The CLI build inlines this resolver into its own dist; npm installs cli-common under the
     // CLI's node_modules. Run the built resolver from that CLI dist location against that layout.
     const cliCommonRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-    const root = await mkdtemp(join(tmpdir(), 'happier-launcher-bundled-'));
+    // Keep external package resolution real while relocating the complete compiled module tree.
+    const fixtureDir = join(cliCommonRoot, 'node_modules', '.cache');
+    await mkdir(fixtureDir, { recursive: true });
+    const root = await mkdtemp(join(fixtureDir, 'happier-launcher-bundled-'));
     try {
       const cliRoot = join(root, 'node_modules', '@happier-dev', 'cli');
       const installedCliCommon = join(cliRoot, 'node_modules', '@happier-dev', 'cli-common');
@@ -96,13 +99,7 @@ describe('Windows service launcher asset', () => {
       await copyFile(join(cliCommonRoot, 'package.json'), join(installedCliCommon, 'package.json'));
       await writeFile(join(installedCliCommon, 'dist', 'service', 'index.js'), 'export {};\n');
       await writeFile(launcher, createPeFixture());
-      for (const relativePath of [
-        join('service', 'windowsLauncher.js'),
-        join('firstPartyRuntime', 'resolveSelfContainedCliRuntimeRoot.js'),
-      ]) {
-        await mkdir(dirname(join(cliRoot, 'dist', relativePath)), { recursive: true });
-        await copyFile(join(cliCommonRoot, 'dist', relativePath), join(cliRoot, 'dist', relativePath));
-      }
+      await cp(join(cliCommonRoot, 'dist'), join(cliRoot, 'dist'), { recursive: true });
 
       const bundled = await import(pathToFileURL(join(cliRoot, 'dist', 'service', 'windowsLauncher.js')).href) as
         typeof import('./windowsLauncher');
