@@ -5,6 +5,26 @@ import type {
   BrowserDaemonViewV1,
   BrowserSemanticAdapterKindV1,
 } from '@happier-dev/protocol';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+
+export type BrowserCommandScope = Readonly<{
+  signal?: AbortSignal;
+  /** Containing operation's absolute deadline, in Date.now() milliseconds. */
+  deadlineMs?: number;
+  requester?: Readonly<{ role?: NonNullable<RpcActionExecutorContext['machineAdmission']>['role'] }>;
+}>;
+
+/** Carry admitted custody to profile selection without forwarding credentials to CDP. */
+export function browserCommandScope(context?: Pick<RpcActionExecutorContext,
+  'signal' | 'externalActionExecutionAuthorization' | 'machineAdmission' | 'requesterSessionBootstrap'>): BrowserCommandScope {
+  const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
+  const admission = context?.machineAdmission
+    ?? context?.requesterSessionBootstrap?.savedSecretOperationContext.machineAdmission
+    ?? requester?.savedSecretOperationContext.machineAdmission;
+  return { signal: context?.signal,
+    ...(admission || context?.requesterSessionBootstrap || requester ? { requester: { role: admission?.role } } : {}) };
+}
 
 export type BrowserDaemonControlAdapterKind = Extract<
   BrowserSemanticAdapterKindV1,
@@ -30,13 +50,13 @@ export type BrowserDaemonControlAdapter = Readonly<{
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
   listViews?(browserSessionId: string): readonly BrowserDaemonViewV1[];
   supportsOpenView(command: Extract<BrowserCommandV1, { kind: 'openView' }>): boolean;
-  dispatchCommand(command: BrowserCommandV1, scope?: Readonly<{ signal?: AbortSignal; deadlineMs?: number }>): Promise<BrowserCommandDispatchResultV1> | BrowserCommandDispatchResultV1;
+  dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1> | BrowserCommandDispatchResultV1;
 }>;
 
 export type BrowserDaemonControlBroker = Readonly<{
   registerAdapter(adapter: BrowserDaemonControlAdapter): () => void;
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
-  dispatchCommand(command: BrowserCommandV1, scope?: Readonly<{ signal?: AbortSignal; deadlineMs?: number }>): Promise<BrowserCommandDispatchResultV1>;
+  dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1>;
   hasExecutableAdapters(): boolean;
   listViews(browserSessionId: string): readonly BrowserDaemonViewV1[];
 }>;

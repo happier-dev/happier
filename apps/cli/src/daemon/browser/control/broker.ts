@@ -5,6 +5,7 @@ import {
   browserCommandDispatchFailure,
   type BrowserDaemonControlAdapter,
   type BrowserDaemonControlBroker,
+  type BrowserCommandScope,
 } from './types';
 
 function invalidAdapterResultFailure(
@@ -65,7 +66,7 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
     };
   }
 
-  async function dispatchCommand(command: BrowserCommandV1, scope?: Readonly<{ signal?: AbortSignal; deadlineMs?: number }>) {
+  async function dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope) {
     if (adapters.size === 0) {
       return browserCommandDispatchFailure({
         commandId: command.commandId,
