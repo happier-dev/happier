@@ -43,7 +43,6 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
 }>): Promise<DeploymentSourceIntentForHost> {
     const { request, host } = input;
     const { environment } = request;
-    const actionId = request.actionId ?? 'deployments.deploy';
     const signal = request.context.signal && host.signal ? AbortSignal.any([request.context.signal, host.signal])
         : request.context.signal ?? host.signal;
     signal?.throwIfAborted();
@@ -65,14 +64,15 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         await host.assertAuthority();
         signal?.throwIfAborted();
     };
+    const authorization = request.context.externalActionExecutionAuthorization;
+    const childActionId = readRequesterAccountActionContext(authorization)?.deploymentChild?.actionId;
     const sourceActions = createCliProjectSourceActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
         admitAccount: serverId => serverId === host.serverId ? null : { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' },
         async resolveRequestHeaders(context, effectActionId, transport) {
             await assertAuthority();
             const authorization = context.externalActionExecutionAuthorization;
             const projection = authorization?.requesterHttpProjection;
-            const child = readRequesterAccountActionContext(authorization)?.deploymentChild;
-            if (projection) return await projection.createRequestHeaders({ ...transport, effectActionId: child?.actionId ?? effectActionId, signal });
+            if (projection) return await projection.createRequestHeaders({ ...transport, effectActionId: childActionId ?? effectActionId, signal });
             if (context.externalActionCredential || context.rpcSessionAuthorization) return null;
             return { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${host.credentials.token}` };
         },
@@ -90,9 +90,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         sourceRevision ??= result.source.revision;
     };
     await readSource();
-    const authorization = request.context.externalActionExecutionAuthorization;
     const rows = needsWorkspace ? await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => readProjectAccountRowsObservation({
-        ...(authorization ? { authorization, effectActionId: actionId } : { credentials: host.credentials }),
+        ...(authorization ? { authorization, effectActionId: childActionId ?? authorization.binding.actionId } : { credentials: host.credentials }),
         serverId: host.serverId, signal, assertCurrentAuthority: assertAuthority,
         selection: { kinds: ['workspace-ref'], serverId: host.serverId },
     })) : undefined;
