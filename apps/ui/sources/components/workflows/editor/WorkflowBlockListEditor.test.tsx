@@ -12,6 +12,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { createRenderCommitCounter } from '@/dev/testkit/performance/counts';
+import { t } from '@/text';
 
 const promptCosts = vi.hoisted(() => new Map<string, ReturnType<typeof createRenderCommitCounter>>());
 
@@ -524,8 +525,8 @@ it('reads a step role by its display name and keeps a read-only step input on it
     });
     const composer = findComposer(screen, harness, 'check');
     // The built-in role's own name, never its id.
-    expect(composer?.props.agentLabel).toBe('Second opinion');
-    expect(composer?.props.engineLabel).toBe('Second opinion');
+    expect(composer?.props.agentLabel).toBe(t('roles.settings.secondOpinionTitle'));
+    expect(composer?.props.engineLabel).toBe(t('roles.settings.secondOpinionTitle'));
     // The input token sits on the step's one footer line, not a band of its own.
     const footer = screen.findHostByTestId('workflow-editor-step-check-footer');
     expect(footer?.findAll((node) => node.props?.testID === 'workflow-editor-step-check-input-0').length).toBeGreaterThan(0);

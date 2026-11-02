@@ -225,11 +225,13 @@ describe('retired Automation routes', () => {
         await getServerFeaturesSnapshot({ serverId: serverB, force: true });
         const projectA = { machineId: 'machine-a', directory: '/account-a' };
         const projectB = { machineId: 'machine-b', directory: '/account-b' };
-        storage.setState({ authoringMemory: { ...storage.getState().authoringMemory,
-            workflowProjectTargetsByDefinitionId: { [workflowId]: projectA } },
+        const memoryKey = buildWorkflowProjectMemoryKeyV1(workflowId);
+        homes.answer(serverA, `GET /v1/account/authoring-memory/${encodeURIComponent(memoryKey)}`, {
+            body: { status: 'present', revision: 1, content: { t: 'plain', v: projectA } } });
+        await sync.applyAuthoringMemoryDelta({ workflowProjectTargetsByDefinitionId: { [workflowId]: projectA } });
+        storage.setState({
             machineListByServerId: { ...storage.getState().machineListByServerId,
                 [serverB]: [createMachineFixture({ id: 'machine-b' })] } });
-        const memoryKey = buildWorkflowProjectMemoryKeyV1(workflowId);
         const memory = { t: 'plain', v: projectB };
         homes.answer(serverB, 'GET /v1/account/authoring-memory', { body: { rows: [{ key: memoryKey, revision: 1, content: memory }] } });
         homes.answer(serverB, `GET /v1/account/authoring-memory/${encodeURIComponent(memoryKey)}`, {
