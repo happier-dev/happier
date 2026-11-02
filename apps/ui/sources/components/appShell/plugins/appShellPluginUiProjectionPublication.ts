@@ -141,6 +141,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     // Derivation inputs stay private: changing a supplier list is not itself
     // a consumer publication when the union and candidates are unchanged.
     let unionMembers = NO_MEMBERS;
+    let membersByMachineId: ReadonlyMap<string, PluginUiProjectionUnionMember> = new Map();
     let currentnessReports: ReadonlyMap<string, AppShellAccountScopedPluginUiCurrentnessReport> = new Map();
     let originReports: ReadonlyMap<string, AppShellAccountScopedPluginExecutionOriginReport> = new Map();
     let groupedOriginReports = originReports;
@@ -177,6 +178,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     function resetDerived() {
         currentnessReports = new Map();
         unionMembers = NO_MEMBERS;
+        membersByMachineId = new Map();
         originReports = new Map();
         groupedOriginReports = originReports;
         selectableByMachine = new Map();
@@ -197,7 +199,35 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         snapshot = EMPTY_SNAPSHOT;
     }
 
-    function publishDerived() {
+    function publishConnectedAccounts(currentness: ReadonlyMap<string, PluginUiProjectionCurrentness>,
+        admitted: ReadonlySet<string>, accountLifetime: ActiveServerAccountScopeLifetime | null) {
+        const descriptorInputs: ConnectedAccountDescriptorMachineProjection[] = [];
+        for (const machineId of sources?.selectableMachineIds ?? NO_IDS) {
+            const current = currentness.get(machineId);
+            const projection = current?.connectedAccountProjection;
+            // Descriptor success is independent of unrelated Machine UI establishment.
+            if (!projection || (projection.kind === 'ready' && current?.phase !== 'current' && current?.phase !== 'establishing')) {
+                descriptorInputs.push({ kind: 'loading' });
+            } else if (projection.kind !== 'ready') {
+                descriptorInputs.push(projection);
+            } else {
+                const executionUnavailablePluginIds = projection.descriptors.flatMap(descriptor => {
+                    if (!descriptor.pluginId || !admitted.has(descriptor.pluginId)) return [];
+                    const report = originReports.get(descriptor.pluginId);
+                    if (!report || report.accountLifetime !== accountLifetime || !isCurrent(report.accountLifetime)) {
+                        descriptorInputs.push({ kind: 'loading' });
+                        return [descriptor.pluginId];
+                    }
+                    return (selectableByMachine.get(machineId) ?? []).some(origin => getPluginMachineExecutionOriginRef(origin).pluginId === descriptor.pluginId)
+                        ? [] : [descriptor.pluginId];
+                });
+                descriptorInputs.push({ kind: 'ready', descriptors: projection.descriptors, executionUnavailablePluginIds });
+            }
+        }
+        return connectedAccounts.publish(descriptorInputs);
+    }
+
+    function publishDerived(changedMachineId?: string) {
         if (!sources || !isCurrent(sources.accountLifetime)) return;
         const { accountLifetime, availabilityInputs } = sources;
         const previous = snapshot;
@@ -291,6 +321,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         // Machine presentation reports do not change the admitted origin facts.
         // Publish their grouping only when its own source reports change.
         if (groupedOriginReports !== originReports) {
+            // A changed plugin census can also withdraw origins on other Machines.
+            changedMachineId = undefined;
             const grouped = new Map<string, PluginMachineExecutionOriginV1[]>();
             for (const [id, report] of originReports) {
                 if (!admitted.has(id) || report.accountLifetime !== accountLifetime || !isCurrent(report.accountLifetime)) continue;
@@ -304,8 +336,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             selectableByMachine = new Map([...grouped].map(([machineId, origins]) => [machineId, Object.freeze(origins)]));
             groupedOriginReports = originReports;
         }
-        const previousMembers = new Map(unionMembers.map(member => [member.machineId, member]));
         const nextMembers = targets.map(target => {
+            const old = membersByMachineId.get(target.machineId);
+            // A Machine report changes only that Machine's merge inputs.
+            // Sources and origin selections still reconcile the whole membership.
+            if (changedMachineId !== undefined && target.machineId !== changedMachineId && old) return old;
             const current = currentness.get(target.machineId);
             const declaration = installedByMachineId.get(target.machineId);
             let merge = machineMerges.get(target.machineId);
@@ -321,12 +356,14 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                     : current?.pluginUiProjection?.generation == null && declaration?.hasUnprovenDeclarations ? 'establishing' : current?.phase ?? 'establishing',
                 unavailableReasonCode: current?.unavailableReasonCode, interactionEnabled: current?.interactionEnabled ?? false,
             };
-            const old = previousMembers.get(target.machineId);
             return old && (shallow(old, member) || arePluginUiProjectionUnionMembersEquivalent([old], [member])) ? old : member;
         });
         for (const id of machineMerges.keys()) if (!eligible.has(id)) machineMerges.delete(id);
         const members = arePluginUiProjectionUnionMembersEquivalent(unionMembers, nextMembers) ? unionMembers : Object.freeze(nextMembers);
-        unionMembers = members;
+        if (unionMembers !== members) {
+            unionMembers = members;
+            membersByMachineId = new Map(members.map(member => [member.machineId, member]));
+        }
         const projectionUnion = union.publish(members, selections);
         const accountUiProjection = sources.hostBundledUiEnabled ? availabilityInputs?.accountUiProjection ?? null : null;
         const pluginUiProjection = accountMerge.publish(accountUiProjection ? [accountUiProjection] : NO_MODELS,
@@ -339,30 +376,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const settingsPages = previous.pluginUiProjection?.settingsPagesById === pluginUiProjection?.settingsPagesById
             ? previous.settingsPages
             : pluginUiProjection ? Object.freeze(Object.values(pluginUiProjection.settingsPagesById)) : NO_SETTINGS_PAGES;
-        const descriptorInputs: ConnectedAccountDescriptorMachineProjection[] = [];
-        for (const machineId of sources.selectableMachineIds) {
-            const current = currentness.get(machineId);
-            const projection = current?.connectedAccountProjection;
-            // Descriptor success is independent of unrelated Machine UI establishment.
-            if (!projection || (projection.kind === 'ready' && current?.phase !== 'current' && current?.phase !== 'establishing')) {
-                descriptorInputs.push({ kind: 'loading' });
-            } else if (projection.kind !== 'ready') {
-                descriptorInputs.push(projection);
-            } else {
-                const executionUnavailablePluginIds = projection.descriptors.flatMap(descriptor => {
-                    if (!descriptor.pluginId || !admitted.has(descriptor.pluginId)) return [];
-                    const report = originReports.get(descriptor.pluginId);
-                    if (!report || report.accountLifetime !== accountLifetime || !isCurrent(report.accountLifetime)) {
-                        descriptorInputs.push({ kind: 'loading' });
-                        return [descriptor.pluginId];
-                    }
-                    return (selectableByMachine.get(machineId) ?? []).some(origin => getPluginMachineExecutionOriginRef(origin).pluginId === descriptor.pluginId)
-                        ? [] : [descriptor.pluginId];
-                });
-                descriptorInputs.push({ kind: 'ready', descriptors: projection.descriptors, executionUnavailablePluginIds });
-            }
-        }
-        const connectedAccountResolution = connectedAccounts.publish(descriptorInputs);
+        const connectedAccountResolution = publishConnectedAccounts(currentness, admitted, accountLifetime);
         const next: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime, activeServerId: sources.activeServerId, accountUiProjection,
             executionOriginMaterializations: materializations, executionOriginPluginIds: pluginIds, projectionTargets: targets,
             currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection, skillSourceIdentity,
@@ -393,11 +407,27 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         },
         publishMachineCurrentness(machineId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness) {
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)
-                || currentness.serverId !== sources.activeServerId) return;
+                || currentness.serverId !== sources.activeServerId || !membersByMachineId.has(machineId)) return;
             const current = currentnessReports.get(machineId);
             if (current?.accountLifetime === accountLifetime && shallow(current.currentness, currentness)) return;
             currentnessReports = new Map(currentnessReports).set(machineId, Object.freeze({ accountLifetime, currentness }));
-            publishDerived();
+            if ((current?.currentness.pluginUiProjection ?? null) === currentness.pluginUiProjection
+                && (current?.currentness.phase ?? 'establishing') === currentness.phase
+                && current?.currentness.unavailableReasonCode === currentness.unavailableReasonCode
+                && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled) {
+                // Missing reports already contribute null/establishing/noninteractive
+                // inputs. Their first matching answer, like Browser and descriptor
+                // arrivals, changes the raw report without changing the catalog.
+                const previous = snapshot;
+                const reports = new Map(previous.currentnessForActiveAccountByMachineId).set(machineId, currentness);
+                snapshot = Object.freeze({ ...previous, currentnessForActiveAccountByMachineId: reports,
+                    connectedAccountResolution: current?.currentness.connectedAccountProjection === currentness.connectedAccountProjection
+                        ? previous.connectedAccountResolution
+                        : publishConnectedAccounts(reports, new Set(previous.executionOriginPluginIds), accountLifetime) });
+                notify(previous);
+                return;
+            }
+            publishDerived(machineId);
         },
         publishExecutionOrigin(pluginId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
             selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget = false) {
