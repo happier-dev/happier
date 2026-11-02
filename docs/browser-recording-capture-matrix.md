@@ -34,6 +34,13 @@ independently. Recording lists require both identity fields; status, Stop and Ca
 address the daemon's unique recording id. The UI projects daemon results and retains
 the real Composer attachment path without a second local recording lifecycle.
 
+In 0.3 development, `recording/captureProfiles.ts` owns the shared availability
+classification used by UI projection and daemon admission, including policy-denial
+reason codes. Browser recording has no pause/resume API or view-hidden/parked/suspended
+recording states; the browser surface lifecycle is separate. The capture producer
+owns frame cadence: a completed artifact reporting a higher FPS than requested
+still reaches media persistence. Encoder and storage failures remain failures.
+
 In 0.3 development, CDP recording and browser live viewing share the per-view producer in
 `apps/cli/src/daemon/browser/capture/cdpScreencast.ts`. The recording transport subscribes to it;
 it does not independently start, stop or acknowledge the CDP screencast. Releasing the last

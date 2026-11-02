@@ -5,6 +5,7 @@ import type {
 import type { BrowserDiagnosticFidelityV1 } from '../diagnostics/v1.js';
 import type {
   BrowserRecordingCaptureKindV1,
+  BrowserRecordingPolicyStateV1,
   BrowserRecordingRetentionClassV1,
 } from './v1.js';
 import type { BrowserRecordingCapabilities } from '../../features/payload/capabilities/browserCapabilities.js';
@@ -199,6 +200,93 @@ export function resolveBrowserRecordingProfileUnavailableReason(input: Readonly<
     || !capabilities.supportedMimeTypes.includes(input.mimeType)
   ) {
     return 'mime';
+  }
+
+  return null;
+}
+
+export type BrowserRecordingAvailabilityInput = Parameters<typeof resolveBrowserRecordingProfileUnavailableReason>[0] & Readonly<{
+  browserRecordingEnabled: boolean;
+  policyState?: BrowserRecordingPolicyStateV1;
+}>;
+
+export type BrowserRecordingAvailabilityReason = Readonly<{
+  reasonCode:
+    | 'browser_recording_disabled'
+    | 'browser_recording_capability_unavailable'
+    | 'browser_recording_policy_denied'
+    | 'browser_recording_adapter_unavailable'
+    | 'browser_recording_capture_unavailable'
+    | 'browser_recording_mime_unavailable'
+    | 'browser_recording_retention_unavailable';
+  policyState: BrowserRecordingPolicyStateV1;
+  message: string;
+}>;
+
+function createUnavailableReason(
+  reasonCode: BrowserRecordingAvailabilityReason['reasonCode'],
+  policyState: BrowserRecordingPolicyStateV1,
+  message: string,
+): BrowserRecordingAvailabilityReason {
+  return { reasonCode, policyState, message };
+}
+
+export function resolveBrowserRecordingAvailability(
+  input: BrowserRecordingAvailabilityInput,
+): BrowserRecordingAvailabilityReason | null {
+  if (!input.browserRecordingEnabled) {
+    return createUnavailableReason(
+      'browser_recording_disabled',
+      'permissionDenied',
+      'Browser recording is disabled.',
+    );
+  }
+
+  const profileUnavailable = resolveBrowserRecordingProfileUnavailableReason(input);
+  if (profileUnavailable === 'capability') {
+    return createUnavailableReason(
+      'browser_recording_capability_unavailable',
+      'captureUnavailable',
+      input.recordingCapabilities.disabledReasons[0] ?? 'Browser recording capability is unavailable.',
+    );
+  }
+  if (input.policyState && input.policyState !== 'allowed') {
+    return createUnavailableReason(
+      'browser_recording_policy_denied',
+      input.policyState,
+      'Browser recording is denied by policy.',
+    );
+  }
+
+  if (profileUnavailable) {
+    switch (profileUnavailable) {
+      case 'adapter':
+        return createUnavailableReason(
+          'browser_recording_adapter_unavailable',
+          'captureUnavailable',
+          'Browser recording is unavailable for this adapter.',
+        );
+      case 'capture':
+      case 'engine':
+      case 'source':
+        return createUnavailableReason(
+          'browser_recording_capture_unavailable',
+          'captureUnavailable',
+          'Browser recording capture is unavailable for this adapter.',
+        );
+      case 'mime':
+        return createUnavailableReason(
+          'browser_recording_mime_unavailable',
+          'captureUnavailable',
+          'Browser recording output type is unavailable.',
+        );
+      case 'retention':
+        return createUnavailableReason(
+          'browser_recording_retention_unavailable',
+          'retentionLimited',
+          'Browser recording retention class is unavailable.',
+        );
+    }
   }
 
   return null;

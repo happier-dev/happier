@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BrowserRecordingSessionV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveBrowserRecordingProfileUnavailableReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
+import { resolveBrowserRecordingAvailability, type BrowserRecordingAvailabilityReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
@@ -21,13 +21,7 @@ export type BrowserRecordingInputControlResolver = (view: Readonly<{
 }>) => SurfaceInputControl | undefined;
 
 export type BrowserRecordingDaemonUnavailableCode =
-  | 'browser_recording_disabled'
-  | 'browser_recording_capability_unavailable'
-  | 'browser_recording_policy_denied'
-  | 'browser_recording_adapter_unavailable'
-  | 'browser_recording_capture_unavailable'
-  | 'browser_recording_mime_unavailable'
-  | 'browser_recording_retention_unavailable'
+  | BrowserRecordingAvailabilityReason['reasonCode']
   | 'browser_recording_capture_adapter_missing'
   | 'browser_recording_already_active'
   | 'browser_recording_id_conflict'
@@ -91,7 +85,6 @@ export type BrowserRecordingDaemonService = Readonly<{
   startRecording(input: BrowserRecordingRuntimeStartInput): Promise<BrowserRecordingRuntimeStartResult>;
   stopRecording(input: BrowserRecordingRuntimeStopInput): Promise<BrowserRecordingRuntimeStopResult>;
   cancelRecording(input: BrowserRecordingRuntimeCancelInput): Promise<BrowserRecordingRuntimeTerminalResult>;
-  applyLifecycleOutcome(input: BrowserRecordingRuntimeLifecycleInput): Promise<BrowserRecordingRuntimeTerminalResult>;
   cleanupExpiredRecordings(input: Readonly<{ nowMs: number; beforeEffect?: () => Promise<void> }>): Promise<Readonly<{
     discardedRecordingIds: readonly string[];
     failedRecordingIds: readonly string[];
@@ -160,25 +153,6 @@ export type BrowserRecordingRuntimeCancelInput = Readonly<{
   reason: Extract<BrowserRecordingOutcomeReasonV1, 'user_canceled' | 'user_discarded' | 'session_closed' | 'logout'>;
 }>;
 
-export type BrowserRecordingRuntimeLifecycleInput = Readonly<{
-  browserSessionId: string;
-  viewId: string;
-  atMs?: number;
-  reason: Extract<
-    BrowserRecordingOutcomeReasonV1,
-    | 'view_hidden'
-    | 'view_parked'
-    | 'view_suspended'
-    | 'host_lost'
-    | 'view_closed'
-    | 'policy_revoked'
-    | 'adapter_lost'
-    | 'session_closed'
-    | 'logout'
-    | 'capture_failed'
-  >;
-}>;
-
 export type BrowserRecordingRuntimeStartResult =
   | Readonly<{ status: 'started'; recording: BrowserRecordingSessionV1 }>
   | Readonly<{ status: 'unavailable'; reason: BrowserRecordingDaemonUnavailableReason }>;
@@ -189,7 +163,7 @@ export type BrowserRecordingRuntimeStopResult =
   | Readonly<{ status: 'unavailable'; reason: BrowserRecordingDaemonUnavailableReason }>;
 
 export type BrowserRecordingRuntimeTerminalResult =
-  | Readonly<{ status: 'paused' | 'failed' | 'canceled' | 'discarded'; recording: BrowserRecordingSessionV1 }>
+  | Readonly<{ status: 'failed' | 'canceled' | 'discarded'; recording: BrowserRecordingSessionV1 }>
   | Readonly<{ status: 'unavailable'; reason: BrowserRecordingDaemonUnavailableReason }>;
 
 type BrowserRecordingTerminalOutcomeStatus = Exclude<BrowserRecordingRuntimeTerminalResult['status'], 'unavailable'>;
@@ -212,60 +186,11 @@ function durationFrom(recording: BrowserRecordingSessionV1, atMs: number): numbe
 function resolveStartUnavailable(
   input: BrowserRecordingRuntimeStartInput,
 ): BrowserRecordingDaemonUnavailableReason | null {
-  if (!input.browserRecordingEnabled) {
-    return createUnavailable('browser_recording_disabled', 'Browser recording is disabled.');
-  }
-  const capabilities = input.recordingCapabilities;
-  if (!capabilities.enabled || !capabilities.available) {
-    return createUnavailable(
-      'browser_recording_capability_unavailable',
-      capabilities.disabledReasons[0] ?? 'Browser recording capability is unavailable.',
-    );
-  }
-  if (input.policyState && input.policyState !== 'allowed') {
-    return createUnavailable('browser_recording_policy_denied', 'Browser recording is denied by policy.');
-  }
-  const profileUnavailable = resolveBrowserRecordingProfileUnavailableReason({
-    recordingCapabilities: capabilities,
-    adapterKind: input.adapterKind,
-    renderEngineKind: input.renderEngineKind,
-    captureKind: input.captureKind,
-    mimeType: input.mimeType,
-    retentionClass: input.retentionClass,
+  const unavailable = resolveBrowserRecordingAvailability({
+    ...input,
     captureSourceAvailable: resolveStartCaptureSourceAvailable(input),
   });
-  if (profileUnavailable) {
-    switch (profileUnavailable) {
-      case 'adapter':
-        return createUnavailable(
-          'browser_recording_adapter_unavailable',
-          'Browser recording is unavailable for this adapter.',
-        );
-      case 'capture':
-      case 'engine':
-      case 'source':
-        return createUnavailable(
-          'browser_recording_capture_unavailable',
-          'Browser recording capture is unavailable for this adapter.',
-        );
-      case 'mime':
-        return createUnavailable(
-          'browser_recording_mime_unavailable',
-          'Browser recording output type is unavailable.',
-        );
-      case 'retention':
-        return createUnavailable(
-          'browser_recording_retention_unavailable',
-          'Browser recording retention class is unavailable.',
-        );
-      case 'capability':
-        return createUnavailable(
-          'browser_recording_capability_unavailable',
-          capabilities.disabledReasons[0] ?? 'Browser recording capability is unavailable.',
-        );
-    }
-  }
-  return null;
+  return unavailable ? { code: unavailable.reasonCode, message: unavailable.message } : null;
 }
 
 function resolveStartCaptureSourceAvailable(input: BrowserRecordingRuntimeStartInput): boolean | undefined {
@@ -279,30 +204,21 @@ function resolveStartCaptureSourceAvailable(input: BrowserRecordingRuntimeStartI
 }
 
 function resolveTerminalStatus(reason: BrowserRecordingOutcomeReasonV1): BrowserRecordingTerminalOutcomeStatus {
-  if (reason === 'view_hidden' || reason === 'view_parked' || reason === 'view_suspended') return 'paused';
   if (reason === 'user_canceled') return 'canceled';
-  if (reason === 'user_discarded' || reason === 'view_closed' || reason === 'session_closed' || reason === 'logout') {
+  if (reason === 'user_discarded' || reason === 'session_closed' || reason === 'logout') {
     return 'discarded';
   }
   return 'failed';
 }
 
 function isActiveStatus(status: BrowserRecordingSessionV1['status']): boolean {
-  return status === 'starting' || status === 'recording' || status === 'paused' || status === 'stopping';
+  return status === 'starting' || status === 'recording' || status === 'stopping';
 }
 
 function isStoredMediaDiscardReason(
   reason: BrowserRecordingRuntimeCancelInput['reason'],
 ): reason is Extract<BrowserRecordingOutcomeReasonV1, 'user_discarded' | 'session_closed' | 'logout'> {
   return reason === 'user_discarded' || reason === 'session_closed' || reason === 'logout';
-}
-
-function resolveArtifactFailure(
-  recording: BrowserRecordingSessionV1,
-  artifact: BrowserRecordingCapturedArtifact,
-): BrowserRecordingOutcomeReasonV1 | null {
-  if (artifact.fps > recording.fps) return 'capture_failed';
-  return null;
 }
 
 export function createBrowserRecordingDaemonService(input: Readonly<{
@@ -370,9 +286,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     atMs: number,
   ): Promise<BrowserRecordingRuntimeTerminalResult> {
     const status = resolveTerminalStatus(reason);
-    if (status !== 'paused') {
-      await discardCapture(recording, reason);
-    }
+    await discardCapture(recording, reason);
     const updated = parseRecordingSession({
       ...recording,
       status,
@@ -381,7 +295,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       durationMs: durationFrom(recording, atMs),
       mediaRef: undefined,
     });
-    putRecording(updated, status === 'paused');
+    putRecording(updated, false);
     return { status, recording: updated };
   }
 
@@ -579,24 +493,6 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         try {
           artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
           if (control?.isObservationHeld()) throw new Error('Browser recording is held for confidential input.');
-          const capFailure = resolveArtifactFailure(recording, artifact);
-          if (capFailure) {
-            const failed = parseRecordingSession({
-              ...recording,
-              status: 'failed',
-              outcomeReason: capFailure,
-              stoppedAtMs: stopInput.stoppedAtMs ?? now(),
-              navigationGenerationEnd: stopInput.navigationGenerationEnd,
-              durationMs: artifact.durationMs,
-              byteSize: artifact.byteSize,
-              frameCount: artifact.frameCount,
-              fps: artifact.fps,
-              mimeType: artifact.mimeType,
-              mediaRef: undefined,
-            });
-            putRecording(failed, false);
-            return { status: 'failed', recording: failed, reason: capFailure };
-          }
           const mediaRef = await input.mediaWriter.persistRecording({ recording, artifact });
           if (control?.isObservationHeld()) {
             await input.mediaWriter.discardRecording({ recording: { ...recording, mediaRef }, reason: 'user_discarded' });
@@ -671,21 +567,6 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       // observation tracker makes confidential delivery await an already-issued teardown.
       if (!control || control.isClosed()) return await cancel();
       return await control.observeWhile(cancel) ?? confidentialityUnavailable();
-    },
-
-    async applyLifecycleOutcome(lifecycleInput) {
-      const recordingId = activeRecordingIdByView.get(browserViewKey(lifecycleInput));
-      const recording = recordingId ? readRecording(recordingId) : null;
-      if (!recording) {
-        return {
-          status: 'unavailable',
-          reason: createUnavailable('browser_recording_missing', 'Browser recording is no longer available.'),
-        };
-      }
-      const control = activeAdapterByRecordingId.get(recording.recordingId)?.control;
-      const applyOutcome = () => terminalOutcome(recording, lifecycleInput.reason, lifecycleInput.atMs ?? now());
-      if (!control || control.isClosed()) return await applyOutcome();
-      return await control.observeWhile(applyOutcome) ?? confidentialityUnavailable();
     },
 
     async cleanupExpiredRecordings(cleanupInput) {

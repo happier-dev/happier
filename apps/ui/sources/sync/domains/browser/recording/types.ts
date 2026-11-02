@@ -1,22 +1,11 @@
 import type {
-    BrowserRecordingCaptureKindV1,
     BrowserRecordingPolicyStateV1,
-    BrowserRecordingRetentionClassV1,
     BrowserRecordingSessionV1} from '@happier-dev/protocol/browser/recording/v1';
-import type {
-    BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
-import type {
-    BrowserRenderEngineKindV1,
-    BrowserSemanticAdapterKindV1,
-} from '@happier-dev/protocol/browser/adapters/kinds';
+import type { BrowserRecordingAvailabilityReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
+export type { BrowserRecordingAvailabilityInput } from '@happier-dev/protocol/browser/recording/captureProfiles';
 
 export type BrowserRecordingUnavailableReasonCode =
-    | 'browser_recording_disabled'
-    | 'browser_recording_capability_unavailable'
-    | 'browser_recording_adapter_unavailable'
-    | 'browser_recording_capture_unavailable'
-    | 'browser_recording_mime_unavailable'
-    | 'browser_recording_retention_unavailable'
+    | BrowserRecordingAvailabilityReason['reasonCode']
     | 'browser_recording_permission_denied'
     | 'browser_recording_missing'
     | 'browser_recording_not_finalized'
@@ -49,15 +38,3 @@ export type BrowserRecordingAttachResult =
         state: BrowserRecordingState;
         reason: BrowserRecordingUnavailableReason;
       }>;
-
-export type BrowserRecordingAvailabilityInput = Readonly<{
-    browserRecordingEnabled: boolean;
-    recordingCapabilities: BrowserRecordingCapabilities;
-    adapterKind: BrowserSemanticAdapterKindV1;
-    renderEngineKind?: BrowserRenderEngineKindV1;
-    captureKind: BrowserRecordingCaptureKindV1;
-    mimeType: string;
-    retentionClass: BrowserRecordingRetentionClassV1;
-    policyState?: BrowserRecordingPolicyStateV1;
-    captureSourceAvailable?: boolean;
-}>;

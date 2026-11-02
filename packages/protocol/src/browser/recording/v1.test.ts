@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { BrowserRecordingCapabilitiesSchema } from '../../features/payload/capabilities/browserCapabilities.js';
-import { BrowserRecordingOutcomeReasonV1Schema } from './v1.js';
+import { BrowserRecordingOutcomeReasonV1Schema, BrowserRecordingStatusV1Schema, BrowserRecordingPolicyStateV1Schema } from './v1.js';
 
 describe('browser recording protocol contracts', () => {
   it('has no producerless recording caps or cap outcomes', () => {
-    expect(BrowserRecordingCapabilitiesSchema.safeParse({ maxDurationMs: 30_000, maxBytes: 16_000_000 }).success).toBe(false);
+    const capabilities = BrowserRecordingCapabilitiesSchema.parse({ maxDurationMs: 30_000, maxBytes: 16_000_000 });
+    expect(capabilities).not.toHaveProperty('maxDurationMs');
+    expect(capabilities).not.toHaveProperty('maxBytes');
     expect(BrowserRecordingOutcomeReasonV1Schema.safeParse('duration_cap').success).toBe(false);
     expect(BrowserRecordingOutcomeReasonV1Schema.safeParse('size_cap').success).toBe(false);
   });
@@ -44,22 +46,16 @@ describe('browser recording protocol contracts', () => {
     expect(parsed.captureKind).toBe('streamFrameCapture');
   });
 
-  it('recognizes lifecycle failure reasons for hidden, parked, suspended, host-lost, closed, unavailable, retention, and permission states', async () => {
-    const mod = await import('./v1.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    expect(mod.BrowserRecordingOutcomeReasonV1Schema.options).toEqual(expect.arrayContaining([
-      'view_hidden',
-      'view_parked',
-      'view_suspended',
-      'host_lost',
-      'view_closed',
-      'capture_unavailable',
-      'retention_limit',
-      'permission_denied',
-    ]));
+  it('rejects dormant recording lifecycle states, policies and outcomes at the wire boundary', () => {
+    for (const status of ['paused', 'hidden', 'parked', 'suspended']) {
+      expect(BrowserRecordingStatusV1Schema.safeParse(status).success, status).toBe(false);
+    }
+    for (const reason of ['view_hidden', 'view_parked', 'view_suspended', 'view_closed', 'host_lost', 'adapter_lost']) {
+      expect(BrowserRecordingOutcomeReasonV1Schema.safeParse(reason).success, reason).toBe(false);
+    }
+    for (const policy of ['sensitiveOrigin', 'sensitiveFieldsPresent', 'ephemeralOnly']) {
+      expect(BrowserRecordingPolicyStateV1Schema.safeParse(policy).success, policy).toBe(false);
+    }
   });
 
   it('requires completed and finalized recordings to carry a stored media reference, never inline bytes', async () => {

@@ -43,9 +43,6 @@ export const BrowserRecordingPolicyStateV1Schema = lazyZodSchema(() => z.enum([
   'allowed',
   'permissionDenied',
   'policyDenied',
-  'sensitiveOrigin',
-  'sensitiveFieldsPresent',
-  'ephemeralOnly',
   'captureUnavailable',
   'retentionLimited',
 ]));
@@ -54,7 +51,6 @@ export type BrowserRecordingPolicyStateV1 = z.infer<typeof BrowserRecordingPolic
 export const BrowserRecordingStatusV1Schema = lazyZodSchema(() => z.enum([
   'starting',
   'recording',
-  'paused',
   'stopping',
   'completed',
   'finalized',
@@ -69,14 +65,8 @@ export const BrowserRecordingOutcomeReasonV1Schema = lazyZodSchema(() => z.enum(
   'user_stopped',
   'user_canceled',
   'user_discarded',
-  'view_hidden',
-  'view_parked',
-  'view_suspended',
-  'host_lost',
-  'view_closed',
   'policy_revoked',
   'permission_denied',
-  'adapter_lost',
   'session_closed',
   'logout',
   'capture_failed',
@@ -219,7 +209,7 @@ export const BrowserRecordingSessionV1Schema = lazyZodSchema(() => z.strictObjec
       });
     }
     if (
-      ['paused', 'completed', 'finalized', 'failed', 'canceled', 'discarded', 'expired'].includes(session.status)
+      ['completed', 'finalized', 'failed', 'canceled', 'discarded', 'expired'].includes(session.status)
       && !session.outcomeReason
     ) {
       context.addIssue({
@@ -388,7 +378,7 @@ export type DaemonBrowserRecordingCancelInputV1 = z.infer<
 
 export const DaemonBrowserRecordingTerminalResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
-      status: z.enum(['paused', 'failed', 'canceled', 'discarded']),
+      status: z.enum(['failed', 'canceled', 'discarded']),
       recording: BrowserRecordingSessionV1Schema,
     }),
   z.strictObject({

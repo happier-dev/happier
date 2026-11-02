@@ -4813,6 +4813,17 @@ A mismatched provider or obsolete element binding returns
 missing provider returns `computer_provider_unavailable` with an install hint.
 This is a contained development-source trial, not a released availability claim.
 
+## Browser recording and diagnostics (unreleased 0.3)
+
+The same unreleased recording cut removes the dormant `paused` status from both
+recordings and terminal results, the `view_hidden`, `view_parked`, `view_suspended`,
+`view_closed`, `host_lost` and `adapter_lost` outcomes, and the unused recording
+policy variants `sensitiveOrigin`, `sensitiveFieldsPresent` and `ephemeralOnly`.
+The daemon's uncalled lifecycle API is removed; current UI readers and generated
+SDK recording DTOs consume the narrowed closed V1 schema together. Browser-context
+privacy and browser-surface lifecycle contracts remain separate. `completed` and
+`expired` retain their existing stored-media reference rules.
+
 The 2026-11-02 guest-fallback amendment changes host placement, without changing
 policy or refusal wire shapes. Enabled Linux member provisioning selects member
 users; otherwise guests use the owner's Agent placement (shared Agent user when

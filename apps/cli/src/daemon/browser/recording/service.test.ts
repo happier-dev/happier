@@ -77,6 +77,32 @@ describe('browser recording daemon service', () => {
     captureSource: streamCaptureSource,
   } satisfies BrowserRecordingRuntimeStartInput;
 
+  it.each([
+    { name: 'permission', overrides: { policyState: 'permissionDenied' }, code: 'browser_recording_policy_denied' },
+    { name: 'policy', overrides: { policyState: 'policyDenied' }, code: 'browser_recording_policy_denied' },
+    { name: 'feature', overrides: { browserRecordingEnabled: false }, code: 'browser_recording_disabled' },
+    { name: 'capability', overrides: { recordingCapabilities: { ...recordingCapabilities, available: false } }, code: 'browser_recording_capability_unavailable' },
+    { name: 'adapter', overrides: { adapterKind: 'externalUrl' }, code: 'browser_recording_adapter_unavailable' },
+    { name: 'capture', overrides: { captureKind: 'cdpScreencast' }, code: 'browser_recording_capture_unavailable' },
+    { name: 'source', overrides: { captureSource: undefined, captureSourceAvailable: false }, code: 'browser_recording_capture_unavailable' },
+    { name: 'mime', overrides: { mimeType: 'image/png' }, code: 'browser_recording_mime_unavailable' },
+    { name: 'retention', overrides: { retentionClass: 'diagnosticsOnly' }, code: 'browser_recording_retention_unavailable' },
+  ] satisfies readonly { name: string; overrides: Partial<BrowserRecordingRuntimeStartInput>; code: string }[])(
+    'shares the UI availability reason for $name', async ({ overrides, code }) => {
+      const { createBrowserRecordingDaemonService } = await import('./service');
+      const { resolveBrowserRecordingAvailability } = await import('../../../../../ui/sources/sync/domains/browser/recording/state');
+      const service = createBrowserRecordingDaemonService({
+        captureAdapters: [],
+        mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+      });
+      const input = { ...confidentialStartInput, captureSourceAvailable: true, ...overrides };
+      const ui = resolveBrowserRecordingAvailability(input);
+      const daemon = await service.startRecording(input);
+      expect(daemon).toMatchObject({ status: 'unavailable', reason: { code } });
+      if (daemon.status !== 'unavailable') throw new Error('Recording must be unavailable');
+      expect(ui?.reasonCode).toBe(daemon.reason.code);
+    });
+
   it('isolates recordings and retirement for two Sessions sharing one view id', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const service = createBrowserRecordingDaemonService({
@@ -100,8 +126,8 @@ describe('browser recording daemon service', () => {
     expect(await service.startRecording({ ...confidentialStartInput, ...viewA }))
       .toMatchObject({ status: 'unavailable', reason: { code: 'browser_recording_already_active' } });
 
-    expect(await service.applyLifecycleOutcome({ ...viewA, reason: 'view_closed' }))
-      .toMatchObject({ recording: { recordingId: first.recording.recordingId, outcomeReason: 'view_closed' } });
+    expect(await service.cancelRecording({ recordingId: first.recording.recordingId, reason: 'session_closed' }))
+      .toMatchObject({ recording: { recordingId: first.recording.recordingId, outcomeReason: 'session_closed' } });
     expect(service.getRecordingStatus(second.recording.recordingId)).toEqual(second.recording);
     const restarted = await service.startRecording({ ...confidentialStartInput, ...viewA });
     expect(restarted.status).toBe('started');
@@ -396,7 +422,7 @@ describe('browser recording daemon service', () => {
     expect(capturing).toBe(completion === 'failed');
   });
 
-  it.each(['cancel', 'lifecycle'] as const)('keeps %s capture cleanup reachable after the input target closes', async (operation) => {
+  it.each(['user_canceled', 'session_closed'] as const)('keeps %s capture cleanup reachable after the input target closes', async (reason) => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const control = createSurfaceInputControl();
     let capturing = true;
@@ -412,13 +438,12 @@ describe('browser recording daemon service', () => {
     });
     await service.startRecording({ ...confidentialStartInput, recordingId: 'closed_capture' });
     await control.close();
-    if (operation === 'cancel') await service.cancelRecording({ recordingId: 'closed_capture', reason: 'user_canceled' });
-    else await service.applyLifecycleOutcome({ browserSessionId: 'browser_session_1', viewId: 'view_1', reason: 'view_closed' });
+    await service.cancelRecording({ recordingId: 'closed_capture', reason });
 
     expect(capturing).toBe(false);
   });
 
-  it('persists stopped recordings through the session-media writer and stores only a reference envelope', async () => {
+  it('persists stopped recordings even when reported fps exceeds the requested rate and stores only a reference envelope', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const cleanup = vi.fn(async () => {});
     const captureAdapter = {
@@ -428,7 +453,7 @@ describe('browser recording daemon service', () => {
         durationMs: 2_000,
         byteSize: 800_000,
         frameCount: 24,
-        fps: 12,
+        fps: 24,
         mimeType: 'video/webm',
         source: recordingArtifactSource,
         cleanup,
@@ -480,6 +505,7 @@ describe('browser recording daemon service', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(stopped.recording).toMatchObject({
       status: 'finalized',
+      fps: 24,
       outcomeReason: 'user_stopped',
       mediaRef: { mediaId: 'media_recording_1' },
       retentionClass: 'preSend',
@@ -911,7 +937,7 @@ describe('browser recording daemon service', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it('discards temporary capture artifacts with explicit lifecycle outcomes on cancel and host loss', async () => {
+  it('discards temporary capture artifacts with explicit outcomes on user cancel and Session close', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const captureAdapter = {
       captureKind: 'streamFrameCapture' as const,
@@ -960,11 +986,11 @@ describe('browser recording daemon service', () => {
     });
     expect(canceled).not.toHaveProperty('recording.mediaRef');
 
-    const hostLossStart = await service.startRecording({
+    const sessionCloseStart = await service.startRecording({
       browserRecordingEnabled: true,
       recordingCapabilities,
       browserSessionId: 'browser_session_1',
-      viewId: 'view_host_lost',
+      viewId: 'view_session_closed',
       profileId: 'profile_1',
       targetKind: 'streamedBrowser',
       adapterKind: 'streamedBrowserSurface',
@@ -976,28 +1002,27 @@ describe('browser recording daemon service', () => {
       retentionClass: 'preSend',
       captureSource: streamCaptureSource,
     });
-    expect(hostLossStart.status).toBe('started');
-    if (hostLossStart.status !== 'started') return;
+    expect(sessionCloseStart.status).toBe('started');
+    if (sessionCloseStart.status !== 'started') return;
 
-    const hostLost = await service.applyLifecycleOutcome({
-      browserSessionId: 'browser_session_1',
-      viewId: 'view_host_lost',
+    const sessionClosed = await service.cancelRecording({
+      recordingId: sessionCloseStart.recording.recordingId,
       atMs: 11_500,
-      reason: 'host_lost',
+      reason: 'session_closed',
     });
 
-    expect(hostLost).toMatchObject({
-      status: 'failed',
-      recording: { status: 'failed', outcomeReason: 'host_lost' },
+    expect(sessionClosed).toMatchObject({
+      status: 'discarded',
+      recording: { status: 'discarded', outcomeReason: 'session_closed' },
     });
-    expect(hostLost).not.toHaveProperty('recording.mediaRef');
+    expect(sessionClosed).not.toHaveProperty('recording.mediaRef');
     expect(captureAdapter.discard).toHaveBeenCalledWith(expect.objectContaining({
       recordingId: cancelStart.recording.recordingId,
       reason: 'user_canceled',
     }));
     expect(captureAdapter.discard).toHaveBeenCalledWith(expect.objectContaining({
-      recordingId: hostLossStart.recording.recordingId,
-      reason: 'host_lost',
+      recordingId: sessionCloseStart.recording.recordingId,
+      reason: 'session_closed',
     }));
   });
 
