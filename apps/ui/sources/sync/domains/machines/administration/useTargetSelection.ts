@@ -6,11 +6,7 @@ import type {
 import {
     areServerProfileIdentifiersEquivalent,
 } from '@/sync/domains/server/serverProfiles';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { isMachineSelectableForFleet } from './fleetUnion';
-import { isMachineReplaced } from '@/sync/domains/machines/identity/machineIdentityTypes';
 import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
-import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { readMachineInventoryStatus } from '@/sync/domains/machines/machineInventorySnapshots';
@@ -21,8 +17,6 @@ import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScop
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { resolveFleetMachineAvailability } from './fleetUnion';
 import {
-    readLiveMachineInventoryRows,
-    resolvePortableMachineAdministrationTarget,
     type PortableMachineAdministrationTargetResolution,
 } from '@/sync/domains/machines/resolveServerScopedMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -53,6 +47,9 @@ import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
     type MachineAdministrationCandidateInventoryRowV1,
 } from './targetState';
+
+import { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
+export { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
 
 export type MachineAdministrationExecutionTargetOptions = Readonly<{
     intent?: 'retry';
@@ -105,49 +102,6 @@ export function doesMachineAdministrationTargetMatchActiveAccount(params: Readon
             params.target.serverIdentityId,
             activeAccountServerId,
         );
-}
-
-/**
- * Re-resolves the device preference from current raw owner state.
- * Warm-cache rows never enter this path, and availability is checked again at
- * invocation time so a presentation snapshot cannot authorize a later effect.
- */
-export function resolveFreshMachineAdministrationExecutionTarget(
-    target: MachineAdministrationTargetV1 | null,
-    options: MachineAdministrationExecutionTargetOptions = {},
-): FreshMachineAdministrationExecutionTargetV1 | null {
-    if (!target) return null;
-    const state = storage.getState();
-    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const machineListByServerId = state.machineListByServerId ?? {};
-    const activeMachines = Object.values(state.machines ?? {});
-    const resolution = resolvePortableMachineAdministrationTarget({
-        target,
-        // Execution must resolve the scoped row admitted below. During refresh,
-        // the active display fallback can hold a different presence object.
-        activeServerId: '',
-        activeMachines,
-        machineListByServerId,
-        machineListStatusByServerId: state.machineListStatusByServerId,
-    });
-    if (resolution.kind !== 'resolved') return null;
-    if (!readLiveMachineInventoryRows({
-        activeServerId,
-        activeMachines,
-        machineListByServerId,
-        machineListStatusByServerId: state.machineListStatusByServerId ?? {},
-        profile: resolution.profile,
-        serverIdentityId: resolution.target.serverIdentityId,
-    }).has(resolution.machine)) {
-        return null;
-    }
-    const accountScope = 'accountScope' in options ? options.accountScope : selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), resolution.profile.id);
-    if (!accountScope || !areServerProfileIdentifiersEquivalent(accountScope.serverId, resolution.profile.id)) return null;
-    if (resolution.machine.availability?.kind === 'locked'
-        || (typeof resolution.machine.revokedAt === 'number' && resolution.machine.revokedAt > 0)
-        || isMachineReplaced(resolution.machine)) return null;
-    if (options.intent === 'retry') return resolution;
-    return isMachineSelectableForFleet(accountScope, resolution.machine) ? resolution : null;
 }
 
 export type MachineAdministrationTargetSelectionV1 = Readonly<{
