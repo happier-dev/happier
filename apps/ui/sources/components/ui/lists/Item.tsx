@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/lists/itemTextClamp';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { metaFigureStyle } from '@/components/ui/text/metaFigures';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { queryRanges } from '@/components/ui/text/queryRanges';
 import { MiddleEllipsisText, splitForWebMiddleEllipsis } from '@/components/ui/text/MiddleEllipsisText';
@@ -1236,6 +1237,8 @@ export const Item = React.memo<ItemProps>((props) => {
         ? (factDetailStyle ?? pageRowStyles.detail)
         : isTight ? styles.detailTight : isCompact ? styles.detailCompact : isCozy ? styles.detailCozy : null;
 
+    const detailFigures = metaFigureStyle(detail);
+
     const [isHovered, setIsHovered] = React.useState(false);
     // The pointer over an accessory that sits beside the press target (a row's own menu) still engages the row.
     const [isAccessoryHovered, setIsAccessoryHovered] = React.useState(false);
@@ -1585,6 +1588,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         style={[
                             styles.detail,
                             detailSizeStyle,
+                            detailFigures,
                             { marginRight: rightElement || showAccessory ? 8 : 0 },
                             detailStyle
                         ]}
@@ -1607,7 +1611,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 {chevronAccessory}
             </View>
             {measuresDetail && detail ? (
-                <Text style={[styles.detail, detailSizeStyle, styles.detailMeasure]} numberOfLines={1} onLayout={handleDetailLayout}
+                <Text style={[styles.detail, detailSizeStyle, detailFigures, styles.detailMeasure]} numberOfLines={1} onLayout={handleDetailLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{detail}</Text>
             ) : null}
             {measuresTitle ? (
@@ -1646,6 +1650,7 @@ export const Item = React.memo<ItemProps>((props) => {
         detail,
         detailTestID,
         detailSizeStyle,
+        detailFigures,
         detailStyle,
         iconContainerStyle,
         isPageRow,

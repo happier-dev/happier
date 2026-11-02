@@ -153,7 +153,7 @@ export const english = {
         offlineHidden: ({ count }: { count: number }) => count === 1 ? `1 machine is offline` : `${count} machines are offline`,
         showOffline: "Show",
         hideOffline: "Hide",
-        machinesCount: ({ count }: { count: number }) => count === 1 ? `1 machine` : `${count} machines`,
+        machinesCount: ({ count }: { count: number }) => count === 1 ? `1 Machine` : `${count} Machines`,
         sessionsWorking: ({ count }: { count: number }) => count === 1 ? `1 session working` : `${count} sessions working`,
     },
     machineSummary: {

@@ -13,6 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
+import { metaFigureStyle } from '@/components/ui/text/metaFigures';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 export type CapabilityRowProps = Readonly<{
@@ -76,7 +77,7 @@ export const CapabilityRow = React.memo(function CapabilityRow(
   const summary =
     props.whereSummary == null ? null : typeof props.whereSummary ===
       'string' ? (
-      <Text variant="meta" numberOfLines={1} style={styles.summary}>
+      <Text variant="meta" numberOfLines={1} style={[styles.summary, metaFigureStyle(props.whereSummary)]}>
         {props.whereSummary}
       </Text>
     ) : (
@@ -109,7 +110,7 @@ export const CapabilityRow = React.memo(function CapabilityRow(
       ) : (
         <View style={[styles.narrowLines, dimmed ? styles.dimmed : null]}>
           {typeof menuLine2 === 'string' ? (
-            <Text variant="meta" numberOfLines={1} style={styles.summary}>{menuLine2}</Text>
+            <Text variant="meta" numberOfLines={1} style={[styles.summary, metaFigureStyle(menuLine2)]}>{menuLine2}</Text>
           ) : menuLine2}
           <View testID={`${props.testID}:scope`}>{summary}</View>
         </View>
