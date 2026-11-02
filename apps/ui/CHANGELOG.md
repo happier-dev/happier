@@ -1,5 +1,17 @@
 # Changelog
 
+## Release 2026-11-02.1 - 2026-11-02
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "CLI 0.2.19 corrects Linux terminal support for x64 and arm64." },
+  "appStore": { "whatsNew": "CLI maintenance release for Linux terminal support." },
+  "playStore": { "whatsNew": "CLI maintenance release for Linux terminal support." }
+}
+-->
+
+- CLI 0.2.19 ships the corrected Linux terminal support: the packaged CLI now includes the terminal (PTY) module that matches each Linux platform (x64 and arm64).
+
 ## Release 2026-11-01.1 - 2026-11-01
 
 <!-- happier-release-note-projections:v1
