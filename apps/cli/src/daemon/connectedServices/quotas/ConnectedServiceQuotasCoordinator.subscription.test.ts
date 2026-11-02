@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, getProviderAccountUsageRefreshErrorAt,
+  isProviderAccountUsageRefreshRequestSettled } from '@happier-dev/protocol';
 import { createOpenAiCodexSubscriptionFetcher } from '@/backends/codex/connectedServices/subscriptionFetcher';
 import { createOpenAiCodexQuotaFetcher } from '@/backends/codex/connectedServices/quotaFetcher';
 import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
 import { createProviderAccountUsageStore } from '../accountUsage/store';
+import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '../accountUsage/fromConnectedServiceQuotaObservation';
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
@@ -74,5 +76,31 @@ describe('subscription observations in the account polling coordinator', () => {
     fixture.advance(1_000);
     await fixture.coordinator.tickOnce();
     expect(subscriptionRequests).toHaveLength(1);
+  });
+
+  it('updates subscriptions without clearing a quota failure or settling a newer quota refresh', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ active_until: '2026-10-01T00:00:00Z', will_renew: false })));
+    const fixture = setup();
+    const refreshError = { kind: 'provider_http', status: 429, observedAtMs: 950_000 } as const;
+    const previous = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+      snapshot: { v: 1, serviceId: 'openai-codex', profileId: 'work', activeAccountId: 'account',
+        fetchedAt: 900_000, staleAfterMs: 300_000, source: 'provider_api', confidence: 'exact',
+        planLabel: null, accountLabel: null, meters: [{ meterId: 'weekly', label: 'Weekly',
+          used: null, limit: null, unit: 'unknown', utilizationPct: 10, remainingPct: 90,
+          resetsAt: null, status: 'ok', details: {} }] },
+      observedAtMs: refreshError.observedAtMs,
+      refreshError,
+    });
+    fixture.store.recordSnapshot(previous, { sources: [{ serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' }] });
+
+    await fixture.coordinator.tickOnce();
+
+    const updated = fixture.store.listSnapshots()[0]!;
+    expect(updated).toMatchObject({ state: 'error_last_known_good', observedAtMs: 950_000,
+      fetchedAtMs: 900_000, diagnostics: [refreshError], meters: previous.meters,
+      subscription: { status: 'subscribed', renewal: 'off', observedAtMs: 1_000_000 } });
+    const outcome = { fetchedAt: updated.fetchedAtMs, refreshErrorAt: getProviderAccountUsageRefreshErrorAt(updated) };
+    expect(isProviderAccountUsageRefreshRequestSettled({ ...outcome, refreshRequestedAt: 950_000 })).toBe(true);
+    expect(isProviderAccountUsageRefreshRequestSettled({ ...outcome, refreshRequestedAt: 975_000 })).toBe(false);
   });
 });

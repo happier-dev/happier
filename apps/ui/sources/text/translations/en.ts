@@ -4583,6 +4583,8 @@ export const en = {
     },
 
     errors: {
+        quotaRefreshFailed: "Could not refresh usage. Try again.",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `Could not refresh usage. Try again after ${time}.`,
         machineRpcDecryptionFailed: "Unable to decrypt data from this machine. Sign in with the matching account key and try again.",
         machineRpcContextUnavailable: "This machine’s connection is unavailable. Refresh your machines and try again.",
         networkError: 'Network error occurred',

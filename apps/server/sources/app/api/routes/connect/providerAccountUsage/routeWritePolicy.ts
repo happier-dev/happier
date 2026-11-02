@@ -8,6 +8,8 @@ import {
     compareConnectedServiceQuotaObservationRecency,
     isConnectedServiceQuotaObservationAtOrBeforeNow,
     mergeProviderAccountSubscription,
+    getProviderAccountUsageRefreshErrorAt,
+    isProviderAccountUsageRefreshRequestSettled,
 } from "@happier-dev/protocol";
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 
@@ -33,6 +35,7 @@ export type ProviderAccountUsageWritePolicyParams = Readonly<{
     fetchedAt: number;
     staleAfterMs: number;
     materialFingerprint?: string;
+    refreshErrorAt?: number;
     snapshot?: ProviderAccountUsageSnapshotV1;
     sealedPayload?: SealedProviderAccountUsageSnapshotV1;
     client?: ProviderAccountUsagePolicyClient;
@@ -44,14 +47,6 @@ type ProviderAccountUsageWritePolicyOverrides = Partial<Omit<ProviderAccountUsag
 
 function normalizeFingerprint(value: string | undefined): string | undefined {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function shouldClearRefreshRequest(refreshRequestedAt: number | undefined, fetchedAt: number): boolean {
-    return refreshRequestedAt !== undefined && fetchedAt >= refreshRequestedAt;
-}
-
-function shouldPreserveRefreshRequest(refreshRequestedAt: number | undefined, fetchedAt: number): boolean {
-    return refreshRequestedAt !== undefined && fetchedAt < refreshRequestedAt;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -73,7 +68,10 @@ function buildWriteParams(
         staleAfterMs: merged.staleAfterMs,
         ...(merged.snapshot ? { snapshot: merged.snapshot } : {}),
         ...(merged.sealedPayload ? { sealedPayload: merged.sealedPayload } : {}),
-        ...(merged.materialFingerprint ? { metadata: { materialFingerprint: merged.materialFingerprint } } : {}),
+        ...((merged.materialFingerprint || merged.refreshErrorAt !== undefined) ? { metadata: {
+            ...(merged.materialFingerprint ? { materialFingerprint: merged.materialFingerprint } : {}),
+            ...(merged.refreshErrorAt !== undefined ? { refreshErrorAt: merged.refreshErrorAt } : {}),
+        } } : {}),
         ...(merged.refreshRequestedAt !== undefined ? { refreshRequestedAt: merged.refreshRequestedAt } : {}),
     };
 }
@@ -84,6 +82,14 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
     const nowMs = Date.now();
     if (!isConnectedServiceQuotaObservationAtOrBeforeNow({ observedAtMs: params.fetchedAt, nowMs })) {
         throw new ProviderAccountUsagePayloadInvariantError("Provider account usage observation time must not be in the future");
+    }
+    const snapshotErrorAt = params.snapshot ? getProviderAccountUsageRefreshErrorAt(params.snapshot) : undefined;
+    if (params.refreshErrorAt !== undefined && (
+        !Number.isSafeInteger(params.refreshErrorAt) || params.refreshErrorAt < 0 || params.refreshErrorAt > nowMs
+        || params.status !== "error"
+        || (params.payloadMode === "plain_json_v1" && snapshotErrorAt !== params.refreshErrorAt)
+    )) {
+        throw new ProviderAccountUsagePayloadInvariantError("Provider account usage refresh error must match a recorded failure outcome at or before now");
     }
     const account = await params.client.account.findUnique({
         where: { id: params.accountId },
@@ -120,8 +126,20 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             incomingObservedAtMs: params.fetchedAt,
             nowMs,
         }) === "incoming_newer";
-        const clearsRefreshRequest = shouldClearRefreshRequest(existing.refreshRequestedAt, params.fetchedAt);
-        const preservesRefreshRequest = shouldPreserveRefreshRequest(existing.refreshRequestedAt, params.fetchedAt);
+        const existingErrorAt = existing.metadata?.refreshErrorAt;
+        const advancesFailure = params.refreshErrorAt !== undefined
+            && (params.refreshErrorAt > (existingFetchedAt ?? -1)
+                || (params.refreshErrorAt === existingFetchedAt && params.fetchedAt === existingFetchedAt))
+            && params.refreshErrorAt > (existingErrorAt ?? -1);
+        const nextFetchedAt = isNewer ? params.fetchedAt : (existingFetchedAt ?? params.fetchedAt);
+        const refreshErrorAt = advancesFailure ? params.refreshErrorAt
+            : existingErrorAt !== undefined && (existingErrorAt > nextFetchedAt || (!isNewer && existingErrorAt === nextFetchedAt))
+                ? existingErrorAt : undefined;
+        const clearsRefreshRequest = isProviderAccountUsageRefreshRequestSettled({
+            refreshRequestedAt: existing.refreshRequestedAt,
+            fetchedAt: nextFetchedAt,
+            refreshErrorAt,
+        });
 
         const previousSubscription = existing.sealedPayload?.subscription;
         const incomingSubscription = params.sealedPayload?.subscription;
@@ -132,70 +150,44 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         const subscriptionAdvanced = sealedSubscription !== previousSubscription
             || JSON.stringify(plainSubscription) !== JSON.stringify(existing.snapshot?.subscription);
 
-        let nextWrite;
-        let result: "written" | "noop" | "stale";
-        if (!incomingFingerprint) {
-            if (!isNewer && !subscriptionAdvanced) return "stale";
-            nextWrite = buildWriteParams(params, {
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
-        } else if (existingFingerprint === incomingFingerprint) {
-            if (!isNewer && !clearsRefreshRequest && !subscriptionAdvanced) return "noop";
-            const preservedStatus = existing.status === "refresh_requested" ? params.status : existing.status;
-            nextWrite = buildWriteParams(params, {
-                status: isNewer ? params.status : preservedStatus,
-                fetchedAt: isNewer ? params.fetchedAt : (existing.fetchedAt ?? params.fetchedAt),
-                staleAfterMs: isNewer ? params.staleAfterMs : (existing.staleAfterMs ?? params.staleAfterMs),
-                snapshot: params.payloadMode === "plain_json_v1"
-                    ? (isNewer ? params.snapshot : existing.snapshot)
-                    : undefined,
-                sealedPayload: params.payloadMode === "sealed_account_scoped_v1"
-                    ? (isNewer ? params.sealedPayload : existing.sealedPayload)
-                    : undefined,
-                materialFingerprint: incomingFingerprint,
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
-        } else {
-            if (!isNewer && !subscriptionAdvanced) return "stale";
-            nextWrite = buildWriteParams(params, {
-                materialFingerprint: incomingFingerprint,
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
+        const sameFingerprint = incomingFingerprint !== undefined && existingFingerprint === incomingFingerprint;
+        if (!isNewer && !subscriptionAdvanced && !advancesFailure && !clearsRefreshRequest) {
+            return sameFingerprint ? "noop" : "stale";
         }
-
-        if (params.payloadMode === "sealed_account_scoped_v1" && sealedSubscription) {
-            const basePayload = isNewer ? params.sealedPayload : existing.sealedPayload;
-            nextWrite = {
-                ...nextWrite,
-                ...(!isNewer ? {
-                    fetchedAt: existing.fetchedAt ?? params.fetchedAt,
-                    staleAfterMs: existing.staleAfterMs ?? params.staleAfterMs,
-                    status: existing.status === "refresh_requested" ? params.status : existing.status,
-                } : {}),
-                sealedPayload: basePayload ? { ...basePayload, subscription: sealedSubscription } : undefined,
-            };
-        }
-        if (params.payloadMode === "plain_json_v1" && plainSubscription) {
-            const baseSnapshot = isNewer ? params.snapshot : existing.snapshot;
-            nextWrite = {
-                ...nextWrite,
-                ...(!isNewer ? {
-                    fetchedAt: existing.fetchedAt ?? params.fetchedAt,
-                    staleAfterMs: existing.staleAfterMs ?? params.staleAfterMs,
-                    status: existing.status === "refresh_requested" ? params.status : existing.status,
-                } : {}),
-                snapshot: baseSnapshot ? { ...baseSnapshot, subscription: plainSubscription } : undefined,
-            };
-        }
+        const baseSnapshot = isNewer ? params.snapshot : existing.snapshot;
+        const errorSnapshot = advancesFailure ? params.snapshot : existing.snapshot;
+        const snapshot = baseSnapshot ? {
+            ...baseSnapshot,
+            ...(plainSubscription ? { subscription: plainSubscription } : {}),
+            ...(refreshErrorAt !== undefined && errorSnapshot ? {
+                state: "error_last_known_good" as const,
+                diagnostics: errorSnapshot.diagnostics,
+            } : {}),
+        } : undefined;
+        // Sealed payloads cannot be merged. Preserve the newest observation ciphertext;
+        // the separately authenticated metadata records the refresh failure outcome.
+        const baseSealedPayload = isNewer || (advancesFailure && params.fetchedAt === existingFetchedAt)
+            ? params.sealedPayload : existing.sealedPayload;
+        const sealedPayload = baseSealedPayload && sealedSubscription
+            ? { ...baseSealedPayload, subscription: sealedSubscription }
+            : baseSealedPayload;
+        const nextWrite = buildWriteParams(params, {
+            fetchedAt: nextFetchedAt,
+            staleAfterMs: isNewer ? params.staleAfterMs : (existing.staleAfterMs ?? params.staleAfterMs),
+            status: refreshErrorAt !== undefined ? "error" : isNewer || existing.status === "refresh_requested" ? params.status : existing.status,
+            snapshot,
+            sealedPayload,
+            materialFingerprint: isNewer || (advancesFailure && params.fetchedAt === existingFetchedAt) ? incomingFingerprint : existingFingerprint,
+            refreshErrorAt,
+            ...(!clearsRefreshRequest && existing.refreshRequestedAt !== undefined ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
+        });
 
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, {
             fetchedAt: existing.fetchedAt,
+            metadata: existing.metadata,
             ...(existing.refreshRequestedAt !== undefined ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
         }, params.client);
-        if (updated) return result;
+        if (updated) return "written";
     }
 
     throw new Error("Provider account usage write policy could not commit after concurrent changes");

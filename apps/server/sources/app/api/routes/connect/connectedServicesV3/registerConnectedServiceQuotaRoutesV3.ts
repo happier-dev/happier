@@ -46,6 +46,7 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                         staleAfterMs: z.number().int().nonnegative(),
                         status: z.enum(["ok", "unavailable", "estimated", "error"]),
                         refreshRequestedAt: z.number().int().nonnegative().optional(),
+                        refreshErrorAt: z.number().int().nonnegative().optional(),
                     }),
                 }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),

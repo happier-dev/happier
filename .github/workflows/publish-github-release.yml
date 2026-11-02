@@ -249,4 +249,4 @@ jobs:
             --assets-dir "${assets_dir}" \
             --clobber "$INPUT_CLOBBER" \
             --prune-assets "$INPUT_PRUNE_ASSETS" \
-            --release-message "${release_message}"
+            --release-message="${release_message}"

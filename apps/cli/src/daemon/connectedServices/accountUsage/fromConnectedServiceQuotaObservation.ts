@@ -5,6 +5,7 @@ import {
   ConnectedServiceQuotaSourceV1Schema,
   type ConnectedServiceQuotaSnapshotV1,
   type ProviderAccountUsageConfidenceV1,
+  type ProviderAccountUsageDiagnosticV1,
   type ProviderAccountUsageRecordKeyV1,
   type ProviderAccountUsageSourceV1,
   type ProviderAccountUsageSnapshotV1,
@@ -42,6 +43,7 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
   snapshot: ConnectedServiceQuotaSnapshotV1;
   observedAtMs?: number;
   sourceProviderAccountId?: string | null;
+  refreshError?: ProviderAccountUsageDiagnosticV1;
 }>): ProviderAccountUsageSnapshotV1 {
   const snapshot = input.snapshot;
   const providerId = (snapshot.providerId ?? snapshot.serviceId).trim();
@@ -76,7 +78,8 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
     staleAfterMs: snapshot.staleAfterMs,
     source: mapQuotaSourceToUsageSource(snapshot.source),
     confidence: mapQuotaConfidenceToUsageConfidence(snapshot.confidence),
-    state: snapshot.confidence === 'stale'
+    ...(input.refreshError ? { diagnostics: [input.refreshError] } : {}),
+    state: input.refreshError ? 'error_last_known_good' : snapshot.confidence === 'stale'
       ? 'stale_data'
       : snapshot.meters.length > 0
         ? 'loaded_data'

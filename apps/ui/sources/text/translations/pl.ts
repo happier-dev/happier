@@ -4921,6 +4921,8 @@ export const pl: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "Nie udało się odświeżyć użycia. Spróbuj ponownie.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Nie udało się odświeżyć użycia. Spróbuj ponownie po ${time}.`,
     machineRpcDecryptionFailed: "Nie można odszyfrować danych tego komputera. Zaloguj się przy użyciu pasującego klucza konta i spróbuj ponownie.",
     machineRpcContextUnavailable: "Połączenie z tym komputerem jest niedostępne. Odśwież komputery i spróbuj ponownie.",
     networkError: "Wystąpił błąd sieci",

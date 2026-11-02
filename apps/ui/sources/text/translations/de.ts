@@ -4563,6 +4563,8 @@ export const de: TranslationStructure = {
     },
 
     errors: {
+        quotaRefreshFailed: "Die Nutzung konnte nicht aktualisiert werden. Versuche es erneut.",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `Die Nutzung konnte nicht aktualisiert werden. Versuche es nach ${time} erneut.`,
         machineRpcDecryptionFailed: "Die Daten dieses Rechners können nicht entschlüsselt werden. Melde dich mit dem passenden Kontoschlüssel an und versuche es erneut.",
         machineRpcContextUnavailable: "Die Verbindung zu diesem Rechner ist nicht verfügbar. Aktualisiere deine Rechner und versuche es erneut.",
         networkError: 'Netzwerkfehler aufgetreten',

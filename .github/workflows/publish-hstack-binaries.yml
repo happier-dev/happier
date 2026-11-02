@@ -615,7 +615,7 @@ jobs:
           node scripts/pipeline/release/publish-hstack-binaries.mjs \
             --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --version "$VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
@@ -678,7 +678,7 @@ jobs:
           node scripts/pipeline/release/publish-hstack-binaries.mjs \
             --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

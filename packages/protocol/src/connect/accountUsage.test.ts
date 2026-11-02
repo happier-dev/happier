@@ -7,6 +7,37 @@ import { ConnectedServiceQuotaSnapshotV1Schema, SealedConnectedServiceQuotaSnaps
 import * as protocol from '../index.js';
 import { ReleasedProviderAccountUsageSnapshotV1Schema, ReleasedSealedProviderAccountUsageSnapshotV1Schema, ReleasedProviderAccountUsagePlainWriteSchema } from './fixtures/releasedV0216AccountUsage.js';
 
+describe('provider account usage refresh completion', () => {
+  it('projects the latest recorded failure as quota evidence while retaining the provider observation', () => {
+    const snapshot = accountUsageModule.ProviderAccountUsageSnapshotV1Schema.parse({
+      ...createSnapshot(), state: 'error_last_known_good', diagnostics: [
+        { kind: 'unknown', observedAtMs: 2000 },
+        { kind: 'provider_http', code: 'rate_limited', status: 429, observedAtMs: 3000, headers: { 'retry-after': 'Mon, 02 Nov 2026 10:00:00 GMT' } },
+      ],
+    });
+    const projected = accountUsageModule.projectProviderAccountUsageToConnectedServiceQuotaSnapshot(snapshot, {
+      serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile',
+    });
+    expect(projected).toMatchObject({ fetchedAt: snapshot.fetchedAtMs, evidence: snapshot.diagnostics?.[1] });
+    expect(ReleasedProviderAccountUsagePlainWriteSchema.safeParse({
+      content: { t: 'plain', v: snapshot },
+      metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'error' },
+    }).success).toBe(true);
+    expect(requireExport<(value: typeof snapshot) => number | undefined>('getProviderAccountUsageRefreshErrorAt', isFunction)(snapshot)).toBe(3000);
+  });
+
+  it('settles only requests covered by a provider observation or recorded failure outcome', () => {
+    const settled = requireExport<(input: { refreshRequestedAt: number | undefined; fetchedAt: number; refreshErrorAt?: number }) => boolean>(
+      'isProviderAccountUsageRefreshRequestSettled', isFunction,
+    );
+    expect(settled({ refreshRequestedAt: undefined, fetchedAt: 100 })).toBe(false);
+    expect(settled({ refreshRequestedAt: 100, fetchedAt: 99 })).toBe(false);
+    expect(settled({ refreshRequestedAt: 100, fetchedAt: 100 })).toBe(true);
+    expect(settled({ refreshRequestedAt: 100, fetchedAt: 50, refreshErrorAt: 100 })).toBe(true);
+    expect(settled({ refreshRequestedAt: 101, fetchedAt: 50, refreshErrorAt: 100 })).toBe(false);
+  });
+});
+
 type ProviderAccountUsageRecordKeyV1 = Readonly<{
   providerId: string;
   accountSubjectId: string;

@@ -505,7 +505,7 @@ jobs:
           node scripts/pipeline/release/publish-ui-web.mjs \
             --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --phase "$PUBLISH_PHASE" \
             --base-version "$BASE_VERSION" \
             --version "$VERSION" \
@@ -574,5 +574,5 @@ jobs:
             --phase promote-rolling --channel "$CHANNEL" \
             --allow-stable "$ALLOW_STABLE" \
             --version "$RETRY_VERSION" --authorized-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE" \
+            --release-message="$RELEASE_MESSAGE" \
             --run-contracts false --check-installers false

@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import {
     loadPackagedPrismaClientModule,
+    createDbSqliteMaintenanceClient,
+    prismaRuntime,
     resolveGeneratedClientEntrypoint,
     resolvePackagedDefaultPrismaClientEntrypoint,
     resolvePackagedGeneratedClientEntrypoint,
@@ -12,6 +14,16 @@ import {
 } from "./prisma";
 
 describe("resolveGeneratedClientEntrypoint", () => {
+    it("keeps maintenance clients separate from the active runtime namespace", async () => {
+        const before = prismaRuntime;
+        const maintenance = await createDbSqliteMaintenanceClient();
+        try {
+            expect(prismaRuntime).toBe(before);
+        } finally {
+            await maintenance.$disconnect();
+        }
+    });
+
     it("appends /index.js for directory specifiers", () => {
         expect(resolveGeneratedClientEntrypoint("../../generated/mysql-client")).toMatch(/\/index\.js$/);
         expect(resolveGeneratedClientEntrypoint("../../generated/mysql-client/")).toMatch(/\/index\.js$/);

@@ -141,6 +141,7 @@ export type QuotaApi = Readonly<{
           staleAfterMs: number;
           status: 'ok' | 'unavailable' | 'estimated' | 'error';
           refreshRequestedAt?: number;
+          refreshErrorAt?: number;
           materialFingerprint?: string;
         }>;
       }>
@@ -154,6 +155,7 @@ export type QuotaApi = Readonly<{
           staleAfterMs: number;
           status: 'ok' | 'unavailable' | 'estimated' | 'error';
           refreshRequestedAt?: number;
+          refreshErrorAt?: number;
           materialFingerprint?: string;
         }>;
       }>
@@ -187,7 +189,7 @@ export type QuotaApi = Readonly<{
     recordKey: ProviderAccountUsageRecordKeyV1;
     source?: ConnectedServiceUsageSourceV1;
     sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
-    metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error'; materialFingerprint?: string }>;
+    metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error'; materialFingerprint?: string; refreshErrorAt?: number }>;
   }>) => Promise<void>;
   registerProviderAccountUsageSnapshotPlain?: (args: Readonly<{
     recordId: string;
@@ -752,18 +754,22 @@ export function defaultSleepMs(ms: number): Promise<void> {
 /**
  * X8 — Stale-but-usable quota.
  *
- * Returns a copy of the snapshot with all meters annotated as stale_quota so
- * the UI can show "last known data (refresh failed)" rather than a blank.
- * The meter data (utilizationPct, resetsAt, etc.) is preserved.
+ * Returns a copy of the snapshot with all meters annotated with the given
+ * staleness code so the UI can show "last known data (refresh failed)" rather
+ * than a blank. The meter data (utilizationPct, resetsAt, etc.) is preserved.
+ * `provider_rate_limited` marks a refresh the provider refused with 429.
  */
-export function annotateSnapshotAsStale(snapshot: ConnectedServiceQuotaSnapshotV1): ConnectedServiceQuotaSnapshotV1 {
+export function annotateSnapshotAsStale(
+  snapshot: ConnectedServiceQuotaSnapshotV1,
+  code: 'stale_quota' | 'provider_rate_limited' = 'stale_quota',
+): ConnectedServiceQuotaSnapshotV1 {
   return {
     ...snapshot,
     meters: snapshot.meters.map((meter) => ({
       ...meter,
       details: {
         ...meter.details,
-        code: 'stale_quota',
+        code,
       },
     })),
   };

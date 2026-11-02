@@ -286,7 +286,7 @@ describe('ApiClient connected services v2', () => {
       status: 200,
       data: {
         sealed: { format: 'account_scoped_v1', ciphertext: 'cHJvdmlkZXItdXNhZ2U=' },
-        metadata: { fetchedAt: 1_000, staleAfterMs: 300_000, status: 'ok' },
+        metadata: { fetchedAt: 1_000, staleAfterMs: 300_000, status: 'error', refreshErrorAt: 2_000 },
         sources: [source],
       },
     });
@@ -294,6 +294,7 @@ describe('ApiClient connected services v2', () => {
     const api = await ApiClient.create(createTestCredentials());
 
     const res = await api.getProviderAccountUsageSnapshotSealed({ recordId });
+    expect(res?.metadata).toMatchObject({ status: 'error', refreshErrorAt: 2_000 });
 
     expect(res?.sealed).toEqual({ format: 'account_scoped_v1', ciphertext: 'cHJvdmlkZXItdXNhZ2U=' });
     expect(res?.sources).toEqual([source]);
@@ -313,7 +314,7 @@ describe('ApiClient connected services v2', () => {
       status: 200,
       data: {
         sealed: { format: 'account_scoped_v1', ciphertext: 'cXVvdGEtY2lwaGVydGV4dA==' },
-        metadata: { fetchedAt: Date.now(), staleAfterMs: 300_000, status: 'ok' },
+        metadata: { fetchedAt: Date.now(), staleAfterMs: 300_000, status: 'error', refreshErrorAt: 2_000 },
       },
     });
 
@@ -324,6 +325,7 @@ describe('ApiClient connected services v2', () => {
       profileId: 'work',
     });
 
+    expect(res?.metadata).toMatchObject({ status: 'error', refreshErrorAt: 2_000 });
     expect(res?.sealed?.ciphertext).toBe('cXVvdGEtY2lwaGVydGV4dA==');
     expect(axios.get).toHaveBeenCalledWith(
       expect.stringContaining('/v2/connect/openai-codex/profiles/work/quotas'),

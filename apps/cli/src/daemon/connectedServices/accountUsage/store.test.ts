@@ -78,6 +78,22 @@ describe('provider account usage store', () => {
     vi.useRealTimers();
   });
 
+  it('applies a later refresh failure without replacing newer meter observations or accepting an older outcome', async () => {
+    const { createProviderAccountUsageStore } = await import('./store');
+    const store = createProviderAccountUsageStore();
+    const current = createSnapshot({ fetchedAtMs: 2_000, observedAtMs: 2_000, planLabel: 'New usage' });
+    store.recordSnapshot(current);
+    const failure = createSnapshot({ fetchedAtMs: 1_000, observedAtMs: 3_000, state: 'error_last_known_good',
+      diagnostics: [{ kind: 'provider_http', status: 429, observedAtMs: 3_000 }] });
+    expect(store.recordSnapshot(failure).snapshotAdvanced).toBe(true);
+    expect(store.resolveRecordId(current.recordId)).toMatchObject({ fetchedAtMs: 2_000, observedAtMs: 3_000,
+      planLabel: 'New usage', state: 'error_last_known_good', diagnostics: failure.diagnostics });
+    store.recordSnapshot({ ...current, observedAtMs: 2_500 });
+    expect(store.resolveRecordId(current.recordId)?.state).toBe('error_last_known_good');
+    store.recordSnapshot({ ...current, observedAtMs: 4_000 });
+    expect(store.resolveRecordId(current.recordId)).toMatchObject({ state: 'loaded_data', observedAtMs: 4_000 });
+  });
+
   it('merges subscription observations independently without re-aging or replacing newer usage', async () => {
     const module = await loadStoreModule();
     const store = module!.createProviderAccountUsageStore();

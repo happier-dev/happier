@@ -45,6 +45,7 @@ export async function writeProviderAccountUsageRecordAndLinkConnectedServiceUsag
             ...(params.sealedPayload ? { sealedPayload: params.sealedPayload } : {}),
             fetchedAt: params.fetchedAt,
             staleAfterMs: params.staleAfterMs,
+            ...(params.refreshErrorAt !== undefined ? { refreshErrorAt: params.refreshErrorAt } : {}),
             ...(params.materialFingerprint !== undefined ? { materialFingerprint: params.materialFingerprint } : {}),
             client: tx,
         });

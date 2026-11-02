@@ -103,6 +103,25 @@ function createCredentials(): Credentials {
 }
 
 describe('provider account usage persistence', () => {
+  it('carries failure completion in sealed metadata without re-aging retained usage', async () => {
+    const { createProviderAccountUsagePersistenceScheduler } = await import('./persistence');
+    const write = vi.fn(async () => {});
+    const scheduler = createProviderAccountUsagePersistenceScheduler({
+      api: { getAccountEncryptionMode: async () => 'e2ee', registerProviderAccountUsageSnapshotSealed: write },
+      credentials: createCredentials(), randomBytes: (length) => new Uint8Array(length).fill(8),
+      now: () => 5_000,
+    });
+    try {
+      await scheduler.recordInBandSnapshot({ ...createSnapshot(), observedAtMs: 4_000, state: 'error_last_known_good',
+        diagnostics: [{ kind: 'provider_http', status: 429, observedAtMs: 3_000 },
+          { kind: 'provider_http', status: 503, observedAtMs: 4_000 }] });
+      await scheduler.flush(1_000);
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.objectContaining({ fetchedAt: 1_000, status: 'error', refreshErrorAt: 4_000 }),
+      }));
+    } finally { scheduler.dispose(); }
+  });
+
   it('omits subscription but preserves usage when the server subscription decision is absent', async () => {
     const { createProviderAccountUsagePersistenceScheduler } = await import('./persistence');
     const base = createSnapshot();

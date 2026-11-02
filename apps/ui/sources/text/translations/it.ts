@@ -5244,6 +5244,8 @@ export const it: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "Impossibile aggiornare l’utilizzo. Riprova.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Impossibile aggiornare l’utilizzo. Riprova dopo ${time}.`,
     machineRpcDecryptionFailed: "Impossibile decifrare i dati di questa macchina. Accedi con la chiave dell’account corrispondente e riprova.",
     machineRpcContextUnavailable: "La connessione a questa macchina non è disponibile. Aggiorna le macchine e riprova.",
     networkError: "Si è verificato un errore di rete",

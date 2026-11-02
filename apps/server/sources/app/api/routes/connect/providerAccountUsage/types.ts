@@ -13,6 +13,7 @@ export type ProviderAccountUsagePayloadMode = "plain_json_v1" | "sealed_account_
 export type ProviderAccountUsageStatus = "ok" | "unavailable" | "estimated" | "error" | "refresh_requested";
 export type ProviderAccountUsageRecordMetadata = Readonly<{
     materialFingerprint?: string;
+    refreshErrorAt?: number;
     subscription?: ProviderAccountSubscriptionV1;
     recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1;
 }>;
@@ -66,6 +67,7 @@ export type ProviderAccountUsageResponseMetadata = Readonly<{
     staleAfterMs: number;
     status: Exclude<ProviderAccountUsageStatus, "refresh_requested">;
     refreshRequestedAt?: number;
+    refreshErrorAt?: number;
 }>;
 
 export type ConnectedServiceQuotaView = Readonly<{

@@ -102,7 +102,7 @@ vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
 
 const { getConnectedServiceQuotaSnapshotPlainSpy } = vi.hoisted(() => ({
   getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
-    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => Promise<import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 | null>
   >(async () => null),
 }));
 const profileState = vi.hoisted(() => ({
@@ -116,7 +116,10 @@ const profileState = vi.hoisted(() => ({
   },
 }));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotPlain: async (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => {
+    const snapshot = await getConnectedServiceQuotaSnapshotPlainSpy(...args);
+    return snapshot ? { snapshot, metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } } : null;
+  },
   requestConnectedServiceQuotaSnapshotRefreshV3: vi.fn(async () => true),
 }));
 

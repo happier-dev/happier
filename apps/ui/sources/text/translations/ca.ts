@@ -4635,6 +4635,8 @@ export const ca: TranslationStructure = {
     },
 
     errors: {
+        quotaRefreshFailed: "No s’ha pogut actualitzar l’ús. Torna-ho a provar.",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `No s’ha pogut actualitzar l’ús. Torna-ho a provar després de ${time}.`,
         machineRpcDecryptionFailed: "No es poden desxifrar les dades d’aquesta màquina. Inicia la sessió amb la clau de compte corresponent i torna-ho a provar.",
         machineRpcContextUnavailable: "La connexió amb aquesta màquina no està disponible. Actualitza les màquines i torna-ho a provar.",
         networkError: 'Error de connexió',
