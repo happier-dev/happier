@@ -389,6 +389,7 @@ export function buildSessionFromListRenderable(
             ? mergeSessionListDocumentObservations(heldFullDocuments[SESSION_LIST_DOCUMENT_ADMISSION]!, rowAdmission)
             : rowAdmission } : {}),
         id: renderable.id,
+        projectKey: renderable.projectKey,
         viewer: renderable.viewer,
         encryptionMode: renderable.encryptionMode ?? options.baseSession?.encryptionMode,
         encryptedContentAvailability: renderable.encryptedContentAvailability !== undefined

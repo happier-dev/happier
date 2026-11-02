@@ -34,6 +34,8 @@ export interface Session {
     id: string,
     ownerAccountId?: string,
     serverId?: string,
+    /** Accepted non-content Project relationship published by the Session owner. */
+    projectKey?: string | null,
     seq: number,
     /**
      * Session content encryption mode. Missing means legacy/unknown and should be treated as `e2ee`.

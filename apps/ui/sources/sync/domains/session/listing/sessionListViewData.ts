@@ -30,6 +30,8 @@ import {
 } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { buildSessionListDateGroups } from './sessionListDateGroups';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { buildProjectGroupDisplayIndex, projectGroupIdentityKey, type SessionListFallbackGroupDisplay } from '@/sync/domains/workspaces/projectGroupDisplay';
 
 export type SessionListViewItem =
     | {
@@ -38,6 +40,7 @@ export type SessionListViewItem =
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'loading' | 'folder';
         groupKey?: string;
         workspaceKey?: string;
+        projectKey?: QualifiedProjectKeyV1;
         seedSessionId?: string | null;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         serverId?: string;
@@ -52,6 +55,8 @@ export type SessionListViewItem =
     | {
         type: 'session';
         session: SessionListRenderableSession;
+        projectKey?: QualifiedProjectKeyV1;
+        fallbackGroupDisplay?: SessionListFallbackGroupDisplay;
         section?: 'active' | 'inactive';
         groupKey?: string;
         groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'loading' | 'folder';

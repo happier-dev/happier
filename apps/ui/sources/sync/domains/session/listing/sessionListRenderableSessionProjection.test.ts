@@ -414,4 +414,12 @@ describe('buildSessionFromListRenderable', () => {
         expect(recipientSession.ownerMetadataView).toBeNull();
         expect(readSessionOwnerMetadataView(recipientSession)).toBeNull();
     });
+    it('carries the admitted Project relationship without reviving an omitted or cleared base relationship', () => {
+        const session = createSessionFixture({ projectKey: 'payments' });
+        const row = buildSessionListRenderableFromSession(session);
+        expect(buildSessionFromListRenderable(row).projectKey).toBe('payments');
+        expect(buildSessionFromListRenderable({ ...row, projectKey: null }, { baseSession: session }).projectKey).toBeNull();
+        expect(buildSessionFromListRenderable({ ...row, projectKey: undefined }, { baseSession: session }).projectKey).toBeUndefined();
+    });
+
 });
