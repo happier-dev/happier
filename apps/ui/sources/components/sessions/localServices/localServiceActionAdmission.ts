@@ -1,4 +1,3 @@
-import type { RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import * as React from 'react';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionApprovalRequestCreatedResultSchema, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -14,9 +13,9 @@ export type LocalServiceActionInvocationOptions = Readonly<{
     confirmation?: NonNullable<NonNullable<Parameters<FrontDoorRuntimeActionExecute>[1]>['presentUserActionConfirmation']>;
 }>;
 
-type LocalServiceActionExecute = (request: RuntimeActionExecuteArgs, options?: LocalServiceActionInvocationOptions) => Promise<unknown>;
-type LocalServiceRuntimeActionExecute = (request: RuntimeActionExecuteArgs,
-    options?: Parameters<FrontDoorRuntimeActionExecute>[1]) => Promise<unknown>;
+type LocalServiceActionRequest = Parameters<FrontDoorRuntimeActionExecute>[0];
+type LocalServiceActionExecute = (request: LocalServiceActionRequest, options?: LocalServiceActionInvocationOptions) => Promise<unknown>;
+type LocalServiceRuntimeActionExecute = FrontDoorRuntimeActionExecute;
 
 export type LocalServiceEffectReview = Readonly<{
     actionId: 'localServices.launcher.start' | 'localServices.actions.restartManaged';
@@ -76,7 +75,7 @@ export function useLocalServiceActionExecutor(context: LocalServiceActionAdmissi
 /** Join immediate and durable Ask-first results through the existing Artifact continuation. */
 export async function executeLocalServiceActionWithAdmission(input: Readonly<{
     execute: LocalServiceRuntimeActionExecute;
-    request: RuntimeActionExecuteArgs;
+    request: LocalServiceActionRequest;
     admission: LocalServiceActionAdmission;
     confirmation?: LocalServiceActionInvocationOptions['confirmation'];
 }>): Promise<unknown> {

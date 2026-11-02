@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
-import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import type { LocalServiceLauncherSnapshot, LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';

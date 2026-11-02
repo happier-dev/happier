@@ -1,9 +1,9 @@
+import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type {
     LocalServiceLauncherSnapshotV1,
-    RuntimeActionExecute,
     ApprovalRequestV2,
 } from '@happier-dev/protocol';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';

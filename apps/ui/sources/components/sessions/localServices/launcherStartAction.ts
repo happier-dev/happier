@@ -1,8 +1,8 @@
+import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import * as React from 'react';
 
 import type {
     DaemonLocalServiceLauncherStartRequestV1,
-    RuntimeActionExecute,
 } from '@happier-dev/protocol';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';

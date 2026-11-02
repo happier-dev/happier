@@ -93,7 +93,12 @@ describe('local service launcher machine RPC client', () => {
         });
         const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
         const { executeLocalServiceActionWithAdmission } = await import('@/components/sessions/localServices/localServiceActionAdmission');
-        await expect(executeLocalServiceActionWithAdmission({ execute: createDefaultRuntimeActionExecutor(),
+        const runtime = createDefaultRuntimeActionExecutor();
+        await expect(executeLocalServiceActionWithAdmission({
+            // This carrier test admits only its named runtime leaf, not the full Action catalog.
+            execute: args => args.actionId === 'localServices.launcher.start'
+                ? runtime({ ...args, actionId: args.actionId })
+                : Promise.resolve({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
             request: { actionId: 'localServices.launcher.start', input: { machineId: 'machine_1', targetId: 'target_1' },
                 context: { surface: 'ui', serverId: 'server_1' } },
             admission: { signal: cancellation.signal },
@@ -112,6 +117,7 @@ describe('local service launcher machine RPC client', () => {
         });
         const { startLocalServiceLauncherTargetViaMachineRpc } = await import('./machineRpc');
         const { createLocalServicesRuntimeActionExecutor } = await import('../actions/runtimeActionExecutor');
+        const runtime = createLocalServicesRuntimeActionExecutor();
         const { buildLocalServiceLauncherStartRequest } = await import('@/components/sessions/localServices/launcherStartAction');
         const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
         const request = buildLocalServiceLauncherStartRequest({ target: { ...startResponse.snapshot.targets[0]!,
@@ -174,13 +180,17 @@ describe('local service launcher machine RPC client', () => {
         const { renderHook } = await import('@/dev/testkit');
         const { useLocalServiceLauncherHistoryClearAction } = await import('@/components/sessions/localServices/lifecycleActions');
         const { createLocalServicesRuntimeActionExecutor } = await import('../actions/runtimeActionExecutor');
+        const runtime = createLocalServicesRuntimeActionExecutor();
         const cancellation = new AbortController();
         machineRpcWithServerScopeMock.mockImplementationOnce(async (request) => {
             const admitted = request.accountId === 'initiating-account' && request.signal === cancellation.signal
                 && request.payload.scope === 'workspace' && request.payload.workspaceRoot === '/repo/web';
             return { protocolVersion: 1, cleared: admitted ? 1 : 0, snapshot: { ...snapshot, sessionId: undefined } };
         });
-        const hook = await renderHook(() => useLocalServiceLauncherHistoryClearAction({ runtimeActionExecute: createLocalServicesRuntimeActionExecutor(),
+        const hook = await renderHook(() => useLocalServiceLauncherHistoryClearAction({
+            runtimeActionExecute: args => args.actionId === 'localServices.launcher.history.clear'
+                ? runtime({ ...args, actionId: args.actionId })
+                : Promise.resolve({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
             machineId: 'machine_1', serverId: 'server_1', scope: 'workspace', workspaceRoot: '/repo/web',
             expectedAccountId: 'initiating-account', signal: cancellation.signal,
         }));
@@ -213,6 +223,7 @@ describe('local service launcher machine RPC client', () => {
         });
         const { startLocalServiceLauncherTargetViaMachineRpc } = await import('./machineRpc');
         const { createLocalServicesRuntimeActionExecutor } = await import('../actions/runtimeActionExecutor');
+        const runtime = createLocalServicesRuntimeActionExecutor();
         const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
         const input = { machineId: 'machine_1', targetId: 'target_1', workspace, declaration, expectedEffectDigest, choice: { kind: 'primary' } };
         await expect(execute({ actionId: 'localServices.launcher.start', input,

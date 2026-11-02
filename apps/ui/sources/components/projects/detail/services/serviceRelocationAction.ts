@@ -1,16 +1,16 @@
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { ProjectServiceRelocateResultV1Schema, type ProjectServiceRelocateInputV1, type ProjectServiceRelocateResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission } from '@/components/sessions/localServices/localServiceActionAdmission';
+import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 export type ServiceRelocationOutcome = ProjectServiceRelocateResultV1
   | Readonly<{ status: 'failed'; errorCode: string }>;
 
 /** Consume the canonical Action result; the execute port is the addressed daemon/front door. */
 export async function executeServiceRelocationAction(input: Readonly<{
-  execute: RuntimeActionExecute;
+  execute: FrontDoorRuntimeActionExecute;
   request: ProjectServiceRelocateInputV1;
-  context: RuntimeActionExecuteArgs['context'];
+  context: Parameters<FrontDoorRuntimeActionExecute>[0]['context'];
   admission: LocalServiceActionAdmission & Required<Pick<LocalServiceActionAdmission, 'onApprovalPending'>> & Readonly<{ expectedAccountId: string }>;
 }>): Promise<ServiceRelocationOutcome> {
   const value = await executeLocalServiceActionWithAdmission({ execute: input.execute,

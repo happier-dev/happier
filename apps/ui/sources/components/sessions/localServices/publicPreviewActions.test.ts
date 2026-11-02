@@ -1,3 +1,4 @@
+import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -66,8 +67,8 @@ describe('local service public preview actions', () => {
             workspace: { serverId: 'home-a', machineId: 'machine_1', workspaceId: 'accepted-workspace', rootPath: '/accepted' },
             browserTarget: { kind: 'localServicePreview' as const, targetId: 'preview_1', machineId: 'machine_1', serviceTarget },
         } satisfies LocalServiceLaunchTargetV1;
-        const requests: Parameters<import('@happier-dev/protocol').RuntimeActionExecute>[0][] = [];
-        const runtimeActionExecute: import('@happier-dev/protocol').RuntimeActionExecute = async request => {
+        const requests: Parameters<FrontDoorRuntimeActionExecute>[0][] = [];
+        const runtimeActionExecute: FrontDoorRuntimeActionExecute = async request => {
             requests.push(request);
             return { ok: false, errorCode: 'approval_required', error: 'approval_required' };
         };
@@ -85,9 +86,9 @@ describe('local service public preview actions', () => {
         const serviceExposure = { ...baseExposure, serviceTarget } satisfies LocalServicePublicExposureV1;
         const { sessionId: _snapshotSessionId, ...baseSnapshot } = snapshot;
         const serviceSnapshot = { ...baseSnapshot, exposures: [serviceExposure] } satisfies LocalServicePublicPreviewSnapshotV1;
-        const requests: Parameters<import('@happier-dev/protocol').RuntimeActionExecute>[0][] = [];
+        const requests: Parameters<FrontDoorRuntimeActionExecute>[0][] = [];
         // The remote Action receipts and OS clipboard are system boundaries; projection stays real.
-        const runtimeActionExecute: import('@happier-dev/protocol').RuntimeActionExecute = async request => {
+        const runtimeActionExecute: FrontDoorRuntimeActionExecute = async request => {
             requests.push(request);
             if (request.actionId === 'localServices.publicPreview.create') return { protocolVersion: 1, exposure: serviceExposure, snapshot: serviceSnapshot };
             if (request.actionId === 'localServices.publicPreview.copyUrl') return { protocolVersion: 1, machineId: 'machine_1', previewId: 'preview_1', exposureId: 'public_preview_1', serviceTarget, publicUrl: serviceExposure.publicUrl };

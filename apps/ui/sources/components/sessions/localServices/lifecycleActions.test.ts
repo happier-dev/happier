@@ -1,8 +1,10 @@
+import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+type RuntimeActionExecute = FrontDoorRuntimeActionExecute;
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema, type RuntimeActionExecute } from '@happier-dev/protocol';
+import { isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol';
 import { DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';

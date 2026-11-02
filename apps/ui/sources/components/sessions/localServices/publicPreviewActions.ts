@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, type DaemonLocalServicePublicPreviewCopyUrlRequestV1, type DaemonLocalServicePublicPreviewCreateRequestV1, type DaemonLocalServicePublicPreviewRevokeRequestV1, type LocalServicePublicExposureModeV1, type LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
-import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
