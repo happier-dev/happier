@@ -5,13 +5,14 @@ import { fileURLToPath } from 'node:url';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import {
   FirstPartyVersionRootIdentityError,
+  FIRST_PARTY_INSTALL_HOME_ENV_KEY,
   readDefaultManagedReleaseChannelSync,
   resolveFirstPartyInstallLayout,
   resolveFirstPartyVersionRootIdentity,
   resolveInstalledFirstPartyComponentPaths,
-  resolveFirstPartyComponentPublicReleaseVariant,
+  resolveInstalledCliRuntimeLayout,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
+import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { BundledPackagedRuntimeCustodyV1 } from '@happier-dev/protocol';
 import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
@@ -23,26 +24,6 @@ import {
   resolveRunnerSnapshotRuntimeRootFromPath,
   resolveRuntimeRootsFromLaunchedProcess,
 } from '@/packagedRuntime/resolveRuntimeEntrypointArgv';
-
-const MANAGED_CLI_SHIM_INSTALLS = new Map(
-  (['stable', 'preview', 'publicdev'] as const).flatMap((channel) => {
-    const variant = resolveFirstPartyComponentPublicReleaseVariant({
-      componentId: 'happier-cli',
-      channel,
-    });
-    const legacyShimAliases =
-      channel === 'preview'
-        ? ['happier-preview']
-        : channel === 'publicdev'
-          ? ['happier-dev']
-          : [];
-    const shimNames = [...variant.installShims, ...legacyShimAliases];
-    return shimNames.map((shimName) => [
-      normalizeExecutableBase(shimName),
-      { channel, installRootName: variant.installRootName },
-    ] as const);
-  }),
-);
 
 function normalizePathLike(pathLike: string): string {
   return String(pathLike ?? '').trim().replaceAll('\\', '/');
@@ -85,7 +66,7 @@ function resolveRuntimeRootFromBinaryPath(pathLike: string): string | null {
 }
 
 function resolveManagedInstalledCliProjectRootForChannel(
-  channel: 'stable' | 'preview' | 'publicdev',
+  channel: PublicReleaseRingId,
 ): string | null {
   try {
     const paths = resolveInstalledFirstPartyComponentPaths({
@@ -108,34 +89,14 @@ function resolveManagedInstalledCliProjectRootForChannel(
   return null;
 }
 
-function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | null {
-  const normalized = normalizePathLike(pathLike);
-  if (!normalized || isEmbeddedBunBundlePath(normalized) || isJavaScriptRuntimeExecutable(normalized)) {
-    return null;
-  }
-
-  const shimInstall = MANAGED_CLI_SHIM_INSTALLS.get(normalizeExecutableBase(normalized));
-  if (!shimInstall) {
-    return null;
-  }
-
-  const binaryDir = dirname(normalized);
-  if (basename(binaryDir).toLowerCase() !== 'bin') {
-    return null;
-  }
-
-  return resolveManagedInstalledCliProjectRootForChannel(shimInstall.channel)
-    ?? join(dirname(binaryDir), shimInstall.installRootName, 'current');
-}
-
 function resolveManagedInstalledCliProjectRoot(): string | null {
-  const channels: Array<'stable' | 'preview' | 'publicdev'> = [];
+  const channels: PublicReleaseRingId[] = [];
   try {
     channels.push(readDefaultManagedReleaseChannelSync());
   } catch {
     // fall through to canonical channel sweep
   }
-  for (const channel of ['stable', 'preview', 'publicdev'] as const) {
+  for (const channel of PUBLIC_RELEASE_RING_IDS) {
     if (!channels.includes(channel)) {
       channels.push(channel);
     }
@@ -153,8 +114,6 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
   const roots: string[] = [];
   const candidateRoots = [
     ...resolveRuntimeRootsFromLaunchedProcess(),
-    resolveRuntimeRootFromInstalledShimPath(process.execPath),
-    resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),
@@ -321,15 +280,7 @@ function resolveAuthoritativeRuntimeAuthority(
     };
   }
 
-  const exactShimRoot = resolveRuntimeRootFromInstalledShimPath(params.currentExecPath ?? process.execPath)
-    ?? resolveRuntimeRootFromInstalledShimPath(argv[0] ?? '');
-  return exactShimRoot
-    ? {
-        projectRoot: exactShimRoot,
-        runtimeRoot: exactShimRoot,
-        provenance: 'packaged-shim',
-      }
-    : null;
+  return null;
 }
 
 export function resolveAuthoritativePackagedRuntimeProjectRoot(
@@ -414,13 +365,23 @@ export function resolveAuthoritativePackagedRuntimeCustody(
   }
 
   const processEnv = params.processEnv ?? process.env;
+  // A copied/hardlinked managed shim proves its installation home. A loaded
+  // immutable module can outlive channel/version pointer changes, so validate
+  // every ring there through the same identity owner as the configured home.
+  const argv = params.argv ?? process.argv;
+  const shimLayouts = [...new Set([params.currentExecPath ?? process.execPath, argv[0] ?? ''])]
+    .map((execPath) => resolveInstalledCliRuntimeLayout(execPath, processEnv));
+  const installEnvs = [
+    ...shimLayouts.flatMap((layout) => layout
+      ? [{ ...processEnv, [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: layout.happyHomeDir }]
+      : []),
+    processEnv,
+  ];
+  const layouts = installEnvs.flatMap((env) => PUBLIC_RELEASE_RING_IDS.map((channel) => (
+    resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel, processEnv: env })
+  )));
   let outsideLayoutError: FirstPartyVersionRootIdentityError | null = null;
-  for (const channel of PUBLIC_RELEASE_RING_IDS) {
-    const layout = resolveFirstPartyInstallLayout({
-      componentId: 'happier-cli',
-      channel,
-      processEnv,
-    });
+  for (const layout of layouts) {
     try {
       const identity = resolveFirstPartyVersionRootIdentity({
         layout,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -45,6 +45,7 @@ vi.mock('node:fs', async (importOriginal) => {
     return {
         ...actual,
         existsSync: vi.fn(() => false),
+        readFileSync: vi.fn(actual.readFileSync),
     };
 });
 
@@ -67,8 +68,12 @@ vi.mock('@/projectPath', async (importOriginal) => {
 
 describe('resolvePackagedRuntimeEntrypoint', () => {
     const originalExecPath = process.execPath;
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
     const originalArgv = [...process.argv];
-    afterEach(() => {
+    afterEach(async () => {
+        const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+        vi.mocked(readFileSync).mockReset().mockImplementation(actualFs.readFileSync);
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
         vi.mocked(existsSync).mockReset();
         vi.mocked(existsSync).mockReturnValue(false);
         readDefaultManagedReleaseChannelSyncMock.mockReset();
@@ -627,6 +632,9 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
     });
 
     it('uses the launched managed shim channel before the default managed channel', () => {
+        // Windows drive paths use the Windows environment and filesystem boundaries.
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        vi.mocked(readFileSync).mockReturnValue('0.2.5-dev.102.1');
         readDefaultManagedReleaseChannelSyncMock.mockReturnValue('stable');
         resolveInstalledFirstPartyComponentPathsMock.mockImplementation((params: { channel?: string } = {}) => {
             if (params.channel === 'publicdev') {
@@ -673,6 +681,7 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
     });
 
     it('handles Windows-style stable shim and package-dist paths', () => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
         Object.defineProperty(process, 'execPath', {
             value: 'C:\\Users\\test\\.happier\\bin\\happier.exe',
             configurable: true,

@@ -1,6 +1,6 @@
 import { basename, dirname } from 'node:path';
 
-import { isEmbeddedBunBundlePath, resolveRuntimeRootFromEntrypointPath, resolveRunnerSnapshotRuntimeRootFromPath } from '@happier-dev/cli-common/firstPartyRuntime';
+import { isEmbeddedBunBundlePath, resolveInstalledCliRuntimeRootPath, resolveRuntimeRootFromEntrypointPath, resolveRunnerSnapshotRuntimeRootFromPath } from '@happier-dev/cli-common/firstPartyRuntime';
 
 export { resolveRuntimeRootFromEntrypointPath, resolveRunnerSnapshotRuntimeRootFromPath } from '@happier-dev/cli-common/firstPartyRuntime';
 
@@ -70,6 +70,8 @@ export function resolveRuntimeRootFromPackagedBinaryPath(pathLike: string | null
   if (!normalized || isEmbeddedBunBundlePath(normalized)) {
     return null;
   }
+  const installedShimRoot = resolveInstalledCliRuntimeRootPath(normalized);
+  if (installedShimRoot) return installedShimRoot;
   const fileName = basename(normalized).toLowerCase();
   if (!['happier', 'happier.exe', 'happier-dev', 'happier-dev.exe'].includes(fileName)) {
     return null;

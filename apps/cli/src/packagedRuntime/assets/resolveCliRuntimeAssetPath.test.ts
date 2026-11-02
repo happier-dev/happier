@@ -1,4 +1,14 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { FirstPartyVersionRootIdentityError } from '@happier-dev/cli-common/firstPartyRuntime';
+
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { resolveAuthoritativePackagedRuntimeCustody, resolveAuthoritativePackagedRuntimeProjectRoot, resolvePackagedRuntimeEntrypoint } from '../resolvePackagedRuntimeEntrypoint';
+import { resolveCliRuntimeAssetPathFromModuleUrl } from './resolveCliRuntimeAssetPath';
 
 describe('resolveCliRuntimeAssetPath', () => {
   const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
@@ -12,6 +22,67 @@ describe('resolveCliRuntimeAssetPath', () => {
     if (originalExecPathDescriptor) {
       Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
     }
+  });
+
+  it('reads sidecars and child entrypoints from the launched shim home and version', async () => {
+    await withTempDir('happier-runtime-shim-home-', async (root) => {
+      const shimHome = join(root, 'install');
+      const stateHome = join(root, 'state');
+      const ambientInstallHome = join(root, 'another-install');
+      const versionRoot = join(shimHome, 'cli-preview', 'versions', 'version-a');
+      const foreignRoot = join(ambientInstallHome, 'cli-preview', 'current');
+      const binRoot = join(shimHome, 'bin');
+      for (const runtimeRoot of [versionRoot, foreignRoot, binRoot]) {
+        mkdirSync(join(runtimeRoot, 'scripts'), { recursive: true });
+        mkdirSync(join(runtimeRoot, 'package-dist'), { recursive: true });
+        writeFileSync(join(runtimeRoot, 'package-dist', 'index.mjs'), '');
+        writeFileSync(join(runtimeRoot, 'package-dist', 'shim-test-child.mjs'), '');
+        writeFileSync(join(runtimeRoot, 'scripts', 'session_hook_forwarder.cjs'), 'hook fixture');
+      }
+      writeFileSync(join(shimHome, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'preview' }));
+      writeFileSync(join(shimHome, 'cli-preview', 'current.version'), 'version-a\n');
+      vi.stubEnv('HAPPIER_HOME_DIR', stateHome);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', ambientInstallHome);
+      vi.stubEnv('HAPPIER_PUBLIC_RELEASE_CHANNEL', 'stable');
+      const shim = join(shimHome, 'bin', 'happier.exe');
+      Object.defineProperty(process, 'execPath', { ...originalExecPathDescriptor, value: shim });
+      process.argv = [shim];
+      // A self-contained bundle has no physical module path. Keep the real shim/layout
+      // readers beneath that process boundary and deliberately omit the current junction.
+      const moduleUrl = 'file:///$bunfs/root/happier';
+      const asset = resolveCliRuntimeAssetPathFromModuleUrl(moduleUrl, 'scripts', 'session_hook_forwarder.cjs');
+      const child = resolvePackagedRuntimeEntrypoint('shim-test-child.mjs', { moduleUrl });
+      const authority = resolveAuthoritativePackagedRuntimeProjectRoot({ moduleUrl });
+      expect({ asset, child, authority }).toEqual({
+        asset: join(versionRoot, 'scripts', 'session_hook_forwarder.cjs'),
+        child: join(versionRoot, 'package-dist', 'shim-test-child.mjs'),
+        authority: { root: versionRoot, provenance: 'packaged-launch' },
+      });
+      expect(readFileSync(asset, 'utf8')).toBe('hook fixture');
+      expect(resolveAuthoritativePackagedRuntimeCustody({ moduleUrl })).toEqual({
+        root: versionRoot,
+        packagedRuntime: { kind: 'cli_version_root', versionRootId: 'version-a' },
+        provenance: 'packaged-launch',
+      });
+
+      // The loaded immutable module remains authoritative when an update or
+      // channel choice moves the active pointers during this process's life.
+      writeFileSync(join(shimHome, 'cli-preview', 'current.version'), 'version-b\n');
+      writeFileSync(join(shimHome, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'stable' }));
+      expect(resolveAuthoritativePackagedRuntimeCustody({
+        moduleUrl: pathToFileURL(join(versionRoot, 'package-dist', 'chunk.js')).href,
+      })).toEqual({
+        root: versionRoot,
+        packagedRuntime: { kind: 'cli_version_root', versionRootId: 'version-a' },
+        provenance: 'packaged-module',
+      });
+
+      const unrelatedModuleRoot = join(root, 'outside-install', 'cli-preview', 'versions', 'version-a');
+      mkdirSync(join(unrelatedModuleRoot, 'package-dist'), { recursive: true });
+      expect(() => resolveAuthoritativePackagedRuntimeCustody({
+        moduleUrl: pathToFileURL(join(unrelatedModuleRoot, 'package-dist', 'chunk.js')).href,
+      })).toThrow(FirstPartyVersionRootIdentityError);
+    });
   });
 
   it('uses the executable directory when running as a self-contained binary', async () => {

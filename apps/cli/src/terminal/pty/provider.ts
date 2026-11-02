@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
+import { resolveLaunchedRuntimeEntrypointsFromArgv, resolveRuntimeRootsFromLaunchedProcess } from '@/packagedRuntime/resolveRuntimeEntrypointArgv';
 import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
 import type { ProcessCustodySpawnSpec, resolveProcessCustodyRuntimeExecutable } from '@/subprocess/supervision/processCustody';
@@ -133,91 +134,6 @@ export function resolvePtyProviderRequireBase(params?: Readonly<{
     return currentExecPath;
   }
   return importMetaUrl || currentExecPath;
-}
-
-const RUNTIME_ENTRYPOINT_ARGV_SCAN_LIMIT = 3;
-
-function normalizePathLike(pathLike: string): string {
-  return String(pathLike ?? '').trim().replaceAll('\\', '/');
-}
-
-function resolveRuntimeRootFromEntrypointPath(pathLike: string | null | undefined): string | null {
-  const normalized = normalizePathLike(String(pathLike ?? ''));
-  if (!normalized || isEmbeddedBunBundlePath(normalized)) {
-    return null;
-  }
-  if (basename(normalized).toLowerCase() !== 'index.mjs') {
-    return null;
-  }
-
-  const packageDistMarker = `${String.raw`/`}package-dist${String.raw`/`}`;
-  const distMarker = `${String.raw`/`}dist${String.raw`/`}`;
-  const packageDistIndex = normalized.indexOf(packageDistMarker);
-  if (packageDistIndex >= 0) {
-    return normalized.slice(0, packageDistIndex);
-  }
-  const distIndex = normalized.indexOf(distMarker);
-  if (distIndex >= 0) {
-    return normalized.slice(0, distIndex);
-  }
-  return null;
-}
-
-function resolveLaunchedRuntimeEntrypointsFromArgv(
-  argv: readonly string[] = process.argv,
-): string[] {
-  const entrypoints: string[] = [];
-  const seen = new Set<string>();
-  for (const arg of argv.slice(1, RUNTIME_ENTRYPOINT_ARGV_SCAN_LIMIT)) {
-    const entrypoint = String(arg ?? '').trim();
-    if (!entrypoint || seen.has(entrypoint)) {
-      continue;
-    }
-    if (!resolveRuntimeRootFromEntrypointPath(entrypoint)) {
-      continue;
-    }
-    entrypoints.push(entrypoint);
-    seen.add(entrypoint);
-  }
-  return entrypoints;
-}
-
-function resolveRuntimeRootsFromLaunchedArgv(
-  argv: readonly string[] = process.argv,
-): string[] {
-  const roots: string[] = [];
-  for (const entrypoint of resolveLaunchedRuntimeEntrypointsFromArgv(argv)) {
-    const root = resolveRuntimeRootFromEntrypointPath(entrypoint);
-    if (root) {
-      roots.push(root);
-    }
-  }
-  return [...new Set(roots)];
-}
-
-function resolveRuntimeRootFromPackagedBinaryPath(pathLike: string | null | undefined): string | null {
-  const normalized = normalizePathLike(String(pathLike ?? ''));
-  if (!normalized || isEmbeddedBunBundlePath(normalized)) {
-    return null;
-  }
-  const fileName = basename(normalized).toLowerCase();
-  if (!['happier', 'happier.exe', 'happier-dev', 'happier-dev.exe'].includes(fileName)) {
-    return null;
-  }
-  return dirname(normalized);
-}
-
-function resolveRuntimeRootsFromLaunchedProcess(params?: Readonly<{
-  argv?: readonly string[] | null;
-  currentExecPath?: string | null;
-}>): string[] {
-  const argv = params?.argv ?? process.argv;
-  const roots = [
-    ...resolveRuntimeRootsFromLaunchedArgv(argv),
-    resolveRuntimeRootFromPackagedBinaryPath(params?.currentExecPath ?? process.execPath),
-    resolveRuntimeRootFromPackagedBinaryPath(argv[0]),
-  ].filter((root): root is string => Boolean(root));
-  return [...new Set(roots)];
 }
 
 export function resolvePtyProviderModuleIds(
