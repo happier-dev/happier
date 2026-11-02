@@ -76,8 +76,8 @@ describe('plugin contribution catalog', () => {
     })).toEqual([]);
   });
   it('admits one machine provisioner declaration and references its same-plugin daemon roles', () => {
-    const roles = ['check', 'acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'put-file'];
-    const native = defineProtocolObject({}, { policy: 'closed' });
+    const roles = ['check', 'options', 'acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'put-file'];
+    const native = defineProtocolObject({ label: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' });
     const schemas = defineMachineProvisionerSchemas({ launch: native, resource: native });
     const declaration = {
       id: 'guest', title: 'Guest', icon: 'machine', resourceKind: 'vm', schemaVersion: 1,
@@ -86,16 +86,64 @@ describe('plugin contribution catalog', () => {
       platforms: ['darwin'], prerequisites: [],
       billing: { location: 'local', stoppedBilling: 'not-billed' },
       retention: { supportedIntents: ['delete'] },
-      actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+      actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
       bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
     };
     const actions = roles.map((id) => ({ id, title: id, execution: { target: 'daemon' },
       surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe',
-      inputSchema: (id === 'check' ? schemas.checkInput : id === 'acquire' ? schemas.acquireInput : id === 'bootstrap' ? schemas.bootstrapInput : id === 'exec' ? schemas.execInput : id === 'put-file' ? schemas.putFileInput : schemas.resourceInput).jsonSchema,
-      resultSchema: (id === 'check' ? MachineProvisionerCheckResultProtocolV1Schema : id === 'acquire' ? schemas.acquireResult : id === 'bootstrap' ? MachineProvisionerBootstrapCarrierV1Schema : id === 'inspect' ? MachineProvisionerObservationV1Schema : id === 'exec' ? MachineProvisionerNativeExecResultV1Schema : id === 'put-file' ? MachineProvisionerPutFileResultV1Schema : MachineProvisionerPowerResultV1Schema).jsonSchema,
+      inputSchema: (id === 'check' || id === 'options' ? schemas.checkInput : id === 'acquire' ? schemas.acquireInput : id === 'bootstrap' ? schemas.bootstrapInput : id === 'exec' ? schemas.execInput : id === 'put-file' ? schemas.putFileInput : schemas.resourceInput).jsonSchema,
+      resultSchema: (id === 'check' ? MachineProvisionerCheckResultProtocolV1Schema : id === 'options' ? provisioners.MachineProvisionerOptionsResultProtocolV1Schema : id === 'acquire' ? schemas.acquireResult : id === 'bootstrap' ? MachineProvisionerBootstrapCarrierV1Schema : id === 'inspect' ? MachineProvisionerObservationV1Schema : id === 'exec' ? MachineProvisionerNativeExecResultV1Schema : id === 'put-file' ? MachineProvisionerPutFileResultV1Schema : MachineProvisionerPowerResultV1Schema).jsonSchema,
     }));
     const parsed = PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration], actions });
     expect(parsed.success).toBe(true);
+    const manifest = (declaredActions: typeof actions) => PluginManifestV2Schema.safeParse({ schemaVersion: 2,
+      id: 'fixture.machine', version: '1.0.0', displayName: 'Guest', runtime: { apiVersion: 1 },
+      contributes: { machineProvisioners: [declaration], actions: declaredActions } });
+    expect(manifest(actions).success).toBe(true);
+    // Existing writers can predate optional diagnostics and nested option facts.
+    // Their required identity/lifecycle fields still come from the public schemas.
+    const narrowActions = actions.map(action => {
+      const resultSchema = structuredClone(action.resultSchema);
+      for (const envelope of [resultSchema, ...(resultSchema.oneOf ?? []), ...(resultSchema.anyOf ?? [])]) {
+        if (envelope.properties) {
+          delete envelope.properties.nativeCause;
+          if (action.id === 'options') delete envelope.properties.code;
+        }
+      }
+      if (action.id === 'options') {
+        const facts = resultSchema.properties?.choices?.items?.properties?.nativeFacts;
+        if (!facts?.properties?.size?.properties) throw new Error('Expected canonical native option facts');
+        delete facts.properties.network;
+        delete facts.properties.size.properties.memoryBytes;
+      }
+      return { ...action, resultSchema };
+    });
+    expect(manifest(narrowActions).success).toBe(true);
+    const changedNativeResult = structuredClone(actions);
+    const bound = changedNativeResult.find(action => action.id === 'acquire')?.resultSchema.oneOf
+      ?.find(arm => arm.properties?.kind?.const === 'bound');
+    const nativeValue = bound?.properties?.resource?.properties?.value;
+    if (!nativeValue?.properties?.label) throw new Error('Expected the descriptor-owned native value');
+    delete nativeValue.properties.label;
+    expect(manifest(changedNativeResult).success).toBe(false);
+    for (const change of ['open', 'required', 'constraint'] as const) {
+      const altered = structuredClone(narrowActions);
+      const facts = altered.find(action => action.id === 'options')?.resultSchema.properties?.choices?.items?.properties?.nativeFacts;
+      const size = facts?.properties?.size;
+      if (!size?.properties?.id) throw new Error('Expected canonical native size facts');
+      if (change === 'open') size.additionalProperties = true;
+      if (change === 'required') size.required = [];
+      if (change === 'constraint') size.properties.id = { type: 'string' };
+      expect(manifest(altered).success).toBe(false);
+    }
+    for (const resultSchema of [
+      { ...actions[0]!.resultSchema, properties: { ...actions[0]!.resultSchema.properties, nativeCause: { type: 'string' as const } } },
+      { ...actions[0]!.resultSchema, required: [...(actions[0]!.resultSchema.required ?? []), 'nativeCause'] },
+      { ...actions[0]!.resultSchema, required: [] },
+    ]) expect(manifest(actions.map(action => action.id === 'check' ? { ...action, resultSchema } : action)).success).toBe(false);
+    expect(manifest(actions.map(action => action.id === 'options' ? { ...action, resultSchema: {
+      ...action.resultSchema, properties: { ...action.resultSchema.properties, code: { type: 'string' } },
+    } } : action)).success).toBe(false);
     expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [{ ...declaration, retention: { supportedIntents: ['start'] } }], actions }).success).toBe(false);
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'machineProvisioners');
     expect(family?.extractReferences(declaration).map((reference) => reference.reference)).toEqual(roles);

@@ -53,6 +53,38 @@ function nestedProjection(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
 
 // This is the public manifest/classic-schema consumer seam. Facts have their
 // existing Mini owners; there is no second provider-facts validation tree.
+/** Older writers may omit optional result facts, but cannot redefine a retained field. */
+function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical: PluginJsonSchemaV2): boolean {
+  const writer = nestedProjection(declared);
+  const reader = nestedProjection(canonical);
+  if (pluginJsonValuesEqual(writer, reader)) return true;
+  function projectWriterShape(expected: PluginJsonSchemaV2, supplied: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+    let projected = expected;
+    if (expected.properties) {
+      projected = { ...projected, properties: Object.fromEntries(Object.entries(expected.properties)
+        .filter(([name]) => expected.required?.includes(name) || Object.hasOwn(supplied.properties ?? {}, name))
+        // Resource and native-operation `value` schemas belong to the descriptor,
+        // not to host fact evolution; retain their exact declared contract.
+        .map(([name, schema]) => [name, name !== 'value' && supplied.properties?.[name]
+          ? projectWriterShape(schema, supplied.properties[name]) : schema])) };
+    }
+    if (expected.items && supplied.items) {
+      projected = { ...projected, items: projectWriterShape(expected.items, supplied.items) };
+    }
+    // Canonical role unions keep their discriminants and complete arm set.
+    // This is optional-property evolution, not general JSON Schema subtyping.
+    for (const keyword of ['oneOf', 'anyOf'] as const) {
+      const expectedArms = expected[keyword];
+      const suppliedArms = supplied[keyword];
+      if (expectedArms && suppliedArms?.length === expectedArms.length) {
+        projected = { ...projected, [keyword]: expectedArms.map((arm, index) => projectWriterShape(arm, suppliedArms[index]!)) };
+      }
+    }
+    return projected;
+  }
+  return pluginJsonValuesEqual(writer, projectWriterShape(reader, writer));
+}
+
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
   resourceKind: z.string().check(z.trim(), z.minLength(1)),
@@ -152,9 +184,9 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
         context.addIssue({ code: 'custom', path, message: 'Provisioner role input must use its canonical contract and declared launch/resource schema.' });
       }
       const result = machineProvisionerRoleResultProjection(descriptor, binding.role);
-      const resultMatches = pluginJsonValuesEqual(nestedProjection(action.resultSchema), nestedProjection(result))
-        || binding.role === 'destroy' && pluginJsonValuesEqual(
-          nestedProjection(action.resultSchema), nestedProjection(MachineProvisionerPowerResultV1Schema.jsonSchema));
+      const resultMatches = machineProvisionerResultMatches(action.resultSchema, result)
+        || binding.role === 'destroy' && machineProvisionerResultMatches(
+          action.resultSchema, MachineProvisionerPowerResultV1Schema.jsonSchema);
       if (!resultMatches) {
         context.addIssue({ code: 'custom', path, message: 'Provisioner role results must use their canonical declared contract.' });
       }

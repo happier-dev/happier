@@ -7,7 +7,25 @@ import { MachineProvisionerOptionsResultV1Schema } from './machineProvisioners.j
 describe('public machine provisioner authoring', () => {
   it('exposes labelled native options through the public neutral result schema', async () => {
     expect(MachineProvisionerOptionsResultV1Schema.parse(machineProvisionerAuthorOptions)).toEqual(machineProvisionerAuthorOptions);
-    const testkit = await createPluginTestkit({ manifest: machineProvisionerAuthorFixture.manifest, module: machineProvisionerAuthorFixture });
+    // A packaged external author can predate optional diagnostics and native facts.
+    const manifest = structuredClone(machineProvisionerAuthorFixture.manifest);
+    for (const action of manifest.contributes.actions ?? []) {
+      const result = action.resultSchema;
+      if (!result) continue;
+      for (const envelope of [result, ...(result.oneOf ?? []), ...(result.anyOf ?? [])]) {
+        if (!envelope.properties) continue;
+        delete envelope.properties.nativeCause;
+        if (action.id === 'options') delete envelope.properties.code;
+      }
+      if (action.id === 'options') {
+        const facts = result.properties?.choices?.items?.properties?.nativeFacts;
+        if (!facts?.properties?.size?.properties) throw new Error('Expected canonical native option facts');
+        delete facts.properties.network;
+        delete facts.properties.size.properties.memoryBytes;
+      }
+    }
+    expect(parsePluginManifest(manifest).ok).toBe(true);
+    const testkit = await createPluginTestkit({ manifest, module: machineProvisionerAuthorFixture });
     try {
       const options = MachineProvisionerOptionsResultV1Schema.parse(await testkit.invokeAction('options', {}));
       expect(options).toEqual(machineProvisionerAuthorOptions);
