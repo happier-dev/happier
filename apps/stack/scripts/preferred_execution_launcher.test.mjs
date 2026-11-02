@@ -3,6 +3,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes,
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
@@ -4554,7 +4555,20 @@ test('native launcher retries another target when a live control master refuses 
   assert.doesNotMatch(result.stdout, /wrong-local/);
 });
 
-test('native launcher retries the same target without multiplexing when the authoritative mux session is refused before remote execution starts', async () => {
+async function liveSshControlFixture(t) {
+  const fixture = await createTempFixture(t, { prefix: 'ssh-control-' });
+  const configPath = fixture.path('config');
+  await writeFile(configPath, '');
+  for (const target of ['mac-host', 'mac2-host']) {
+    const server = createServer();
+    await new Promise(resolveListen => server.listen(fixture.path(`${target}.sock`), resolveListen));
+    t.after(() => new Promise(resolveClose => server.close(resolveClose)));
+  }
+  return { controlPath: fixture.root, configPath };
+}
+
+test('native launcher retries the same target without multiplexing when the authoritative mux session is refused before remote execution starts', async t => {
+  const control = await liveSshControlFixture(t);
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-authoritative-mux-refused-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
@@ -4573,13 +4587,13 @@ test('native launcher retries the same target without multiplexing when the auth
     "target_count='2'",
     "target_1_name='mac'",
     "target_1_ssh='mac-host'",
-    "target_1_ssh_config=''",
+    `target_1_ssh_config='${control.configPath}'`,
     "target_1_repo_dir='/remote/repo'",
     "target_1_cli_home='/remote/home'",
     "target_1_remote_path='/usr/bin:/bin'",
     "target_2_name='mac2'",
     "target_2_ssh='mac2-host'",
-    "target_2_ssh_config=''",
+    `target_2_ssh_config='${control.configPath}'`,
     "target_2_repo_dir='/remote/repo'",
     "target_2_cli_home='/remote/home'",
     "target_2_remote_path='/usr/bin:/bin'",
@@ -4599,6 +4613,7 @@ test('native launcher retries the same target without multiplexing when the auth
     '  last_argument=$argument',
     'done',
     'case "$*" in',
+    '  "-G "*) printf "controlpath %s/%s.sock\\n" "$SSH_CONTROL_PATH" "$last_argument"; exit 0 ;;',
     '  *getconf*) case "$*" in *mac2-host*) printf "8 4 0.5\\n" ;; *) printf "8 1 0.5\\n" ;; esac ;;',
     '  *command\\ -v*|*-O\\ check*|*-MNf*) exit 0 ;;',
     '  *mac-host*)',
@@ -4622,6 +4637,7 @@ test('native launcher retries the same target without multiplexing when the auth
     env: {
       ...executionNeutralEnv,
       HOME: root,
+      SSH_CONTROL_PATH: control.controlPath,
       XDG_RUNTIME_DIR: root,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       PATH: `${binDir}:/usr/bin:/bin`,
@@ -4644,6 +4660,170 @@ test('native launcher retries the same target without multiplexing when the auth
   assert.match(result.stdout, /remote:mac:dedicated:.*ControlPath=none.*probe-command.*ok/);
   assert.doesNotMatch(result.stderr, /selected mac2 /);
   assert.doesNotMatch(result.stdout, /wrong-local/);
+});
+
+test('native launcher replaces only certified pre-payload dispatch refusals', async t => {
+  for (const scenario of ['kex', 'connect', 'mux-kex', 'mux-proxy-kex', 'proxy-pin', 'proxy-all', 'pin', 'all', 'sync', 'after-start', 'fallback', 'sync-all']) {
+    await t.test(scenario, async t => {
+      const fixture = await createTempFixture(t, { prefix: 'hstack-dispatch-refusal-' });
+      const root = fixture.root;
+      const control = await liveSshControlFixture(t);
+      const bin = fixture.path('bin');
+      const storage = fixture.path('stacks');
+      const stack = join(storage, 'repo-dispatch');
+      const proxyRefusal = scenario.includes('proxy');
+      let resetPort = '';
+      let realSsh = '';
+      if (proxyRefusal) {
+        realSsh = spawnSync('/bin/sh', ['-c', 'command -v ssh'], { encoding: 'utf8' }).stdout.trim();
+        assert.ok(realSsh, 'the proxy-hop regression requires real OpenSSH');
+        // Real TCP/SSH boundary: the proxy hop resets before accepting a session.
+        // ERROR hides the parent diagnostic while the proxy writes to stderr.
+        const resetServer = createServer(socket => socket.resetAndDestroy());
+        await new Promise(resolve => resetServer.listen(0, '127.0.0.1', resolve));
+        t.after(() => new Promise(resolve => resetServer.close(resolve)));
+        resetPort = String(resetServer.address().port);
+      }
+      await mkdir(bin, { recursive: true });
+      await mkdir(join(stack, 'mutagen/data'), { recursive: true });
+      await writeFile(join(stack, 'dev-targets.json'), '{"version":1,"targets":[]}\n');
+      await writeNativeProjectionFixture(join(stack, 'dev-target-exec-v1.sh'), [
+        "HSTACK_EXEC_PROJECTION_VERSION='2'", `projection_repo_root='${repoRoot}'`,
+        "command_mode='auto'", "include_local='0'", `fallback_mode='${scenario === 'fallback' || scenario === 'sync-all' ? 'local' : 'error'}'`,
+        "load_ttl_seconds='15'", "unavailable_ttl_seconds='120'", "target_count='2'",
+        ...['mac', 'mac2'].flatMap((name, index) => [
+          `target_${index + 1}_name='${name}'`, `target_${index + 1}_ssh='${name}-host'`,
+          `target_${index + 1}_ssh_config='${control.configPath}'`, `target_${index + 1}_repo_dir='/remote/repo'`,
+          `target_${index + 1}_cli_home='/remote/home'`, `target_${index + 1}_remote_path='/usr/bin:/bin'`,
+        ]), '',
+      ].join('\n'));
+      await executable(join(bin, 'node'), '#!/bin/sh\nexit 97\n');
+      await executable(join(bin, 'probe-command'), '#!/bin/sh\nprintf "local-payload\\n"\n');
+      await executable(join(bin, 'mutagen'), `#!/bin/sh
+if [ "$SCENARIO" = sync ] && [ "$2" = flush ]; then
+  case "$3" in *-mac) printf 'read-only filesystem during flush\\n' >&2; exit 1 ;; esac
+fi
+if [ "$SCENARIO" = sync-all ] && [ "$2" = flush ]; then exit 1; fi
+if [ "$2" = flush ]; then printf '%s\\n' "$3" >> "$FLUSHES"; fi
+printf '%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n' "$3"
+`);
+      await executable(join(bin, 'ssh'), `#!/bin/sh
+debug_log=; previous=; target=; last_argument=; log_level=
+for argument in "$@"; do
+  [ "$previous" != -E ] || debug_log=$argument
+  case "$argument" in mac-host|mac2-host) target=$argument ;; esac
+  case "$argument" in LogLevel=*) log_level=\${argument#LogLevel=} ;; esac
+  previous=$argument; last_argument=$argument
+done
+case "$*" in
+  "-G "*) printf 'controlpath %s/%s.sock\\n' "$SSH_CONTROL_PATH" "$target"; exit 0 ;;
+  *getconf*) case "$target" in mac-host) printf '8 1 0.5\\n' ;; *) printf '8 4 0.5\\n' ;; esac; exit 0 ;;
+  *command\\ -v*|*-O\\ check*|*-MNf*) exit 0 ;;
+esac
+[ "$last_argument" != : ] || exit 0
+case "$last_argument" in *' cancel '*) exit 0 ;; esac
+printf '%s\\n' "$target" >> "$ATTEMPTS"
+if [ "$target" = mac2-host ] && [ "$SCENARIO" != all ] && [ "$SCENARIO" != proxy-all ] && [ "$SCENARIO" != fallback ]; then
+  printf '%s\\n' "$target" >> "$PAYLOADS"; printf 'payload:mac2\\n'; exit 0
+fi
+case "$SCENARIO" in
+  *proxy*)
+    grep -Fx "happier-\${target%-host}" "$FLUSHES" >/dev/null || exit 83
+    case "$*" in
+      *ControlPath=none*)
+        exec "$REAL_SSH" -F /dev/null -E "$debug_log" -o "LogLevel=$log_level" \
+          -o IdentityFile=none -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -o BatchMode=yes \
+          -o "ProxyCommand=$REAL_SSH -F /dev/null -o IdentityFile=none -o IdentitiesOnly=yes -p $RESET_PORT 127.0.0.1 -W 127.0.0.1:22" 127.0.0.1 : ;;
+      *) printf 'mux_client_request_session: session request failed: Session open refused by peer\\n' > "$debug_log" ;;
+    esac ;;
+  after-start)
+    printf '%s\\n' "$target" >> "$PAYLOADS"
+    printf 'payload:mac\\n'
+    printf 'kex_exchange_identification: read: Connection reset by peer\\n' >&2
+    printf 'client_loop: read: Connection reset by peer\\n' > "$debug_log" ;;
+  connect) printf 'ssh: connect to host mac-host port 22: Connection refused\\n' > "$debug_log" ;;
+  mux-kex)
+    case "$*" in *ControlPath=none*) printf 'kex_exchange_identification: read: Connection reset by peer\\n' > "$debug_log" ;;
+    *) printf 'mux_client_request_session: session request failed: Session open refused by peer\\n' > "$debug_log" ;; esac ;;
+  *) printf 'kex_exchange_identification: read: Connection reset by peer\\n' > "$debug_log" ;;
+esac
+exit 255
+`);
+      const env = { ...executionNeutralEnv, HOME: root, XDG_RUNTIME_DIR: root,
+        HAPPIER_STACK_STORAGE_DIR: storage, HAPPIER_EXEC_CONFIG_PATH: join(stack, 'dev-targets.json'),
+        PATH: `${bin}:/usr/bin:/bin`, TMPDIR: root,
+        SSH_CONTROL_PATH: control.controlPath,
+        SCENARIO: scenario, ATTEMPTS: fixture.path('attempts'), PAYLOADS: fixture.path('payloads'),
+        FLUSHES: fixture.path('flushes'), REAL_SSH: realSsh, RESET_PORT: resetPort };
+      const invoke = () => new Promise((resolve, reject) => {
+        const child = spawn('/bin/sh', [launcher,
+          ...(scenario === 'pin' || scenario === 'proxy-pin' ? ['--target=mac'] : []), '--', 'probe-command'],
+        { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = ''; let stderr = '';
+        child.stdout.on('data', chunk => { stdout += chunk; });
+        child.stderr.on('data', chunk => { stderr += chunk; });
+        child.once('error', reject);
+        child.once('close', status => resolve({ status, stdout, stderr }));
+      });
+      const result = await invoke();
+      const lines = async name => (await readFile(fixture.path(name), 'utf8').catch(error => {
+        if (error.code === 'ENOENT') return ''; throw error;
+      })).trim().split('\n').filter(Boolean);
+      if (scenario === 'after-start') {
+        assert.equal(result.status, 255, result.stderr);
+        assert.deepEqual(await lines('payloads'), ['mac-host']);
+        assert.deepEqual(await lines('attempts'), ['mac-host']);
+      } else if (scenario === 'fallback') {
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /local-payload/);
+        assert.deepEqual(await lines('payloads'), []);
+        const again = await invoke();
+        assert.equal(again.status, 0, again.stderr);
+        assert.match(again.stdout, /local-payload/);
+        assert.deepEqual(await lines('attempts'), ['mac-host', 'mac2-host']);
+      } else if (scenario === 'sync-all') {
+        for (const failed of [result, await invoke()]) {
+          assert.notEqual(failed.status, 0);
+          assert.match(failed.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+          assert.match(failed.stderr, /mac=sync/);
+          assert.match(failed.stderr, /mac2=sync/);
+          assert.doesNotMatch(failed.stdout, /local-payload/);
+        }
+        assert.deepEqual(await lines('attempts'), []);
+      } else if (scenario === 'pin' || scenario === 'all' || scenario === 'proxy-pin' || scenario === 'proxy-all') {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+        assert.match(result.stderr, /mac=ssh/);
+        if (scenario === 'all' || scenario === 'proxy-all') assert.match(result.stderr, /mac2=ssh/);
+        assert.deepEqual(await lines('payloads'), []);
+        const expectedAttempts = scenario === 'proxy-pin' ? ['mac-host', 'mac-host']
+          : scenario === 'proxy-all' ? ['mac-host', 'mac-host', 'mac2-host', 'mac2-host']
+            : scenario === 'pin' ? ['mac-host'] : ['mac-host', 'mac2-host'];
+        assert.deepEqual(await lines('attempts'), expectedAttempts);
+        if (scenario === 'all' || scenario === 'proxy-all') {
+          const again = await invoke();
+          assert.notEqual(again.status, 0);
+          assert.match(again.stderr, /HSTACK_EXEC_DISPATCH_REFUSED/);
+          assert.match(again.stderr, /mac=ssh/);
+          assert.match(again.stderr, /mac2=ssh/);
+          assert.deepEqual(await lines('attempts'), expectedAttempts);
+        }
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(await lines('payloads'), ['mac2-host'], 'payload executes exactly once');
+        assert.deepEqual(await lines('attempts'), scenario === 'sync' ? ['mac2-host']
+          : scenario === 'mux-kex' || proxyRefusal ? ['mac-host', 'mac-host', 'mac2-host'] : ['mac-host', 'mac2-host']);
+        const negative = await readFile(join(stack, 'dev-target-command-load-native/mac.cache'), 'utf8');
+        assert.match(negative, /^\d+ 0 - 1 dispatch-(ssh|sync)\n$/);
+        const again = await invoke();
+        assert.equal(again.status, 0, again.stderr);
+        assert.deepEqual(await lines('payloads'), ['mac2-host', 'mac2-host']);
+        assert.equal((await lines('attempts')).filter(name => name === 'mac-host').length,
+          scenario === 'sync' ? 0 : scenario === 'mux-kex' || proxyRefusal ? 2 : 1,
+          'unavailable TTL prevents another dispatch to the refusing target');
+      }
+    });
+  }
 });
 
 test('native launcher never replays an authoritative remote command that starts and exits 255', async () => {
@@ -6415,6 +6595,7 @@ test('native launcher exact target flushes the selected Mutagen session before r
   ].join('\n'));
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
+    'case "$*" in *getconf*) printf "4 1 0.5 10000000 1 0 28000000 28000000 0 0 0 0 0 0 0 linux\\n28000000 0 28000000 0\\n-\\n"; exit 0 ;; esac',
     'case "$*" in *"&& command -v "*) exit 0 ;; esac',
     `if [ ! -e "${remoteMarker}.fresh" ]; then printf '%s\\n' 'remote dispatch attempted before sync flush' >&2; exit 74; fi`,
     'case "$*" in',

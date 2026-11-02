@@ -144,6 +144,7 @@ esac
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_process_priority.sh'), join(proc, 'native_process_priority.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/proc/native_admission_client.sh'), join(proc, 'native_admission_client.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_command_policy.sh'), join(targets, 'native_command_policy.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_dispatch_recovery.sh'), join(targets, 'native_dispatch_recovery.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_sync_readiness.sh'), join(targets, 'native_sync_readiness.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh'), join(targets, 'remote_execution_custody.sh')),
   ]);

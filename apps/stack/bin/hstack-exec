@@ -65,6 +65,7 @@ fi
 # Workload classes and memory requirements have one source owner. Load its
 # native projection before either direct admission or command placement.
 . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
+. "$script_dir/../scripts/utils/dev_targets/native_dispatch_recovery.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_process_priority.sh" || exit 1
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
@@ -1276,7 +1277,7 @@ read_fresh_cache() {
   if [ "$available" = 0 ]; then ttl=${unavailable_ttl_seconds-120}; else ttl=${load_ttl_seconds-15}; fi
   [ $((now - sampled)) -lt "$ttl" ] || return 1
   if [ "$available" = 0 ]; then
-    case "$cached_sample" in admission|prerequisite|unreachable) ;; *) cached_sample=unreachable ;; esac
+    case "$cached_sample" in admission|prerequisite|unreachable|dispatch-ssh|dispatch-sync) ;; *) cached_sample=unreachable ;; esac
     printf '0 - 1 %s\n' "$cached_sample"
     return 0
   fi
@@ -1332,7 +1333,16 @@ probe_target() {
             probe_available=busy
           fi
           ;;
-        *) if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then excluded_reason=prerequisite; else excluded_reason=unreachable; fi ;;
+        *)
+          excluded_reason=unreachable
+          for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
+            case "$refusal" in
+              "$name="*)
+                excluded_reason=${refusal#*=}
+                case "$excluded_reason" in sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
+                break ;;
+            esac
+          done ;;
       esac
       if [ "$probe_available" != busy ]; then
         printf '%s %s 0 - 1 %s\n' "$number" "$name" "$excluded_reason"
@@ -1527,6 +1537,17 @@ fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
+  case "$candidate_cache" in
+    dispatch-ssh)
+      HSTACK_EXEC_PRE_DISPATCH_REFUSALS="${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} $candidate_name=ssh"
+      export HSTACK_EXEC_PRE_DISPATCH_REFUSALS
+      candidate_cache=unreachable ;;
+    dispatch-sync)
+      HSTACK_EXEC_PRE_DISPATCH_REFUSALS="${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} $candidate_name=sync"
+      HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED=1
+      export HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED
+      candidate_cache=prerequisite ;;
+  esac
   if [ "$candidate_available" = 1 ] || [ "$candidate_available" = busy ]; then
     active_counts=$(count_active_dispatches "$candidate_name")
     candidate_active=${active_counts%% *}
@@ -1596,6 +1617,9 @@ if [ -z "$selected" ]; then
   if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
     cleanup_probe_tmp
     exit 75
+  fi
+  if [ "${fallback_mode-local}" = error ] || [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then
+    if report_dispatch_refusals; then exit 1; fi
   fi
   if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ] || awk -v runtime="$runtime_build_target" '$1 != 0 && $3 != 1 && $5 != "unreachable" && !(runtime != "" && ($5 == "capability" || $5 == "memory-capacity")) { found=1 } END { exit !found }' "$candidates"; then
     printf '%s\n' '[preferred-execution] reachable remote targets cannot run this command safely; check synchronization, target tools, repository cwd and disk space with hstack dev-targets status. Local fallback is only for unreachable targets.' >&2
@@ -2056,25 +2080,22 @@ retry_other_target_before_dispatch() {
 
 handle_selected_command_connection_failure() {
   release_reservation
+  if [ -n "${custody_pipe-}" ]; then release_custody_pipe; fi
   [ -n "$control_path" ] && rm -f -- "$control_path" 2>/dev/null || true
-  now=$(date +%s)
-  unavailable_cache="$cache_dir/$selected_name.cache"
-  unavailable_temporary=$(create_cache_temporary "$unavailable_cache" 2>/dev/null || true)
-  if [ -n "$unavailable_temporary" ]; then
-    printf '%s 0 - 1\n' "$now" > "$unavailable_temporary" && \
-      mv -f -- "$unavailable_temporary" "$unavailable_cache"
-    rm -f -- "$unavailable_temporary" 2>/dev/null || true
-  fi
+  record_selected_unavailable dispatch-ssh ssh
   if [ -n "$explicit_target_number" ]; then
     printf '%s\n' "[preferred-execution] requested target $selected_name did not accept the command connection" >&2
+    report_dispatch_refusals
     exit 1
   fi
   retry_other_target_before_dispatch "$@"
   if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then
+    report_dispatch_refusals
     printf '%s\n' '[preferred-execution] reachable remote target synchronization failed; run hstack dev-targets status. Local fallback is only for unreachable targets.' >&2
     exit 1
   fi
   if [ "${fallback_mode-local}" = error ]; then
+    report_dispatch_refusals
     printf '%s\n' '[preferred-execution] no execution target accepted a command connection' >&2
     exit 1
   fi
@@ -2101,9 +2122,11 @@ if [ "$flush_status" -ne 0 ]; then
   printf '[preferred-execution] selected target sync flush failed: %s\n' "$selected_name" >&2
   close_selected_control
   release_reservation
+  record_selected_unavailable dispatch-sync sync
   HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED=1
   export HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED
   retry_other_target_before_dispatch "$@"
+  report_dispatch_refusals
   printf '%s\n' '[preferred-execution] reachable remote target synchronization failed; run hstack dev-targets status and repair synchronization before retrying. Local fallback is only for unreachable targets.' >&2
   exit 1
 fi
@@ -2121,6 +2144,8 @@ if ! open_selected_control; then
 fi
 
 run_selected_ssh() {
+  # Proxy-hop failures reach stderr directly. VERBOSE also retains the parent
+  # SSH's pre-session kex closure in -E, so recovery needs no payload stderr.
   # This descriptor belongs only to the controller. If inherited by SSH, it
   # would keep its own lifetime pipe open after controller SIGKILL.
   exec 9>&-
@@ -2128,17 +2153,17 @@ run_selected_ssh() {
   ssh_tty=-T
   [ "$explicit_tty" = 1 ] && ssh_tty=-tt
   if [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ] && [ -n "$ssh_config" ]; then
     exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ]; then
     exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$ssh_config" ]; then
     exec ssh "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   else
@@ -2259,17 +2284,13 @@ if [ "$status" -eq 255 ] && [ "$authoritative_session_refused" -eq 1 ]; then
   wait "$ssh_pid"
   status=$?
   trap - HUP INT TERM
-  dedicated_session_refused=0
-  [ -n "$authoritative_ssh_error_log" ] && grep -q 'mux_client_request_session: session request failed:' "$authoritative_ssh_error_log" 2>/dev/null && dedicated_session_refused=1
-  if [ "$status" -eq 255 ] && [ "$dedicated_session_refused" -eq 1 ]; then
-    # Neither transport attempt reached the remote command. Automatic routing
-    # can therefore exclude this target and safely select another one without
-    # risking a replay of authoritative work.
-    [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
-    authoritative_ssh_error_log=
-    close_selected_control
-    handle_selected_command_connection_failure "$@"
-  fi
+fi
+if [ "$status" -eq 255 ] && ssh_refused_before_session "$authoritative_ssh_error_log"; then
+  cat "$authoritative_ssh_error_log" >&2
+  rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
+  authoritative_ssh_error_log=
+  close_selected_control
+  handle_selected_command_connection_failure "$@"
 fi
 if [ "$status" -eq 255 ]; then
   # -E redirects SSH's ordinary ERROR diagnostics away from stderr. Preserve
@@ -2317,16 +2338,11 @@ if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" 
   release_reservation
   release_custody_pipe
   [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
-  now=$(date +%s)
-  unavailable_cache="$cache_dir/$selected_name.cache"
-  unavailable_temporary=$(create_cache_temporary "$unavailable_cache" 2>/dev/null || true)
-  if [ -n "$unavailable_temporary" ]; then
-    printf '%s 0 - 1 admission\n' "$now" > "$unavailable_temporary" && mv -f -- "$unavailable_temporary" "$unavailable_cache"
-    rm -f -- "$unavailable_temporary"
-  fi
+  record_selected_unavailable admission admission
   printf '[preferred-execution] %s admission state failed before dispatch; excluding it for %ss; use automatic placement unless a specific host/platform is required\n' \
     "$selected_name" "${unavailable_ttl_seconds-120}" >&2
   retry_other_target_before_dispatch "$@"
+  report_dispatch_refusals
   printf '%s\n' '[preferred-execution] no configured target has usable admission state; repair worker state before retrying' >&2
   exit 1
 fi
