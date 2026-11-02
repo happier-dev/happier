@@ -244,3 +244,15 @@ export { normalizeActionInputByFieldHints } from './inputHints.js';
 export { readActionInputOptionValue } from './inputHints.js';
 export { resolveEffectiveActionInputFields } from './inputHints.js';
 export { seedInputByFieldHints } from './inputHints.js';
+
+export type { DeploymentsActionInputById, DeploymentsActionResultById } from './dtos/deploymentsActionDtos.generated.js';
+export type { InputPredicateWithValue, MachineSetupSourceFactsMapV1, MachineSetupSourceV1 } from './dtos/pluginActionDtoSupport.generated.js';
+export type { AutomationOccurrencesActionInputById, AutomationOccurrencesActionResultById } from './dtos/automationOccurrencesActionDtos.generated.js';
+export type { DesktopShellActionInputById, DesktopShellActionResultById } from './dtos/desktopShellActionDtos.generated.js';
+export type { DesktopWindowsActionInputById, DesktopWindowsActionResultById } from './dtos/desktopWindowsActionDtos.generated.js';
+export type { MachineAdminAccessActionInputById, MachineAdminAccessActionResultById } from './dtos/machineAdminAccessActionDtos.generated.js';
+export type { MachineAgentIsolationActionInputById, MachineAgentIsolationActionResultById } from './dtos/machineAgentIsolationActionDtos.generated.js';
+export type { MachineReachabilityActionInputById, MachineReachabilityActionResultById } from './dtos/machineReachabilityActionDtos.generated.js';
+export type { MediaAnnotationActionInputById, MediaAnnotationActionResultById } from './dtos/mediaAnnotationActionDtos.generated.js';
+export type { SessionMessagePinsActionInputById, SessionMessagePinsActionResultById } from './dtos/sessionMessagePinsActionDtos.generated.js';
+export type { FirstPresence, MachineSetupSourceEntryV1 } from './dtos/pluginActionDtoSupport.generated.js';

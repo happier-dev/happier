@@ -1,23 +1,9 @@
+import type { ScmHostingProviderKind as ProtocolScmHostingProviderKind } from '../scm/hostingProvider.js';
 import { ScmHostingRepositoryIdentityV1ProtocolSchema as canonicalIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
-export type ProtocolScmHostingProviderKind = ScmHostingProviderRef['kind'];
+export type { ScmHostingProviderKind, ScmHostingProviderKind as ProtocolScmHostingProviderKind } from '../scm/hostingProvider.js';
 
-export type ScmHostingProviderKind = ProtocolScmHostingProviderKind;
-
-export type ScmHostingProviderRef = {
-    [key: string]: unknown;
-    id: string;
-    kind: 'github' | 'gitlab' | 'bitbucket' | 'azure-devops' | 'custom' | 'unknown';
-    displayName: string;
-    baseUrl: string;
-    nameWithOwner?: string;
-    repositoryWebUrl?: string;
-    remoteName?: string;
-    urlSafety: {
-        [key: string]: unknown;
-        allowedSchemes: string[];
-    };
-};
+export type { ScmHostingProviderRef } from '../scm/hostingProvider.js';
 
 export type ScmHostingRepositoryIdentityV1<
     TKind extends ProtocolScmHostingProviderKind = ProtocolScmHostingProviderKind,
@@ -30,7 +16,7 @@ import type { ProtocolComposableSchema } from './protocolFacade.js';
 
 /** The SCM owner's exact repository admission, composable in feature protocols. */
 export const ScmHostingRepositoryIdentityV1ProtocolSchema: ProtocolComposableSchema<Readonly<{
-    kind: ScmHostingProviderRef['kind'];
+    kind: ProtocolScmHostingProviderKind;
     deployment: string;
     repository: string;
 }>> = canonicalIdentity;

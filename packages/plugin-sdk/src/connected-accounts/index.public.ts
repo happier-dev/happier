@@ -128,3 +128,5 @@ export {
   normalizeConnectedAccountAccessTokenFingerprint,
   type ConnectedAccountAccessTokenFingerprint,
 } from './tokenFingerprint.js';
+
+export type { ConnectedAccountEstablishedReadContext } from '../connectedAccounts.js';

@@ -4,6 +4,36 @@
 import type { JsonValue } from '../../identity.js';
 
 export type PromptLibraryActionInputById = {
+    readonly "prompts.invocation.create": {
+        token: string;
+        title: string;
+        target: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+        allowArgs?: boolean | undefined;
+        availableIn?: 'global' | 'session_only' | undefined;
+    };
+    readonly "prompts.invocation.update": {
+        token: string;
+        title: string;
+        target: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        invocationId: string;
+        expectedRevision: number | 'absent';
+        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+        allowArgs?: boolean | undefined;
+        availableIn?: 'global' | 'session_only' | undefined;
+    };
+    readonly "prompts.invocation.delete": {
+        invocationId: string;
+        expectedRevision: number | 'absent';
+    };
     readonly "prompt_doc.get": {
         artifactId: string;
     };
@@ -131,38 +161,55 @@ export type PromptLibraryActionInputById = {
             installMode?: 'copy' | 'symlink' | undefined;
         } | undefined;
     };
-    readonly "prompts.invocation.create": {
-        token: string;
-        title: string;
-        target: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        };
-        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
-        allowArgs?: boolean | undefined;
-        availableIn?: 'global' | 'session_only' | undefined;
-    };
-    readonly "prompts.invocation.update": {
-        token: string;
-        title: string;
-        target: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        };
-        invocationId: string;
-        expectedRevision: number | 'absent';
-        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
-        allowArgs?: boolean | undefined;
-        availableIn?: 'global' | 'session_only' | undefined;
-    };
-    readonly "prompts.invocation.delete": {
-        invocationId: string;
-        expectedRevision: number | 'absent';
-    };
 };
 export type PromptLibraryActionResultById = {
+    readonly "prompts.invocation.create": {
+        status: 'updated';
+        invocationId: string;
+        token: string;
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    };
+    readonly "prompts.invocation.update": {
+        status: 'updated';
+        invocationId: string;
+        token: string;
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'invalid';
+        reason: 'not_found';
+    };
+    readonly "prompts.invocation.delete": {
+        status: 'updated';
+        invocationId: string;
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'not_found';
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    };
     readonly "prompt_doc.get": {
         ok: true;
         artifactId: string;
@@ -172,6 +219,16 @@ export type PromptLibraryActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
+        provenance?: {
+            savedBy: {
+                kind: 'person';
+                accountId: string;
+            } | {
+                kind: 'agent';
+                accountId: string;
+                sessionId?: string | undefined;
+            };
+        } | undefined;
     };
     readonly "prompt_doc.create": {
         ok: true;
@@ -182,7 +239,7 @@ export type PromptLibraryActionResultById = {
         artifactId: string;
     };
     readonly "prompts.library.list": {
-        coverage: 'complete' | 'partial' | 'unavailable';
+        coverage: 'unavailable' | 'complete' | 'partial';
         items: {
             artifactId: string;
             title: string;
@@ -222,51 +279,4 @@ export type PromptLibraryActionResultById = {
         } | undefined;
     };
     readonly "prompt_registry.install": JsonValue;
-    readonly "prompts.invocation.create": {
-        status: 'updated';
-        invocationId: string;
-        token: string;
-        revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
-    } | {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    };
-    readonly "prompts.invocation.update": {
-        status: 'updated';
-        invocationId: string;
-        token: string;
-        revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
-    } | {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'invalid';
-        reason: 'not_found';
-    };
-    readonly "prompts.invocation.delete": {
-        status: 'updated';
-        invocationId: string;
-        revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'not_found';
-    } | {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    };
 };

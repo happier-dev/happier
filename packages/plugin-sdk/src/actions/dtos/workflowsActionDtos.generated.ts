@@ -1304,6 +1304,8 @@ export type WorkflowsActionInputById = {
     readonly "workflow.trigger.list": {
         workflow: string;
     } | {
+        [x: string]: any;
+    } | {
         scope: 'account_inline' | 'account_all';
     } | {
         automationId: string;
@@ -6271,6 +6273,7 @@ export type WorkflowsActionResultById = {
                 actionContract?: {
                     inputSchema: JsonValue;
                     outputSchema: JsonValue;
+                    secretInputPaths?: string[] | undefined;
                     completion?: JsonValue | undefined;
                 } | undefined;
                 actionInput?: Record<string, JsonValue> | undefined;
@@ -8097,6 +8100,7 @@ export type WorkflowsActionResultById = {
                 actionContract?: {
                     inputSchema: JsonValue;
                     outputSchema: JsonValue;
+                    secretInputPaths?: string[] | undefined;
                     completion?: JsonValue | undefined;
                 } | undefined;
                 actionInput?: Record<string, JsonValue> | undefined;

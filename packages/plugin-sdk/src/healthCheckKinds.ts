@@ -53,3 +53,5 @@ export interface HealthChecksService {
             /** Absolute producer deadline; null waits for an authenticated receipt. */
             nextEligibleAt?: number | null }>[]>;
 }
+
+export type { HealthCheckDnsConfigV1, HealthCheckHeartbeatConfigV1, HealthCheckTcpConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';

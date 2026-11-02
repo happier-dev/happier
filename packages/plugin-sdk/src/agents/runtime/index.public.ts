@@ -1,3 +1,4 @@
+export type { AgentAcpProviderTurnSink, AgentAcpProviderTurnSourceHost, AgentAcpProviderTurnSource, AgentAcpProviderTurnSourceFactory } from '../../agentRuntime/acpProviderTurns.js';
 export { ACP_AGENT_CLI_TRANSPORT_TIMEOUTS } from '../../agentRuntime/projections.js';
 export type {
   AgentSessionCompactionCapability,
@@ -471,3 +472,5 @@ export { TERMINAL_BRACKETED_PASTE_START, TERMINAL_BRACKETED_PASTE_END } from '..
 
 export { resolvePromptCacheLastUseAtMs } from '../../agentRuntime/promptCacheClock.js';
 export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';
+
+export type { AgentSessionIdleCompactionPreferenceV1, UsagePromptCache } from '../../agentRuntime/projections.js';

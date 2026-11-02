@@ -1,3 +1,4 @@
+import type { AgentAcpProviderTurnSourceFactory } from './acpProviderTurns.js';
 import type { PluginAgentAcpTransport, PluginAgentAcpSkillsSessionDeliveryV2 } from '@happier-dev/protocol';
 
 import type { PluginDiagnosticData } from '../diagnostics.js';
@@ -72,6 +73,9 @@ export type AgentAcpRuntimeOptions = Readonly<{
   transport: PluginAgentAcpTransport;
   definition?: AgentAcpRuntimeDefinition;
   extensions?: AgentAcpRuntimeExtensions;
+  providerTurnSource?: AgentAcpProviderTurnSourceFactory;
+  initialSessionModeId?: string;
+  disableSessionModeUpdates?: boolean;
 }>;
 
 export type AgentAcpAuthenticationContext = Readonly<{

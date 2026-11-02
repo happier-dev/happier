@@ -43,6 +43,27 @@ test('filtered canonical Action families preserve their exact partition without 
   });
 });
 
+test('canonical Action families resolve named re-exports to their declaration owner', t => {
+  const root = mkdtempSync(resolve(tmpdir(), 'happier-action-reexport-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  const owner = resolve(actions, 'codeIds.ts');
+  writeFileSync(owner, `
+    throw new Error('Catalog source must not execute');
+    export const IDS = ['code.hover.get', 'code.definition.get'] as const;
+  `);
+  writeFileSync(resolve(actions, 'codeFamily.ts'), "export { IDS as CODE_IDS } from './codeIds.js';");
+  writeFileSync(resolve(actions, 'actionIds.ts'), `
+    import { CODE_IDS as CODE } from './codeFamily.js';
+    export const ACTION_ID_FAMILIES_V1 = { code: CODE } as const;
+  `);
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  const catalog = readActionCatalog(root);
+  assert.deepEqual(catalog.families, { code: ['code.hover.get', 'code.definition.get'] });
+  assert.deepEqual(catalog.familyOwners, { code: owner });
+});
+
 test('an explicit Action map producer invocation defaults to source writes and remote checks', () => {
   // The source checkout owns this generated input, whatever it is publishing: a local
   // artifact publication after a concurrent Protocol edit must regenerate, not fail.
@@ -897,6 +918,10 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   for (const output of outputs.values()) {
     assert.doesNotMatch(output, /export type ScmComparisonSource\s*=/u);
   }
+  const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
+  assert.ok(/import type \{ MachinePresetItemV1 \} from '\.\.\/\.\.\/machineSetup\.js';/u.test(support),
+    'Machine Preset values must reuse their existing SDK public declaration');
+  assert.doesNotMatch(support, /export type MachinePresetItemV1\s*=/u);
 });
 
 test('Action DTO projection scopes mapped keys without hiding external declarations', () => {

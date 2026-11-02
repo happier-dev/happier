@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ScmGitActionInputById = {
     readonly "scm.backend.describe": {
@@ -21,6 +22,7 @@ export type ScmGitActionInputById = {
         outcomeVersion?: 1 | undefined;
         includeWorktreeStatus?: boolean | undefined;
         operationStateVersion?: 1 | undefined;
+        sessionId?: SessionTargetV1<true> | undefined;
     };
     readonly "scm.worktrees.enrichment": {
         worktreePaths: string[];
@@ -125,6 +127,10 @@ export type ScmGitActionInputById = {
                     commit: string;
                     parent?: string;
                 } | {
+                    kind: 'revisionRange';
+                    baseOid: string;
+                    headOid: string;
+                } | {
                     kind: 'pullRequest';
                     locator: {
                         providerId: string;
@@ -138,6 +144,7 @@ export type ScmGitActionInputById = {
                                 localId: string;
                             };
                             input?: JsonValue;
+                            clientId?: string;
                             messageActionReference?: {
                                 v: 1;
                                 sessionId: string;
@@ -231,6 +238,11 @@ export type ScmGitActionInputById = {
         skip?: number | undefined;
         query?: string | undefined;
         range?: 'incoming' | undefined;
+        revisionRange?: {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | undefined;
     };
     readonly "scm.branch.list": {
         cwd?: string | undefined;
@@ -418,6 +430,7 @@ export type ScmGitActionInputById = {
         expectedRemoteOid?: string | undefined;
         remote?: string | undefined;
         branch?: string | undefined;
+        sessionId?: SessionTargetV1<true> | undefined;
     };
     readonly "scm.remote.push": {
         cwd?: string | undefined;
@@ -871,6 +884,15 @@ export type ScmGitActionResultById = {
     readonly "scm.diff.file": {
         success: boolean;
         diff?: string | undefined;
+        reviewUnits?: {
+            key: string;
+            hunkIndex: number;
+            runIndex: number;
+            oldStart: number;
+            oldLines: number;
+            newStart: number;
+            newLines: number;
+        }[] | undefined;
         error?: string | undefined;
         errorCode?: 'CHANGE_MOVED_ON' | 'FILE_CHANGED' | 'COMPARISON_UNAVAILABLE' | 'DISCARD_UNSUPPORTED' | 'unsupported' | 'not_found' | 'too_large' | 'blob_unavailable' | 'NOT_REPOSITORY' | 'INVALID_PATH' | 'ROOT_NOT_FOUND' | 'INVALID_REQUEST' | 'SCM_SOURCE_CHANGED' | 'COMMAND_FAILED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_EMPTY' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_UNDO_PUBLISHED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'REMOTE_NETWORK_FAILED' | 'COMMAND_CANCELLED' | 'COMMAND_TIMEOUT' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_OUTCOME_UNKNOWN' | 'REPOSITORY_REFRESH_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_APPLY_FAILED' | 'STASH_DROP_FAILED' | 'CHANGE_APPLY_FAILED' | 'COMMIT_REQUIRED' | 'CONFLICTING_WORKTREE' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_REJECTED' | 'REMOTE_RATE_LIMITED' | 'REMOTE_NOT_FOUND' | 'REMOTE_ALREADY_EXISTS' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'FEATURE_UNSUPPORTED' | 'BACKEND_UNAVAILABLE' | 'BACKEND_NOT_INSTALLED' | undefined;
     };
@@ -3112,6 +3134,15 @@ export type ScmGitActionResultById = {
         }[] | undefined;
         queryApplied?: boolean | undefined;
         rangeApplied?: boolean | undefined;
+        revisionRange?: {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+            historyComplete: boolean;
+            graphRelation?: 'equal' | 'forward' | 'diverged' | undefined;
+            totalCount?: number | undefined;
+            nextSkip?: number | undefined;
+        } | undefined;
         error?: string | undefined;
         errorCode?: 'CHANGE_MOVED_ON' | 'FILE_CHANGED' | 'COMPARISON_UNAVAILABLE' | 'DISCARD_UNSUPPORTED' | 'unsupported' | 'not_found' | 'too_large' | 'blob_unavailable' | 'NOT_REPOSITORY' | 'INVALID_PATH' | 'ROOT_NOT_FOUND' | 'INVALID_REQUEST' | 'SCM_SOURCE_CHANGED' | 'COMMAND_FAILED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_EMPTY' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_UNDO_PUBLISHED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'REMOTE_NETWORK_FAILED' | 'COMMAND_CANCELLED' | 'COMMAND_TIMEOUT' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_OUTCOME_UNKNOWN' | 'REPOSITORY_REFRESH_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_APPLY_FAILED' | 'STASH_DROP_FAILED' | 'CHANGE_APPLY_FAILED' | 'COMMIT_REQUIRED' | 'CONFLICTING_WORKTREE' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_REJECTED' | 'REMOTE_RATE_LIMITED' | 'REMOTE_NOT_FOUND' | 'REMOTE_ALREADY_EXISTS' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'FEATURE_UNSUPPORTED' | 'BACKEND_UNAVAILABLE' | 'BACKEND_NOT_INSTALLED' | undefined;
     };

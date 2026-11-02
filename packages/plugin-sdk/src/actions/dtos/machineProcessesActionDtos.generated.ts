@@ -41,6 +41,15 @@ export type MachineProcessesActionInputById = {
                     sessionId?: string | undefined;
                     workspaceId?: string | undefined;
                 } | {
+                    kind: 'container';
+                    serverId: string;
+                    machineId: string;
+                    serviceId: string;
+                    containerId: string;
+                    composeProject: string;
+                    composeService: string;
+                    environmentId?: string | undefined;
+                } | {
                     kind: 'run';
                     runId: string;
                     sessionId?: string | undefined;
@@ -80,6 +89,15 @@ export type MachineProcessesActionInputById = {
                     pluginId?: string | undefined;
                     sessionId?: string | undefined;
                     workspaceId?: string | undefined;
+                } | {
+                    kind: 'container';
+                    serverId: string;
+                    machineId: string;
+                    serviceId: string;
+                    containerId: string;
+                    composeProject: string;
+                    composeService: string;
+                    environmentId?: string | undefined;
                 } | {
                     kind: 'run';
                     runId: string;
@@ -127,6 +145,15 @@ export type MachineProcessesActionResultById = {
                 pluginId?: string | undefined;
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
+            } | {
+                kind: 'container';
+                serverId: string;
+                machineId: string;
+                serviceId: string;
+                containerId: string;
+                composeProject: string;
+                composeService: string;
+                environmentId?: string | undefined;
             } | {
                 kind: 'run';
                 runId: string;
@@ -229,6 +256,15 @@ export type MachineProcessesActionResultById = {
                 pluginId?: string | undefined;
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
+            } | {
+                kind: 'container';
+                serverId: string;
+                machineId: string;
+                serviceId: string;
+                containerId: string;
+                composeProject: string;
+                composeService: string;
+                environmentId?: string | undefined;
             } | {
                 kind: 'run';
                 runId: string;
@@ -387,6 +423,15 @@ export type MachineProcessesActionResultById = {
             sessionId?: string | undefined;
             workspaceId?: string | undefined;
         } | {
+            kind: 'container';
+            serverId: string;
+            machineId: string;
+            serviceId: string;
+            containerId: string;
+            composeProject: string;
+            composeService: string;
+            environmentId?: string | undefined;
+        } | {
             kind: 'run';
             runId: string;
             sessionId?: string | undefined;
@@ -423,6 +468,15 @@ export type MachineProcessesActionResultById = {
                 pluginId?: string | undefined;
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
+            } | {
+                kind: 'container';
+                serverId: string;
+                machineId: string;
+                serviceId: string;
+                containerId: string;
+                composeProject: string;
+                composeService: string;
+                environmentId?: string | undefined;
             } | {
                 kind: 'run';
                 runId: string;

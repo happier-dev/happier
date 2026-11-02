@@ -15,6 +15,7 @@ const flags = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseStructural
   | ts.TypeFormatFlags.UseSingleQuotesForStringLiteralType;
 
 const supportBindings = [
+  ...['SessionSpawnNewInputV2', 'SessionServerStartSpawnDraftV1'].map(name => ['sessions/creation/sessionSpawnNewInputV2.ts', name]),
   ...['SessionTargetV1', 'SessionTargetSelectorV1', 'ActionSessionTargetDeclarationV1'].map(name => ['actions/sessionTargetV1.ts', name]),
   ['actions/filesystemActionFamily.ts', 'FilesystemTreeNode'],
   // Host finding author values share the existing Action-result DTO projection.
@@ -337,6 +338,10 @@ export function readActionCatalog(repoRoot, recordInput = () => {}, readSource =
       }
       if (ts.isImportDeclaration(node) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)) {
         const binding = node.importClause.namedBindings.elements.find(n => n.name.text === name);
+        if (binding) return definition(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (binding.propertyName ?? binding.name).text);
+      }
+      if (ts.isExportDeclaration(node) && node.moduleSpecifier && node.exportClause && ts.isNamedExports(node.exportClause)) {
+        const binding = node.exportClause.elements.find(n => n.name.text === name);
         if (binding) return definition(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')), (binding.propertyName ?? binding.name).text);
       }
     }

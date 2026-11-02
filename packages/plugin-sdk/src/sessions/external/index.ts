@@ -46,6 +46,8 @@ export type { AgentExternalSessionUserProjection } from '../../externalSessions.
 export type { AgentExternalSessionsCandidatePreparation } from '../../externalSessions.js';
 export type { AgentExternalSessionsContribution } from '../../externalSessions.js';
 export type { AgentExternalSessionsFailureCode } from '../../externalSessions.js';
+export type { AgentExternalSessionsHydrateCandidatesRequest } from '../../externalSessions.js';
+export type { AgentExternalSessionsHydrateCandidatesResult } from '../../externalSessions.js';
 export type { AgentExternalSessionsInvocation } from '../../externalSessions.js';
 export type { AgentExternalSessionsInvocationBounds } from '../../externalSessions.js';
 export type { AgentExternalSessionsListCandidatesRequest } from '../../externalSessions.js';

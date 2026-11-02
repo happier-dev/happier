@@ -4,6 +4,10 @@
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
 
 export type ProjectExecutionActionInputById = {
+    readonly "projects.pages.list": {
+        workspaceRefId: string;
+        serverId: string;
+    };
     readonly "projects.trust.list": {
         project?: {
             serverId: string;
@@ -116,6 +120,7 @@ export type ProjectExecutionActionInputById = {
                 selection: 'automatic' | 'ask';
             };
         } | undefined;
+        execution?: 'primary' | 'portable' | undefined;
         memoryDemand?: {
             bytes: number;
             basis: {
@@ -132,6 +137,27 @@ export type ProjectExecutionActionInputById = {
     };
 };
 export type ProjectExecutionActionResultById = {
+    readonly "projects.pages.list": {
+        pages: ({
+            kind: 'builtin';
+            id: string;
+            title: string;
+            icon: string;
+            href: string;
+            disabledReason: string | null;
+        } | {
+            kind: 'plugin';
+            destination: {
+                pluginId: string;
+                localId: string;
+            };
+            id: string;
+            title: string;
+            icon: string;
+            href: string;
+            disabledReason: string | null;
+        })[];
+    };
     readonly "projects.trust.list": {
         trust: {
             project: {
@@ -253,51 +279,6 @@ export type ProjectExecutionActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
-                    kind: 'partial';
-                    savedSecrets: {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        source: {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        };
-                    }[];
-                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
-                    errorCode: string;
-                    environmentId?: string | undefined;
-                    revision?: number | undefined;
-                    targetLinkId?: string | undefined;
-                    definition?: undefined | {
-                        kind: 'stored';
-                        contentRevision: number;
-                        composeDigest: string;
-                    };
-                    deployment?: undefined | {
-                        deploymentId: string;
-                        deploymentRevision: number;
-                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                    } | {
-                        kind: 'pending';
-                        actionOperationId: string;
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    };
-                    unknownSecret?: undefined | {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        ref: string;
-                    };
-                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -316,6 +297,32 @@ export type ProjectExecutionActionResultById = {
                     category: 'status' | 'currentness' | 'transport' | 'schema';
                     status?: number | undefined;
                     code?: string | undefined;
+                } | {
+                    kind: 'managedNative';
+                    nativeCause: {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'unknown' | 'conflict' | 'unavailable' | 'forbidden' | 'json_error' | 'unauthorized' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                        fields?: ('name' | 'location' | 'server_type' | 'start_after_create' | 'image' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'start' | 'restart' | 'stop' | 'create' | 'run' | 'up';
+                        exitCode: number | null;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'stop' | 'run' | 'inspect' | 'delete' | 'pull' | 'configure';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 14 | 7 | 8 | 10 | 12 | 13 | 15 | 16;
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -361,6 +368,11 @@ export type ProjectExecutionActionResultById = {
                     serverId: string;
                     runId: string;
                 } | undefined;
+            } | {
+                kind: 'deployment';
+                serverId: string;
+                environmentId: string;
+                deploymentId: string;
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -412,6 +424,29 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineSetup';
+                serverId: string;
+                machineId: string;
+                preset?: {
+                    id: string;
+                    revision: number;
+                } | undefined;
+                managedId?: string | undefined;
+                setupTask?: {
+                    id: string;
+                    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1';
+                    prompt?: {
+                        kind: 'sudo.password';
+                        adminUsername: string;
+                    } | undefined;
+                } | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'machineEnvironment';
                 serverId: string;
@@ -504,6 +539,50 @@ export type ProjectExecutionActionResultById = {
             observation?: {
                 kind: 'outcome_uncertain' | 'stop_unconfirmed';
                 code: string;
+            } | {
+                kind: 'review_required';
+                code: 'agent_isolation_effect_changed';
+                machineId: string;
+                enabled: boolean;
+                current: {
+                    kind: 'ready';
+                    plan: {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                            changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        requiresAdmin: boolean;
+                        planDigest: string;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    metadataVersion: number;
+                    status: {
+                        kind: 'effective';
+                        platform: 'linux';
+                        agentUser: 'happier-agent';
+                    } | {
+                        kind: 'disabled';
+                    } | {
+                        kind: 'enable_required';
+                        reason: 'existing_machine_workspace_migration';
+                    } | {
+                        kind: 'applying';
+                        phase: 'workspace' | 'account' | 'sudoers' | 'runtime_replacement';
+                    } | {
+                        kind: 'unavailable';
+                        code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
+                    };
+                };
             } | undefined;
             setupReview?: {
                 reviewedEffect: JsonValue;
@@ -602,51 +681,6 @@ export type ProjectExecutionActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
-                    kind: 'partial';
-                    savedSecrets: {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        source: {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        };
-                    }[];
-                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
-                    errorCode: string;
-                    environmentId?: string | undefined;
-                    revision?: number | undefined;
-                    targetLinkId?: string | undefined;
-                    definition?: undefined | {
-                        kind: 'stored';
-                        contentRevision: number;
-                        composeDigest: string;
-                    };
-                    deployment?: undefined | {
-                        deploymentId: string;
-                        deploymentRevision: number;
-                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                    } | {
-                        kind: 'pending';
-                        actionOperationId: string;
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    };
-                    unknownSecret?: undefined | {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        ref: string;
-                    };
-                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -665,6 +699,32 @@ export type ProjectExecutionActionResultById = {
                     category: 'status' | 'currentness' | 'transport' | 'schema';
                     status?: number | undefined;
                     code?: string | undefined;
+                } | {
+                    kind: 'managedNative';
+                    nativeCause: {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'unknown' | 'conflict' | 'unavailable' | 'forbidden' | 'json_error' | 'unauthorized' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                        fields?: ('name' | 'location' | 'server_type' | 'start_after_create' | 'image' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'start' | 'restart' | 'stop' | 'create' | 'run' | 'up';
+                        exitCode: number | null;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'stop' | 'run' | 'inspect' | 'delete' | 'pull' | 'configure';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 14 | 7 | 8 | 10 | 12 | 13 | 15 | 16;
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -710,6 +770,11 @@ export type ProjectExecutionActionResultById = {
                     serverId: string;
                     runId: string;
                 } | undefined;
+            } | {
+                kind: 'deployment';
+                serverId: string;
+                environmentId: string;
+                deploymentId: string;
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -761,6 +826,29 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineSetup';
+                serverId: string;
+                machineId: string;
+                preset?: {
+                    id: string;
+                    revision: number;
+                } | undefined;
+                managedId?: string | undefined;
+                setupTask?: {
+                    id: string;
+                    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1';
+                    prompt?: {
+                        kind: 'sudo.password';
+                        adminUsername: string;
+                    } | undefined;
+                } | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'machineEnvironment';
                 serverId: string;
@@ -853,6 +941,50 @@ export type ProjectExecutionActionResultById = {
             observation?: {
                 kind: 'outcome_uncertain' | 'stop_unconfirmed';
                 code: string;
+            } | {
+                kind: 'review_required';
+                code: 'agent_isolation_effect_changed';
+                machineId: string;
+                enabled: boolean;
+                current: {
+                    kind: 'ready';
+                    plan: {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                            changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        requiresAdmin: boolean;
+                        planDigest: string;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    metadataVersion: number;
+                    status: {
+                        kind: 'effective';
+                        platform: 'linux';
+                        agentUser: 'happier-agent';
+                    } | {
+                        kind: 'disabled';
+                    } | {
+                        kind: 'enable_required';
+                        reason: 'existing_machine_workspace_migration';
+                    } | {
+                        kind: 'applying';
+                        phase: 'workspace' | 'account' | 'sudoers' | 'runtime_replacement';
+                    } | {
+                        kind: 'unavailable';
+                        code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
+                    };
+                };
             } | undefined;
             setupReview?: {
                 reviewedEffect: JsonValue;
@@ -951,51 +1083,6 @@ export type ProjectExecutionActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
-                    kind: 'partial';
-                    savedSecrets: {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        source: {
-                            kind: 'secret';
-                            ref: string;
-                            resourceRevision: number;
-                        };
-                    }[];
-                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
-                    errorCode: string;
-                    environmentId?: string | undefined;
-                    revision?: number | undefined;
-                    targetLinkId?: string | undefined;
-                    definition?: undefined | {
-                        kind: 'stored';
-                        contentRevision: number;
-                        composeDigest: string;
-                    };
-                    deployment?: undefined | {
-                        deploymentId: string;
-                        deploymentRevision: number;
-                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                    } | {
-                        kind: 'pending';
-                        actionOperationId: string;
-                        ok: true;
-                        environmentId: string;
-                        revision: number;
-                        operation?: undefined | {
-                            serverId: string;
-                            machineId: string;
-                            operationId: string;
-                        };
-                    };
-                    unknownSecret?: undefined | {
-                        name: string;
-                        phase: 'build' | 'runtime';
-                        ref: string;
-                    };
-                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -1014,6 +1101,32 @@ export type ProjectExecutionActionResultById = {
                     category: 'status' | 'currentness' | 'transport' | 'schema';
                     status?: number | undefined;
                     code?: string | undefined;
+                } | {
+                    kind: 'managedNative';
+                    nativeCause: {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'unknown' | 'conflict' | 'unavailable' | 'forbidden' | 'json_error' | 'unauthorized' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                        fields?: ('name' | 'location' | 'server_type' | 'start_after_create' | 'image' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'start' | 'restart' | 'stop' | 'create' | 'run' | 'up';
+                        exitCode: number | null;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'stop' | 'run' | 'inspect' | 'delete' | 'pull' | 'configure';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        grpcStatusCode: 1 | 4 | 6 | 2 | 11 | 3 | 5 | 9 | 14 | 7 | 8 | 10 | 12 | 13 | 15 | 16;
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -1059,6 +1172,11 @@ export type ProjectExecutionActionResultById = {
                     serverId: string;
                     runId: string;
                 } | undefined;
+            } | {
+                kind: 'deployment';
+                serverId: string;
+                environmentId: string;
+                deploymentId: string;
             } | {
                 kind: 'forkRequest';
                 id: string;
@@ -1110,6 +1228,29 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineSetup';
+                serverId: string;
+                machineId: string;
+                preset?: {
+                    id: string;
+                    revision: number;
+                } | undefined;
+                managedId?: string | undefined;
+                setupTask?: {
+                    id: string;
+                    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1';
+                    prompt?: {
+                        kind: 'sudo.password';
+                        adminUsername: string;
+                    } | undefined;
+                } | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'machineEnvironment';
                 serverId: string;
@@ -1202,6 +1343,50 @@ export type ProjectExecutionActionResultById = {
             observation?: {
                 kind: 'outcome_uncertain' | 'stop_unconfirmed';
                 code: string;
+            } | {
+                kind: 'review_required';
+                code: 'agent_isolation_effect_changed';
+                machineId: string;
+                enabled: boolean;
+                current: {
+                    kind: 'ready';
+                    plan: {
+                        roots: {
+                            rootId: string;
+                            path: string;
+                            changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                        }[];
+                        ancestorAcls: {
+                            path: string;
+                            add: 'x';
+                        }[];
+                        sessionsToReplace: number;
+                        requiresAdmin: boolean;
+                        planDigest: string;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    metadataVersion: number;
+                    status: {
+                        kind: 'effective';
+                        platform: 'linux';
+                        agentUser: 'happier-agent';
+                    } | {
+                        kind: 'disabled';
+                    } | {
+                        kind: 'enable_required';
+                        reason: 'existing_machine_workspace_migration';
+                    } | {
+                        kind: 'applying';
+                        phase: 'workspace' | 'account' | 'sudoers' | 'runtime_replacement';
+                    } | {
+                        kind: 'unavailable';
+                        code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
+                    };
+                };
             } | undefined;
             setupReview?: {
                 reviewedEffect: JsonValue;

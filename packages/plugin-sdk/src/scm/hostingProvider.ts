@@ -11,6 +11,7 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { ConnectedAccountRef } from '../connectedAccounts.js';
+import type { PluginLocalizedStringV2 } from '../manifest.js';
 
 export type ScmHostingProviderKind =
     | 'github'
@@ -37,8 +38,8 @@ export type ScmHostingProviderRef = {
 
 export type HostingProviderContribution = {
     id: string;
-    title: string | { key: string; fallback: string };
-    description?: string | { key: string; fallback: string };
+    title: PluginLocalizedStringV2;
+    description?: PluginLocalizedStringV2;
     kind: string;
     capabilities: ('detect' | 'clone' | 'fetch' | 'status' | 'diff' | 'commit' | 'push' | 'pullRequest')[];
     authService?: string | Readonly<{ pluginId: string; localId: string }>;

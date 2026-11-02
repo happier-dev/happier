@@ -25,6 +25,7 @@ export type { ProtocolUniqueJsonArrayOptions } from './protocolFacade.js';
 export type { ProtocolUtf8StringOptions } from './protocolFacade.js';
 export { ProtocolValidationError } from './protocolFacade.js';
 export type { ProtocolValidationIssue } from './protocolFacade.js';
+export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 export { TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 } from './triageEntryRef.js';
 export { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './triageEntryRef.js';
 export { TriageCollisionScopeV1ProtocolSchema } from './triageEntryRef.js';
@@ -47,5 +48,3 @@ export { defineTriageCompositeIdentifierStringV1 } from './triageEntryRef.js';
 export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
 export { encodeBase64 } from './encoding.js';
 export { pluginJsonValuesEqual } from './protocolFacade.js';
-
-export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './index.public.js';

@@ -77,6 +77,7 @@ export type LaunchProfilesActionInputById = {
             defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
             defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: unknown;
             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
             compatibility?: Record<string, boolean> | undefined;
             authMode?: 'machineLogin' | undefined;
@@ -358,11 +359,13 @@ export type LaunchProfilesActionInputById = {
                 } | undefined;
                 endpointOverrides?: {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[] | undefined;
                 endpointOverridesByMachineId?: Record<string, {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[]> | undefined;
                 purposeBindingDefaults?: Record<string, {
                     kind: 'account';
@@ -484,11 +487,13 @@ export type LaunchProfilesActionInputById = {
                 } | undefined;
                 endpointOverrides?: {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[] | undefined;
                 endpointOverridesByMachineId?: Record<string, {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[]> | undefined;
                 purposeBindingDefaults?: Record<string, {
                     kind: 'account';
@@ -605,6 +610,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -744,6 +750,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -939,6 +946,7 @@ export type LaunchProfilesActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;
@@ -996,6 +1004,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -1139,6 +1148,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -1337,6 +1347,7 @@ export type LaunchProfilesActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;
@@ -1468,6 +1479,7 @@ export type LaunchProfilesActionResultById = {
                         description?: string | undefined;
                         defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                         defaultModelMode?: string | undefined;
+                        defaultBackendTargetKey?: string | undefined;
                         authMode?: 'machineLogin' | undefined;
                         requiresMachineLoginTargetKey?: string | undefined;
                         requiresMachineLogin?: string | undefined;

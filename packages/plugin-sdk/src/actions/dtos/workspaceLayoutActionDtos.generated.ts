@@ -17,6 +17,7 @@ export type WorkspaceLayoutActionInputById = {
             rootPath?: string | undefined;
         };
         path: string;
+        rootPath?: string | undefined;
         anchor?: {
             kind: 'fileLine';
             startLine: number;
@@ -74,6 +75,7 @@ export type WorkspaceLayoutActionInputById = {
                 rootPath?: string | undefined;
             };
             path: string;
+            rootPath?: string | undefined;
             anchor?: {
                 kind: 'fileLine';
                 startLine: number;

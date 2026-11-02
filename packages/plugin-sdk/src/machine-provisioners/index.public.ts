@@ -38,3 +38,5 @@ export {
 
 export type { MachineProvisionerNativeCauseV1, MachineProvisionerDimensionV1, MachineProvisionerDimensionOptionV1, MachineProvisionerSelectionV1, MachineProvisionerOptionSelectorV1, MachineProvisionerConditionalPriceV1, MachineProvisionerOptionConstraintV1, MachineProvisionerSelectionProjectionV1 } from '../machineProvisioners.js';
 export { MACHINE_PROVISIONER_DIMENSIONS_V1, projectMachineProvisionerSelectionV1 } from '../machineProvisioners.js';
+
+export type { MachineProvisionerProcessConfigV1 } from '../machineProvisioners.js';

@@ -23,7 +23,8 @@ export type ProvidersActionInputById = {
             selectedCandidateId: string | null;
             endpointOverrides?: {
                 endpointTemplateId: string;
-                baseUrl: string;
+                baseUrl?: string | undefined;
+                publicHeaders?: Record<string, string> | undefined;
             }[] | undefined;
         } | undefined;
     }, true>;
@@ -41,7 +42,8 @@ export type ProvidersActionInputById = {
             revision: number;
             endpointOverrides?: {
                 endpointTemplateId: string;
-                baseUrl: string;
+                baseUrl?: string | undefined;
+                publicHeaders?: Record<string, string> | undefined;
             }[] | undefined;
         };
     }, true>;
@@ -212,7 +214,7 @@ export type ProvidersActionInputById = {
         expectedRevision: number;
         scope: 'account' | 'machine';
         endpointTemplateId: string;
-        baseUrl: string | null;
+        baseUrl?: string | null | undefined;
     }, true>;
     readonly "providers.connections.duplicate": AccountOperand<{
         machineId: string;
@@ -1092,6 +1094,7 @@ export type ProvidersActionInputById = {
                             title?: string | {
                                 key: string;
                                 fallback: string;
+                                params?: Record<string, string | number> | undefined;
                             } | undefined;
                             required?: boolean | undefined;
                             materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
@@ -1274,6 +1277,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -1322,6 +1330,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -1342,6 +1351,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -1352,11 +1362,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -1566,6 +1593,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -1614,6 +1646,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -1634,6 +1667,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -1644,11 +1678,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -1761,6 +1812,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -1809,6 +1865,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -1829,6 +1886,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -1839,11 +1897,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -1956,6 +2031,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2004,6 +2084,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2024,6 +2105,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2034,11 +2116,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2151,6 +2250,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2199,6 +2303,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2219,6 +2324,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2229,11 +2335,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2346,6 +2469,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2394,6 +2522,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2414,6 +2543,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2424,11 +2554,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2541,6 +2688,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2589,6 +2741,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2609,6 +2762,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2619,11 +2773,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2736,6 +2907,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2784,6 +2960,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2804,6 +2981,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2814,11 +2992,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2931,6 +3126,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2979,6 +3179,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2999,6 +3200,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3009,11 +3211,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3126,6 +3345,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3174,6 +3398,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3194,6 +3419,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3204,11 +3430,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3321,6 +3564,11 @@ export type ProvidersActionResultById = {
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3369,6 +3617,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3389,6 +3638,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3399,11 +3649,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -4614,6 +4881,7 @@ export type ProvidersActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;

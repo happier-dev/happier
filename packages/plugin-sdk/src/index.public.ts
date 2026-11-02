@@ -255,3 +255,8 @@ export type { ProjectToolchainSelectionV1 } from './projectNativeAdapters.js';
 export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
 
 export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';
+
+export type { DeploymentTargetRoleV1 } from './deploymentTargets.js';
+export type { HealthCheckDnsConfigV1, HealthCheckHeartbeatConfigV1, HealthCheckTcpConfigV1 } from './healthCheckKinds.js';
+export type { PluginSecretSourceRequestV1 } from './secretSources.js';
+export type { DeploymentTargetDataInputV1 } from './deploymentTargets.js';

@@ -222,6 +222,38 @@ export type MachineConnectionActionInputById = {
     readonly "machines.pairing.create": {
         serverId: string;
     };
+    readonly "machines.managed.bootstrap.respond": {
+        purpose: 'approve';
+        prompt: {
+            kind: 'auth.approveRemoteProvisioning';
+            message: string;
+        } | {
+            kind: 'ssh.trustHost' | 'ssh.replaceHostKey';
+            message: string;
+            host: string;
+            keyType: string | null;
+            fingerprint: string;
+            existingFingerprint: string | null;
+        } | {
+            kind: 'daemon.replaceRemoteBackgroundServices';
+            message: string;
+        };
+        approved: boolean;
+        serverId: string;
+        homeId: string;
+        managedId: string;
+        operationId: string;
+        taskId: string;
+    } | {
+        purpose: 'establish';
+        promptId: string;
+        password: string;
+        serverId: string;
+        homeId: string;
+        managedId: string;
+        operationId: string;
+        taskId: string;
+    };
 };
 export type MachineConnectionActionResultById = {
     readonly "machines.terminal.open": {
@@ -455,5 +487,8 @@ export type MachineConnectionActionResultById = {
         pairId: string;
         link: string;
         expiresAtMs: number;
+    };
+    readonly "machines.managed.bootstrap.respond": {
+        taskId: string;
     };
 };

@@ -183,6 +183,7 @@ export type SavedSecretSharingActionInputById = {
                             defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
                             defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
                             defaultModelMode?: string | undefined;
+                            defaultBackendTargetKey?: unknown;
                             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
                             compatibility?: Record<string, boolean> | undefined;
                             authMode?: 'machineLogin' | undefined;
@@ -433,7 +434,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -446,11 +447,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     };
                                     importedAt: number;
                                 };
@@ -466,11 +477,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     } | undefined;
                                 } | undefined;
                             } | {
@@ -629,7 +650,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -642,11 +663,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     };
                                     importedAt: number;
                                 };
@@ -667,11 +698,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     } | undefined;
                                 } | undefined;
                             } | undefined;
@@ -847,11 +888,13 @@ export type SavedSecretSharingActionInputById = {
                             } | undefined;
                             endpointOverrides?: {
                                 endpointTemplateId: string;
-                                baseUrl: string;
+                                baseUrl?: string | undefined;
+                                publicHeaders?: Record<string, string> | undefined;
                             }[] | undefined;
                             endpointOverridesByMachineId?: Record<string, {
                                 endpointTemplateId: string;
-                                baseUrl: string;
+                                baseUrl?: string | undefined;
+                                publicHeaders?: Record<string, string> | undefined;
                             }[]> | undefined;
                             purposeBindingDefaults?: Record<string, {
                                 kind: 'account';
@@ -1292,8 +1335,8 @@ export type SavedSecretSharingActionInputById = {
                             sources: {
                                 id: string;
                                 title: string;
-                                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
-                                kinds: ('agent' | 'skill' | 'mcpServer' | 'plugin')[];
+                                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                                kinds: ('agent' | 'skill' | 'mcpServer' | 'plugin' | 'app')[];
                                 url: string;
                                 enabled: boolean;
                                 addedAt: number;

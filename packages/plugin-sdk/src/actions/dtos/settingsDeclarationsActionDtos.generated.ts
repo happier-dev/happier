@@ -102,6 +102,7 @@ export type SettingsDeclarationsActionInputById = {
     };
     readonly "settings.reset": {
         anchor: string;
+        key?: string | undefined;
         target?: {
             kind: 'home';
             serverId: string;
