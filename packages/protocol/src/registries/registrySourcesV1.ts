@@ -13,11 +13,12 @@ export const RegistryFormatV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type RegistryFormatV1 = z.infer<typeof RegistryFormatV1Schema>;
 
-export const RegistryKindV1Schema = lazyZodSchema(() => z.enum(['skill', 'mcpServer', 'agent', 'plugin', 'app']));
+export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app', 'browserExtension'] as const;
+export const RegistryKindV1Schema = lazyZodSchema(() => z.enum(REGISTRY_KINDS_V1));
 export type RegistryKindV1 = z.infer<typeof RegistryKindV1Schema>;
 export const REGISTRY_FORMAT_KINDS_V1: Readonly<Record<RegistryFormatV1, readonly RegistryKindV1[]>> = {
   'skills-sh': ['skill'], git: ['skill'], 'claude-marketplace': ['skill'], 'mcp-registry': ['mcpServer'],
-  'acp-registry': ['agent'], 'happier-catalog': ['skill', 'mcpServer', 'agent', 'plugin', 'app'], 'happier-npm': ['plugin', 'agent'],
+  'acp-registry': ['agent'], 'happier-catalog': REGISTRY_KINDS_V1, 'happier-npm': ['plugin', 'agent'],
   'coolify-templates': ['app'], 'dokploy-templates': ['app'],
 };
 export const RegistrySourceTokenV1Schema = lazyZodSchema(() => z.strictObject({ secretRef: z.string().check(z.minLength(1)),
@@ -168,7 +169,7 @@ export function readRegistrySourcesRecordV1(raw: unknown): RegistrySourcesRecord
 }
 // Other built-ins co-land with their format's first consuming unit.
 export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[] = [{
-  id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: ['skill', 'mcpServer', 'agent', 'plugin', 'app'],
+  id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: [...REGISTRY_FORMAT_KINDS_V1['happier-catalog']],
   url: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {
   id: 'builtin:skills-sh', title: 'skills.sh', format: 'skills-sh', kinds: ['skill'], url: 'https://skills.sh', enabled: true,

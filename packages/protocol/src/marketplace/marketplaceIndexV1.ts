@@ -12,6 +12,7 @@ import { NpmRegistryOriginV1Schema } from '../rpc/npmRegistryProfiles.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { PluginUpdatePolicyV1Schema } from './pluginUpdatePolicyV1.js';
 import { REGISTRY_FORMAT_KINDS_V1, RegistryFormatV1Schema } from '../registries/registrySourcesV1.js';
+import { RegistryBrowserExtensionCatalogEntryV1Schema } from '../registries/registryBrowserExtensionV1.js';
 
 const NonEmptyText = z.string().check(z.trim(), z.minLength(1));
 const Identifier = z.string().check(z.trim(), z.minLength(1), z.regex(/^[a-z0-9][a-z0-9._-]*$/));
@@ -240,6 +241,7 @@ export const MarketplaceIndexSourceSnapshotV1Schema = lazyZodSchema(() => z.stri
   }),
   entries: z.array(MarketplaceIndexEntryV1Schema),
   picks: z._default(z.array(HappierPickV1Schema), []),
+  browserExtensions: z.optional(z.array(RegistryBrowserExtensionCatalogEntryV1Schema)),
   diagnostics: z.array(MarketplaceDiagnosticV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.source.kind !== 'curated' && value.picks.length > 0) {

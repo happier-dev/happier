@@ -23,10 +23,13 @@ export const RegistryPackageContentRefV1Schema = lazyZodSchema(() => z.strictObj
   kind: z.literal('packageContent'), ...RegistryPackageContentSourceV1Schema.shape,
   digest: z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)),
 }));
+export const RegistryContentDigestRefV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('content'), digest: z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)),
+}));
 export const RegistryRemoteContentRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   RegistryGitTreeRefV1Schema,
   z.strictObject({ kind: z.literal('version'), version: z.string().check(z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('content'), digest: z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)) }),
+  RegistryContentDigestRefV1Schema,
   WellKnownSkillRefV1Schema,
 ]));
 export const RegistryContentRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

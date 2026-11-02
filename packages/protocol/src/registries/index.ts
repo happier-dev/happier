@@ -1,6 +1,7 @@
 export * from './registrySourcesV1.js';
 export * from './registryPluginSourcesV1.js';
 export * from './registryItemsV1.js';
+export * from './registryBrowserExtensionV1.js';
 export * from './registryListV1.js';
 export * from './registryUpdatesV1.js';
 export * from './registrySourcesMutationV1.js';

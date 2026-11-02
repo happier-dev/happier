@@ -1,6 +1,7 @@
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema } from './registryContentRefV1.js';
+import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
+import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema, RegistryContentDigestRefV1Schema } from './registryContentRefV1.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
   RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
 export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
@@ -114,6 +115,8 @@ export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUn
   z.strictObject({ kind: z.literal('skill'), skill: RegistrySkillSourceV1Schema }),
   z.strictObject({ kind: z.literal('mcpServer'), server: McpRegistryServerV1Schema }),
   z.strictObject({ kind: z.literal('agent'), agent: AcpRegistryAgentV1Schema }),
+  z.strictObject({ kind: z.literal('browserExtension'), extension: RegistryBrowserExtensionV1Schema,
+    ref: RegistryContentDigestRefV1Schema }),
   z.strictObject({ kind: z.literal('plugin'), listing: MarketplaceIndexEntryV1Schema,
     source: MarketplaceIndexSourceSnapshotV1Schema.shape.source }),
 ]));
@@ -126,6 +129,7 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
     : item.payload.kind === 'app' ? item.payload.ref.kind === 'gitTree' ? item.payload.ref.commit
       : item.payload.ref.kind === 'version' ? item.payload.ref.version
       : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
+    : item.payload.kind === 'browserExtension' ? item.payload.ref.digest
     : item.payload.kind === 'agent' ? item.payload.agent.version
       : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;
   if (item.summary.kind !== item.payload.kind || item.summary.version !== version

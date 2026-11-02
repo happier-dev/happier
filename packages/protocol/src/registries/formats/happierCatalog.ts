@@ -2,11 +2,12 @@ import { parseMarketplaceIndexSourceSnapshotV1, type HappierPickV1 } from '../..
 import { readMarketplaceSourceListingsV1 } from '../../marketplace/marketplaceSourceListingsV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
-import { deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
+import { REGISTRY_FORMAT_KINDS_V1, deriveRegistrySourceIdV1, type RegistrySourceV1 } from '../registrySourcesV1.js';
 import { RegistryItemV1Schema, type RegistryContentRefV1, type RegistryItemSummaryV1, type RegistryProvenanceV1 } from '../registryItemsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './index.js';
 import { registryPluginItemV1, registryPluginSummaryV1, registryPluginSupportsKindV1 } from './registryPluginListingV1.js';
 import { bindRegistryMarketplaceCatalogV1 } from './registryMarketplaceCatalogBindingV1.js';
+import { readHappierBrowserExtensionCatalogItemV1, registryBrowserExtensionSummaryV1 } from './happierBrowserExtensionCatalog.js';
 
 async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1,
   pinned?: Readonly<{ pluginId: string; version: string }>) {
@@ -20,20 +21,26 @@ async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1
 }
 
 export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
-  format: 'happier-catalog', kinds: ['skill', 'mcpServer', 'agent', 'plugin'], browserFetchable: () => true, supportsQuery: true,
+  format: 'happier-catalog', kinds: REGISTRY_FORMAT_KINDS_V1['happier-catalog'], browserFetchable: () => true, supportsQuery: true,
   async detect(ctx, url) {
     const response = await ctx.http.getJson(url);
     if (!response.ok) return null;
     try { const catalog = parseMarketplaceIndexSourceSnapshotV1(response.value);
       return { format: 'happier-catalog', kinds: [...new Set(['plugin' as const, ...catalog.picks.map(pick => pick.kind),
-        ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : [])])],
-        title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length };
+        ...(catalog.entries.some(entry => registryPluginSupportsKindV1(entry, 'agent')) ? ['agent' as const] : []),
+        ...(catalog.browserExtensions?.length ? ['browserExtension' as const] : [])])],
+        title: catalog.source.title, itemCount: catalog.entries.length + catalog.picks.length + (catalog.browserExtensions?.length ?? 0) };
     } catch { return null; }
   },
   async list(ctx, req) {
     try {
       const { catalog, fetchedAt } = await readCatalog(ctx, req.source);
       const query = (req.query ?? '').trim().toLocaleLowerCase();
+      if (req.kind === 'browserExtension') {
+        const items = (catalog.browserExtensions ?? []).map(entry => registryBrowserExtensionSummaryV1(req.source.id, entry))
+          .filter(item => !query || `${item.title} ${item.description ?? ''} ${item.itemId}`.toLocaleLowerCase().includes(query));
+        return { sourceId: req.source.id, status: { state: 'ok', fetchedAt }, items, total: items.length, nextCursor: null };
+      }
       if (req.kind !== 'plugin') {
         const picks = catalog.picks.filter(pick => pick.kind === req.kind);
         const counts = new Map<string, number>();
@@ -78,6 +85,8 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   async read(ctx, req) {
     const { catalog, fetchedAt } = await readCatalog(ctx, req.source,
       (req.kind === 'plugin' || req.kind === 'agent') && req.version ? { pluginId: req.itemId, version: req.version } : undefined);
+    if (req.kind === 'browserExtension') return readHappierBrowserExtensionCatalogItemV1({ sourceId: req.source.id,
+      entries: catalog.browserExtensions ?? [], itemId: req.itemId, version: req.version, fetchedAt });
     if (req.kind !== 'plugin') {
       const picks = catalog.picks.filter(pick => pick.kind === req.kind && pickItemId(pick) === req.itemId);
       const pick = picks.length === 1 ? picks[0] : undefined;
