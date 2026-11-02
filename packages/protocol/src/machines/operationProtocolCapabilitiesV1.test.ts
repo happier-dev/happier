@@ -14,6 +14,19 @@ function readCapabilitySchema(): CapabilitySchema {
 }
 
 describe('MachineOperationProtocolCapabilitiesV1', () => {
+  it('advertises enforce-or-refuse requester execution without treating native readiness as support', () => {
+    const capabilities = { requesterExecutionIsolation: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse(capabilities).success).toBe(true);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(capabilities)).toMatchObject({
+      success: true, data: capabilities,
+    });
+    expect(protocol.MachineOperationProtocolCapabilitiesV1Schema.safeParse({
+      requesterExecutionIsolation: { protocolVersions: [1], effective: true },
+    }).success).toBe(false);
+    expect(protocol.MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse({
+      ...capabilities, requesterExecutionIsolation: { protocolVersions: [2] },
+    })).toMatchObject({ success: true, data: { sessionSpawn: { protocolVersions: [1] } } });
+  });
   it('negotiates private authoring provenance independently and fails closed on an unknown epoch', () => {
     const capability = 'sessionSpawnAuthoringOrigin';
     const capabilities = { sessionSpawnAuthoringOrigin: { protocolVersions: [1] }, sessionSpawn: { protocolVersions: [1] } };

@@ -1,3 +1,4 @@
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod/mini';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { SpawnSessionTerminalSchema } from '@happier-dev/protocol/spawnSession';
@@ -44,6 +45,12 @@ import {
 } from '@/session/shared/spawnSessionContract';
 import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from './spawnRuntimeSelection';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
+
+/** Actual private lifecycle registrations; not the public fresh-spawn Action. */
+export const PRIVATE_SPAWN_SESSION_RPC_METHODS = Object.freeze({
+  primary: RPC_METHODS.SPAWN_HAPPY_SESSION,
+  providerSafe: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+});
 
 function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
   if (values.length === 0) {

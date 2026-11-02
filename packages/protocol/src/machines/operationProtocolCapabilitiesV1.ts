@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
-import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 export const MachineOperationProtocolVersionsV1Schema = lazyZodSchema(() => z.readonly(z
   .tuple([z.literal(1)])));
@@ -28,7 +28,10 @@ export const MachineIrohEndpointCapabilityV1Schema = lazyZodSchema(() => z.reado
     protocolVersions: MachineOperationProtocolVersionsV1Schema,
   }))));
 
-export const MachineOperationProtocolCapabilitiesV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z.strictObject({
+    // Installed ingress enforces the admitted requester's execution/file boundary
+    // or refuses before effects. This is not native setup/effectiveness evidence.
+    requesterExecutionIsolation: z.optional(MachineOperationProtocolCapabilityV1Schema),
     sessionInputAdmission: z.optional(MachineOperationProtocolCapabilityThroughV2Schema),
     sessionMessageReply: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Published only once the admitted host can open B witnesses and release held Pending input.
@@ -58,9 +61,22 @@ export const MachineOperationProtocolCapabilitiesV1Schema = lazyZodSchema(() => 
       contextV1: z.literal(true),
       wakeOnHumanChangeV1: z.optional(z.literal(true)),
     }))),
-  })));
+  }));
 
-/** Retained Machine reads strip extras; publication and events stay strict. */
+export const MachineOperationProtocolCapabilitiesV1Schema = defineStoredReadProjection(
+  lazyZodSchema(() => z.readonly(MachineOperationProtocolCapabilitiesV1ObjectSchema)),
+  () => {
+    const shape = MachineOperationProtocolCapabilitiesV1ObjectSchema.shape;
+    // Every optional leaf retains its own value validation. A newer or malformed
+    // leaf supplies no support, without withdrawing independently valid siblings.
+    const readShape = Object.fromEntries(Object.entries(shape).map(([name, schema]) => [
+      name, z.catch(createStoredReadSchema(schema), undefined),
+    ])) as { [K in keyof typeof shape]: z.ZodMiniCatch<(typeof shape)[K]> };
+    return z.readonly(z.object(readShape));
+  },
+);
+
+/** Retained reads strip extras and isolate invalid leaves; writes stay strict. */
 export const MachineOperationProtocolCapabilitiesV1StoredReadSchema = createStoredReadSchema(
   MachineOperationProtocolCapabilitiesV1Schema,
 );

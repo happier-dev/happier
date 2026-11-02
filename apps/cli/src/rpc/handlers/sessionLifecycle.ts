@@ -19,7 +19,7 @@ import {
     type SpawnSessionNonceResolver,
 } from '@/session/services/awaitSpawnedSessionId';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import { SpawnDaemonSessionRequestSchema } from './spawnSessionOptionsContract';
+import { SpawnDaemonSessionRequestSchema, PRIVATE_SPAWN_SESSION_RPC_METHODS } from './spawnSessionOptionsContract';
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootstrapRpcRequestV1,
     SessionRequesterHandoffBootstrapRpcRequestV1Schema, openSessionRequesterHandoffBootstrapRpcRequestV1,
@@ -652,11 +652,11 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
     };
 
     params.rpcHandlerManager.registerHandler(
-        RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+        PRIVATE_SPAWN_SESSION_RPC_METHODS.providerSafe,
         async (input, context) => await handle(input, true, context),
     );
     params.rpcHandlerManager.registerHandler(
-        RPC_METHODS.SPAWN_HAPPY_SESSION,
+        PRIVATE_SPAWN_SESSION_RPC_METHODS.primary,
         async (input, context) => await handle(input, false, context),
     );
 }
