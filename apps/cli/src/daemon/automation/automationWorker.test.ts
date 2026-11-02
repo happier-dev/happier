@@ -257,7 +257,7 @@ describe('automationWorker', () => {
     mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     mockPost.mockResolvedValue({ data: { run: null, automation: null } });
     const admissionDrain = createDaemonAdmissionDrain();
-    admissionDrain.beginTemporaryDrain();
+    const releaseDrain = admissionDrain.beginTemporaryDrain();
     const worker = startCapacityAutomationWorker({ token: 'token',
       credentials: { token: 'token', encryption: null }, machineId: 'machine-1', admissionDrain });
     try {
@@ -269,7 +269,7 @@ describe('automationWorker', () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       await settleRequestDispatch();
       expect(mockPost.mock.calls.filter(([url]) => String(url).endsWith('/runs/claim'))).toHaveLength(0);
-      admissionDrain.resume();
+      releaseDrain();
       await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/runs/claim')));
     } finally { worker.stop(); }
   });

@@ -567,7 +567,7 @@ describe('SCM generation through real host admission', () => {
                             error: expect.any(String),
                             details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
                         expect(ExecutionRunListResponseSchema.parse(await client.call('execution.run.list', {})).runs).toEqual([]);
-                        admissionDrain.beginTemporaryDrain();
+                        const releaseDrain = admissionDrain.beginTemporaryDrain();
                         try {
                             forbidParentSelectionReads = true;
                             try {
@@ -582,7 +582,7 @@ describe('SCM generation through real host admission', () => {
                             expect(drained).toMatchObject({ ok: false, errorCode: 'execution_run_failed', error: 'daemon_draining',
                                 details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
                             expect(ExecutionRunListResponseSchema.parse(await client.call('execution.run.list', {})).runs).toEqual([]);
-                        } finally { admissionDrain.resume(); }
+                        } finally { releaseDrain(); }
                     };
                     // The machine owner creates the saved result before invoking
                     // the Session's Run. Observe only that genuine network boundary.

@@ -63,7 +63,9 @@ export function createCliMachineResourceActionDeps(
         // Only the receiving factory installs this private callback, with its
         // genuine stamped ingress. Other local callers still traverse Home.
         if (direct?.machineId === input.machineId && direct.machineReboot) return direct.machineReboot({ input, context,
-          canReadEnvironment: async environmentId => await canReadServiceEnvironment(input.serverId, environmentId, context) === true,
+          canReadEnvironments: async environmentIds => new Set((await Promise.all(environmentIds.map(async environmentId =>
+            await canReadServiceEnvironment(input.serverId, environmentId, context) === true ? environmentId : null)))
+            .filter((environmentId): environmentId is string => environmentId !== null)),
           ...(signal ? { signal } : {}) });
         return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
           method: RPC_METHODS.MACHINES_REBOOT, request: input, authority: context.authority,

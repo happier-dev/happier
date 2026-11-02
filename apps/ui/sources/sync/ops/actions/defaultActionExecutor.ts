@@ -268,7 +268,7 @@ import { createManagedMachineActionClient, ManagedMachineActionError } from '@/s
 import { executeManagedMachineNativeAction } from '@/sync/api/machines/managedMachineOrigination';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import { createUiManagedMachineReferenceReader } from './managedMachineReferenceDeps';
+import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createRunnerActivationClient, RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
@@ -786,6 +786,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   machineStorageAction?: NonNullable<ActionExecutorDeps['machineStorageAction']>;
   machineGuardAction?: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   machineProcessesAction?: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
+  machineServiceAction?: NonNullable<ActionExecutorDeps['machineServiceAction']>;
+  machineReboot?: NonNullable<ActionExecutorDeps['machineReboot']>;
   machineResourcesPolicyAction?: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
   usageSourceDismiss?: Parameters<typeof createUiUsageSourceActionPort>[1];
   /** A mounted recap preview may provide the same client rasterization boundary. */
@@ -3037,6 +3039,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.machineResourcesPolicyAction ?? capturedFamilyPorts?.machineResourcesPolicyAction
       ? { machineResourcesPolicyAction: opts?.machineResourcesPolicyAction ?? capturedFamilyPorts!.machineResourcesPolicyAction }
       : {}),
+    ...(opts?.machineServiceAction ?? capturedFamilyPorts?.machineServiceAction
+      ? { machineServiceAction: opts?.machineServiceAction ?? capturedFamilyPorts!.machineServiceAction }
+      : {}),
+    ...(opts?.machineReboot ?? capturedFamilyPorts?.machineReboot
+      ? { machineReboot: opts?.machineReboot ?? capturedFamilyPorts!.machineReboot }
+      : {}),
     ...(capturedFamilyPorts ? { skillMachineActionExecute: capturedFamilyPorts.skillMachineActionExecute } : {}),
     ...(machineAccessAction
       ? { machineAccessAction }
@@ -3081,7 +3089,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         else { const { router } = await import('expo-router'); router.replace(path as never); }
       }) } : {}),
     ...(opts?.workspaceSyncConflictResolve ? { workspaceSyncConflictResolve: opts.workspaceSyncConflictResolve } : {}),
-    ...(accountContext ? { managedMachineReferences: createUiManagedMachineReferenceReader(accountContext) } : {}),
+    ...(accountContext ? { managedMachineReferences: createUiManagedMachineReferenceReader(accountContext),
+      machineRebootReferences: async ({ input, cursor, signal }) => {
+        accountContext.assertCurrent();
+        if (!areServerProfileIdentifiersEquivalent(accountContext.serverId, input.serverId)) throw new Error('server_target_mismatch');
+        const page = await createUiMachineDeploymentReferenceReader(accountContext)({
+          homeId: accountContext.serverIdentityId ?? input.serverId, machineId: input.machineId, ...(cursor ? { cursor } : {}),
+        }, signal);
+        accountContext.assertCurrent();
+        return page;
+      },
+    } : {}),
     managedMachineAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       accountContext.assertCurrent();
@@ -4634,6 +4652,8 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   machineStorageAction: NonNullable<ActionExecutorDeps['machineStorageAction']>;
   machineGuardAction: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   machineProcessesAction: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
+  machineServiceAction: NonNullable<ActionExecutorDeps['machineServiceAction']>;
+  machineReboot: NonNullable<ActionExecutorDeps['machineReboot']>;
   machineResourcesPolicyAction: NonNullable<ActionExecutorDeps['machineResourcesPolicyAction']>;
   skillMachineActionExecute: NonNullable<ActionExecutorDeps['skillMachineActionExecute']>;
   discussionAction: NonNullable<ActionExecutorDeps['discussionAction']>;
@@ -4706,6 +4726,8 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
         availability: await readCollaborationAvailability(), ...(args.signal ? { signal: args.signal } : {}) });
     },
     machineProcessesAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
+    machineServiceAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
+    machineReboot: ({ input, context, signal }) => machineActionRpc('machines.reboot', input, signal, context.actionRequestId ?? undefined),
     // Guard reads, Activity, Undo and Keep running are the target daemon's: Undo re-runs the captured
     // original Action there, through its own approval, so the host only carries the request.
     machineGuardAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined,

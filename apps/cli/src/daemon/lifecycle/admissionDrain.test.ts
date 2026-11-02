@@ -3,9 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { createDaemonAdmissionDrain, waitForDaemonAdmission } from './admissionDrain';
 
 describe('daemon admission drain', () => {
+    it('publishes only admission changes and releases each temporary contribution once', () => {
+        const drain = createDaemonAdmissionDrain();
+        const admissions: boolean[] = [];
+        drain.subscribe(() => { admissions.push(drain.isQuiescing()); });
+        const releaseFirst = drain.beginTemporaryDrain();
+        const releaseSecond = drain.beginTemporaryDrain();
+        expect(admissions).toEqual([true]);
+        releaseFirst();
+        releaseFirst();
+        expect(drain.isQuiescing()).toBe(true);
+        expect(admissions).toEqual([true]);
+        releaseSecond();
+        releaseSecond();
+        expect(drain.isQuiescing()).toBe(false);
+        expect(admissions).toEqual([true, false]);
+    });
     it('reopens unused-stop without clearing independent temporary refusal', async () => {
         const drain = createDaemonAdmissionDrain();
-        drain.beginTemporaryDrain();
+        const releaseDrain = drain.beginTemporaryDrain();
         drain.beginUnusedStopDrain();
         drain.resumeUnusedStop();
         expect(drain.isQuiescing()).toBe(true);
@@ -14,23 +30,23 @@ describe('daemon admission drain', () => {
         const admitted = waitForDaemonAdmission(drain).then(() => { executed = true; });
         await Promise.resolve();
         expect(executed).toBe(false);
-        drain.resume();
+        releaseDrain();
         await admitted;
         expect(executed).toBe(true);
         drain.beginUnusedStopDrain();
-        drain.resume();
+        releaseDrain();
         expect(drain.isQuiescing()).toBe(true);
         drain.resumeUnusedStop();
         expect(drain.isQuiescing()).toBe(false);
     });
     it('retains a waiting leaf through temporary drain and releases it only on reopen', async () => {
         const drain = createDaemonAdmissionDrain();
-        drain.beginTemporaryDrain();
+        const releaseDrain = drain.beginTemporaryDrain();
         let started = false;
         const leaf = waitForDaemonAdmission(drain).then(() => { started = true; });
         await Promise.resolve();
         expect(started).toBe(false);
-        drain.resume();
+        releaseDrain();
         await leaf;
         expect(started).toBe(true);
         drain.beginTemporaryDrain();
@@ -45,25 +61,25 @@ describe('daemon admission drain', () => {
     it('reopens only its temporary cause and preserves plugin handoff exclusion', () => {
         let pluginHandoff = false;
         const drain = createDaemonAdmissionDrain({ isPluginHandoffQuiescing: () => pluginHandoff });
-        drain.beginTemporaryDrain();
+        const releaseDrain = drain.beginTemporaryDrain();
         expect(drain.isQuiescing()).toBe(true);
         expect(drain.isPublicationQuiescing()).toBe(false);
         pluginHandoff = true;
-        drain.resume();
+        releaseDrain();
         expect(drain.isQuiescing()).toBe(true);
         expect(drain.isPublicationQuiescing()).toBe(true);
         pluginHandoff = false;
         drain.notifyPluginHandoffChanged();
         expect(drain.isQuiescing()).toBe(false);
-        drain.beginTemporaryDrain();
+        const releaseNextDrain = drain.beginTemporaryDrain();
         pluginHandoff = true;
         drain.notifyPluginHandoffChanged();
         pluginHandoff = false;
         drain.notifyPluginHandoffChanged();
         expect(drain.isQuiescing()).toBe(true);
-        drain.resume();
+        releaseNextDrain();
         drain.beginShutdown();
-        drain.resume();
+        releaseNextDrain();
         expect(drain.isFinalShutdown()).toBe(true);
     });
 });

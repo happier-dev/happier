@@ -4,7 +4,7 @@ import { act, createMachineFixture, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { ActionOperationSnapshotV1Schema, MachineServiceRowV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import { ACTION_OPERATION_RPC_METHODS_V2, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { listActionOperations, type ActionOperationRpc } from '@/sync/ops/actionOperations';
@@ -54,6 +54,62 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation observation runtime', () => {
+    it('settles the surviving reboot holder from changed boot and restored healthless services, without polling or losing its result', async () => {
+        const store = createActionOperationStore();
+        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running', startedAt: 1000,
+            domainRef: { kind: 'machineReboot', serverId: scope.serverId, machineId: scope.machineId, installationId: 'installation',
+                task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1000,
+                    expectedRunningServiceIds: ['worker'], expectedRunningServicesKnown: true, dispatchStarted: true } } });
+        store.mergeSnapshots({ serverId: scope.serverId, snapshots: [reboot] });
+        const restored = MachineServiceRowV1Schema.parse({ serviceId: 'worker', name: 'Worker', authority: 'project',
+            lifecyclePurpose: 'development', generation: 'new-generation', state: 'running',
+            native: { phase: 'running', readiness: 'not_reported' },
+            capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } });
+        // External Machine reads only: the new daemon has no old operation, and
+        // ordinary admitted facts describe its actual new boot/services.
+        const rpc = (async () => ({ items: [], nextCursor: null })) as ActionOperationRpc;
+        const facts = vi.fn(async () => ({ installationId: 'installation', bootedAt: 2000, services: [restored] }));
+        const params = { scope, store, list: (input: Parameters<typeof listActionOperations>[0]) => listActionOperations({ ...input, rpc }),
+            readRebootFacts: facts };
+        await reconcileActionOperationsOnce(params);
+        const selectors = createActionOperationSelectors();
+        expect(selectors.selectById(store.getSnapshot(), { serverId: scope.serverId, operationId: reboot.operationId }))
+            .toMatchObject({ snapshot: { state: 'succeeded', progress: { phase: 'reboot.restored_unverified' } }, observation: 'available' });
+        let publications = 0;
+        const release = store.subscribe(() => { publications++; });
+        await reconcileActionOperationsOnce(params);
+        expect(selectors.selectById(store.getSnapshot(), { serverId: scope.serverId, operationId: reboot.operationId })?.snapshot.state).toBe('succeeded');
+        expect(publications).toBe(0);
+        expect(facts).toHaveBeenCalledTimes(1);
+        release();
+    });
+    it.each(['missing-service', 'different-installation', 'same-boot', 'unknown-current-boot', 'unknown-before-facts', 'failed-service', 'not-ready', 'unavailable-facts'] as const)(
+        'keeps lost reboot outcome explicitly unknown for %s and equal observations publish nothing', async condition => {
+            const store = createActionOperationStore();
+            const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running', startedAt: 1000,
+                domainRef: { kind: 'machineReboot', serverId: scope.serverId, machineId: scope.machineId, installationId: 'installation',
+                    task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1000,
+                        expectedRunningServiceIds: ['worker'], expectedRunningServicesKnown: condition !== 'unknown-before-facts', dispatchStarted: true } } });
+            store.mergeSnapshots({ serverId: scope.serverId, snapshots: [reboot] });
+            const row = MachineServiceRowV1Schema.parse({ serviceId: 'worker', name: 'Worker', authority: 'project',
+                lifecyclePurpose: 'development', generation: 'new-generation', state: condition === 'failed-service' ? 'failed' : 'running',
+                native: { phase: 'running', readiness: condition === 'not-ready' ? 'not_ready' : 'not_reported' },
+                capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } });
+            const rpc = (async () => ({ items: [], nextCursor: null })) as ActionOperationRpc;
+            const params = { scope, store, list: (input: Parameters<typeof listActionOperations>[0]) => listActionOperations({ ...input, rpc }),
+                readRebootFacts: async () => ({ installationId: condition === 'different-installation' ? 'replacement' : 'installation',
+                    bootedAt: condition === 'unknown-current-boot' ? null : condition === 'same-boot' ? 1000 : 2000,
+                    services: condition === 'missing-service' ? [] : condition === 'unavailable-facts' ? null : [row] }) };
+            await reconcileActionOperationsOnce(params);
+            const retained = () => createActionOperationSelectors().selectById(store.getSnapshot(), { serverId: scope.serverId, operationId: reboot.operationId });
+            expect(retained()).toMatchObject({ snapshot: { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } }, observation: 'unavailable' });
+            let publications = 0;
+            const release = store.subscribe(() => { publications++; });
+            await reconcileActionOperationsOnce(params);
+            expect(publications).toBe(0);
+            release();
+        },
+    );
     it('hydrates retained setup after a pushed Machine recovery, sharing bursts and stopping retired reads without polling', async () => {
         const { actionOperationStore } = await import('./actionOperationStore');
         actionOperationStore.reset();

@@ -101,11 +101,11 @@ describe('managed guest activity bridge', () => {
         const owner = setup();
         expect(await owner.call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'begin' }))
             .toEqual({ kind: 'idle', since: 100 });
-        owner.drain.beginTemporaryDrain();
+        const releaseDrain = owner.drain.beginTemporaryDrain();
         owner.setTarget(false);
         await owner.call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'resume' });
         expect(owner.drain.isQuiescing()).toBe(true);
-        owner.drain.resume();
+        releaseDrain();
         expect(owner.drain.isQuiescing()).toBe(false);
         owner.inventory.dispose();
     });

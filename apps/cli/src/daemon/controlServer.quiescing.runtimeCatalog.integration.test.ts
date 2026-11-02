@@ -46,7 +46,7 @@ describe('daemon control server quiescing producer routes', () => {
         headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} });
       expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
         headers: { 'x-happier-daemon-token': 'test-token' }, payload: {} })).statusCode).toBe(401);
-      admissionDrain.beginTemporaryDrain();
+      const releaseDrain = admissionDrain.beginTemporaryDrain();
       expect((await runAdmission()).json()).toEqual({ admitted: false, reason: 'daemon_draining' });
       expect((await app.inject({ method: 'POST', url: '/connected-service-turn-lifecycle',
         headers: { 'x-happier-daemon-token': 'test-token' },
@@ -71,11 +71,11 @@ describe('daemon control server quiescing producer routes', () => {
       await expect(releaseDaemonForegroundAgentRuntime({ v: 1, attemptId: 'attempt-1', sessionId: 'session-1' }, clientOptions))
         .rejects.toMatchObject({ code: 'daemon_draining' });
       expect(admissionDrain.isPublicationQuiescing()).toBe(false);
-      admissionDrain.resume();
+      releaseDrain();
       expect((await runAdmission()).json()).toEqual({ admitted: true });
       expect((await spawn()).json()).toMatchObject({ success: true, sessionId: 'happy-test-123' });
       admissionDrain.beginShutdown();
-      admissionDrain.resume();
+      releaseDrain();
       expect((await runAdmission()).json()).toEqual({ admitted: false, reason: 'daemon_shutting_down' });
       expect((await spawn()).json()).toMatchObject({ errorCode: 'daemon_shutting_down' });
       await expect(admitDaemonForegroundAgentRuntime(foregroundRequest, clientOptions))
@@ -84,8 +84,8 @@ describe('daemon control server quiescing producer routes', () => {
   });
   it.each(['temporary', 'unused-stop overlap', 'plugin handoff', 'final', 'legacy final'] as const)('rejects runtime producer routes with their %s drain cause', async (cause) => {
     const admissionDrain = createDaemonAdmissionDrain({ isPluginHandoffQuiescing: () => cause === 'plugin handoff' });
-    if (cause === 'temporary' || cause === 'unused-stop overlap') admissionDrain.beginTemporaryDrain();
-    if (cause === 'unused-stop overlap') { admissionDrain.beginUnusedStopDrain(); admissionDrain.resume(); }
+    const releaseDrain = cause === 'temporary' || cause === 'unused-stop overlap' ? admissionDrain.beginTemporaryDrain() : () => {};
+    if (cause === 'unused-stop overlap') { admissionDrain.beginUnusedStopDrain(); releaseDrain(); }
     if (cause === 'final') admissionDrain.beginShutdown();
     const handleSessionConnectedServiceAuthSwitch = vi.fn(async () => ({ status: 'switched' }));
     const handleSessionRunnerRestart = vi.fn(async () => ({

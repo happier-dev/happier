@@ -1,12 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActionOperationStore } from './actionOperationStore';
-import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorActionOperationSnapshotV1Schema } from './testFixtures/predecessorActionOperationV1';
 
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('retains an exact typed refusal receipt without treating its successful transport envelope as operation success', () => {
+    const store = createActionOperationStore();
+    store.create({ operationId: 'reboot-blocked', actionId: 'machines.reboot', title: 'Reboot',
+      scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
+    store.markRunning('reboot-blocked');
+    const receipt = { kind: 'blocked', reasons: ['setup'] };
+    // A variable preserves the current runtime call boundary for RED: current
+    // fail ignores the third argument, rather than failing on an absent export.
+    const fail: (id: string, error: { errorCode: string; error: string }, result?: unknown) => unknown = store.fail;
+    fail('reboot-blocked', { errorCode: 'action_operation_failed', error: 'action_operation_failed' }, receipt);
+    expect(store.get(ACCOUNT_SCOPE, 'reboot-blocked')).toMatchObject({ state: 'failed', result: receipt,
+      error: { errorCode: 'action_operation_failed' } });
+    // Consume the actual producer's retained row at the real strict reader.
+    expect(ActionOperationGetV1ResponseSchema.parse({ kind: 'found',
+      operation: store.get(ACCOUNT_SCOPE, 'reboot-blocked') })).toMatchObject({ operation: { state: 'failed', result: receipt } });
+    expect(store.get({ ...ACCOUNT_SCOPE, accountId: 'other' }, 'reboot-blocked')).toBeNull();
+    store.succeed('reboot-blocked', { kind: 'accepted' });
+    expect(store.get(ACCOUNT_SCOPE, 'reboot-blocked')).toMatchObject({ state: 'failed', result: receipt });
+  });
   it('does not publish another retention wake for an unchanged retained resource reference', () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'retention', actionId: 'machines.managed.power.set', title: 'Unused Stop',

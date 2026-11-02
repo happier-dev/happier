@@ -17,6 +17,8 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectServiceRelocateInputV1, ProjectServiceMoveStartClaimResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 
+import { MachineRebootResultV1Schema } from '@happier-dev/protocol';
+
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { createActionOperationSetupReview } from './actionOperationSetupReview';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -97,7 +99,15 @@ function isFiniteProjectCommand(actionId: string): boolean {
   return actionId === 'projects.script.run' || actionId === 'projects.compute.exec' || actionId === 'projects.prepare';
 }
 
+function isUnconfirmedNativeOutcome(actionId: string, result: ActionExecuteResult | undefined): result is Extract<ActionExecuteResult, { ok: false }> {
+  return !!result && !result.ok && (result.errorCode === 'indeterminate'
+    || (actionId === 'machines.services.control' || actionId === 'machines.services.exec' || actionId === 'machines.reboot'
+      || actionId === 'machines.storage.docker.prune') && result.errorCode === 'action_outcome_unknown'
+    || actionId === 'machines.agentIsolation.set' && result.errorCode === 'outcome_unknown');
+}
+
 function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult): boolean {
+  if (actionId === 'machines.reboot') return !result.ok && result.errorCode === 'action_outcome_unknown';
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry') {
     return !result.ok && result.errorCode === 'action_outcome_unknown';
@@ -183,6 +193,7 @@ export function createActionOperationRunner(deps: Readonly<{
         },
       };
       const cancellationListeners = new Set<() => void>();
+      const ownerEvidence: { outcome?: ActionExecuteResult } = {};
       const onCancellationRequested = (listener: () => void): (() => void) => {
         cancellationListeners.add(listener);
         return () => { cancellationListeners.delete(listener); };
@@ -204,6 +215,11 @@ export function createActionOperationRunner(deps: Readonly<{
         }
       };
       const publishOwnerUpdate = (update: ActionOperationOwnerUpdate): void => {
+        if (update.cancellation !== undefined) {
+          cancellation = update.cancellation;
+          deps.store.updateCancellation(operationId, cancellation);
+        }
+        if (update.outcome !== undefined) ownerEvidence.outcome = update.outcome;
         if (update.domainRef) {
           const domainRef = ActionOperationDomainRefV1Schema.safeParse(update.domainRef);
           if (domainRef.success) deps.store.updateDomainRef(operationId, domainRef.data);
@@ -222,7 +238,7 @@ export function createActionOperationRunner(deps: Readonly<{
       const result = Promise.resolve().then(async (): Promise<ActionExecuteResult> => {
         try {
           const attribution = deps.store.readRequesterWorkAttribution(operationId);
-          const executionResult = await request.execute({
+          const handlerResult = await request.execute({
             ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
             actionRequestId: request.requestId ?? operationId,
             ...(resumeActionRequest ? { resumeActionRequest: true as const } : {}),
@@ -237,11 +253,49 @@ export function createActionOperationRunner(deps: Readonly<{
               else accept({ ok: true, result });
             } },
           });
-          if (executionResult.operationCredentialUses) {
-            deps.store.updateCredentialUses(operationId, executionResult.operationCredentialUses);
+          // Only the private native owner supplies effect evidence. Valid plugin
+          // JSON is not a success receipt, and native completion cannot erase a
+          // failure in the handler's later admitted work.
+          const nativeOutcome = ownerEvidence.outcome;
+          if (handlerResult.operationCredentialUses) {
+            deps.store.updateCredentialUses(operationId, handlerResult.operationCredentialUses);
+          }
+          const executionResult = !handlerResult.ok ? handlerResult
+            : nativeOutcome && !nativeOutcome.ok ? {
+              ...nativeOutcome,
+              ...(handlerResult.operationCredentialUses ? { operationCredentialUses: handlerResult.operationCredentialUses } : {}),
+            } : handlerResult;
+          if (isUnconfirmedNativeOutcome(action.actionId, nativeOutcome)) {
+            // A later handler failure is still returned intact, but cannot
+            // turn an unconfirmed physical effect into known terminal evidence.
+            deps.store.updateObservation(operationId, { kind: 'outcome_uncertain',
+              code: handlerResult.ok ? nativeOutcome.errorCode : handlerResult.errorCode });
+            const rebootReceipt = action.actionId === 'machines.reboot' && handlerResult.ok
+              ? MachineRebootResultV1Schema.safeParse(handlerResult.result) : null;
+            if (rebootReceipt?.success && rebootReceipt.data.kind === 'accepted'
+              && rebootReceipt.data.operation.operationId === operationId) return handlerResult;
+            return executionResult;
           }
           if (isRecoverableIndeterminateHandoff(action.actionId, executionResult)) {
             return executionResult;
+          }
+          if (action.actionId === 'machines.reboot' && executionResult.ok) {
+            const receipt = MachineRebootResultV1Schema.safeParse(executionResult.result);
+            if (receipt.success && receipt.data.kind === 'accepted') {
+              deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: 'action_outcome_unknown' });
+              if (receipt.data.operation.operationId !== operationId) return { ok: false,
+                errorCode: 'action_outcome_unknown', error: 'Reboot dispatch could not be correlated with this operation' };
+              return executionResult;
+            }
+            if (receipt.success && receipt.data.kind !== 'accepted') {
+              // A typed refusal is not physical success simply because the
+              // transport/domain envelope was parsed successfully. Retain the
+              // exact receipt at the SAME operation owner for its consumers.
+              const errorCode = receipt.data.kind === 'blocked' ? 'action_operation_failed'
+                : receipt.data.kind === 'failed' ? receipt.data.reasonCode : receipt.data.reason;
+              deps.store.fail(operationId, { errorCode, error: errorCode }, receipt.data);
+              return executionResult;
+            }
           }
           if (action.actionId === 'session.spawn_new' && executionResult.ok) {
             const settlement = SessionSpawnNewResultV1Schema.safeParse(executionResult.result);

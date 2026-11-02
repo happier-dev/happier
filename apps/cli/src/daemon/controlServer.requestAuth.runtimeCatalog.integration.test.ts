@@ -137,12 +137,12 @@ describe('daemon private connected-account request-auth routes', () => {
       headers: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: secret }, payload: { purpose } });
     try {
       expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
-      admissionDrain.beginTemporaryDrain();
+      const releaseDrain = admissionDrain.beginTemporaryDrain();
       expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
-      admissionDrain.resume();
+      releaseDrain();
       expect((await lookup()).statusCode).toBe(200);
       admissionDrain.beginShutdown();
-      admissionDrain.resume();
+      releaseDrain();
       expect((await lookup()).json()).toEqual({ ok: false, error: { code: 'request_auth_unavailable' } });
     } finally {
       await app.close();

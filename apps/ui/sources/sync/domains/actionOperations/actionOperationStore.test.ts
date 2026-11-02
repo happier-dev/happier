@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectCommandSourceV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -43,6 +43,42 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation store', () => {
+    it('applies reboot recovery facts only to the retained Home, Account and Machine', () => {
+        const store = createActionOperationStore();
+        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running',
+            domainRef: { kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
+                task: { id: 'task', taskKind: 'machine.reboot.v1' }, basis: { bootedAt: 1000,
+                    expectedRunningServiceIds: [], expectedRunningServicesKnown: true, dispatchStarted: true } } });
+        merge(store, [reboot]);
+        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [],
+            knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(reboot.operationId))]) });
+        const retained = store.getSnapshot();
+        const input = { serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', operationId: reboot.operationId,
+            facts: { installationId: 'installation', bootedAt: 2000, services: [] } };
+        for (const foreignScope of [{ serverId: 'other-home' }, { accountId: 'other-account' }, { machineId: 'other-machine' }]) {
+            store.reobserveMachineReboot({ ...input, ...foreignScope });
+            expect(store.getSnapshot()).toBe(retained);
+        }
+        store.reobserveMachineReboot(input);
+        expect(createActionOperationSelectors().selectById(store.getSnapshot(), operationAddress(reboot.operationId)))
+            .toMatchObject({ snapshot: { state: 'succeeded', progress: { phase: 'reboot.restored' } }, observation: 'available' });
+    });
+
+    it('keeps the reboot outcome unknown without retained before-dispatch facts', () => {
+        const store = createActionOperationStore();
+        const reboot = ActionOperationSnapshotV1Schema.parse({ ...operation(), actionId: 'machines.reboot', state: 'running',
+            domainRef: { kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
+                task: { id: 'task', taskKind: 'machine.reboot.v1' } } });
+        merge(store, [reboot]);
+        store.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [],
+            knownOperationKeys: new Set([actionOperationAddressKey(operationAddress(reboot.operationId))]) });
+        store.reobserveMachineReboot({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', operationId: reboot.operationId,
+            facts: { installationId: 'installation', bootedAt: 2000, services: [] } });
+        expect(createActionOperationSelectors().selectById(store.getSnapshot(), operationAddress(reboot.operationId)))
+            .toMatchObject({ snapshot: { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } },
+                observation: 'unavailable' });
+    });
+
     it('reads one qualified operation without traversing unrelated inventory and preserves its observation identity', () => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();

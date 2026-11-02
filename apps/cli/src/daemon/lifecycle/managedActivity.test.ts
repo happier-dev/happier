@@ -7,7 +7,7 @@ import { createSessionLiveWorkProducer } from './sessionLiveWorkProducer';
 import { waitForChangeOrDeadline } from './waitForChangeOrDeadline';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
 
-import { createManagedActivityInventory, createLiveWorkProducerGroup, readWorkspaceSessionIdle, type LiveWorkProducerV1, type LiveWorkItemV1 } from './managedActivity';
+import { createManagedActivityInventory, createLiveWorkProducerGroup, readMachineMaintenanceAdmission, readWorkspaceSessionIdle, type LiveWorkProducerV1, type LiveWorkItemV1 } from './managedActivity';
 
 function producer() {
     let items: readonly LiveWorkItemV1[] = [];
@@ -25,6 +25,58 @@ function producer() {
 }
 
 describe('managed activity inventory', () => {
+    it('keeps resident services busy for retention while maintenance reads fresh facts and excludes only its Action', async () => {
+        const service: LiveWorkItemV1 = { category: 'service', ownerRef: 'deployed-db', attribution: { kind: 'unknown' },
+            state: 'active', lifecyclePurpose: 'deployment', serviceActivity: 'residency' };
+        const source = producer();
+        source.change([service]);
+        const operations = createActionOperationStore();
+        const inventory = createManagedActivityInventory({ producers: [source.source,
+            { read: operations.readLiveWork, subscribe: operations.subscribe }] });
+        try {
+            expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['service'] });
+            expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'eligible' });
+            for (const lifecyclePurpose of ['development', 'infrastructure'] as const) {
+                source.change([{ ...service, lifecyclePurpose }]);
+                expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'eligible' });
+            }
+            source.change([{ ...service, serviceActivity: 'transition' }]);
+            expect(await readMachineMaintenanceAdmission(inventory)).toEqual({ kind: 'blocked', reasons: ['service'] });
+            source.change([service]);
+            for (const operationId of ['reboot', 'other']) operations.create({ operationId, actionId: 'projects.compute.exec',
+                scope: { accountId: 'owner', machineId: 'machine' }, title: 'Work', cancellation: 'supported', inputIdentity: operationId });
+            expect(await readMachineMaintenanceAdmission(inventory, { excludeOperationId: 'reboot' }))
+                .toEqual({ kind: 'blocked', reasons: ['finite'] });
+            operations.succeed('other', {});
+            expect(await readMachineMaintenanceAdmission(inventory, { excludeOperationId: 'reboot' })).toEqual({ kind: 'eligible' });
+            source.change([{ ...service, ownerRef: 'reboot', serviceActivity: 'transition' }]);
+            expect(await readMachineMaintenanceAdmission(inventory, { excludeOperationId: 'reboot' }))
+                .toEqual({ kind: 'blocked', reasons: ['service'] });
+            source.change([service], 'unknown');
+            expect(await readMachineMaintenanceAdmission(inventory, { excludeOperationId: 'reboot' }))
+                .toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+        } finally { inventory.dispose(); }
+    });
+    it('publishes only changed service activity facts while retaining a busy retention decision', async () => {
+        const source = producer();
+        const service = { category: 'service' as const, ownerRef: 'deployed-db', attribution: { kind: 'unknown' as const },
+            state: 'active' as const, lifecyclePurpose: 'deployment' as const, serviceActivity: 'residency' as const };
+        source.change([service]);
+        const inventory = createManagedActivityInventory({ producers: [source.source] });
+        let publications = 0;
+        const unsubscribe = inventory.subscribeFacts(() => { publications++; });
+        try {
+            await inventory.read();
+            publications = 0;
+            for (let index = 0; index < 100; index++) await inventory.read();
+            expect(publications).toBe(0);
+            const transition = { ...service, serviceActivity: 'transition' as const };
+            source.change([transition]);
+            await inventory.read();
+            expect(publications).toBe(1);
+            expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['service'] });
+        } finally { unsubscribe(); inventory.dispose(); }
+    });
     it('refreshes every Session for explicit confirmation during a partial passive read and retires its late idle reply', async () => {
         const passiveRequest = createDeferred();
         const passiveTransportCompleted = createDeferred();

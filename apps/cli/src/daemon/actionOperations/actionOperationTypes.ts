@@ -2,6 +2,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 import type {
   ActionOperationDeclarationV1,
+  ActionExecuteResult,
   ActionOperationDomainRefV1,
   ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions';
@@ -44,6 +45,8 @@ export type ActionOperationProgressUpdate = Readonly<{
 
 export type ActionOperationOwnerUpdate = Readonly<{
   state?: 'running';
+  cancellation?: 'supported' | 'unsupported';
+  outcome?: ActionExecuteResult;
   progress?: ActionOperationProgressUpdate;
   domainRef?: ActionOperationDomainRefV1;
   observation?: ActionOperationObservationV1 | null;

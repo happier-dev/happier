@@ -162,6 +162,7 @@ export function createActionOperationStore(options?: Readonly<{
         return {
           category: category ?? 'setup',
           ownerRef: snapshot.operationId,
+          actionOperationId: snapshot.operationId,
           attribution: invocationMetadata.get(snapshot.operationId)?.requesterWorkAttributionV1 ?? { kind: 'unknown' },
           state: isTerminal(snapshot) ? 'settled' : snapshot.observation || category === null ? 'unknown' : 'active',
           ...(snapshot.domainRef?.kind === 'projectCommand' && snapshot.domainRef.terminalId
@@ -312,7 +313,7 @@ export function createActionOperationStore(options?: Readonly<{
       });
     },
 
-    fail(operationId: string, error: ActionOperationFailureV1): ActionOperationSnapshotV1 | null {
+    fail(operationId: string, error: ActionOperationFailureV1, result?: unknown): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => {
         const failure = ActionOperationFailureV1Schema.parse(error);
         const settledAt = lifecycleTime(current);
@@ -324,6 +325,7 @@ export function createActionOperationStore(options?: Readonly<{
           startedAt: current.startedAt ?? settledAt,
           settledAt,
           error: failure,
+          ...(result === undefined ? {} : { result }),
         };
       });
     },

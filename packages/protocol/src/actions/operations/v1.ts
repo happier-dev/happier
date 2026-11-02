@@ -1,3 +1,5 @@
+import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
+import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -269,6 +271,20 @@ z.strictObject({
     exitCode: z.optional(z.number().check(z.int())),
   }),
   z.strictObject({
+    kind: z.literal('machineReboot'),
+    serverId: ActionOperationIdentifierV1Schema,
+    machineId: ActionOperationIdentifierV1Schema,
+    installationId: ActionOperationIdentifierV1Schema,
+    task: z.strictObject({ id: ActionOperationIdentifierV1Schema, taskKind: z.literal('machine.reboot.v1'),
+      prompt: z.optional(MachineSudoPasswordPromptV1Schema) }),
+    basis: z.optional(z.strictObject({
+      bootedAt: MachineVitalsHostFactsV1Schema.def.shape.bootedAt,
+      expectedRunningServiceIds: z.readonly(z.array(z.string().check(z.minLength(1)))),
+      expectedRunningServicesKnown: z.boolean(),
+      dispatchStarted: z.literal(true),
+    })),
+  }),
+  z.strictObject({
     kind: z.literal('projectService'),
     purpose: z.enum(['start', 'relocation']),
     /** Original checkout remains stable while native custody changes Machines. */
@@ -356,7 +372,14 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
     context.addIssue({ code: 'custom', path: ['error'], message: 'Only failed operations require an error.' });
   }
   if (snapshot.result !== undefined && snapshot.state !== 'succeeded') {
-    context.addIssue({ code: 'custom', path: ['result'], message: 'Only succeeded operations may carry a result.' });
+    // This new Action returns closed domain refusals, not physical success.
+    // Preserve the exact receipt without accepting arbitrary failed results
+    // or treating a dispatch receipt as terminal process evidence.
+    const rebootRefusal = snapshot.actionId === 'machines.reboot' && snapshot.state === 'failed'
+      ? MachineRebootResultV1Schema.safeParse(snapshot.result) : null;
+    if (!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted') {
+      context.addIssue({ code: 'custom', path: ['result'], message: 'Only succeeded operations or typed reboot refusals may carry a result.' });
+    }
   }
   if (terminal && snapshot.observation !== undefined) {
     context.addIssue({ code: 'custom', path: ['observation'], message: 'Unconfirmed observations cannot accompany terminal process evidence.' });

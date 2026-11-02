@@ -5,6 +5,7 @@ import {
     type ActionOperationRevisionEphemeralV1,
 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { actionOperationStore, type ActionOperationStore } from './actionOperationStore';
@@ -43,6 +44,17 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
         snapshot.scope.accountId !== params.accountId
         || snapshot.scope.machineId !== params.update.machineId
     ) return;
+
+    const store = params.store ?? actionOperationStore;
+    // The full opened Account-scoped push is the surviving holder's basis.
+    // Reboot can destroy the target before the ordinary fresh read completes;
+    // retaining this typed basis is not a generic notification fallback.
+    if (snapshot.actionId === 'machines.reboot' && snapshot.domainRef?.kind === 'machineReboot'
+        && snapshot.domainRef.basis?.dispatchStarted
+        && snapshot.domainRef.machineId === snapshot.scope.machineId
+        && areServerProfileIdentifiersEquivalent(snapshot.domainRef.serverId, sourceServerId)) {
+        store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot] });
+    }
 
     await refreshActionOperationSnapshot({ ...params, operation: { serverId: sourceServerId, snapshot } });
 }

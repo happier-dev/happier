@@ -22,6 +22,44 @@ afterEach(() => {
 });
 
 describe('managed dependency read through the originating Account', () => {
+    it('reviews reboot roles in the saved Account without reading managed allocation dependencies or dispatching an effect', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://reboot-references.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_reboot_references');
+        await upsertAndActivateServer({ serverUrl: 'https://other-reboot-references.test', scope: 'tab' });
+        const token = createAccountTokenForTests('requester', { currentAccount: true });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const requests: string[] = [];
+        const page = { homeId: 'srv_reboot_references', machineId: 'machine-a', coverage: 'complete',
+            references: [{ kind: 'deployment_environment', id: 'environment-a', name: 'Production', deploymentRoles: ['edge'] }], nextCursor: null };
+        setRuntimeFetch(async (raw, init) => {
+            const url = new URL(String(raw));
+            expect(url.origin).toBe(target.serverUrl);
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+            requests.push(url.pathname);
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname === '/v1/deployments/machine-references') {
+                expect(url.searchParams.get('machineId')).toBe('machine-a');
+                return Response.json(page);
+            }
+            throw new Error(`unexpected Home request: ${url.pathname}`);
+        });
+        const result = await createDefaultActionExecutor({
+            // Genuine Machine and person-dialog boundaries; Account capture,
+            // HTTP role reads and shared approval preparation remain real.
+            machineServiceAction: async () => ({ kind: 'snapshot', services: [] }),
+            machineReboot: async () => { throw new Error('reboot must not dispatch after cancellation'); },
+            presentUserActionConfirmation: async () => false,
+        }).execute('machines.reboot', { serverId: target.id, machineId: 'machine-a', expectedInstallationId: 'installation-a' }, {
+            serverId: target.id, expectedAccountId: 'requester', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(requests).toContain('/v1/deployments/machine-references');
+        expect(requests.every(path => ['/v1/account/encryption', '/v1/account/encryption/currentness',
+            '/v2/account/settings', '/v1/deployments/machine-references'].includes(path))).toBe(true);
+    });
+
     it.each(['healthy', 'unavailable'] as const)('discloses %s requester coverage in the saved Home without guest/controller dispatch', async availability => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-references.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_references');

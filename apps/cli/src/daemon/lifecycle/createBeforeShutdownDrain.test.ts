@@ -134,12 +134,12 @@ describe('createBeforeShutdownDrain', () => {
             buildUnexpectedSpawnResult: (errorMessage) => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
             disposePluginRuntimeRegistry: async () => { disposal.push('disposed'); },
         });
-        admissionDrain.beginTemporaryDrain();
-        admissionDrain.resume();
+        const releaseDrain = admissionDrain.beginTemporaryDrain();
+        releaseDrain();
         expect(admissionDrain.isQuiescing()).toBe(false);
         expect(disposal).toEqual([]);
         await beforeShutdown();
-        admissionDrain.resume();
+        releaseDrain();
         expect(admissionDrain.isFinalShutdown()).toBe(true);
         expect(disposal).toEqual(['disposed']);
         await beforeShutdown();

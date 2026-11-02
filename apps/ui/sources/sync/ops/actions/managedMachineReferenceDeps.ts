@@ -1,11 +1,24 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { readMachineReferenceCensusV1, type MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
+    type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readProfileCatalogInContext } from '@/sync/api/account/apiProfileCatalog';
 import { listAutomationDefinitions } from '@/sync/api/automations/apiAutomations';
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
 import { createMachinePoolActionClient } from '@/sync/api/machines/machinePoolActions';
 import type { LazyActionAccountContext } from './actionAccountContext';
+
+/** Exact requester-owned deployment roles; no managed allocation or broader census reads. */
+export function createUiMachineDeploymentReferenceReader(account: LazyActionAccountContext) {
+    return async (selection: MachineDeploymentReferencesInputV1, signal?: AbortSignal): Promise<MachineDeploymentReferencesPageV1> => {
+        const query = new URLSearchParams({ homeId: selection.homeId, machineId: selection.machineId,
+            ...(selection.cursor ? { cursor: selection.cursor } : {}) });
+        const response = await account.request(`/v1/deployments/machine-references?${query}`, { method: 'GET', signal },
+            { includeAuth: true, recoveryRead: 'unbounded' });
+        if (!response.ok) throw new Error('deployment_references_unavailable');
+        return MachineDeploymentReferencesPageV1Schema.parse(await response.json());
+    };
+}
 
 /** Requester-owned disclosure. Native controllers never supply another Account's private references. */
 export function createUiManagedMachineReferenceReader(account: LazyActionAccountContext): NonNullable<ActionExecutorDeps['managedMachineReferences']> {

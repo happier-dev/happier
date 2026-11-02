@@ -290,6 +290,7 @@ describe('workflow coordinator', () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const executed: string[] = [];
     let parked = false;
+    let releaseDrain = () => {};
     const workflow = definition([step('accepted'), step('next')]);
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       isAcceptedAuthorizationCurrent: async () => true,
@@ -300,14 +301,14 @@ describe('workflow coordinator', () => {
       executeStep: async (params) => {
         await params.beforeInputAdmission();
         executed.push(params.step.id);
-        if (params.step.id === 'accepted') drain.beginTemporaryDrain();
+        if (params.step.id === 'accepted') releaseDrain = drain.beginTemporaryDrain();
         return { kind: 'completed', result: params.step.id };
       } });
     const result = coordinator.run({ runId: 'reversible-drain', definition: workflow, inputs: {}, executionTarget, authorization });
     await vi.waitFor(() => expect(parked).toBe(true));
     expect(store.list().find(row => row.blockId === 'accepted')?.lifecycle).toBe('completed');
     expect(executed).toEqual(['accepted']);
-    drain.resume();
+    releaseDrain();
     expect(await result).toMatchObject({ state: 'succeeded' });
     expect(executed).toEqual(['accepted', 'next']);
   });

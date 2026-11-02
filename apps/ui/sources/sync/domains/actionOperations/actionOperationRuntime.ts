@@ -7,6 +7,12 @@ import type {
 } from '@happier-dev/protocol';
 import { projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
+import { subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { storage } from '@/sync/domains/state/storageStore';
+import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 
 import { getActionOperation, listActionOperations } from '@/sync/ops/actionOperations';
 import { useActiveServerAccountScope, useAllMachines, useSocketStatus } from '@/sync/domains/state/storage';
@@ -16,7 +22,7 @@ import {
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ActionOperationObservation } from './actionOperationStore';
-import { actionOperationStore, isActionOperationTerminal, type ActionOperationStore } from './actionOperationStore';
+import { actionOperationStore, isActionOperationTerminal, type ActionOperationStore, type MachineRebootReadFacts } from './actionOperationStore';
 import { selectTerminalActionOperation, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { refreshActionOperationSnapshot } from './consumeActionOperationSnapshotPush';
 import {
@@ -74,6 +80,7 @@ type ListActionOperations = (params: Readonly<{
     accountId: string;
     requireCurrentDomainFacts: () => boolean;
     request?: ActionOperationListV1Request;
+    signal?: AbortSignal;
 }>) => Promise<ActionOperationListV1Response>;
 
 function runtimeScopeKey(scope: ActionOperationMachineRuntimeScope): string {
@@ -89,12 +96,43 @@ function belongsToScope(
         && operation.snapshot.scope.machineId === scope.machineId;
 }
 
+function readMachineRebootHost(scope: ActionOperationMachineRuntimeScope): Omit<MachineRebootReadFacts, 'services'> | null {
+    const machine = resolveServerScopedMachine(storage.getState(), scope.serverId, scope.machineId);
+    if (!machine || machine.revokedAt || machine.availability?.kind === 'locked'
+        || machine.access && machine.access.accessState !== 'ready') return null;
+    const daemonState: unknown = machine.daemonState;
+    const resources = daemonState && typeof daemonState === 'object' && 'resources' in daemonState
+        ? MachinePublishedResourceSummaryV1Schema.safeParse(daemonState.resources) : null;
+    return { installationId: machine.installationId ?? null,
+        bootedAt: resources?.success ? resources.data.host?.bootedAt ?? null : null };
+}
+
+type ReadRebootFacts = (input: ActionOperationMachineRuntimeScope & Readonly<{ signal?: AbortSignal }>) => Promise<MachineRebootReadFacts | null>;
+
+/** One finite ordinary Action read per recovery wake, never a reboot poll. */
+const readMachineRebootFacts: ReadRebootFacts = async input => {
+    const before = readMachineRebootHost(input);
+    if (!before) return null;
+    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    const { MachineServicesListResultV1Schema } = await import('@happier-dev/protocol');
+    const outcome = await createFrontDoorActionExecute()('machines.services.list', { serverId: input.serverId, machineId: input.machineId }, {
+        surface: 'ui', serverId: input.serverId, expectedAccountId: input.accountId, ...(input.signal ? { signal: input.signal } : {}),
+    });
+    const after = readMachineRebootHost(input);
+    if (!after || before.installationId !== after.installationId || before.bootedAt !== after.bootedAt) return null;
+    const parsed = outcome.ok ? MachineServicesListResultV1Schema.safeParse(outcome.result) : null;
+    return { ...after, services: parsed?.success && parsed.data.kind === 'snapshot' ? parsed.data.services : null };
+};
+
 export async function reconcileActionOperationsOnce(params: Readonly<{
     scope: ActionOperationMachineRuntimeScope;
     store?: ActionOperationStore;
     list?: ListActionOperations;
     shouldContinue?: () => boolean;
     requireCurrentDomainFacts?: true;
+    signal?: AbortSignal;
+    /** Genuine Machine read boundary; lifecycle, classification and retention stay in this owner. */
+    readRebootFacts?: ReadRebootFacts;
 }>): Promise<void> {
     const store = params.store ?? actionOperationStore;
     const list = params.list ?? listActionOperations;
@@ -124,6 +162,7 @@ export async function reconcileActionOperationsOnce(params: Readonly<{
             accountId: params.scope.accountId,
             requireCurrentDomainFacts,
             request: cursor ? { cursor } : {},
+            ...(params.signal ? { signal: params.signal } : {}),
         });
         if (!shouldContinue()) return;
 
@@ -146,6 +185,17 @@ export async function reconcileActionOperationsOnce(params: Readonly<{
         snapshots: listedSnapshots,
         knownOperationKeys,
     });
+    const lostReboots = [...store.getSnapshot().operationsByKey.entries()].filter(([key, operation]) => (
+        store.getSnapshot().unavailableOperationKeys.has(key) && belongsToScope(operation, { ...params.scope, serverId })
+        && operation.snapshot.actionId === 'machines.reboot' && !isActionOperationTerminal(operation.snapshot.state)
+    ));
+    if (lostReboots.length === 0) return;
+    let facts: MachineRebootReadFacts | null = null;
+    try { facts = await (params.readRebootFacts ?? readMachineRebootFacts)({ ...params.scope, serverId, signal: params.signal }); }
+    catch { params.signal?.throwIfAborted(); }
+    if (!shouldContinue()) return;
+    for (const [, operation] of lostReboots) store.reobserveMachineReboot({ ...params.scope, serverId,
+        operationId: operation.snapshot.operationId, facts });
 }
 
 export type ActionOperationMachineObserver = Readonly<{
@@ -160,33 +210,60 @@ function createActionOperationMachineObserver(params: Readonly<{
 }>): ActionOperationMachineObserver {
     const store = params.store ?? actionOperationStore;
     const reconcileOnce = params.reconcileOnce ?? reconcileActionOperationsOnce;
-    let stopped = true;
-
-    const run = async (): Promise<void> => {
-        try {
-            await reconcileOnce({
-                scope: params.scope,
-                store,
-                shouldContinue: () => !stopped,
-            });
-        } catch {
-            if (stopped) return;
-            store.setMachineObservation(
-                { serverId: params.scope.serverId, machineId: params.scope.machineId },
-                'reconnecting',
-            );
-        }
-    };
+    let stop: (() => void) | null = null;
 
     return {
         start() {
-            if (!stopped) return;
-            stopped = false;
+            if (stop) return;
+            const controller = new AbortController();
+            let reading = false;
+            let recoveryPending = false;
+            const run = async (): Promise<void> => {
+                if (controller.signal.aborted) return;
+                if (reading) {
+                    recoveryPending = true;
+                    return;
+                }
+                reading = true;
+                try {
+                    await reconcileOnce({ scope: params.scope, store, signal: controller.signal,
+                        shouldContinue: () => !controller.signal.aborted });
+                } catch {
+                    if (controller.signal.aborted) return;
+                    store.setMachineObservation(
+                        { serverId: params.scope.serverId, machineId: params.scope.machineId },
+                        'reconnecting',
+                    );
+                } finally {
+                    reading = false;
+                    if (recoveryPending) {
+                        recoveryPending = false;
+                        void run();
+                    }
+                }
+            };
+            const unsubscribe = subscribeMachineRpcRecovery({ ...params.scope, expectedAccountId: params.scope.accountId }, () => {
+                void run();
+            });
+            let host = readMachineRebootHost(params.scope);
+            const releaseMachineFacts = subscribeRegisteredStorageMachineUpdates((serverId, machineIds) => {
+                if (!areServerProfileIdentifiersEquivalent(serverId, params.scope.serverId) || !machineIds.includes(params.scope.machineId)) return;
+                const next = readMachineRebootHost(params.scope);
+                if (next?.installationId === host?.installationId && next?.bootedAt === host?.bootedAt) return;
+                host = next;
+                const retained = store.getSnapshot();
+                if ([...retained.unavailableOperationKeys].some(key => {
+                    const operation = retained.operationsByKey.get(key);
+                    return operation && belongsToScope(operation, params.scope) && operation.snapshot.actionId === 'machines.reboot'
+                        && !isActionOperationTerminal(operation.snapshot.state);
+                })) void run();
+            });
+            stop = () => { controller.abort(); unsubscribe(); releaseMachineFacts?.(); };
             void run();
         },
         stop() {
-            if (stopped) return;
-            stopped = true;
+            stop?.();
+            stop = null;
         },
     };
 }

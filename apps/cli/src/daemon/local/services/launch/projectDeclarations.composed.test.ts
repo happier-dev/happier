@@ -2387,12 +2387,12 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
         if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
-        h.admissionDrain.beginTemporaryDrain();
+        const releaseDrain = h.admissionDrain.beginTemporaryDrain();
         expect(await h.routes.startTarget!(request, h.ingress, h.context)).toMatchObject({ status: 'denied', reasonCode: 'draining' });
         expect(h.copies()).toBe(0);
         expect(h.owner.listProjectServices()).toEqual([]);
-        h.admissionDrain.resume();
-        h.afterCopy(() => h.admissionDrain.beginTemporaryDrain());
+        releaseDrain();
+        h.afterCopy(() => { h.admissionDrain.beginTemporaryDrain(); });
         expect(await h.routes.startTarget!(request, h.ingress, h.context)).toMatchObject({ status: 'failed', reasonCode: 'draining' });
         expect(h.copies()).toBe(1);
         expect(h.owner.listProjectServices()).toEqual([]);

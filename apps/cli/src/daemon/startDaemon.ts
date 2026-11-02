@@ -189,6 +189,7 @@ import { listConnectedServiceRetainedMaterializedHomeSanitizers } from './connec
 import { readRetainedConnectedServiceMaterializationKeys } from './connectedServices/materialize/cleanup/readRetainedConnectedServiceMaterializationKeys';
 import { resolveConnectedServicesMaterializationBaseDir } from './connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import { createDaemonMachineRpcRouteAttachmentCache } from './machineRpcRouteAttachments';
+import { machineNativeEffectAdmission } from './local/services/launch/machineNativeEffectAdmission';
 import { createMachineVitalsSampler, type MachineVitalsSampler } from './vitals/createMachineVitalsSampler';
 import { createMachineVitalsReader } from './vitals/createMachineVitalsReader';
 import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
@@ -3881,6 +3882,16 @@ agentIsolation,
         isShuttingDown: isDaemonQuiescing,
         admissionDrain,
         managedActivity: { activity: managedActivity, admissionDrain },
+        machineReboot: {
+          nativeAdmission: machineNativeEffectAdmission,
+          vitals: { host: () => machineVitals?.host() ?? null },
+          readServiceFacts: async request => {
+            const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+            if (!lease) return { coverage: 'unknown', services: [] };
+            try { return await lease.registry.projectManagedServices.readMachineRebootServices(request); }
+            finally { await lease.release(); }
+          },
+        },
         isPublicationQuiescing: admissionDrain.isPublicationQuiescing,
         readSpawnFailureLimits: () => machineVitals?.latest()?.limits,
         ownerRemainder,

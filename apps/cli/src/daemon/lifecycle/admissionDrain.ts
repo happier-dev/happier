@@ -11,10 +11,10 @@ export type DaemonAdmissionDrain = Readonly<{
     isQuiescing(): boolean;
     isFinalShutdown(): boolean;
     isPublicationQuiescing(): boolean;
-    beginTemporaryDrain(): void;
+    /** Release withdraws only this caller's contribution and is idempotent. */
+    beginTemporaryDrain(): () => void;
     beginUnusedStopDrain(): void;
     resumeUnusedStop(): void;
-    resume(): void;
     beginShutdown(): void;
     notifyPluginHandoffChanged(): void;
     subscribe(listener: () => void): () => void;
@@ -25,22 +25,31 @@ export function createDaemonAdmissionDrain(params: Readonly<{
     isPluginHandoffQuiescing?: () => boolean;
     isShutdownRequested?: () => boolean;
 }> = {}): DaemonAdmissionDrain {
-    let state: 'open' | 'draining' | 'shutdown' = 'open';
+    let shuttingDown = false;
+    let temporaryDrains = 0;
     let unusedStop = false;
     const listeners = new Set<() => void>();
-    const isFinalShutdown = () => state === 'shutdown' || params.isShutdownRequested?.() === true;
+    const isFinalShutdown = () => shuttingDown || params.isShutdownRequested?.() === true;
     const isPublicationQuiescing = () => isFinalShutdown() || params.isPluginHandoffQuiescing?.() === true;
-    const change = (next: typeof state) => {
-        if (isFinalShutdown() && next !== 'shutdown') return;
-        if (state === next && next !== 'open') return;
-        state = next;
-        for (const listener of listeners) listener();
-    };
+    const isQuiescing = () => unusedStop || temporaryDrains > 0 || isPublicationQuiescing();
+    const notify = () => { for (const listener of listeners) listener(); };
     return {
-        isQuiescing: () => unusedStop || state === 'draining' || isPublicationQuiescing(),
+        isQuiescing,
         isFinalShutdown,
         isPublicationQuiescing,
-        beginTemporaryDrain: () => change('draining'),
+        beginTemporaryDrain: () => {
+            if (isFinalShutdown()) return () => {};
+            const wasQuiescing = isQuiescing();
+            temporaryDrains += 1;
+            if (!wasQuiescing) notify();
+            let released = false;
+            return () => {
+                if (released) return;
+                released = true;
+                temporaryDrains -= 1;
+                if (!isQuiescing()) notify();
+            };
+        },
         beginUnusedStopDrain: () => {
             if (unusedStop || isFinalShutdown()) return;
             unusedStop = true;
@@ -51,8 +60,11 @@ export function createDaemonAdmissionDrain(params: Readonly<{
             unusedStop = false;
             for (const listener of listeners) listener();
         },
-        resume: () => change('open'),
-        beginShutdown: () => change('shutdown'),
+        beginShutdown: () => {
+            if (shuttingDown) return;
+            shuttingDown = true;
+            notify();
+        },
         notifyPluginHandoffChanged: () => { for (const listener of listeners) listener(); },
         subscribe: (listener) => {
             listeners.add(listener);

@@ -1,5 +1,5 @@
 import { canAdvanceActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1, ActionOperationStateV1, MachineServiceRowV1 } from '@happier-dev/protocol';
 
 import {
     actionOperationAddressKey,
@@ -13,6 +13,13 @@ import {
 } from './qualifiedActionOperation';
 
 export type ActionOperationObservation = 'available' | 'reconnecting' | 'unavailable';
+
+/** Ordinary admitted Machine facts, not a second reboot receipt or authority. */
+export type MachineRebootReadFacts = Readonly<{
+    installationId: string | null;
+    bootedAt: number | null;
+    services: readonly MachineServiceRowV1[] | null;
+}>;
 
 /** Reachable transport cannot erase the execution owner's uncertainty about an active outcome. */
 export function resolveActionOperationObservation(
@@ -36,6 +43,13 @@ export type ActionOperationStore = Readonly<{
     getSnapshot(): ActionOperationStoreSnapshot;
     subscribe(listener: () => void): () => void;
     mergeSnapshots(input: Readonly<{ serverId: string | null; snapshots: readonly ActionOperationSnapshotV1[] }>): void;
+    reobserveMachineReboot(input: Readonly<{
+        serverId: string;
+        accountId: string;
+        machineId: string;
+        operationId: string;
+        facts: MachineRebootReadFacts | null;
+    }>): void;
     reconcileMachineProjection(input: Readonly<{
         serverId: string;
         accountId: string;
@@ -147,6 +161,41 @@ export function createActionOperationStore(): ActionOperationStore {
                 dismissedUnavailableOperationKeys: dismissedUnavailableOperationKeys ?? state.dismissedUnavailableOperationKeys,
             }));
         },
+        reobserveMachineReboot(input) {
+            const serverId = normalizeActionOperationServerId(input.serverId);
+            if (!serverId) return;
+            const key = actionOperationAddressKey({ serverId, operationId: input.operationId });
+            const current = state.operationsByKey.get(key)?.snapshot;
+            if (!current || !state.unavailableOperationKeys.has(key) || TERMINAL_STATES.has(current.state)
+                || current.actionId !== 'machines.reboot' || current.domainRef?.kind !== 'machineReboot'
+                || current.scope.accountId !== input.accountId || current.scope.machineId !== input.machineId) return;
+            const basis = current.domainRef.basis;
+            const facts = input.facts;
+            const rows = new Map(facts?.services?.map(row => [row.serviceId, row]));
+            const expected = basis?.expectedRunningServiceIds.map(id => rows.get(id)) ?? [];
+            const restored = !!basis?.dispatchStarted && basis.expectedRunningServicesKnown
+                && facts?.installationId === current.domainRef.installationId
+                && facts.bootedAt !== null && facts.bootedAt !== basis.bootedAt && facts.services !== null
+                && expected.every(row => !!row && !row.unavailableReason
+                    && (row.state === 'healthy' || row.state === 'running')
+                    && (!row.native || row.native.phase === 'running' && row.native.readiness !== 'not_ready'));
+            if (!restored && current.observation?.kind === 'outcome_uncertain'
+                && current.observation.code === 'action_outcome_unknown') return;
+            const { observation: _oldObservation, error: _oldError, ...retained } = current;
+            const next: ActionOperationSnapshotV1 = restored && basis ? {
+                ...retained, revision: current.revision + 1, state: 'succeeded', cancellation: 'unsupported',
+                settledAt: Math.max(current.startedAt ?? current.createdAt, Date.now()),
+                progress: { kind: 'phase', label: current.title, phase: expected.some(row => row?.state !== 'healthy'
+                    && row?.native?.readiness !== 'ready') ? 'reboot.restored_unverified' : 'reboot.restored' },
+                result: { kind: 'accepted', operation: { operationId: current.operationId }, bootedAt: basis.bootedAt },
+            } : { ...current, revision: current.revision + 1,
+                observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } };
+            const operationsByKey = new Map(state.operationsByKey);
+            operationsByKey.set(key, qualifyActionOperationSnapshot(serverId, next));
+            const unavailableOperationKeys = new Set(state.unavailableOperationKeys);
+            if (restored) unavailableOperationKeys.delete(key);
+            publish(Object.freeze({ ...state, operationsByKey, unavailableOperationKeys }));
+        },
         reconcileMachineProjection(input) {
             const serverId = normalizeActionOperationServerId(input.serverId);
             if (!serverId) return;
@@ -174,6 +223,13 @@ export function createActionOperationStore(): ActionOperationStore {
                     continue;
                 }
                 if (!input.knownOperationKeys.has(currentOperationKey)) continue;
+                // This surviving holder proved recovery after the target lost its
+                // in-memory receipt. A later empty daemon list cannot erase it.
+                if (snapshot.actionId === 'machines.reboot' && snapshot.domainRef?.kind === 'machineReboot'
+                    && snapshot.state === 'succeeded' && snapshot.progress?.kind === 'phase'
+                    && (snapshot.progress.phase === 'reboot.restored' || snapshot.progress.phase === 'reboot.restored_unverified')) {
+                    continue;
+                }
                 if (!TERMINAL_STATES.has(snapshot.state)) {
                     if (!state.unavailableOperationKeys.has(currentOperationKey)) {
                         unavailableOperationKeys ??= new Set(state.unavailableOperationKeys);

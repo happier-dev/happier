@@ -46,6 +46,24 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, actionArgs: { intent: 'stop' } } }).success).toBe(false);
     expect(ActionOperationProgressV1Schema.safeParse({ ...progress, approval: { ...approval, artifactId: '' } }).success).toBe(false);
   });
+  it('retains typed no-dispatch reboot refusals at the current strict operation read seam only', () => {
+    const failed = { ...baseSnapshot, actionId: 'machines.reboot', state: 'failed', startedAt: 110, settledAt: 120,
+      error: { errorCode: 'action_operation_failed', error: 'action_operation_failed' } };
+    for (const result of [{ kind: 'blocked', reasons: ['setup'] }, { kind: 'failed', reasonCode: 'denied' },
+      { kind: 'unavailable', reason: 'daemon_shutting_down' }]) {
+      const operation = { ...failed, result };
+      expect(ActionOperationSnapshotV1Schema.parse(operation).result).toEqual(result);
+      expect(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation })).toMatchObject({ operation: { result } });
+    }
+    // A physical dispatch receipt is not terminal failure/success evidence;
+    // unrelated Actions retain the existing prohibition on failed results.
+    for (const operation of [
+      { ...failed, actionId: 'session.spawn_new', result: { kind: 'blocked', reasons: ['setup'] } },
+      { ...failed, result: { kind: 'accepted', operation: { operationId: failed.operationId }, bootedAt: 1000 } },
+      { ...failed, result: { kind: 'outcome_unknown' } },
+      { ...failed, state: 'running', settledAt: undefined, error: undefined, result: { kind: 'blocked', reasons: ['setup'] } },
+    ]) expect(ActionOperationSnapshotV1Schema.safeParse(operation).success).toBe(false);
+  });
   it('retains machine setup output on the exact Home and Machine without exposing executable or secret material', () => {
     const domainRef = { kind: 'machineEnvironment', serverId: 'setup-home', machineId: 'guest',
       preset: { id: 'preset', revision: 3 }, managedId: 'paid', terminalId: 'actual-terminal', exitCode: 17 };

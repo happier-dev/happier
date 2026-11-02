@@ -484,10 +484,10 @@ describe('exact target worker status Action', () => {
       expect(await executor.execute('projects.worker.status', service, context))
         .toMatchObject({ ok: true, result: { eligible: false, explanation: 'unsupported' } });
       serviceLive = true;
-      drain.beginTemporaryDrain();
+      const releaseDrain = drain.beginTemporaryDrain();
       expect(await executor.execute('projects.worker.status', service, context))
         .toMatchObject({ ok: true, result: { eligible: false, explanation: 'draining' } });
-      drain.resume();
+      releaseDrain();
       rowsAvailable = false;
       expect(await executor.execute('projects.worker.status', service, context))
         .toMatchObject({ ok: true, result: { eligible: false, explanation: 'unavailable' } });

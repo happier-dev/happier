@@ -358,6 +358,9 @@ import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/age
 import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationInput } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { registerDaemonMachineAdminAccessRpcHandlers, type DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
+import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
+import { createMachineRebootAction, type DaemonMachineRebootRoutes, type MachineRebootDirectTargetInvocation } from '@/daemon/lifecycle/machineReboot';
+import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1, getMachineAdminAccessV1 } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -503,6 +506,10 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     requesterSessionRuntime?: MachineRpcHandlerDeps['requesterSessionRuntime'];
     requesterBootstrapBoundary?: MachineRpcHandlerDeps['requesterBootstrapBoundary'];
     managedActivity?: Pick<ManagedActivityRpcOwner, 'activity' | 'admissionDrain'>;
+    /** Same installed lifecycle owners. Policy and installation remain ApiMachine-owned. */
+    machineReboot?: Omit<DaemonMachineRebootRoutes, 'target' | 'inventory' | 'admissionDrain'> & Readonly<{
+        spawnElevation?: MachineElevationDependencies['spawn'];
+    }>;
     /** Pure observation of the daemon's incumbent Project admission. */
     readProjectFiniteLoad?: MachineWorkSummaryRpcOwner['readFiniteLoad'];
     createProjectFiniteRuntime?: MachineRpcHandlerDeps['createProjectFiniteRuntime'];
@@ -744,6 +751,7 @@ export class ApiMachineClient {
     private readonly filesystemAccessPolicy: FilesystemAccessPolicy;
     private externalActionIngressOwner: ExternalActionIngressOwner | null = null;
     private machineGuardLocalAction: ActionExecutorDeps['machineGuardAction'] | null = null;
+    private machineRebootAction: ReturnType<typeof createMachineRebootAction> | null = null;
     private additionalAllowedReadDirs: string[] = [];
     private additionalAllowedWriteDirs: string[] = [];
     private readonly transientSessionMediaReadAllowance = createTransientSessionMediaReadAllowance();
@@ -1564,6 +1572,39 @@ export class ApiMachineClient {
         });
 
         this.machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
+        const reboot = this.lifecycleDependencies.machineReboot;
+        const managedActivity = this.lifecycleDependencies.managedActivity;
+        if (reboot && managedActivity) {
+            const routes: DaemonMachineRebootRoutes = { ...reboot,
+                inventory: managedActivity.activity, admissionDrain: managedActivity.admissionDrain,
+                target: () => {
+                    const installationId = this.machineRuntimeInstallationId;
+                    const custodianAccountId = readAccountIdFromToken(this.token);
+                    return !this.projectionSchedulingClosed && this.machineContentReady && installationId && custodianAccountId
+                        && configuration.activeServerId === this.machineRuntimeServerId
+                        && readInstallationIdentityIfExistsSync()?.installationId === installationId
+                        ? { serverId: this.machineRuntimeServerId, machineId: this.machine.id, installationId, custodianAccountId } : null;
+                },
+            };
+            this.machineRebootAction = createMachineRebootAction({ routes, operations: this.actionOperationRuntime,
+                captureElevation: () => {
+                    const installationId = routes.target()?.installationId;
+                    if (!installationId) throw new Error('admission_unavailable');
+                    return { ...this.captureMachineAdminAccess(), installationId, installedCli: resolveInstalledMachineEffectCli(),
+                        ...(reboot.spawnElevation ? { spawn: reboot.spawnElevation } : {}) };
+                },
+            });
+        }
+        // Always register independently of service observation/launcher presence.
+        // Resolution is late through the incumbent receiving credential factory;
+        // no raw power handler or self-invocation is installed alongside it.
+        registerActionSpecRpcHandlers<'machines.reboot'>({
+            rpcHandlerManager: this.rpcHandlerManager, actionIds: ['machines.reboot'],
+            targetMachineId: this.machine.id, defaultMachineTarget: true,
+            observeExecution: this.actionOperationRuntime.observeExecution,
+            resolveActionExecutor: request => this.hostResourceRoutes?.resolveLauncherActionExecutor?.(request)
+                ?? { execute: async () => ({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' }) },
+        });
         this.filesystemAccessPolicy = resolveFilesystemAccessPolicy();
         const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
             serverUrl: resolveServerHttpBaseUrl(),
@@ -2568,6 +2609,12 @@ export class ApiMachineClient {
 
 
 
+
+    /** Private installed target port, invoked only after public Action admission. */
+    async executeMachineRebootAction(request: MachineRebootDirectTargetInvocation): Promise<unknown> {
+        if (this.projectionSchedulingClosed || !this.machineRebootAction) return { kind: 'unavailable', reason: 'admission_unavailable' };
+        return await this.machineRebootAction(request);
+    }
 
     registerMachineVitalsRoutes(options: DaemonMachineVitalsRoutes): void {
         registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, options);
@@ -5151,6 +5198,7 @@ export class ApiMachineClient {
     }
 
     private async disposeRpcLifecycleRegistrations(): Promise<void> {
+        this.machineRebootAction = null;
         this.managedActivityPublicationCleanup?.();
         this.managedActivityPublicationCleanup = null;
         this.liveWorkProducer.dispose();

@@ -243,6 +243,7 @@ export function createDaemonMachineBootstrapRuntime(
     isShuttingDown: BootstrapRuntime['isShuttingDown'];
     admissionDrain?: DaemonAdmissionDrain;
     managedActivity?: Pick<ManagedActivityRpcOwner, 'activity' | 'admissionDrain'>;
+    machineReboot?: ApiMachineClientLifecycleDependencies['machineReboot'];
     isPublicationQuiescing?: () => boolean;
     readSpawnFailureLimits?: ApiMachineClientLifecycleDependencies['readSpawnFailureLimits'];
     ownerRemainder?: ApiMachineClientLifecycleDependencies['ownerRemainder'];
@@ -492,6 +493,7 @@ agentIsolation: params.agentIsolation,
                 ...(params.stopRequesterSessionForHandoff ? { stopForHandoff: params.stopRequesterSessionForHandoff } : {}) },
             } : {}),
             ...(params.managedActivity ? { managedActivity: params.managedActivity } : {}),
+            ...(params.machineReboot ? { machineReboot: params.machineReboot } : {}),
             ...(params.onMachineMetadataChanged ? { onMachineMetadataChanged: params.onMachineMetadataChanged } : {}),
             ...(params.onProjectOperationInspection ? { onProjectOperationInspection: params.onProjectOperationInspection } : {}),
             ...(params.directPeerServerLifecycle ? { directPeerServerLifecycle: params.directPeerServerLifecycle } : {}),

@@ -191,6 +191,7 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN: 'daemon.plugins.ui.resources.watch.open',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT: 'daemon.plugins.ui.resources.watch.next',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE: 'daemon.plugins.ui.resources.watch.close',
+  MACHINES_REBOOT: 'machines.reboot',
   MACHINES_VITALS_GET: 'machines.vitals.get',
   MACHINES_RESOURCES_POLICY_SET: 'machines.resources.policy.set',
   MACHINES_GUARD_GET: 'machines.guard.get',

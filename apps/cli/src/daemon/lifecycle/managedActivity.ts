@@ -15,6 +15,10 @@ export type LiveWorkItemV1 = Readonly<{
     ownerRef: unknown;
     attribution: RequesterWorkAttributionV1 | Readonly<{ kind: 'unknown' }>;
     lifecyclePurpose?: 'development' | 'deployment' | 'infrastructure';
+    /** Residency still counts as active retention use; only native transitions block maintenance. */
+    serviceActivity?: 'residency' | 'transition';
+    /** Supplied only by the canonical Action operation owner, never inferred from an opaque reference. */
+    actionOperationId?: string;
     state: 'active' | 'settled' | 'unknown';
     /** Owner-reported anchor; never reconstructed from daemon uptime. */
     settledAt?: number;
@@ -47,6 +51,29 @@ export type ManagedActivityInventory = Readonly<{
     subscribeFacts(listener: () => void): () => void;
     dispose(): void;
 }>;
+
+export type MachineMaintenanceAdmission =
+    | Readonly<{ kind: 'eligible' }>
+    | Readonly<{ kind: 'blocked'; reasons: readonly LiveWorkCategoryV1[] }>
+    | Readonly<{ kind: 'unknown'; reasons: readonly (LiveWorkCategoryV1 | 'coverage_unknown')[] }>;
+
+/** Fresh all-owner confirmation; residency and retention remain facts of the same inventory. */
+export async function readMachineMaintenanceAdmission(
+    inventory: Pick<ManagedActivityInventory, 'read'>,
+    options?: Readonly<{ excludeOperationId?: string }>,
+): Promise<MachineMaintenanceAdmission> {
+    const current = await inventory.read();
+    const items = current.items.filter(item => item.state !== 'settled'
+        && !(options?.excludeOperationId !== undefined && item.actionOperationId === options.excludeOperationId)
+        && !(item.category === 'service' && item.state === 'active'
+            && item.lifecyclePurpose !== undefined && item.serviceActivity === 'residency'));
+    const active = [...new Set(items.filter(item => item.state === 'active').map(item => item.category))];
+    if (active.length) return { kind: 'blocked', reasons: active };
+    const unknown: Array<LiveWorkCategoryV1 | 'coverage_unknown'> = [...new Set(items
+        .filter(item => item.state === 'unknown').map(item => item.category))];
+    if (current.coverage === 'unknown') unknown.push('coverage_unknown');
+    return unknown.length ? { kind: 'unknown', reasons: unknown } : { kind: 'eligible' };
+}
 
 /** Project-service eligibility reads Session facts, never the service's residency. */
 export function readWorkspaceSessionIdle(
@@ -225,6 +252,8 @@ export function createManagedActivityInventory(params: Readonly<{
                         || previous.state !== item.state || previous.settledAt !== item.settledAt
                         || previous.activeCount !== item.activeCount || previous.associatedTerminal !== item.associatedTerminal
                         || previous.workspacePath !== item.workspacePath || previous.workspaceId !== item.workspaceId
+                        || previous.lifecyclePurpose !== item.lifecyclePurpose || previous.serviceActivity !== item.serviceActivity
+                        || previous.actionOperationId !== item.actionOperationId
                         || JSON.stringify(previous.attribution) !== JSON.stringify(item.attribution);
                 }));
             if (factsChanged) {

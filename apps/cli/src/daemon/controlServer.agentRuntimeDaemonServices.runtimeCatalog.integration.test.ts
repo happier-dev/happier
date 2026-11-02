@@ -105,7 +105,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
     await writeSessionMarker({ pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
     const admissionDrain = createDaemonAdmissionDrain();
     const beforeDispatch = phase === 'initial authority' || phase === 'post-wake authority';
-    if (beforeDispatch) admissionDrain.beginTemporaryDrain();
+    const releaseDrain = beforeDispatch ? admissionDrain.beginTemporaryDrain() : () => {};
     const authorityEntered = createDeferred<void>();
     const authorityReply = createDeferred<number>();
     const responseClosed = createDeferred<void>();
@@ -160,7 +160,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       if (phase === 'post-wake authority') {
         await vi.waitFor(() => expect(activeWaiters).toBe(1));
         holdAuthorityRead = true;
-        admissionDrain.resume();
+        releaseDrain();
       }
       await authorityEntered.promise;
       client.destroy();
@@ -170,7 +170,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       await vi.waitFor(() => expect(settled || activeWaiters > 0 || (beforeDispatch && dispatches.length > 0)).toBe(true));
       expect(activeWaiters).toBe(0);
       expect(dispatches).toEqual(beforeDispatch ? [] : ['turn.admission.authorize']);
-      admissionDrain.resume();
+      releaseDrain();
       await handlerSettled.promise;
       expect(dispatches).toEqual(beforeDispatch ? [] : ['turn.admission.authorize']);
       expect((await readSessionMarkerForPid(runner.pid))?.agentRuntimeDaemonServiceActiveAdmission).toBeUndefined();
@@ -233,7 +233,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       const probe = handlers.get(MANAGED_ACTIVITY_READ_RPC_METHOD)!({ homeId: 'home', managedId: 'managed', expectedRevision: 1,
         controller: { machineId: 'controller', installationId: 'controller-installation' } }, context);
       await activityEntered.promise;
-      if (outcome === 'temporary') admissionDrain.beginTemporaryDrain();
+      const releaseDrain = outcome === 'temporary' ? admissionDrain.beginTemporaryDrain() : () => {};
       if (outcome === 'handoff') { handoffQuiescing = true; admissionDrain.notifyPluginHandoffChanged(); }
       expect(admissionDrain.isQuiescing()).toBe(true);
       let completed = false;
@@ -254,7 +254,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       if (outcome === 'temporary' || outcome === 'handoff') {
         expect(admissionDrain.isQuiescing()).toBe(true);
         expect(completed).toBe(false);
-        if (outcome === 'temporary') admissionDrain.resume();
+        if (outcome === 'temporary') releaseDrain();
         else { handoffQuiescing = false; admissionDrain.notifyPluginHandoffChanged(); }
       }
       const response = await firstTurn;
@@ -595,7 +595,6 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       admissionDrain.notifyPluginHandoffChanged();
       for (const operation of [turn, managedProcess]) expect((await send(operation)).statusCode).toBe(501);
       admissionDrain.beginShutdown();
-      admissionDrain.resume();
       expect((await send(turn)).statusCode).toBe(503);
     } finally {
       await app.close();

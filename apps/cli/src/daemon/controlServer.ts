@@ -4175,7 +4175,8 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request) => {
     const stopSessions = request.body?.stopSessions === true;
-    admissionDrain.beginTemporaryDrain();
+    const releaseDrain = admissionDrain.beginTemporaryDrain();
+    try {
     logger.debug('[CONTROL SERVER] Stop daemon request received', {
       stopSessions,
     });
@@ -4211,7 +4212,6 @@ export function createDaemonControlApp({
         }
       }
       if (!cleanupComplete) {
-        admissionDrain.resume();
         return { status: 'session_cleanup_incomplete' };
       }
     }
@@ -4242,6 +4242,7 @@ export function createDaemonControlApp({
     }, 50);
 
     return { status: 'stopping' };
+    } finally { releaseDrain(); }
   });
 
   return app;

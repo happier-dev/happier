@@ -14,6 +14,7 @@ import { MACHINE_VITALS_ACTION_IDS } from './specs/machineVitalsActionIdsV1.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV1.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './specs/storageActionIdsV1.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './specs/machineResourcesActionIdsV1.js';
+import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
 import { MACHINE_GUARD_ACTION_IDS } from '../machines/guard/actionIdsV1.js';
 import { MACHINE_TERMINAL_ACTION_IDS } from './specs/machineTerminalActionIdsV1.js';
 import { SCOPE_ACTION_IDS } from './scopeActionFamily.js';
@@ -228,6 +229,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   machine_processes: MACHINE_PROCESSES_ACTION_IDS,
   machine_storage: MACHINE_STORAGE_ACTION_IDS,
   machine_resources: MACHINE_RESOURCES_ACTION_IDS,
+  machine_reboot: MACHINE_REBOOT_ACTION_IDS,
   machine_guard: MACHINE_GUARD_ACTION_IDS,
   session_access: [
     'session.access.candidates.inspect',

@@ -3,7 +3,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
 
@@ -16,6 +16,33 @@ describe('Action operation snapshot producer compatibility', () => {
     } });
   });
   afterEach(() => vi.restoreAllMocks());
+  it.each(['plain', 'e2ee'] as const)('publishes current reboot attendance and before-basis through the existing %s Account push', async mode => {
+    const accountId = 'reboot-owner';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, updatedAt: 1 } });
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => accountId,
+      serverBaseUrl: 'https://original-home.example', readCredentials: async () => ({ token, encryption: mode === 'plain' ? null : material }),
+      publishContent: content => { contents.push(content); } });
+    const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'reboot-operation', revision: 3,
+      actionId: 'machines.reboot', state: 'running', scope: { accountId, machineId: 'machine' },
+      title: 'Reboot', createdAt: 1, startedAt: 2, cancellation: 'unsupported',
+      domainRef: { kind: 'machineReboot', serverId: 'home', machineId: 'machine', installationId: 'installation',
+        task: { id: 'task', taskKind: 'machine.reboot.v1', prompt: { kind: 'sudo.password', adminUsername: 'operator' } },
+        basis: { bootedAt: 1000, expectedRunningServiceIds: ['service'], expectedRunningServicesKnown: true, dispatchStarted: true } } };
+    await publisher(snapshot);
+    expect(contents).toHaveLength(1);
+    const content = contents[0]!;
+    const opened = content.t === 'plain' ? content.v : openAccountScopedBlobCiphertext({
+      kind: 'action_operation_snapshot', material, ciphertext: content.c,
+    })?.value;
+    expect(ActionOperationSnapshotV1Schema.parse(opened)).toEqual(snapshot);
+    // The actual supported predecessor reader closes unknown domain kinds.
+    // Its UI opener safeParses and returns null, dropping only this new Action;
+    // existing Actions still use their unchanged predecessor projection below.
+    expect(PredecessorSnapshotSchema.safeParse(opened).success).toBe(false);
+  });
   it('retains released encrypted publication when the Home exposes persisted mode but no currentness endpoint', async () => {
     const accountId = 'older-account';
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;

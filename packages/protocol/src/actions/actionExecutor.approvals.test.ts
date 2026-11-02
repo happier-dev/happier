@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 
 import { ApprovalRequestSchema, ApprovalRequestPublicSettlementSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { getActionSpec } from './actionSpecs.js';
+import { ActionIdSchema } from './actionIds.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 import type { ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
@@ -195,6 +196,84 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     }),
   };
 }
+
+describe('Machine reboot Action registration and dispatch', () => {
+  it('dispatches the canonical exact-installation Action and rejects extra identity or another Home', async () => {
+    const actionId = ActionIdSchema.safeParse('machines.reboot');
+    expect(actionId.success).toBe(true);
+    if (!actionId.success) throw new Error('The canonical Action catalog must declare reboot');
+    const spec = getActionSpec(actionId.data);
+    expect(spec.executionPlacement).toBe('machine');
+    expect(spec.bindings?.rpcMethod).toBe('machines.reboot');
+    expect(spec.operation?.version).toBe(1);
+    const input = { serverId: 'server-1', machineId: 'machine-1', expectedInstallationId: 'installation' };
+    const effects: unknown[] = [];
+    const executor = createExecutor({
+      // The receiving daemon is a system boundary; catalog parsing, policy,
+      // and dispatch remain real. This boundary cannot reboot the test host.
+      machineReboot: async request => {
+        effects.push(request.input);
+        return { kind: 'accepted', operation: { operationId: 'reboot-operation' }, bootedAt: 1000 };
+      },
+    });
+    const person: ActionExecutorContext = {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: input.serverId,
+      presentUserConfirmation: { actionId: actionId.data },
+    };
+    expect(await executor.execute(actionId.data, input, person))
+      .toMatchObject({ ok: true, result: { kind: 'accepted', bootedAt: 1000 } });
+    expect(effects).toEqual([input]);
+    expect(await executor.execute(actionId.data, { ...input, requestId: 'second-identity' }, person))
+      .toMatchObject({ ok: false });
+    expect(await executor.execute(actionId.data, { ...input, serverId: 'other-home' }, person))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(effects).toEqual([input]);
+  });
+});
+
+describe('Machine reboot approval review', () => {
+  it.each(['complete', 'partial', 'unavailable', 'paged', 'wrong-target', 'no-reader'] as const)('presents fresh %s role context before the existing person confirmation without another approval floor', async coverage => {
+    const trace: string[] = [];
+    const confirmations: unknown[] = [];
+    const input = { serverId: 'server-1', machineId: 'machine-1', expectedInstallationId: 'installation' };
+    const references = { homeId: 'stable-home', machineId: input.machineId,
+      coverage: coverage === 'partial' ? 'partial' as const : 'complete' as const,
+      references: [{ kind: 'deployment_environment' as const, id: 'environment', name: 'Production', deploymentRoles: ['edge' as const] }],
+      nextCursor: null };
+    // Home and Machine reads, the person dialog, and the reboot target are genuine
+    // system boundaries; shared preparation, policy and dispatch stay real.
+    const ports = {
+      machineRebootReferences: coverage === 'no-reader' ? undefined : async (request: Parameters<NonNullable<ActionExecutorDeps['machineRebootReferences']>>[0]) => {
+        trace.push('roles');
+        expect(request.input).toEqual(input);
+        expect(request.context.runtimeAccountId).toBe('account');
+        if (coverage === 'unavailable') throw new Error('Home unavailable');
+        if (coverage === 'wrong-target') return { ...references, machineId: 'other-machine' };
+        if (coverage === 'paged' && !request.cursor) return { ...references, references: [], nextCursor: 'next' };
+        return references;
+      },
+      machineServiceAction: async () => { trace.push('services'); return { kind: 'snapshot', services: [] }; },
+      machineReboot: async () => { trace.push('effect'); return { kind: 'unavailable', reason: 'admission_unavailable' }; },
+      presentUserActionConfirmation: async (request: Parameters<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>[0]) => {
+        trace.push('confirmation'); confirmations.push(request); return false;
+      },
+    };
+    const executor = createExecutor(ports);
+    const result = await executor.execute('machines.reboot', input, { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, serverId: input.serverId, serverIdentityId: 'stable-home',
+      runtimeAccountId: 'account', actionsSettings: defaultActionsSettings });
+    expect(confirmations).toEqual([expect.objectContaining({ preview: expect.objectContaining({ machineRebootReview: {
+      kind: 'machineReboot', ...input, deploymentReferences: coverage === 'no-reader' ? null
+        : coverage === 'unavailable' || coverage === 'wrong-target' ? { ...references, coverage: 'partial', references: [] } : references,
+      services: { kind: 'snapshot', services: [] },
+    } }) })]);
+    expect(trace).toContain('services');
+    if (coverage !== 'no-reader') expect(trace).toContain('roles');
+    expect(trace.at(-1)).toBe('confirmation');
+    expect(trace).not.toContain('effect');
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+  });
+});
 
 function sharedRequesterContext(actionId: ApprovalRequest['actionId'], input: unknown): ActionExecutorContext {
   const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
