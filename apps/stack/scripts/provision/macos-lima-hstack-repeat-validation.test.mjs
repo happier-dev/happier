@@ -11,6 +11,7 @@ import { createLimaTestEnv, limaGuestExec } from '../testkit/core/lima_guest_har
 const testEnv = createLimaTestEnv();
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const pinnedAgentBrowserVersion = (await readFile(new URL('./.agent-browser-version', import.meta.url), 'utf8')).trim();
 const pinnedBunVersion = (await readFile(new URL('./.bun-version', import.meta.url), 'utf8')).trim();
 
 async function fileExists(path) {
@@ -77,6 +78,9 @@ test('macos lima repeat-validation wrapper records per-run artifacts for repeate
       '  exit 2',
       'fi',
       'case "$url" in',
+      '  */.agent-browser-version)',
+      `    printf '%s\\n' ${JSON.stringify(pinnedAgentBrowserVersion)} > "$out"`,
+      '    ;;',
       '  */.bun-version)',
       `    printf '%s\\n' ${JSON.stringify(pinnedBunVersion)} > "$out"`,
       '    ;;',
@@ -272,6 +276,9 @@ test('macos lima repeat-validation wrapper writes summary.json with failureReaso
       '  exit 2',
       'fi',
       'case "$url" in',
+      '  */.agent-browser-version)',
+      `    printf '%s\\n' ${JSON.stringify(pinnedAgentBrowserVersion)} > "$out"`,
+      '    ;;',
       '  */.bun-version)',
       `    printf '%s\\n' ${JSON.stringify(pinnedBunVersion)} > "$out"`,
       '    ;;',

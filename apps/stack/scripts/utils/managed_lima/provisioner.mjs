@@ -9,6 +9,10 @@ export { REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN } from './guest_toolchain.mjs';
 
 const PROFILES = new Set(['happier', 'installer', 'bare']);
 const SIMPLE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+function readPinnedAgentBrowserVersion() {
+  return readFileSync(new URL('../../provision/.agent-browser-version', import.meta.url), 'utf8').trim();
+}
+
 function readPinnedBunVersion() {
   return readFileSync(new URL('../../provision/.bun-version', import.meta.url), 'utf8').trim();
 }
@@ -153,7 +157,7 @@ export async function inspectManagedLimaGuestToolchain({
   instance: rawInstance,
   nodeMajor: rawNodeMajor = '24',
   mutagenVersion: rawMutagenVersion = '0.18.1',
-  agentBrowserVersion: rawAgentBrowserVersion = '0.34.0',
+  agentBrowserVersion: rawAgentBrowserVersion = readPinnedAgentBrowserVersion(),
   playwrightVersion: rawPlaywrightVersion = '1.58.2',
   bunVersion: rawBunVersion = readPinnedBunVersion(),
 }) {
@@ -211,7 +215,7 @@ export async function provisionManagedLimaGuest({
   profile: rawProfile = 'happier',
   nodeMajor: rawNodeMajor = '24',
   mutagenVersion: rawMutagenVersion = '0.18.1',
-  agentBrowserVersion: rawAgentBrowserVersion = '0.34.0',
+  agentBrowserVersion: rawAgentBrowserVersion = readPinnedAgentBrowserVersion(),
   playwrightVersion: rawPlaywrightVersion = '1.58.2',
   bunVersion: rawBunVersion = readPinnedBunVersion(),
 }) {

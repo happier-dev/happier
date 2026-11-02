@@ -13,6 +13,7 @@ import {
   restartManagedLimaGuestAgent,
 } from './provisioner.mjs';
 
+const pinnedAgentBrowserVersion = (await readFile(new URL('../../provision/.agent-browser-version', import.meta.url), 'utf8')).trim();
 const pinnedBunVersion = (await readFile(new URL('../../provision/.bun-version', import.meta.url), 'utf8')).trim();
 
 function fakeExecutor({ ready = false } = {}) {
@@ -106,7 +107,7 @@ test('managed Lima guest provisioning streams the canonical script and writes a 
   assert.ok(provision.args.includes('HAPPIER_PROVISION_NODE_MAJOR=24'));
   assert.ok(!provision.args.some(arg => arg.startsWith('HAPPIER_PROVISION_YARN_VERSION=')));
   assert.ok(provision.args.includes('HAPPIER_PROVISION_MUTAGEN_VERSION=0.18.1'));
-  assert.ok(provision.args.includes('HAPPIER_PROVISION_AGENT_BROWSER_VERSION=0.34.0'));
+  assert.ok(provision.args.includes(`HAPPIER_PROVISION_AGENT_BROWSER_VERSION=${pinnedAgentBrowserVersion}`));
   assert.ok(provision.args.includes('HAPPIER_PROVISION_PLAYWRIGHT_VERSION=1.58.2'));
   assert.ok(provision.args.includes(`HAPPIER_PROVISION_BUN_VERSION=${pinnedBunVersion}`));
   assert.deepEqual(provision.args.slice(-4), ['bash', '-s', '--', '--profile=happier']);

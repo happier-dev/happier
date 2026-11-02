@@ -280,7 +280,12 @@ if [[ "${VM_CREATED}" == "1" ]]; then
     guest_bun_version="$(cat "${SCRIPT_DIR}/.bun-version")"
     guest_bun_version="${guest_bun_version%$'\r'}"
   fi
-  limactl shell "${VM_NAME}" -- env "HAPPIER_PROVISION_BUN_VERSION=${guest_bun_version}" bash -s -- "--profile=${GUEST_PROVISION_PROFILE}" < "${GUEST_PROVISION_SCRIPT}"
+  guest_agent_browser_version="${HAPPIER_PROVISION_AGENT_BROWSER_VERSION:-}"
+  if [[ "${GUEST_PROVISION_PROFILE}" != "bare" && -z "${guest_agent_browser_version}" ]]; then
+    guest_agent_browser_version="$(cat "${SCRIPT_DIR}/.agent-browser-version")"
+    guest_agent_browser_version="${guest_agent_browser_version%$'\r'}"
+  fi
+  limactl shell "${VM_NAME}" -- env "HAPPIER_PROVISION_BUN_VERSION=${guest_bun_version}" "HAPPIER_PROVISION_AGENT_BROWSER_VERSION=${guest_agent_browser_version}" bash -s -- "--profile=${GUEST_PROVISION_PROFILE}" < "${GUEST_PROVISION_SCRIPT}"
 fi
 
 echo ""

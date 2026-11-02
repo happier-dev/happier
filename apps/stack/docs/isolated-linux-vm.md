@@ -159,6 +159,7 @@ Inside the VM:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
   && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
+  && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.agent-browser-version -o /tmp/.agent-browser-version \
   && chmod +x /tmp/linux-ubuntu-provision.sh \
   && /tmp/linux-ubuntu-provision.sh --profile=happier
 ```

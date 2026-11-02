@@ -21,7 +21,7 @@ set -euo pipefail
 # Env overrides:
 # - HAPPIER_PROVISION_NODE_MAJOR (default: 24)
 # - HAPPIER_PROVISION_MUTAGEN_VERSION (default: 0.18.1)
-# - HAPPIER_PROVISION_AGENT_BROWSER_VERSION (default: 0.34.0)
+# - HAPPIER_PROVISION_AGENT_BROWSER_VERSION (default: adjacent .agent-browser-version)
 # - HAPPIER_PROVISION_PLAYWRIGHT_VERSION (default: 1.58.2; Linux ARM64 browser payload)
 # - HAPPIER_PROVISION_BUN_VERSION (default: adjacent .bun-version from the same source ref)
 
@@ -99,7 +99,7 @@ say() {
 
 NODE_MAJOR="${HAPPIER_PROVISION_NODE_MAJOR:-24}"
 MUTAGEN_VERSION="${HAPPIER_PROVISION_MUTAGEN_VERSION:-0.18.1}"
-AGENT_BROWSER_VERSION="${HAPPIER_PROVISION_AGENT_BROWSER_VERSION:-0.34.0}"
+AGENT_BROWSER_VERSION="${HAPPIER_PROVISION_AGENT_BROWSER_VERSION:-}"
 PLAYWRIGHT_VERSION="${HAPPIER_PROVISION_PLAYWRIGHT_VERSION:-1.58.2}"
 BUN_VERSION="${HAPPIER_PROVISION_BUN_VERSION:-}"
 
@@ -185,6 +185,23 @@ if [[ "${PROFILE}" == "happier" || "${PROFILE}" == "bun" ]]; then
   fi
   if [[ ! "${BUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "[provision] invalid Bun version: ${BUN_VERSION}" >&2
+    exit 2
+  fi
+fi
+
+if [[ "${PROFILE}" != "bun" ]]; then
+  if [[ -z "${AGENT_BROWSER_VERSION}" ]]; then
+    AGENT_BROWSER_VERSION_FILE="$(dirname "${BASH_SOURCE[0]}")/.agent-browser-version"
+    if [[ ! -r "${AGENT_BROWSER_VERSION_FILE}" ]]; then
+      echo "[provision] missing agent-browser version owner: ${AGENT_BROWSER_VERSION_FILE}; download it beside this script from the same source ref or set HAPPIER_PROVISION_AGENT_BROWSER_VERSION" >&2
+      exit 2
+    fi
+    AGENT_BROWSER_VERSION="$(cat "${AGENT_BROWSER_VERSION_FILE}")"
+    AGENT_BROWSER_VERSION="${AGENT_BROWSER_VERSION%$'\r'}"
+  fi
+
+  if [[ ! "${AGENT_BROWSER_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[provision] invalid agent-browser version: ${AGENT_BROWSER_VERSION}" >&2
     exit 2
   fi
 fi
@@ -355,11 +372,6 @@ say "mutagen: $(mutagen version)"
 provision_bun_toolchain
 
 provision_node_toolchain
-fi
-
-if [[ ! "${AGENT_BROWSER_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "[provision] invalid agent-browser version: ${AGENT_BROWSER_VERSION}" >&2
-  exit 2
 fi
 
 CURRENT_AGENT_BROWSER_VERSION="$(agent-browser --version 2>/dev/null | awk '{print $NF}' || true)"

@@ -18,8 +18,11 @@ export async function runManagedWslOperation(
     const bunVersion = String(env.HAPPIER_PROVISION_BUN_VERSION ?? '').trim()
       || (await readFile(new URL('../../provision/.bun-version', import.meta.url), 'utf8')).trim();
     if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(bunVersion)) throw new Error('[dev-targets] invalid Bun provision version');
+    const agentBrowserVersion = String(env.HAPPIER_PROVISION_AGENT_BROWSER_VERSION ?? '').trim()
+      || (await readFile(new URL('../../provision/.agent-browser-version', import.meta.url), 'utf8')).trim();
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(agentBrowserVersion)) throw new Error('[dev-targets] invalid agent-browser provision version');
     // The guest receives a streamed script, not this package's adjacent files.
-    provision = `export HAPPIER_PROVISION_BUN_VERSION=${bunVersion}\n`
+    provision = `export HAPPIER_PROVISION_BUN_VERSION=${bunVersion}\nexport HAPPIER_PROVISION_AGENT_BROWSER_VERSION=${agentBrowserVersion}\n`
       + await readFile(new URL('../../provision/linux-ubuntu-provision.sh', import.meta.url), 'utf8');
   }
   const invocation = [

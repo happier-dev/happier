@@ -89,6 +89,7 @@ limactl shell "${VM_NAME}" -- bash -lc "
   echo '[vm] downloading provision + smoke scripts...'
   curl -fsSL '${HSTACK_RAW_BASE}/scripts/provision/linux-ubuntu-provision.sh' -o /tmp/linux-ubuntu-provision.sh
   curl -fsSL '${HSTACK_RAW_BASE}/scripts/provision/.bun-version' -o /tmp/.bun-version
+  curl -fsSL '${HSTACK_RAW_BASE}/scripts/provision/.agent-browser-version' -o /tmp/.agent-browser-version
   chmod +x /tmp/linux-ubuntu-provision.sh
   /tmp/linux-ubuntu-provision.sh --profile='${HSTACK_PROVISION_PROFILE}'
 

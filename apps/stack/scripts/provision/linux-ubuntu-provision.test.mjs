@@ -9,6 +9,7 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from '../testkit/core/fake_bin_harness.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const pinnedAgentBrowserVersion = (await readFile(join(__dirname, '.agent-browser-version'), 'utf8')).trim();
 
 test('Bun-only provisioning repairs missing or stale compilers without unrelated host setup and is idempotent', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-bun-only-' });
@@ -62,6 +63,7 @@ test('fresh Lima provisioning forwards its CRLF companion or explicit Bun overri
   for (const name of ['macos-lima-vm.sh', 'linux-ubuntu-provision.sh']) {
     await writeFile(join(fixtureProvisionDir, name), await readFile(join(__dirname, name)));
   }
+  await writeFile(join(fixtureProvisionDir, '.agent-browser-version'), '7.7.7\r\n');
   // limactl is the genuine VM/process boundary. Never execute the streamed
   // provisioner: unknown VM commands fail closed rather than reaching the host.
   const { binDir } = writeFakeBin({ root, name: 'limactl', content: [
@@ -72,6 +74,7 @@ test('fresh Lima provisioning forwards its CRLF companion or explicit Bun overri
     '  start|stop) ;;',
     '  shell)',
     '    [[ "$4" == env && "$5" == "HAPPIER_PROVISION_BUN_VERSION=$TEST_EXPECTED_BUN_VERSION" ]] || exit 79',
+    '    [[ "$6" == "HAPPIER_PROVISION_AGENT_BROWSER_VERSION=$TEST_EXPECTED_AGENT_BROWSER_VERSION" ]] || exit 80',
     '    /bin/cat > /dev/null',
     '    ;;',
     '  *) exit 79 ;;',
@@ -88,7 +91,9 @@ test('fresh Lima provisioning forwards its CRLF companion or explicit Bun overri
     const result = spawnSync('bash', [join(fixtureProvisionDir, 'macos-lima-vm.sh'), 'fixture'], {
       env: { ...process.env, HOME: root, LIMA_HOME: limaHome, PATH: `${binDir}:${process.env.PATH}`,
         HSTACK_PROVISION_PROFILE: profile, HAPPIER_PROVISION_BUN_VERSION: override,
-        TEST_LIMA_CONFIG: join(limaHome, 'fixture', 'lima.yaml'), TEST_EXPECTED_BUN_VERSION: expected },
+        TEST_LIMA_CONFIG: join(limaHome, 'fixture', 'lima.yaml'), TEST_EXPECTED_BUN_VERSION: expected,
+        HAPPIER_PROVISION_AGENT_BROWSER_VERSION: override ? '6.6.6' : '',
+        TEST_EXPECTED_AGENT_BROWSER_VERSION: override ? '6.6.6' : '7.7.7' },
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -120,7 +125,7 @@ test('QA provisioning reuses only the browser install owner and preserves user A
   await writeFile(join(root, 'package.json'), manifest);
   const log = join(root, 'browser.log');
   const { binDir } = writeFakeBin({ root, name: 'agent-browser', content:
-    '#!/bin/sh\nif [ "$1" = --version ]; then echo "agent-browser 0.34.0"; else printf "%s\\n" "$*" >> "$QA_BROWSER_LOG"; fi\n' });
+    `#!/bin/sh\nif [ "$1" = --version ]; then echo "agent-browser ${pinnedAgentBrowserVersion}"; else printf "%s\\n" "$*" >> "$QA_BROWSER_LOG"; fi\n` });
   writeFakeBin({ root, name: 'uname', content: '#!/bin/sh\necho x86_64\n' });
   // If QA takes the full worker setup path, fail at its first OS/package boundary.
   for (const name of ['sudo', 'apt-get', 'npm', 'python3']) {
@@ -138,12 +143,12 @@ test('QA provisioning reuses only the browser install owner and preserves user A
   // npm's package acquisition/install is the external boundary. The real
   writeFakeBin({ root, name: 'npm', content: `#!${process.execPath}
 
-require('node:assert/strict').deepEqual(process.argv.slice(2), ['install', '--global', '--no-audit', '--no-fund', '--allow-scripts=agent-browser', 'agent-browser@0.34.0']);
+require('node:assert/strict').deepEqual(process.argv.slice(2), ['install', '--global', '--no-audit', '--no-fund', '--allow-scripts=agent-browser', 'agent-browser@${pinnedAgentBrowserVersion}']);
 require('node:fs').writeFileSync(process.env.QA_INSTALLED, 'installed');
 ` });
   writeFakeBin({ root, name: 'id', content: '#!/bin/sh\necho 1000\n' });
   writeFakeBin({ root, name: 'agent-browser', content:
-    '#!/bin/sh\nif [ "$1" = --version ]; then if [ -f "$QA_INSTALLED" ]; then echo "agent-browser 0.34.0"; else echo 0.0.0; fi; fi\n' });
+    `#!/bin/sh\nif [ "$1" = --version ]; then if [ -f "$QA_INSTALLED" ]; then echo "agent-browser ${pinnedAgentBrowserVersion}"; else echo 0.0.0; fi; fi\n` });
   writeFakeBin({ root, name: 'sudo', content:
     '#!/bin/sh\nprintf "%s\\n" "$*" >> "$QA_PRIVILEGE_LOG"\n[ "$1" = -n ] || exit 78\nshift\nexec "$@"\n' });
   writeFakeBin({ root, name: 'node', content:
@@ -166,6 +171,39 @@ async function readIfExists(path) {
     return '';
   }
 }
+
+test('QA provisioning upgrades a stale browser to the shared pin and then keeps it', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-qa-browser-pin-' });
+  const pin = pinnedAgentBrowserVersion;
+  const installed = join(root, 'installed');
+  const acquisitions = join(root, 'acquisitions');
+  const { binDir } = writeFakeBin({ root, name: 'agent-browser', content: [
+    '#!/bin/sh',
+    'if [ "$1" = --version ]; then',
+    '  if [ -f "$QA_INSTALLED" ]; then cat "$QA_INSTALLED"; else echo 0.34.0; fi',
+    'fi',
+  ].join('\n') });
+  writeFakeBin({ root, name: 'uname', content: '#!/bin/sh\necho x86_64\n' });
+  writeFakeBin({ root, name: 'id', content: '#!/bin/sh\necho 0\n' });
+  // npm is the acquisition boundary; the real provisioner selects the version.
+  writeFakeBin({ root, name: 'npm', content: [
+    '#!/bin/sh',
+    'for arg do case "$arg" in agent-browser@*)',
+    '  printf "%s\\n" "${arg#agent-browser@}" > "$QA_INSTALLED"',
+    '  printf "%s\\n" "$arg" >> "$QA_ACQUISITIONS" ;; esac; done',
+  ].join('\n') });
+  const run = () => spawnSync('bash', [join(__dirname, 'linux-ubuntu-provision.sh'), '--profile=qa'], {
+    env: { ...process.env, HOME: root, PATH: `${binDir}:${process.env.PATH}`,
+      HAPPIER_PROVISION_AGENT_BROWSER_VERSION: '', QA_INSTALLED: installed, QA_ACQUISITIONS: acquisitions },
+    encoding: 'utf8',
+  });
+  const first = run();
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal((await readIfExists(installed)).trim(), pin, 'a stale launcher must be replaced by the shared pin');
+  assert.equal(run().status, 0);
+  assert.equal((await readFile(acquisitions, 'utf8')).trim(), `agent-browser@${pin}`);
+  await assert.rejects(readFile(join(root, '.codex', 'config.toml')), { code: 'ENOENT' });
+});
 
 test('linux provision consumes its companion Bun pin and installs browser tools through npm', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-linux-provision-test-'));
@@ -254,7 +292,7 @@ test('linux provision consumes its companion Bun pin and installs browser tools 
       '  echo "11.0.0"',
       '  exit 0',
       'fi',
-      `if [[ "\${1:-}" == "install" && "$*" == *"agent-browser@0.34.0"* ]]; then : > ${JSON.stringify(agentBrowserInstalled)}; fi`,
+      `if [[ "\${1:-}" == "install" && "$*" == *"agent-browser@${pinnedAgentBrowserVersion}"* ]]; then : > ${JSON.stringify(agentBrowserInstalled)}; fi`,
       'if [[ "${1:-}" == "exec" && "$*" == *"playwright@1.58.2"* ]]; then',
       '  browser_dir="$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1208/chrome-linux"',
       '  /bin/mkdir -p "$browser_dir"',
@@ -274,7 +312,7 @@ test('linux provision consumes its companion Bun pin and installs browser tools 
     [
       '#!/usr/bin/env bash',
       `echo "agent-browser $*" >> ${JSON.stringify(agentBrowserLog)}`,
-      `if [[ "\${1:-}" == "--version" ]]; then if [[ -f ${JSON.stringify(agentBrowserInstalled)} ]]; then echo 0.34.0; else echo 0.0.0; fi; fi`,
+      `if [[ "\${1:-}" == "--version" ]]; then if [[ -f ${JSON.stringify(agentBrowserInstalled)} ]]; then echo ${pinnedAgentBrowserVersion}; else echo 0.0.0; fi; fi`,
     ].join('\n') + '\n',
     'utf-8',
   );
@@ -372,6 +410,7 @@ test('linux provision consumes its companion Bun pin and installs browser tools 
   // must drive the real install path, independently of the caller's cwd.
   const scriptPath = join(root, 'linux-ubuntu-provision.sh');
   await writeFile(scriptPath, await readFile(join(__dirname, 'linux-ubuntu-provision.sh')));
+  await writeFile(join(root, '.agent-browser-version'), pinnedAgentBrowserVersion);
   // Windows checkout line endings must not change the scalar version.
   await writeFile(join(root, '.bun-version'), '9.9.9\r\n');
   const res = spawnSync('bash', [scriptPath, '--profile=happier'], {
@@ -423,10 +462,9 @@ test('linux provision consumes its companion Bun pin and installs browser tools 
   assert.equal(spawnSync(join(binDir, 'bun'), ['--version'], { encoding: 'utf-8' }).stdout.trim(), '9.9.9');
   assert.match(mutagenOut, /install .* \/etc\/apparmor\.d\/happier-bwrap/);
   assert.match(await readIfExists(apparmorLog), /apparmor_parser -r \/etc\/apparmor\.d\/happier-bwrap/);
-  assert.match(
-    npmOut,
-    /npm install --global --no-audit --no-fund --allow-scripts=agent-browser agent-browser@0\.34\.0 root=1/,
-  );
+  assert.ok(npmOut.includes(
+    `npm install --global --no-audit --no-fund --allow-scripts=agent-browser agent-browser@${pinnedAgentBrowserVersion} root=1`,
+  ));
   assert.match(
     npmOut,
     /npm exec --yes --package=playwright@1\.58\.2 -- playwright install --with-deps chromium-headless-shell root=0/,
