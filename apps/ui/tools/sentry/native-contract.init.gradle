@@ -1,0 +1,22 @@
+// Run from apps/ui/android:
+// ./gradlew -I ../tools/sentry/native-contract.init.gradle \
+//   :sentry_react-native:testDebugUnitTest \
+//   --tests io.sentry.android.replay.ReplayEncoderContractTest
+// Exercise the installed vendor project and its own production dependency pins.
+allprojects { project ->
+    project.plugins.withId("com.android.library") {
+        if (project.name == "sentry_react-native") {
+            project.android.testOptions.unitTests.includeAndroidResources = true
+            project.android.sourceSets.test.java.srcDir(
+                new File(project.rootProject.projectDir, "../tools/sentry/android"))
+            project.dependencies.add("testImplementation", "junit:junit:4.13.2")
+            project.dependencies.add("testImplementation", "org.robolectric:robolectric:4.14.1")
+            project.tasks.withType(Test).configureEach {
+                testLogging {
+                    events "passed", "failed"
+                    exceptionFormat "full"
+                }
+            }
+        }
+    }
+}

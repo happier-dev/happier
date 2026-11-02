@@ -14,3 +14,26 @@ index db86096..db7407a 100644
  #endif
  
      [self postDidBecomeActiveNotification];
+diff --git a/node_modules/@sentry/react-native/android/build.gradle b/node_modules/@sentry/react-native/android/build.gradle
+--- a/node_modules/@sentry/react-native/android/build.gradle
++++ b/node_modules/@sentry/react-native/android/build.gradle
+@@ -55,6 +55,6 @@
+ dependencies {
+     compileOnly files('libs/replay-stubs.jar')
+     implementation 'com.facebook.react:react-native:+'
+-    api 'io.sentry:sentry-android:8.32.0'
+-    debugImplementation 'io.sentry:sentry-spotlight:8.32.0'
++    api 'io.sentry:sentry-android:8.53.0'
++    debugImplementation 'io.sentry:sentry-spotlight:8.53.0'
+ }
+diff --git a/node_modules/@sentry/react-native/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java b/node_modules/@sentry/react-native/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
+--- a/node_modules/@sentry/react-native/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
++++ b/node_modules/@sentry/react-native/android/src/main/java/io/sentry/react/RNSentryModuleImpl.java
+@@ -667,6 +667,6 @@
+             tracesFilesDirPath,
+             (int) SECONDS.toMicros(1) / profilingTracesHz,
+             new SentryFrameMetricsCollector(reactApplicationContext, logger, buildInfo),
+-            executorService,
++            () -> executorService,
+             logger);
+   }

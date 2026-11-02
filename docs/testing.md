@@ -67,6 +67,18 @@ When introducing or moving a lane/pattern, update all relevant places in the sam
 2. root `package.json` lane scripts,
 3. CI workflow wiring.
 
+## UI native Sentry regression
+
+The Android replay regression runs against the installed Sentry Gradle project and its production dependency graph. It wedges only the OS `MediaCodec` boundary, then verifies that the real replay cache can close without waiting for the encoder and cannot persist new segment metadata after closing.
+
+From `apps/ui/android`, run through the checkout's `hstack-exec` with a configured Android SDK and JDK:
+
+```sh
+./gradlew -I ../tools/sentry/native-contract.init.gradle :sentry_react-native:testDebugUnitTest --tests io.sentry.android.replay.ReplayEncoderContractTest
+```
+
+Use `gradlew.bat` on Windows. This extends the vendor project's existing native unit-test task; it does not install an app or replace SDK dependencies for the test. The Sentry vendor patch keeps Android dependencies coherent and includes the official profiler executor supplier adaptation needed by the updated native SDK. Its replay close contract comes from [Sentry's encoder shutdown fix](https://github.com/getsentry/sentry-java/pull/5842).
+
 ## UI e2e authoring
 
 - Prefer stable React Native `testID` selectors, queried in Playwright with `getByTestId(...)`.
