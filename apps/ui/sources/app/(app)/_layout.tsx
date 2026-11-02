@@ -588,7 +588,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                         headerBackVisible: false,
                         headerTitle: Platform.OS === 'web'
                             ? t('newSession.title')
-                            : NewSessionKeyboardDismissHeaderTitle,
+                            : () => <NewSessionKeyboardDismissHeaderTitle />,
                         headerLeft: () => null,
                         headerRight: () => <NewSessionModalHeaderCloseButton navigation={navigation} />,
                     };

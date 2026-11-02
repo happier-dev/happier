@@ -68,7 +68,15 @@ vi.mock('@expo/vector-icons', async () => {
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+    const unistyles = await createUnistylesMock();
+    return {
+        ...unistyles,
+        useUnistyles: () => {
+            // The native SDK hook owns state; a hookless mock hides render-callback misuse.
+            React.useState(null);
+            return unistyles.useUnistyles();
+        },
+    };
 });
 
 vi.mock('@/text', async () => {
@@ -210,6 +218,15 @@ function getStackScreenOptions(
     return options ?? {};
 }
 
+function NativeStackHeader(props: Readonly<{ headerTitle?: () => React.ReactNode }>): React.ReactElement {
+    React.useState(null);
+    // @react-navigation/native-stack invokes headerTitle as a render callback inside
+    // useHeaderConfigProps, so the callback must return an element without calling hooks.
+    const title = props.headerTitle?.();
+    React.useState(null);
+    return <>{title}</>;
+}
+
 describe('app stack modal header close buttons', () => {
     beforeEach(() => {
         routerBackSpy.mockReset();
@@ -308,7 +325,7 @@ describe('app stack modal header close buttons', () => {
         expect(renderedHeader.tree.root.findAllByProps({ testID: 'new-session-cancel' })).toHaveLength(0);
     });
 
-    it('dismisses the keyboard when the native new-session header title is pressed', async () => {
+    it('keeps native header hooks stable and dismisses the keyboard when the new-session title appears', async () => {
         const { default: RootLayout } = await import('@/app/(app)/_layout');
 
         const screen = await renderScreen(<RootLayout />);
@@ -317,7 +334,8 @@ describe('app stack modal header close buttons', () => {
         const headerTitle = options.headerTitle as (() => React.ReactNode) | undefined;
         expect(headerTitle).toBeTypeOf('function');
 
-        const renderedHeaderTitle = await renderScreen(<>{headerTitle?.()}</>);
+        const renderedHeaderTitle = await renderScreen(<NativeStackHeader />);
+        await renderedHeaderTitle.update(<NativeStackHeader headerTitle={headerTitle} />);
         const dismissTarget = renderedHeaderTitle.tree.root
             .findAllByProps({ testID: 'new-session-header-keyboard-dismiss' })
             .at(0);
