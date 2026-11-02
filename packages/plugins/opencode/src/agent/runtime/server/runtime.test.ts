@@ -403,6 +403,37 @@ describe('OpenCode catalog observation', () => {
 });
 
 describe('createOpenCodeServerRuntime', () => {
+  it('delivers pending V2 compaction cancellation to the public watcher before disposal', async () => {
+    const client = createClientFixture();
+    const operations = createOpenCodeServerRuntime({
+      ctx: createContextFixture().ctx,
+      directory: '/repo',
+      happierSessionId: 'happy-session-1',
+      client,
+      dialect: 'v2',
+      providerModelId: 'anthropic/sonnet',
+      mcpRegistration: readyMcpRegistration,
+      mcpProjection: emptyMcpProjection,
+    });
+    await operations.openSession({ kind: 'create' });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    try {
+      expect(await runtime.compact({ compactionId: 'idle-dispose', trigger: 'idle' })).toEqual({ status: 'admitted' });
+      expect(client.sessionSummarize).toHaveBeenCalledOnce();
+      expect(events.filter(event => event.kind === 'context-compaction').map(event => event.phase)).toEqual(['started']);
+      await runtime.dispose();
+      expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+        { compactionId: 'idle-dispose', trigger: 'idle', phase: 'started' },
+        { compactionId: 'idle-dispose', trigger: 'idle', phase: 'cancelled' },
+      ]);
+      const settledCount = events.length;
+      await runtime.dispose();
+      expect(events).toHaveLength(settledCount);
+    } finally { await runtime.dispose(); }
+  });
+
   it.each([false, true])('publishes only live exact-parent cache clocks without adding history reads (tool: %s)', async (hasTool) => {
     const client = createClientFixture();
     const operations = await createStartedRuntime({ client });

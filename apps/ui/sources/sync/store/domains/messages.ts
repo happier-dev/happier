@@ -7,6 +7,7 @@ import {
 
 import { createReducer, reducer, type ReducerState } from "@happier-dev/session-core/reducer";
 import type { Message } from "@happier-dev/session-core/messages";
+import { messageAttentionImpact } from "@happier-dev/session-core/messages";
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import type { Session } from '../../domains/state/storageTypes';
 import { readSessionPresentationCompletedRequests } from '../../domains/session/presentation/readSessionPresentationCompletedRequests';
@@ -873,8 +874,14 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             completedRequests: renderableCompletedRequests,
                         });
                     }
+                    // Quiet transcript arrivals advance the Session's transport cursor,
+                    // but that cursor alone must not replace its visible list row.
+                    const quietArrivals = processedMessages.length > 0 && processedMessages.every((message) => {
+                        const impact = messageAttentionImpact(message);
+                        return !impact.affectsUnread && !impact.affectsMeaningfulActivity;
+                    });
                     const nextRenderable = buildSessionListRenderableFromSession(
-                        nextSessionForRenderable,
+                        quietArrivals ? { ...nextSessionForRenderable, seq: previousRenderable.seq } : nextSessionForRenderable,
                         previousRenderable,
                         undefined,
                         renderableAggregate,

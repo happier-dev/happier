@@ -17,6 +17,7 @@ import {
     scopedPluginSettingsAdapter,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { isReleasedFlatPluginSettingKey } from '@/sync/domains/settings/releasedFlatPluginSettings';
 import { useSettingsSelector } from '@/sync/store/hooks';
 
 const NO_SETTINGS_KEYS: readonly string[] = Object.freeze([]);
@@ -123,6 +124,11 @@ export function useAgentScopedPluginSettingsSnapshot(params: Readonly<{
             || selectedAgentSettingsSources.every((source) => source.declaration === null || source.projection.state.ready),
         [selectedAgentHasScopedSettings, selectedAgentSettingsSources],
     );
+    const selectedAgentReleasedFlatKeys = React.useMemo(() => (
+        selectedAgentScopedSettingsDeclarations.account?.fields
+            .map((field) => field.key.trim())
+            .filter(isReleasedFlatPluginSettingKey) ?? NO_SETTINGS_KEYS
+    ), [selectedAgentScopedSettingsDeclarations.account]);
     const selectedAgentAccountFieldValues = useSettingsSelector(React.useCallback((accountSettings) => {
         const values: Record<string, unknown> = {};
         const declaration = selectedAgentScopedSettingsDeclarations.account;
@@ -139,8 +145,7 @@ export function useAgentScopedPluginSettingsSnapshot(params: Readonly<{
         }
         return values;
     }, [selectedAgentAccountSettings.state.values, selectedAgentScopedSettingsDeclarations.account, params.serverId]),
-    // An Agent without Account declarations reads no Account setting, so it demands none.
-    selectedAgentScopedSettingsDeclarations.account ? undefined : NO_SETTINGS_KEYS);
+    selectedAgentReleasedFlatKeys);
     const selectedAgentPluginSettings: AgentPluginSettingsSnapshot | null = React.useMemo(() => {
         if (!selectedAgentHasScopedSettings || !selectedAgentSettingsReady) return null;
         const serverIdentityId = resolveScopedPluginSettingsServerIdentity(params.serverId);

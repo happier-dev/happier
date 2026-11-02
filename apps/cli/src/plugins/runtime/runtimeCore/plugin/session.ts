@@ -331,6 +331,24 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         },
         ...(stableModels ? { models: stableModels } : {}),
         ...(stableModes ? { modes: stableModes } : {}),
+        readSessionCompactionCapability: () => runtimeClosed
+            ? null : currentOperations.readSessionCompactionCapability?.() ?? null,
+        get compactContext() {
+            if (!currentOperations.compactContext) return undefined;
+            return async (command: string) => {
+                const compactContext = currentOperations.compactContext;
+                if (!compactContext) throw new Error('/compact is not supported by this runtime');
+                await compactContext.call(currentOperations, command);
+            };
+        },
+        get compact() {
+            if (!currentOperations.compact) return undefined;
+            return (...args: Parameters<NonNullable<PluginRuntimeHookOperations['compact']>>) => {
+                const compact = currentOperations.compact;
+                if (!compact) throw new Error('Native Agent compaction is unavailable');
+                return compact.apply(currentOperations, args);
+            };
+        },
         get permissionCapability() {
             return currentOperations.permissionCapability;
         },

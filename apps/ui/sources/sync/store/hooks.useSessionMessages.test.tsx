@@ -9,12 +9,71 @@ import { storage } from '@/sync/domains/state/storageStore';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 afterEach(() => {
     standardCleanup();
 });
 
 describe('useSessionMessages', () => {
+    it.each(['completed', 'failed', 'cancelled'] as const)(
+        'idleCompaction.F2 retains Session-list row references through started and %s', async (terminalPhase) => {
+            const previous = storage.getState();
+            const serverId = getActiveServerSnapshot().serverId;
+            const session = createSessionFixture({ id: 'idle-list', serverId, seq: 10, lastViewedSessionSeq: 10,
+                pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 });
+            const neighbor = createSessionFixture({ id: 'idle-neighbor', serverId });
+            storage.setState({
+                sessions: { ...previous.sessions, [session.id]: session, [neighbor.id]: neighbor },
+                sessionListRowsByServerId: { ...previous.sessionListRowsByServerId, [serverId]: {
+                    [session.id]: buildSessionListRenderableFromSession(session),
+                    [neighbor.id]: buildSessionListRenderableFromSession(neighbor),
+                } },
+            });
+            // Settle cold aggregate/request projection before measuring phase arrivals.
+            storage.getState().applyMessages(session.id, []);
+            const counts = createRenderCommitCounter();
+            const serverIds = [serverId];
+            const hook = await renderHook(() => {
+                useRenderCommitCounter(counts);
+                return useSessionListRowsByServerId(serverIds);
+            });
+            try {
+                const initial = hook.getCurrent();
+                const rows = initial[serverId];
+                counts.reset();
+                for (const [index, phase] of (['started', terminalPhase] as const).entries()) {
+                    await act(async () => {
+                        storage.getState().applyMessages(session.id, [{
+                            id: `idle-${phase}`, localId: null, seq: 11 + index, createdAt: 2_000 + index,
+                            role: 'event', isSidechain: false,
+                            content: { type: 'context-compaction', lifecycleId: 'idle-list-compact', trigger: 'idle', phase },
+                        }]);
+                    });
+                    expect(hook.getCurrent()).toBe(initial);
+                    expect(hook.getCurrent()[serverId]?.[session.id]).toBe(rows?.[session.id]);
+                    expect(hook.getCurrent()[serverId]?.[neighbor.id]).toBe(rows?.[neighbor.id]);
+                    expect(storage.getState().sessions[session.id].seq).toBe(11 + index);
+                }
+                expect(counts.read()).toEqual({ renders: 0, commits: 0 });
+                // A meaningful arrival must still reach this same list projection.
+                await act(async () => {
+                    storage.getState().applyMessages(session.id, [{
+                        id: 'manual-compact', localId: null, seq: 13, createdAt: 2_003,
+                        role: 'event', isSidechain: false,
+                        content: { type: 'context-compaction', lifecycleId: 'manual-list-compact', trigger: 'manual', phase: 'completed' },
+                    }]);
+                });
+                expect(hook.getCurrent()[serverId]?.[session.id]).not.toBe(rows?.[session.id]);
+                expect(hook.getCurrent()[serverId]?.[neighbor.id]).toBe(rows?.[neighbor.id]);
+            } finally {
+                await hook.unmount();
+                storage.setState(previous);
+            }
+        },
+    );
+
     // PERFCI gate admission requires ten unchanged passes. STREAM changed the
     // selector and fixture during calibration; the latest basis has one pass.
     // Retain this contract and enable it after completing current-basis calibration.

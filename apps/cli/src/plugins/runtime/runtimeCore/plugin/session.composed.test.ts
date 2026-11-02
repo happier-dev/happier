@@ -1,3 +1,9 @@
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import type { DisposableCodexAppServerClient } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
+import { createCodexNativeEventFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client.test-support';
+import { createCodexNativeAppServerSessionRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
+import { createCodexAppServerRuntime, startCodexAppServerRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -190,6 +196,74 @@ function createHostFactoryParams() {
 }
 
 describe('plugin session runtime adapters', () => {
+  it('keeps manual support after a usage-limited first turn and distinguishes an unopened thread', async () => {
+    const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
+    const receipts = createCodexNativeEventFixture();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    // Only the native JSON-RPC transport is replaced; facade and host binding are real.
+    const client: DisposableCodexAppServerClient = {
+      onNativeEvent: receipts.onNativeEvent,
+      launchFeatures: { realtimeConversationAdvertised: false },
+      async request(method, params) {
+        requests.push({ method, params });
+        if (method === 'thread/start') return { thread: { id: 'main' }, model: 'gpt-6-luna' };
+        if (method === 'turn/start') return { turn: { id: 'limited-turn' } };
+        return {};
+      },
+      notify: async () => {},
+      registerNotificationHandler(method, handler) { handlers.set(method, handler); return () => { handlers.delete(method); }; },
+      registerRequestHandler: () => () => {}, onExit: () => () => {}, dispose: async () => {},
+    };
+    const core = createCodexAppServerRuntime({ happierSessionId: 'codex-manual', directory: '/workspace',
+      host: { baseProcessEnv: {}, logger: { debug() {}, warn() {} }, createClient: async () => client } });
+    const session = createCodexNativeAppServerSessionRuntime(core, 'codex-manual');
+    const events: AgentSessionRuntimeEvent[] = [];
+    const watch = session.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    const notify = async (method: string, params: unknown) => {
+      receipts.publish(method, params);
+      await handlers.get(method)?.(params);
+    };
+    const host = createNativeAgentSessionInteractionOperations({ session, sessionId: 'codex-manual', cwd: '/workspace',
+      context: { agent: { id: 'codex' }, session: { id: 'codex-manual' } } as AgentSessionRuntimeContext,
+      // The concrete opened facade must supply manual support, rather than this declaration.
+      capabilities: { open: ['create'], delivery: ['newTurn'], compaction: { events: true } },
+    });
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(), agent: createAgentFixture(),
+      sessionInput: buildPluginSessionBindingInput({ credentials, startedBy: 'daemon', startingMode: 'remote' }),
+      createSessionRuntime: async () => host,
+    });
+    const runtime = (await plan.config.createSessionRuntime?.(createHostFactoryParams()))?.nativeRuntime;
+    if (!runtime) throw new Error('Missing composed native runtime');
+    try {
+      expect(runtime.compactContext).toBeTypeOf('function');
+      expect(await session.compact!({ compactionId: 'unopened', trigger: 'manual' })).toMatchObject({
+        status: 'unavailable', diagnostic: { code: 'codex_compaction_thread_unavailable' },
+      });
+      expect(await runtime.compact!({ compactionId: 'host-unopened', trigger: 'idle' })).toMatchObject({
+        status: 'unavailable', diagnostic: { code: 'codex_compaction_thread_unavailable' },
+      });
+      expect(requests.some(request => request.method === 'thread/compact/start')).toBe(false);
+      await startCodexAppServerRuntime(core);
+      expect(runtime.readSessionCompactionCapability?.()).toMatchObject({ manual: true });
+      await runtime.sendTurnPrompt('Continue', { localId: 'first', turnId: 'first-host' });
+      await notify('turn/completed', { threadId: 'main', turn: { id: 'limited-turn', status: 'failed',
+        error: { message: 'Usage limit reached', codexErrorInfo: 'usageLimitExceeded' } } });
+      await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-failed', turnId: 'first-host' })));
+      expect(runtime.readSessionCompactionCapability?.()).toMatchObject({ manual: true });
+      await runtime.compactContext!('/compact');
+      expect(requests.filter(request => request.method === 'thread/compact/start')).toEqual([
+        { method: 'thread/compact/start', params: { threadId: 'main' } },
+      ]);
+      await notify('turn/started', { threadId: 'main', turn: { id: 'compact-turn' } });
+      await notify('item/started', { threadId: 'main', turnId: 'compact-turn',
+        item: { id: 'compact-item', type: 'contextCompaction' } });
+      await notify('turn/completed', { threadId: 'main', turn: { id: 'compact-turn', status: 'completed' } });
+      expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+        { trigger: 'manual', phase: 'started' }, { trigger: 'manual', phase: 'completed' },
+      ]);
+    } finally { watch.dispose(); await runtime.resetOrDisposeRuntime(); }
+  });
   it.each([true, false])('retains native mode publication through the replaceable runtime into composer options (producer bound: %s)', async (bound) => {
     const host = createHostFactoryParams();
     const agentId = 'acme.sample.provider';

@@ -2,7 +2,15 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { useAgentScopedPluginSettingsSnapshot } from '@/agents/registry/useAgentScopedPluginSettingsSnapshot';
+import { resolveConfiguredAgentRuntimeKindFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import * as scopedSettingsProjection from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
+import { resolveAgentDetailPluginSettingsProjection } from './resolveAgentDetailSettingsProjection';
 import {
   createProviderSettingsAccountHarness,
   createProviderSettingsHarness,
@@ -113,6 +121,7 @@ const hostAgentRows = (onRender?: React.ProfilerOnRenderCallback) => (
 beforeEach(async () => {
   await account.restore({
     accountId: 'idle-compaction-owner',
+    serverIdentityId: 'srv_idle_settings',
     machines: [],
     waivedActions: ['settings.set'],
   });
@@ -282,6 +291,68 @@ describe('Session defaults · Compact while idle', () => {
     expect(settingsWrites()).toBe(before + 3);
     expect(stored().enabled[EXTERNAL]).toBe(true);
   });
+
+  it('projects declared Account settings only for consumed keys and follows Account replacement', async () => {
+    const entry = resolveAgentDetailPluginSettingsProjection({
+      pluginProjectionById: null,
+      identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    });
+    if (!entry) throw new Error('Missing bundled Claude settings declaration');
+    const projectionInputs = {
+      ...publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1 }) }),
+      pluginProjectionById: { [entry.pluginId]: { ...entry,
+        editableSettingsGroups: entry.editableSettingsGroups.filter(group => group.scope.kind === 'account'),
+      } },
+    };
+    // The real Account transport has no scoped override; released-flat values/defaults apply.
+    account.home.answer(account.serverId, '/v1/account/plugin-settings/happier.agent.claude', {
+      body: { status: 'absent' },
+    });
+    const projection = vi.spyOn(scopedSettingsProjection, 'readScopedPluginSettingsDeclaredFieldValue');
+    const hook = await renderHook(() => {
+      const settings = useAgentScopedPluginSettingsSnapshot({
+        agentId: 'happier.agent.claude/claude',
+        projectionInputs,
+        serverId: account.serverId,
+        machineId: null,
+        accountLifetime: captureActiveServerAccountScopeLifetime(),
+        enabled: true,
+      });
+      return { ...settings, runtimeKind: resolveConfiguredAgentRuntimeKindFromUiBehavior({
+        agentId: 'claude', settings: {}, pluginSettings: settings.snapshot,
+      }) };
+    });
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+        ready: true, snapshot: { account: { claudeUnifiedTerminalEnabled: false } }, runtimeKind: 'agentSdk',
+      }));
+      projection.mockClear();
+      await act(async () => {
+        storage.getState().applySettingsLocal({ experiments: !storage.getState().settings.experiments });
+      });
+      expect(projection).not.toHaveBeenCalled();
+      await act(async () => {
+        const state = storage.getState();
+        state.applySettings(settingsParse({ ...state.settings, claudeUnifiedTerminalEnabled: true }),
+          (state.settingsVersion ?? 0) + 1);
+      });
+      expect(storage.getState().settings).toHaveProperty('claudeUnifiedTerminalEnabled', true);
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+        snapshot: { account: { claudeUnifiedTerminalEnabled: true } }, runtimeKind: 'unifiedTerminal',
+      }));
+      await act(async () => {
+        await account.restore({ accountId: 'replacement-owner', serverIdentityId: 'srv_idle_settings', machines: [],
+          settings: { claudeUnifiedTerminalEnabled: false } });
+      });
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+        ready: true, snapshot: { account: { claudeUnifiedTerminalEnabled: false } }, runtimeKind: 'agentSdk',
+      }));
+    } finally {
+      await hook.unmount();
+      projection.mockRestore();
+    }
+  });
+
   it('re-renders only for its own Account keys, and opening the disclosure writes and reads nothing', async () => {
     // Keep settings Action setup outside the profiler's measured interval.
     storage.getState().applySettingsLocal({ sessionIdleCompactionEnabledByTargetKey: { [EXTERNAL]: true } });
@@ -313,6 +384,5 @@ describe('Session defaults · Compact while idle', () => {
     expect(settingsWrites()).toBe(writes);
     expect(daemon.state.requests).toHaveLength(0);
   });
-
 
 });
