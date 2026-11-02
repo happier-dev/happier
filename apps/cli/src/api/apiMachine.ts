@@ -1516,6 +1516,7 @@ export class ApiMachineClient {
             },
         });
         registerDaemonMachineAgentIsolationRpcHandlers(this.rpcHandlerManager, {
+            runActionOperation: request => this.runActionOperation(request),
             read: () => this.getAgentIsolationSnapshot(),
             readCanonicalHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null,
             target: () => {

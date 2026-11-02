@@ -2,10 +2,11 @@ import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPU
   MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema,
   MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1,
   agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1,
-  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
+  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import type { AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { prepareAgentIsolationEffects, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
@@ -23,6 +24,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
   readCanonicalHomeServerIdentityId?: () => string | null;
   captureMetadataPort?: () => MachineMetadataFieldPortV1;
   effects?: AgentIsolationEffectDependencies;
+  runActionOperation?: NonNullable<ActionExecutorDeps['runActionOperation']>;
   /** Exact own read at P11's native readiness owner. It must not provision,
    * publish status, scan members or promote account/binding existence to separation. */
   inspectOwn?: (input: Readonly<{
@@ -32,7 +34,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
   }>) => Promise<Exclude<MachineAgentIsolationOwnStatusV1, { protection: 'trusted_administrator' }>>;
 }>): void {
   for (const actionId of MACHINE_AGENT_ISOLATION_ACTION_IDS) {
-    rpc.registerHandler(actionId, async (raw, context) => {
+    const run = async (raw: unknown, context?: RpcHandlerContext) => {
       const request = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(raw);
       const target = options.target();
       const homeServerIdentityId = options.readCanonicalHomeServerIdentityId?.() ?? null;
@@ -89,8 +91,12 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       if (!effects || !options.captureMetadataPort) return actionId === 'machines.agentIsolation.preview' ? unavailable()
         : MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code: 'unavailable' });
       const port = options.captureMetadataPort();
-      const operationId = context?.localActionContext?.operationAcceptance?.operationId
-        ?? context?.localActionContext?.actionRequestId ?? context?.transportRequestId;
+      const acceptance = context?.localActionContext?.operationAcceptance;
+      // Preview's finite native check needs correlation, but a mutation may only
+      // expose an operation id created by the retained operation owner.
+      const operationId = acceptance?.actionId === actionId ? acceptance.operationId
+        : actionId === 'machines.agentIsolation.preview'
+          ? context?.localActionContext?.actionRequestId ?? context?.transportRequestId : undefined;
       const prepare = (expectedPolicy?: MachineAgentIsolationPolicyV1) => prepareAgentIsolationEffects({ machineId: request.machineId,
         enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
         ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
@@ -244,6 +250,20 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       }
       await publish(status);
       return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status });
+    };
+    rpc.registerHandler(actionId, async (raw, ingress) => {
+      if (actionId !== 'machines.agentIsolation.set' || !options.runActionOperation || !ingress) return await run(raw, ingress);
+      const request = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(raw);
+      const context = buildActionExecutorContextForRpc({ ...ingress, actionId, serverId: request.serverId,
+        localActionContext: { ...ingress.localActionContext,
+          actionRequestId: ingress.localActionContext?.actionRequestId ?? ingress.transportRequestId } });
+      const result = await options.runActionOperation({ actionId, input: request, context,
+        execute: async operation => ({ ok: true, result: await run(raw, { ...ingress,
+          signal: operation.signal ? AbortSignal.any([ingress.signal, operation.signal]) : ingress.signal,
+          localActionContext: { ...ingress.localActionContext, ...operation } }) }),
+      });
+      if (!result.ok) throw new RpcError(result.error, result.errorCode);
+      return MachineAgentIsolationSetResultV1Schema.parse(result.result);
     });
   }
 }
