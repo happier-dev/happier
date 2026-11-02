@@ -4,6 +4,7 @@ import type {
   ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { resolveGhNativeToken } from '@happier-dev/plugin-sdk/exec';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
@@ -210,6 +211,28 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
             displayName: identity.displayName,
             scopes: identity.scopes,
           };
+        },
+      },
+      'native-import': {
+        kind: 'manual',
+        async complete(input, context, options) {
+          if (input.fields.source !== 'native') {
+            return { status: 'rejected', diagnostic: diagnostic(
+              'github_import_source_unsupported', 'The GitHub import source is unsupported.',
+            ) };
+          }
+          const signal = options?.signal ?? context.signal;
+          const native = await resolveGhNativeToken({ signal });
+          if (!native.ok) {
+            return { status: 'unavailable', diagnostic: diagnostic(
+              'github_import_credentials_unavailable',
+              'GitHub CLI credentials are unavailable. Install gh and sign in with gh auth login on this machine.',
+            ) };
+          }
+          // Import is local-only. The existing attempt owner assigns the opaque
+          // Account id and seals the credential; ordinary status/use verifies it.
+          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, native.token, options);
+          return { status: 'connected', displayName: 'GitHub CLI login', scopes: [] };
         },
       },
     },

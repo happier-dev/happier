@@ -86881,6 +86881,40 @@
               "kind": "manual",
               "outcomeReconciliation": "none",
               "title": "Fine-grained personal access token"
+            },
+            {
+              "credentialOrigin": "native_import",
+              "directExport": {
+                "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
+              },
+              "fields": [
+                {
+                  "default": "native",
+                  "description": "Save this machine’s GitHub CLI login as a connected GitHub account in Happier.",
+                  "id": "source",
+                  "presentation": {
+                    "control": "select",
+                    "options": [
+                      {
+                        "title": "GitHub CLI login",
+                        "value": "native"
+                      }
+                    ]
+                  },
+                  "schema": {
+                    "enum": [
+                      "native"
+                    ],
+                    "type": "string"
+                  },
+                  "secret": false,
+                  "title": "Source"
+                }
+              ],
+              "id": "native-import",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Import GitHub CLI login"
             }
           ],
           "native": {

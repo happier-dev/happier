@@ -1412,6 +1412,7 @@
 | `./exec` | `SystemToolDiagnostic` | type | daemon |
 | `./exec` | `SystemToolResolveRequest` | type | daemon |
 | `./exec` | `SystemToolsService` | type | daemon |
+| `./exec` | `resolveGhNativeToken` | value | daemon |
 | `./exec/protocol-clients` | `PluginFramedBytesClient` | type | daemon |
 | `./exec/protocol-clients` | `PluginJsonRpcClient` | type | daemon |
 | `./exec/protocol-clients` | `PluginJsonRpcConnection` | type | daemon |

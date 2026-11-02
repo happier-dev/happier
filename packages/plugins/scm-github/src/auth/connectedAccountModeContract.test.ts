@@ -4,8 +4,79 @@ import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@
 
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { githubConnectedAccountRuntime } from './connectedAccountRuntime.js';
+import * as processBoundary from '@happier-dev/cli-common/process';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+
+describe('GitHub CLI login import', () => {
+  it.each(['connected', 'signed-out', 'absent', 'cancelled'] as const)(
+    'imports through the existing attempt credential store: %s', async (scenario) => {
+      const mode = githubConnectedAccountRuntime.authentication.modes['native-import'];
+      expect(mode?.kind).toBe('manual');
+      if (!mode || mode.kind !== 'manual') throw new Error('GitHub CLI import is unavailable');
+      const home = await mkdtemp(join(tmpdir(), 'github-import-'));
+      const controller = new AbortController();
+      const values = new Map<string, string>();
+      const requests: string[] = [];
+      const command = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async (_bin, args) => {
+        expect(args).toEqual(['auth', 'token', '--hostname', 'github.com']);
+        if (scenario === 'cancelled') {
+          controller.abort();
+          throw new Error('private process output');
+        }
+        if (scenario === 'signed-out') throw new Error('private process output');
+        return { stdout: 'fixture-native-token\n', stderr: '' };
+      });
+      try {
+        if (scenario !== 'absent') {
+          const bin = join(home, process.platform === 'win32' ? 'gh.exe' : 'gh');
+          await writeFile(bin, 'fixture');
+          await chmod(bin, 0o755);
+        }
+        vi.stubEnv('PATH', home);
+        vi.stubEnv('HAPPIER_HOME_DIR', home);
+        vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', home);
+        const context = {
+          signal: controller.signal,
+          attempt: { kind: 'connect', attemptId: 'import-attempt' },
+          attemptCredentials: {
+            async get(key: string) { return values.get(key) ?? null; },
+            async set(key: string, value: string) { values.set(key, value); },
+            async delete(key: string) { values.delete(key); },
+          },
+          services: { http: { async request(input: { url: string }) {
+            requests.push(input.url);
+            return { status: 200, headers: {}, body: encodeJson({ id: 12345, login: 'octocat' }) };
+          } } },
+        } as unknown as Parameters<typeof mode.complete>[1]; // HTTP/storage are external boundaries.
+        const result = mode.complete({ fields: { source: 'native' } }, context);
+        if (scenario === 'cancelled') {
+          await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+        } else if (scenario === 'connected') {
+          await expect(result).resolves.toEqual({ status: 'connected', displayName: 'GitHub CLI login', scopes: [] });
+          expect(values).toEqual(new Map([['token', 'fixture-native-token']]));
+          expect(requests).toEqual([]);
+          expect(command).toHaveBeenCalledTimes(1);
+        } else {
+          await expect(result).resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'github_import_credentials_unavailable' } });
+          expect(requests).toEqual([]);
+        }
+        if (scenario !== 'connected') expect(values.size).toBe(0);
+        expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0]?.authentication.modes).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: 'native-import', credentialOrigin: 'native_import' })]),
+        );
+      } finally {
+        command.mockRestore();
+        vi.unstubAllEnvs();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe('GitHub Connected Account mode contract', () => {
   it('declares a manual fine-grained PAT mode without reusing Happier login OAuth', () => {
@@ -15,14 +86,14 @@ describe('GitHub Connected Account mode contract', () => {
       id: 'github-account',
       authentication: {
         defaultModeId: 'fine-grained-pat',
-        modes: [{
+        modes: expect.arrayContaining([expect.objectContaining({
           id: 'fine-grained-pat',
           kind: 'manual',
           outcomeReconciliation: 'none',
           fields: [
             expect.objectContaining({ id: 'token', secret: true }),
           ],
-        }],
+        })]),
       },
     });
     expect(descriptor).not.toHaveProperty('auth');

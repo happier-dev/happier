@@ -5233,6 +5233,16 @@ selection. Triage's shared settings and administration Action persist only the
 native service identity. Source and review metadata retain that identity rather
 than inventing an account id. See [Triage source ownership](triage-sources.md).
 
+GitHub's `native-import` method appears in that same Connected Services setup.
+It reads `gh auth token` locally through the shared system/managed GitHub CLI
+resolver, then stages `token` in the existing authentication attempt. Import
+performs no provider HTTP request and returns no credential to the UI. The
+attempt owner assigns an opaque Account id and uses its existing Plain/E2EE
+connected-credential envelope; imported sign-in time and provider identity stay
+unknown. Ordinary account status and use retain GitHub verification. Missing or
+signed-out `gh` settles with `github_import_credentials_unavailable` and local
+sign-in guidance. This is 0.3 development source.
+
 ### Shared provider reads (0.3 development)
 
 The required `HttpService.prepareRead` method admits and snapshots one GET

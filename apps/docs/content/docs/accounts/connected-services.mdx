@@ -94,6 +94,17 @@ happens on the machine. Account-specific credentials and in-progress sign-in
 configuration remain machine operations. If a save's outcome is unknown, read
 the saved configuration before deciding whether to retry; do not assume it failed.
 
+## GitHub CLI import in 0.3 development
+
+In development builds, **Import GitHub CLI login** saves a machine's existing
+GitHub CLI login as a connected GitHub account in Happier. Choose **GitHub account**
+in Connected services, add an account, select that method and choose the machine
+where you signed in to `gh`. Continue through the normal approval flow.
+
+The credential goes through the existing connected-account storage and your
+Account's encryption mode. If the machine has no available GitHub CLI login,
+install `gh`, sign in there with `gh auth login`, then retry the import.
+
 ## Gateways in 0.3 development
 
 The unreleased gateway integration projects your managed Provider connections
