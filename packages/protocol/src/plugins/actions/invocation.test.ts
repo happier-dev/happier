@@ -564,40 +564,50 @@ describe('createPluginActionInvocation', () => {
     }));
   });
 
-  it('prepares schema validation on first invoke, once, rather than when the Action is registered', async () => {
+  it('prepares only consumed schema documents once, keeping result schemas out of input refusal and observation', async () => {
     // A registry builds one invocation per registered Action; compiling and
     // rehydrating every schema up front blocked the daemon for minutes.
-    let schemaReads = 0;
-    const observed = <T extends object>(schema: T): T => new Proxy(schema, {
+    const schemaReads = { input: 0, result: 0 };
+    const observed = <T extends object>(kind: keyof typeof schemaReads, schema: T): T => new Proxy(schema, {
       get(target, key, receiver) {
-        schemaReads += 1;
+        schemaReads[kind] += 1;
         return Reflect.get(target, key, receiver);
       },
       ownKeys(target) {
-        schemaReads += 1;
+        schemaReads[kind] += 1;
         return Reflect.ownKeys(target);
       },
     });
-    const inputSchema = observed(defineProtocolObject({
+    const inputSchema = observed('input', defineProtocolObject({
       title: defineProtocolString({ minLength: 1 }),
     }, { policy: 'additive-open/drop' }).jsonSchema);
-    const resultSchema = observed(defineProtocolObject({
+    const resultSchema = observed('result', defineProtocolObject({
       accepted: defineProtocolLiteral(true),
     }, { policy: 'additive-open/drop' }).jsonSchema);
     const handler = vi.fn(() => ({ accepted: true }));
 
     const invocation = createInvocation({ inputSchema, resultSchema });
-    expect(schemaReads).toBe(0);
+    expect(schemaReads).toEqual({ input: 0, result: 0 });
 
     await expect(invocation.invoke({ title: '' }, { handler }))
       .resolves.toMatchObject({ status: 'invalid', code: 'plugin_action_input_schema_invalid' });
     expect(handler).not.toHaveBeenCalled();
-    const readsAfterFirstInvoke = schemaReads;
-    expect(readsAfterFirstInvoke).toBeGreaterThan(0);
+    expect(schemaReads.input).toBeGreaterThan(0);
+    expect(schemaReads.result).toBe(0);
+    const inputReads = schemaReads.input;
+    const prepared = invocation.prepare({ title: 'Release' });
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted Action input');
+    await expect(prepared.observe({ handler: () => undefined })).resolves.toEqual({ status: 'executed', value: null });
+    expect(schemaReads).toEqual({ input: inputReads, result: 0 });
 
     await expect(invocation.invoke({ title: 'Release' }, { handler }))
       .resolves.toEqual({ status: 'executed', value: { accepted: true } });
-    expect(schemaReads).toBe(readsAfterFirstInvoke);
+    expect(schemaReads.input).toBe(inputReads);
+    expect(schemaReads.result).toBeGreaterThan(0);
+    const resultReads = schemaReads.result;
+    await expect(invocation.invoke({ title: 'Release' }, { handler: () => ({ accepted: false }) }))
+      .resolves.toMatchObject({ status: 'invalid', code: 'plugin_action_result_schema_invalid' });
+    expect(schemaReads).toEqual({ input: inputReads, result: resultReads });
   });
 
   it('runs host pre-dispatch only after input-schema admission and preserves its unavailable result', async () => {

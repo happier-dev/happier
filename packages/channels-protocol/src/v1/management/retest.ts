@@ -51,7 +51,7 @@ export type ConversationConnectionRetestInputV1 = ReturnType<
     typeof ConversationConnectionRetestInputV1Schema.parse
 >;
 export const ConversationConnectionRetestInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionRetestInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionRetestInputV1Schema.jsonSchema)();
 
 /**
  * The retest reuses the shared provider-failure vocabulary rather than minting
@@ -73,7 +73,7 @@ export type ConversationConnectionRetestResultV1 = ReturnType<
     typeof ConversationConnectionRetestResultV1Schema.parse
 >;
 export const ConversationConnectionRetestResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionRetestResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionRetestResultV1Schema.jsonSchema)();
 
 /** The exact manifest-facing declaration for the present-user retest action. */
 export const ConversationConnectionRetestManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({

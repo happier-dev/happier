@@ -66,7 +66,7 @@ export type PluginEventAutomationHistoryGapResetActionResultV1 = ReturnType<
  * the canonical JSON comparison owner before the cold catalog can bind them.
  */
 export const PluginEventAutomationHistoryGapResetActionInputV1JsonSchema =
-  PluginEventAutomationHistoryGapResetActionInputV1Contract.jsonSchema;
+  /* @__PURE__ */ (() => PluginEventAutomationHistoryGapResetActionInputV1Contract.jsonSchema)();
 
 export const PluginEventAutomationHistoryGapResetActionResultV1JsonSchema =
-  PluginEventAutomationHistoryGapResetActionResultV1Contract.jsonSchema;
+  /* @__PURE__ */ (() => PluginEventAutomationHistoryGapResetActionResultV1Contract.jsonSchema)();

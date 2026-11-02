@@ -4,6 +4,7 @@ import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/ac
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DaemonPluginTargetedSourceDeclarationV1, DaemonPluginUiResourceDeclarationsByPluginIdV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { preparePluginContributionPointDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     DaemonPluginSettingsWatchRequestSchema,
     DaemonPluginSettingsWatchResponseSchema,
@@ -1047,6 +1048,7 @@ export async function machinePluginActionSchemasRead(
         payload.qualifiedActionId,
     ]);
     const pending = projectionReadAdmission({ machineId, serverId: opts.serverId ?? null }, payload);
+    let admittedResult: DaemonPluginActionSchemasReadResponse | undefined;
     try {
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId, serverId: opts.serverId, method: RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ,
@@ -1061,12 +1063,15 @@ export async function machinePluginActionSchemasRead(
                     const entry: ActionSchemaRead = matches ? incumbent : {
                         occurrenceId: payload.expectedOccurrenceId, bindingKey: input.binding.key, scope: input.binding.scope,
                     };
-                    if (entry.result) return entry.result as T;
+                    if (entry.result) {
+                        admittedResult = entry.result;
+                        return entry.result as T;
+                    }
                     actionSchemaReadsByKey.set(key, entry);
                     const forget = () => {
                         if (actionSchemaReadsByKey.get(key) === entry) actionSchemaReadsByKey.delete(key);
                     };
-                    return await pending.run({ ...input,
+                    const response = await pending.run({ ...input,
                         onPhysicalAcquire: signal => {
                             const release = input.onPhysicalAcquire(signal);
                             signal.addEventListener('abort', forget, { once: true });
@@ -1082,14 +1087,28 @@ export async function machinePluginActionSchemasRead(
                                 const parsed = DaemonPluginActionSchemasReadResponseSchema.safeParse(value);
                                 input.binding.assertCurrent();
                                 if (!parsed.success || !parsed.data.ok || signal.aborted) forget();
-                                else if (actionSchemaReadsByKey.get(key) === entry) entry.result = parsed.data;
+                                else if (actionSchemaReadsByKey.get(key) === entry) entry.result = Object.freeze({
+                                    ...parsed.data,
+                                    ...(parsed.data.inputSchema === undefined ? {} : {
+                                        inputSchema: normalizePluginJsonSchema(parsed.data.inputSchema),
+                                    }),
+                                    ...(parsed.data.outputSchema === undefined ? {} : {
+                                        outputSchema: normalizePluginJsonSchema(parsed.data.outputSchema),
+                                    }),
+                                });
                                 return value;
                             } catch (error) { forget(); throw error; }
                         },
                     }) as T;
+                    admittedResult = entry.result;
+                    return response;
                 },
             },
         });
+        // The route has admitted this exact occurrence and Account binding.
+        // Re-parsing its owned answer would copy the schemas on every dispatch
+        // and defeat the compiler's lifetime-bound identity memoization.
+        if (admittedResult) return { supported: true, result: admittedResult };
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
         return parsed.success ? { supported: true, result: parsed.data } : { supported: false, reason: 'error' };

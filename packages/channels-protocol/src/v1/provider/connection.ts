@@ -116,7 +116,7 @@ export type ConversationProviderConnectionInputV1 = ReturnType<
     typeof ConversationProviderConnectionInputV1Schema.parse
 >;
 export const ConversationProviderConnectionInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for the provider connection-test role. */
 export const ConversationConnectionTestInputV1ProtocolSchema = defineProtocolObject({
@@ -129,7 +129,7 @@ export type ConversationConnectionTestInputV1 = ReturnType<
     typeof ConversationConnectionTestInputV1Schema.parse
 >;
 export const ConversationConnectionTestInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionTestInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionTestInputV1Schema.jsonSchema)();
 
 const positiveSafeInteger = defineProtocolNumber({
     integer: true,
@@ -164,7 +164,7 @@ export type ConversationProviderConnectionReconciliationSnapshotV1 = ReturnType<
     typeof ConversationProviderConnectionReconciliationSnapshotV1Schema.parse
 >;
 export const ConversationProviderConnectionReconciliationSnapshotV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionReconciliationSnapshotV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionReconciliationSnapshotV1Schema.jsonSchema)();
 
 /** @internal Relative-only map used by both caller-filtered reconciliation reads. */
 export const ConversationProviderConnectionsSnapshotV1ProtocolSchema = defineProtocolObject(
@@ -180,7 +180,7 @@ export type ConversationProviderConnectionsSnapshotV1 = ReturnType<
     typeof ConversationProviderConnectionsSnapshotV1Schema.parse
 >;
 export const ConversationProviderConnectionsSnapshotV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionsSnapshotV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionsSnapshotV1Schema.jsonSchema)();
 
 /**
  * Matches the caller-filtered current connection authority returned by the
@@ -215,7 +215,7 @@ export type ConversationProviderConnectionsListInputV1 = ReturnType<
     typeof ConversationProviderConnectionsListInputV1Schema.parse
 >;
 export const ConversationProviderConnectionsListInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionsListInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionsListInputV1Schema.jsonSchema)();
 
 /** The list result is the same caller-filtered connection-ID map. */
 export const ConversationProviderConnectionsListResultV1Schema =
@@ -231,7 +231,7 @@ export type ConversationProviderConnectionReadInputV1 = ReturnType<
     typeof ConversationProviderConnectionReadInputV1Schema.parse
 >;
 export const ConversationProviderConnectionReadInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionReadInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionReadInputV1Schema.jsonSchema)();
 
 /** An empty map covers absent and caller-ineligible connections without an oracle. */
 export const ConversationProviderConnectionReadResultV1Schema =

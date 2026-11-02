@@ -257,15 +257,15 @@ export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisioners
 
 /** A declaration-neutral projection of the existing validator, not a second parser. */
 function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSchema<T, T> {
-  return lazyDefinition(() => createProtocolComposableSchema<T, T>(
-    zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
+  return createProtocolComposableSchema<T, T>(
+    () => zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
     value => {
       const result = z.safeParse(schema, value);
       return result.success ? { success: true, data: result.data } : { success: false,
         error: new ProtocolValidationError(result.error.issues.map(issue => ({ code: issue.code, message: issue.message, path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number') }))),
       };
     },
-  ));
+  );
 }
 export const MachineProvisionerCheckInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
 export const MachineProvisionerCheckResultProtocolV1Schema = projectRoleSchema(MachineProvisionerCheckResultV1Schema);
@@ -374,7 +374,7 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   } });
 }
 function defineAcquireResult<TInput, TOutput, NInput, NOutput>(resource: ProtocolComposableSchema<TInput, TOutput>, nativeOperation?: ProtocolComposableSchema<NInput, NOutput>) {
-  return createProtocolComposableSchema<AcquireResultV1, AcquireResultV1>(acquireResultProjection(resource.jsonSchema, nativeOperation?.jsonSchema), value => {
+  return createProtocolComposableSchema<AcquireResultV1, AcquireResultV1>(() => acquireResultProjection(resource.jsonSchema, nativeOperation?.jsonSchema), value => {
     const canonical = MachineProvisionerAcquireResultV1Schema.safeParse(value);
     if (!canonical.success || (canonical.data.kind !== 'bound' && canonical.data.kind !== 'pending')) return canonical;
     if (canonical.data.kind === 'pending') {
@@ -403,7 +403,7 @@ function destroyResultProjection(nativeOperation: PluginJsonSchemaV2): PluginJso
   ] });
 }
 function defineDestroyResult<NI, NO>(nativeOperation: ProtocolComposableSchema<NI, NO>) {
-  return createProtocolComposableSchema(destroyResultProjection(nativeOperation.jsonSchema), value => {
+  return createProtocolComposableSchema(() => destroyResultProjection(nativeOperation.jsonSchema), value => {
     const canonical = MachineProvisionerDestroyResultV1Schema.safeParse(value);
     if (!canonical.success || canonical.data.kind !== 'accepted') return canonical;
     const native = nativeOperation.safeParse(canonical.data.nativeOperationRef.value);
@@ -418,7 +418,7 @@ function rebuildResultProjection(resource: PluginJsonSchemaV2): PluginJsonSchema
   return normalizePluginJsonSchema({ oneOf: [...replacement, ...(refused ? [refused] : [])] });
 }
 function defineRebuildResult<I, O>(resource: ProtocolComposableSchema<I, O>) {
-  return createProtocolComposableSchema(rebuildResultProjection(resource.jsonSchema), value => {
+  return createProtocolComposableSchema(() => rebuildResultProjection(resource.jsonSchema), value => {
     const result = MachineProvisionerRebuildResultV1Schema.safeParse(value);
     if (!result.success || result.data.kind !== 'bound') return result;
     const native = resource.safeParse(result.data.resource.value);

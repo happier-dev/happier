@@ -14,4 +14,4 @@ export const ConversationProviderDescriptorV1Schema = defineProtocolObject({
     setupGuidance: ConversationProviderSetupGuidanceV1ProtocolSchema.optional(),
 }, { policy: 'additive-open/drop' });
 export type ConversationProviderDescriptorV1 = ReturnType<typeof ConversationProviderDescriptorV1Schema.parse>;
-export const ConversationProviderDescriptorV1JsonSchema: PluginJsonSchema = ConversationProviderDescriptorV1Schema.jsonSchema;
+export const ConversationProviderDescriptorV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationProviderDescriptorV1Schema.jsonSchema)();

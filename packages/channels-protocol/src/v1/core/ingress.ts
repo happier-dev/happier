@@ -87,7 +87,7 @@ export type ConversationIngressAutomationEventCandidateV1 = ReturnType<
     typeof ConversationIngressAutomationEventCandidateV1Schema.parse
 >;
 export const ConversationIngressAutomationEventCandidateV1JsonSchema: PluginJsonSchema =
-    ConversationIngressAutomationEventCandidateV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationIngressAutomationEventCandidateV1Schema.jsonSchema)();
 
 const conversationObservationTransportV1 = defineProtocolObject({
     kind: defineProtocolUnion([
@@ -234,7 +234,7 @@ export const ConversationObservationV1ProtocolSchema = defineProtocolObject({
 /** Strict authenticated evidence supplied by a provider transport. */
 export const ConversationObservationV1Schema = ConversationObservationV1ProtocolSchema;
 export type ConversationObservationV1 = ReturnType<typeof ConversationObservationV1Schema.parse>;
-export const ConversationObservationV1JsonSchema: PluginJsonSchema = ConversationObservationV1Schema.jsonSchema;
+export const ConversationObservationV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationObservationV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for composed Channels protocol schemas. */
 export const ConversationAuthenticatedObservationShellV1ProtocolSchema = defineProtocolObject({
@@ -248,7 +248,7 @@ export type ConversationAuthenticatedObservationShellV1 = ReturnType<
     typeof ConversationAuthenticatedObservationShellV1Schema.parse
 >;
 export const ConversationAuthenticatedObservationShellV1JsonSchema: PluginJsonSchema =
-    ConversationAuthenticatedObservationShellV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationAuthenticatedObservationShellV1Schema.jsonSchema)();
 
 const conversationUnsupportedEditShellV1 = defineProtocolObject({
     ...conversationAuthenticatedObservationEnvelopeFields,
@@ -281,7 +281,7 @@ export const ConversationNormalizedIngressV1Schema = ConversationNormalizedIngre
 export type ConversationNormalizedIngressV1 = ReturnType<
     typeof ConversationNormalizedIngressV1Schema.parse
 >;
-export const ConversationNormalizedIngressV1JsonSchema: PluginJsonSchema = ConversationNormalizedIngressV1Schema.jsonSchema;
+export const ConversationNormalizedIngressV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationNormalizedIngressV1Schema.jsonSchema)();
 
 /** @internal Relative-only one-occurrence envelope shared by direct and poll ingress. */
 export const ConversationIngressObservedEntryV1ProtocolSchema = defineProtocolObject({
@@ -299,7 +299,7 @@ export type ConversationIngressObservedEntryV1 = ReturnType<
     typeof ConversationIngressObservedEntryV1Schema.parse
 >;
 export const ConversationIngressObservedEntryV1JsonSchema: PluginJsonSchema =
-    ConversationIngressObservedEntryV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationIngressObservedEntryV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for composed Channels protocol schemas. */
 export const ConversationProviderObservationIngestInputV1ProtocolSchema = defineProtocolObject({
@@ -313,4 +313,4 @@ export type ConversationProviderObservationIngestInputV1 = ReturnType<
     typeof ConversationProviderObservationIngestInputV1Schema.parse
 >;
 export const ConversationProviderObservationIngestInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderObservationIngestInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderObservationIngestInputV1Schema.jsonSchema)();

@@ -55,21 +55,21 @@ export type ConversationDeliveryReplyContextV1 = ReturnType<
     typeof ConversationDeliveryReplyContextV1Schema.parse
 >;
 export const ConversationDeliveryReplyContextV1JsonSchema: PluginJsonSchema =
-    ConversationDeliveryReplyContextV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationDeliveryReplyContextV1Schema.jsonSchema)();
 
 export const ConversationDeliveryContentV1Schema = defineProtocolObject({
     text: defineProtocolString({ minLength: 1 }),
     html: defineProtocolString().optional(),
 }, { policy: 'closed' });
 export type ConversationDeliveryContentV1 = ReturnType<typeof ConversationDeliveryContentV1Schema.parse>;
-export const ConversationDeliveryContentV1JsonSchema: PluginJsonSchema = ConversationDeliveryContentV1Schema.jsonSchema;
+export const ConversationDeliveryContentV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryContentV1Schema.jsonSchema)();
 
 export const ConversationDeliveryNewThreadV1Schema = defineProtocolObject({
     recipients: ConversationAllowedPrincipalIdsV1Schema,
     subject: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' });
 export type ConversationDeliveryNewThreadV1 = ReturnType<typeof ConversationDeliveryNewThreadV1Schema.parse>;
-export const ConversationDeliveryNewThreadV1JsonSchema: PluginJsonSchema = ConversationDeliveryNewThreadV1Schema.jsonSchema;
+export const ConversationDeliveryNewThreadV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryNewThreadV1Schema.jsonSchema)();
 
 const conversationDeliveryKeyV1 = defineProtocolUtf8String({
     maxUtf8Bytes: MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
@@ -102,7 +102,7 @@ export const ConversationDeliveryInputV1ProtocolSchema = defineProtocolObject({
 
 export const ConversationDeliveryInputV1Schema = ConversationDeliveryInputV1ProtocolSchema;
 export type ConversationDeliveryInputV1 = ReturnType<typeof ConversationDeliveryInputV1Schema.parse>;
-export const ConversationDeliveryInputV1JsonSchema: PluginJsonSchema = ConversationDeliveryInputV1Schema.jsonSchema;
+export const ConversationDeliveryInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for optional delivery reconciliation. */
 export const ConversationDeliveryReconcileInputV1ProtocolSchema = defineProtocolObject({
@@ -116,7 +116,7 @@ export type ConversationDeliveryReconcileInputV1 = ReturnType<
     typeof ConversationDeliveryReconcileInputV1Schema.parse
 >;
 export const ConversationDeliveryReconcileInputV1JsonSchema: PluginJsonSchema =
-    ConversationDeliveryReconcileInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationDeliveryReconcileInputV1Schema.jsonSchema)();
 
 const conversationProviderMessageIdsV1 = defineProtocolArray(
     ConversationProviderMessageIdV1ProtocolSchema,
@@ -215,4 +215,4 @@ export const ConversationDeliveryResultV1ProtocolSchema = defineProtocolUnion([
 /** Provider delivery effect evidence; delivery/reconciliation inputs remain EU24-held. */
 export const ConversationDeliveryResultV1Schema = ConversationDeliveryResultV1ProtocolSchema;
 export type ConversationDeliveryResultV1 = ReturnType<typeof ConversationDeliveryResultV1Schema.parse>;
-export const ConversationDeliveryResultV1JsonSchema: PluginJsonSchema = ConversationDeliveryResultV1Schema.jsonSchema;
+export const ConversationDeliveryResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryResultV1Schema.jsonSchema)();

@@ -82,7 +82,7 @@ export type ConversationTransportFactReportInputV1 = ReturnType<
     typeof ConversationTransportFactReportInputV1Schema.parse
 >;
 export const ConversationTransportFactReportInputV1JsonSchema: PluginJsonSchema =
-    ConversationTransportFactReportInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationTransportFactReportInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for composed Channels protocol schemas. */
 export const ConversationTransportFactReportResultV1ProtocolSchema = defineProtocolObject({
@@ -101,4 +101,4 @@ export type ConversationTransportFactReportResultV1 = ReturnType<
     typeof ConversationTransportFactReportResultV1Schema.parse
 >;
 export const ConversationTransportFactReportResultV1JsonSchema: PluginJsonSchema =
-    ConversationTransportFactReportResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationTransportFactReportResultV1Schema.jsonSchema)();

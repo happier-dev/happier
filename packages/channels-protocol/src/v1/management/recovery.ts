@@ -26,7 +26,7 @@ export type ConversationIngressRetryInputV1 = ReturnType<
     typeof ConversationIngressRetryInputV1Schema.parse
 >;
 export const ConversationIngressRetryInputV1JsonSchema: PluginJsonSchema =
-    ConversationIngressRetryInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationIngressRetryInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only exact ingress-obligation retry outcome. */
 export const ConversationIngressRetryResultV1ProtocolSchema = defineProtocolObject({
@@ -40,7 +40,7 @@ export type ConversationIngressRetryResultV1 = ReturnType<
     typeof ConversationIngressRetryResultV1Schema.parse
 >;
 export const ConversationIngressRetryResultV1JsonSchema: PluginJsonSchema =
-    ConversationIngressRetryResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationIngressRetryResultV1Schema.jsonSchema)();
 
 /** @internal Relative-only explicit settlement of one ambiguous delivery custody row. */
 export const ConversationDeliveryResolveInputV1ProtocolSchema = defineProtocolObject({
@@ -65,7 +65,7 @@ export type ConversationDeliveryResolveInputV1 = ReturnType<
     typeof ConversationDeliveryResolveInputV1Schema.parse
 >;
 export const ConversationDeliveryResolveInputV1JsonSchema: PluginJsonSchema =
-    ConversationDeliveryResolveInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationDeliveryResolveInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only delivery-custody settlement outcome. */
 export const ConversationDeliveryResolveResultV1ProtocolSchema = defineProtocolObject({
@@ -84,4 +84,4 @@ export type ConversationDeliveryResolveResultV1 = ReturnType<
     typeof ConversationDeliveryResolveResultV1Schema.parse
 >;
 export const ConversationDeliveryResolveResultV1JsonSchema: PluginJsonSchema =
-    ConversationDeliveryResolveResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationDeliveryResolveResultV1Schema.jsonSchema)();

@@ -60,7 +60,7 @@ export function arePluginMachineExecutionRoutingsEqual(
     && left.pluginId === right.pluginId;
 }
 
-export const PluginMachineExecutionRoutingV1JsonSchema: PluginJsonSchemaV2 = PluginMachineExecutionRoutingV1Schema.jsonSchema;
+export const PluginMachineExecutionRoutingV1JsonSchema: PluginJsonSchemaV2 = /* @__PURE__ */ (() => PluginMachineExecutionRoutingV1Schema.jsonSchema)();
 
 export function getPluginMachineExecutionOriginRef(
   origin: PluginMachineExecutionOriginV1,

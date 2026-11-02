@@ -52,7 +52,7 @@ export type ConversationProviderAutomationEventAdmitInputV1 = ReturnType<
     typeof ConversationProviderAutomationEventAdmitInputV1Schema.parse
 >;
 export const ConversationProviderAutomationEventAdmitInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderAutomationEventAdmitInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderAutomationEventAdmitInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only bounded settlement returned to Channels' checkpoint owner. */
 export const ConversationProviderAutomationEventAdmitResultV1ProtocolSchema = defineProtocolUnion([
@@ -66,4 +66,4 @@ export type ConversationProviderAutomationEventAdmitResultV1 = ReturnType<
     typeof ConversationProviderAutomationEventAdmitResultV1Schema.parse
 >;
 export const ConversationProviderAutomationEventAdmitResultV1JsonSchema: PluginJsonSchema =
-    ConversationProviderAutomationEventAdmitResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderAutomationEventAdmitResultV1Schema.jsonSchema)();

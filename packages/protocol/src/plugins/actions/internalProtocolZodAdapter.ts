@@ -19,10 +19,10 @@ export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
 export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
   schema: TSchema,
 ): ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> {
-  // Importing a projection must not force an otherwise lazy domain graph.
-  let projection: ProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>> | undefined;
-  const readProjection = () => projection ??= createProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>>(
-      zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
+  // Parsing and native composition do not consume a JSON document. Give its
+  // construction to the composable owner's memoized projection lifetime.
+  return createProtocolComposableSchema<mini.input<TSchema>, mini.output<TSchema>>(
+      () => zodSchemaToJsonSchemaObject(schema, { target: 'draft-7' }),
       input => {
         const parsed = mini.safeParse(schema, input);
         return parsed.success
@@ -34,13 +34,6 @@ export function projectZodProtocolSchema<TSchema extends mini.core.$ZodType>(
           }))) };
       },
     );
-  return Object.freeze({
-    get jsonSchema() { return readProjection().jsonSchema; },
-    parse(value: unknown) { return readProjection().parse(value); },
-    safeParse(value: unknown) { return readProjection().safeParse(value); },
-    optional() { return readProjection().optional(); },
-    nullable() { return readProjection().nullable(); },
-  });
 }
 
 /**

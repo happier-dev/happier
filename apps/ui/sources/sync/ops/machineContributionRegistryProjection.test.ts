@@ -1441,6 +1441,37 @@ describe('machine contribution registry projection ops', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
     });
 
+    it('retains one admitted Action schema identity across invocations and replaces it on reload', async () => {
+        const { preparePluginJsonSchema } = await import('@happier-dev/protocol/plugins/actions/json-schema-validation');
+        const { machinePluginActionSchemasRead } = await import('./machineContributionRegistryProjection');
+        const inputSchema = { type: 'object', properties: { count: { type: 'integer', minimum: 1 } },
+            required: ['count'], additionalProperties: false };
+        machineRpcWithServerScopeMock.mockImplementation(async () => structuredClone({ ok: true, inputSchema }));
+        const read = (expectedOccurrenceId = 'identity-occurrence') => machinePluginActionSchemasRead('machine-1', {
+            serverId: serverAId, expectedOccurrenceId, qualifiedActionId: 'acme.preview/refresh',
+        });
+        const schemas = [];
+        const validators = [];
+        for (let index = 0; index < 3; index += 1) {
+            const result = await read();
+            if (!result.supported || !result.result.ok || !result.result.inputSchema) throw new Error('Expected admitted input schema');
+            schemas.push(result.result.inputSchema);
+            const prepared = preparePluginJsonSchema(result.result.inputSchema);
+            validators.push(prepared.validate);
+            expect(prepared.validate({ count: index + 1 })).toBe(true);
+            expect(prepared.validate({ count: 0 })).toBe(false);
+        }
+        expect(new Set(validators).size).toBe(1);
+        expect(new Set(schemas).size).toBe(1);
+        expect(Object.isFrozen(schemas[0])).toBe(true);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        const reloaded = await read('replacement-occurrence');
+        if (!reloaded.supported || !reloaded.result.ok || !reloaded.result.inputSchema) throw new Error('Expected replacement schema');
+        expect(reloaded.result.inputSchema).not.toBe(schemas[0]);
+        expect(preparePluginJsonSchema(reloaded.result.inputSchema).validate).not.toBe(validators[0]);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+    });
+
     it('admits a successor Account before reusing a retained Action schema occurrence', async () => {
         const { machinePluginActionSchemasRead } = await import('./machineContributionRegistryProjection');
         const inputSchema = { type: 'object', properties: { privateOption: { type: 'string' } }, additionalProperties: false };

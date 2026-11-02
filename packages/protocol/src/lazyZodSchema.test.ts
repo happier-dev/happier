@@ -1,9 +1,34 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
 import * as mini from 'zod/mini';
-import { lazyZodSchema } from './lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from './lazyZodSchema.js';
 
 describe('lazyZodSchema', () => {
+  it('preserves native parsing when a deferred definition returns another cold definition', () => {
+    const inner = lazyDefinition(() => z.strictObject({ id: z.string().check(z.minLength(1)) }));
+    const outer = lazyDefinition(() => inner);
+    expect(outer.parse({ id: 'kept' })).toEqual({ id: 'kept' });
+    expect(outer).toBeInstanceOf(z.ZodMiniObject);
+    expect(outer.safeParse({ id: '' }).success).toBe(false);
+    expect(outer.safeParse({ id: 'kept', retired: true }).success).toBe(false);
+  });
+
+  it('keeps ordinary prototype inspection cold and preserves concrete Zod identity on use', () => {
+    let constructed = 0;
+    const schema = lazyZodSchema(() => {
+      constructed++;
+      return z.strictObject({ id: z.string() });
+    });
+    // Native console/error formatting inspects arbitrary values with instanceof.
+    // Reflection must not run a definition factory or change its prototype mid-check.
+    expect([schema].map(value => value instanceof Error)).toEqual([false]);
+    expect(constructed).toBe(0);
+    expect(schema.parse({ id: 'kept' })).toEqual({ id: 'kept' });
+    expect(schema).toBeInstanceOf(z.ZodMiniObject);
+    expect(Object.getPrototypeOf(schema)).toBe(z.ZodMiniObject.prototype);
+    expect(constructed).toBe(1);
+  });
+
   it('preserves the public identity when cloning an already parsed definition', () => {
     const source = lazyZodSchema(() => z.string());
     expect(source.parse('warm')).toBe('warm');

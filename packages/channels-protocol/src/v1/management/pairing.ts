@@ -164,7 +164,7 @@ export type ConversationPairingCreateInputV1 = ReturnType<
     typeof ConversationPairingCreateInputV1Schema.parse
 >;
 export const ConversationPairingCreateInputV1JsonSchema: PluginJsonSchema =
-    ConversationPairingCreateInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingCreateInputV1Schema.jsonSchema)();
 
 export const ConversationPairingCancelInputV1Schema = defineProtocolUnion([
     conversationPairingCancelByChallengeInputV1,
@@ -174,21 +174,21 @@ export type ConversationPairingCancelInputV1 = ReturnType<
     typeof ConversationPairingCancelInputV1Schema.parse
 >;
 export const ConversationPairingCancelInputV1JsonSchema: PluginJsonSchema =
-    ConversationPairingCancelInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingCancelInputV1Schema.jsonSchema)();
 
 export const ConversationPairingCancelResultV1Schema = conversationPairingCancelResultV1;
 export type ConversationPairingCancelResultV1 = ReturnType<
     typeof ConversationPairingCancelResultV1Schema.parse
 >;
 export const ConversationPairingCancelResultV1JsonSchema: PluginJsonSchema =
-    ConversationPairingCancelResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingCancelResultV1Schema.jsonSchema)();
 
 export const ConversationPairingCreateResultV1Schema = conversationPairingCreateResultV1;
 export type ConversationPairingCreateResultV1 = ReturnType<
     typeof ConversationPairingCreateResultV1Schema.parse
 >;
 export const ConversationPairingCreateResultV1JsonSchema: PluginJsonSchema =
-    ConversationPairingCreateResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingCreateResultV1Schema.jsonSchema)();
 
 /** Strict owner-visible snapshot of the current daemon-memory pairing manager. */
 export const ConversationPairingResourceV1Schema = conversationPairingResourceV1;
@@ -196,7 +196,7 @@ export type ConversationPairingResourceV1 = ReturnType<
     typeof ConversationPairingResourceV1Schema.parse
 >;
 export const ConversationPairingResourceV1JsonSchema: PluginJsonSchema =
-    ConversationPairingResourceV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingResourceV1Schema.jsonSchema)();
 
 export const ConversationPairingFinalizeInputV1Schema = defineProtocolObject({
     generationId: pairingIdentifier,
@@ -209,7 +209,7 @@ export type ConversationPairingFinalizeInputV1 = ReturnType<
     typeof ConversationPairingFinalizeInputV1Schema.parse
 >;
 export const ConversationPairingFinalizeInputV1JsonSchema: PluginJsonSchema =
-    ConversationPairingFinalizeInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingFinalizeInputV1Schema.jsonSchema)();
 
 export const ConversationPairingFinalizeResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -237,4 +237,4 @@ export type ConversationPairingFinalizeResultV1 = ReturnType<
     typeof ConversationPairingFinalizeResultV1Schema.parse
 >;
 export const ConversationPairingFinalizeResultV1JsonSchema: PluginJsonSchema =
-    ConversationPairingFinalizeResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPairingFinalizeResultV1Schema.jsonSchema)();

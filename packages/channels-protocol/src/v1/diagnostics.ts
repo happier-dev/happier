@@ -25,7 +25,7 @@ export const ConversationProviderDiagnosticV1Schema = ConversationProviderDiagno
 export type ConversationProviderDiagnosticV1 = ReturnType<
     typeof ConversationProviderDiagnosticV1Schema.parse
 >;
-export const ConversationProviderDiagnosticV1JsonSchema: PluginJsonSchema = ConversationProviderDiagnosticV1Schema.jsonSchema;
+export const ConversationProviderDiagnosticV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationProviderDiagnosticV1Schema.jsonSchema)();
 
 const conversationProviderFailureReasonV1 = defineProtocolUnion([
     defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[0]),
@@ -52,7 +52,7 @@ export const ConversationProviderFailureV1ProtocolSchema = defineProtocolObject(
 /** Closed transient outcome for independently valid provider unavailability. */
 export const ConversationProviderFailureV1Schema = ConversationProviderFailureV1ProtocolSchema;
 export type ConversationProviderFailureV1 = ReturnType<typeof ConversationProviderFailureV1Schema.parse>;
-export const ConversationProviderFailureV1JsonSchema: PluginJsonSchema = ConversationProviderFailureV1Schema.jsonSchema;
+export const ConversationProviderFailureV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationProviderFailureV1Schema.jsonSchema)();
 
 /** @internal Relative-only fields for composed provider-history schemas. */
 export const ConversationProviderHistoryUnavailableV1Fields = {
@@ -87,4 +87,4 @@ export type ConversationConnectionHistoryGapFactV1 = ReturnType<
     typeof ConversationConnectionHistoryGapFactV1Schema.parse
 >;
 export const ConversationConnectionHistoryGapFactV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionHistoryGapFactV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionHistoryGapFactV1Schema.jsonSchema)();

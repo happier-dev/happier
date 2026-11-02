@@ -35,7 +35,7 @@ export const ConversationRecommendedRecoveryV1Schema = defineProtocolObject({
     unavailableReason: text.optional(),
 }, closed);
 export type ConversationRecommendedRecoveryV1 = ReturnType<typeof ConversationRecommendedRecoveryV1Schema.parse>;
-export const ConversationRecommendedRecoveryV1JsonSchema: PluginJsonSchema = ConversationRecommendedRecoveryV1Schema.jsonSchema;
+export const ConversationRecommendedRecoveryV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationRecommendedRecoveryV1Schema.jsonSchema)();
 const recommendedRecovery = ConversationRecommendedRecoveryV1Schema.nullable().optional();
 export const ConversationConnectionListInputV1Schema = defineProtocolObject(pageFields, closed);
 export const ConversationBindingListInputV1Schema = defineProtocolObject({ ...pageFields,
@@ -119,15 +119,15 @@ export const ConversationDeliveryReadResultV1Schema = defineProtocolUnion([
     }, closed) }, closed),
 ]);
 
-export const ConversationConnectionListInputV1JsonSchema: PluginJsonSchema = ConversationConnectionListInputV1Schema.jsonSchema;
-export const ConversationConnectionListResultV1JsonSchema: PluginJsonSchema = ConversationConnectionListResultV1Schema.jsonSchema;
-export const ConversationConnectionManagementRowV1JsonSchema: PluginJsonSchema = ConversationConnectionManagementRowV1Schema.jsonSchema;
-export const ConversationBindingListInputV1JsonSchema: PluginJsonSchema = ConversationBindingListInputV1Schema.jsonSchema;
-export const ConversationBindingListResultV1JsonSchema: PluginJsonSchema = ConversationBindingListResultV1Schema.jsonSchema;
-export const ConversationBindingManagementRowV1JsonSchema: PluginJsonSchema = ConversationBindingManagementRowV1Schema.jsonSchema;
-export const ConversationIngressAttentionInputV1JsonSchema: PluginJsonSchema = ConversationIngressAttentionInputV1Schema.jsonSchema;
-export const ConversationIngressAttentionResultV1JsonSchema: PluginJsonSchema = ConversationIngressAttentionResultV1Schema.jsonSchema;
-export const ConversationDeliveryAttentionInputV1JsonSchema: PluginJsonSchema = ConversationDeliveryAttentionInputV1Schema.jsonSchema;
-export const ConversationDeliveryAttentionResultV1JsonSchema: PluginJsonSchema = ConversationDeliveryAttentionResultV1Schema.jsonSchema;
-export const ConversationDeliveryReadInputV1JsonSchema: PluginJsonSchema = ConversationDeliveryReadInputV1Schema.jsonSchema;
-export const ConversationDeliveryReadResultV1JsonSchema: PluginJsonSchema = ConversationDeliveryReadResultV1Schema.jsonSchema;
+export const ConversationConnectionListInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationConnectionListInputV1Schema.jsonSchema)();
+export const ConversationConnectionListResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationConnectionListResultV1Schema.jsonSchema)();
+export const ConversationConnectionManagementRowV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationConnectionManagementRowV1Schema.jsonSchema)();
+export const ConversationBindingListInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingListInputV1Schema.jsonSchema)();
+export const ConversationBindingListResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingListResultV1Schema.jsonSchema)();
+export const ConversationBindingManagementRowV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingManagementRowV1Schema.jsonSchema)();
+export const ConversationIngressAttentionInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationIngressAttentionInputV1Schema.jsonSchema)();
+export const ConversationIngressAttentionResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationIngressAttentionResultV1Schema.jsonSchema)();
+export const ConversationDeliveryAttentionInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryAttentionInputV1Schema.jsonSchema)();
+export const ConversationDeliveryAttentionResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryAttentionResultV1Schema.jsonSchema)();
+export const ConversationDeliveryReadInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryReadInputV1Schema.jsonSchema)();
+export const ConversationDeliveryReadResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationDeliveryReadResultV1Schema.jsonSchema)();

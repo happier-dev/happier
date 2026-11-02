@@ -259,7 +259,7 @@ export function createProtocolStoredReadSchema<TOutput>(schema: Readonly<{
   jsonSchema: object;
   safeParse(value: unknown): ProtocolSchemaSafeParseResult<TOutput>;
 }>): ProtocolStoredReadSchema<TOutput> {
-  const storedParser = protocolStoredParsers.get(schema);
+  const storedParser = protocolSchemaLifetimes.get(schema)?.storedParser;
   if (storedParser) return createTypedProtocolStoredReader(schema, storedParser);
   let projection: CanonicalComposableSchema | undefined;
   let needsProjection: boolean | undefined;
@@ -410,7 +410,15 @@ type ProtocolNormalizedParser<TOutput> = (
 ) => ProtocolSchemaSafeParseResult<TOutput>;
 
 type ProtocolParsePurpose = 'input' | 'stored';
-const protocolStoredParsers = new WeakMap<object, (value: unknown) => ProtocolSchemaSafeParseResult<unknown>>();
+const protocolSchemaLifetimes = new WeakMap<object, Readonly<{
+  allowsUndefined: boolean;
+  storedParser?: (value: unknown) => ProtocolSchemaSafeParseResult<unknown>;
+}>>();
+
+/** @internal Immutable parser identities captured by this owner need no author-graph copy. */
+export function isOwnedProtocolComposableSchema(value: unknown): value is ProtocolComposableSchema<unknown, unknown> {
+  return value !== null && typeof value === 'object' && protocolSchemaLifetimes.has(value);
+}
 
 // Immutable parser-constructor proofs, not admission inferred from a JSON
 // projection: custom/cross-copy parsers can normalize beyond their projection.
@@ -419,25 +427,38 @@ const unionMemberRejections = new WeakMap<object, (input: unknown) => boolean>()
 
 /** Internal construction seam for canonical owners projecting an incumbent parser. */
 export function createProtocolComposableSchema<TInput, TOutput>(
-  projection: object,
+  projection: object | (() => object),
   parseNormalized: ProtocolNormalizedParser<TOutput>,
   allowsUndefined = false,
 ): ProtocolComposableSchema<TInput, TOutput> {
-  // Custom owners supply arbitrary documents; retain full ingress admission.
-  return createProtocolComposableSchemaForPurpose(normalizePluginJsonSchema(projection), parseNormalized, allowsUndefined, false);
+  // Caller documents retain immediate admission. Internal incumbent-parser
+  // adapters can supply a factory: JSON projection is independent of parsing.
+  return createProtocolComposableSchemaForPurpose(
+    typeof projection === 'function'
+      ? () => normalizePluginJsonSchema(projection())
+      : normalizePluginJsonSchema(projection),
+    parseNormalized, allowsUndefined, false,
+  );
 }
 
 function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
-  projection: PluginJsonSchemaV2,
+  projection: PluginJsonSchemaV2 | (() => PluginJsonSchemaV2),
   parseNormalized: (value: ProtocolJsonValue, purpose: ProtocolParsePurpose) => ProtocolSchemaSafeParseResult<TOutput>,
   allowsUndefined = false,
   supportsStoredRead = true,
 ): ProtocolComposableSchema<TInput, TOutput> {
-  // The dialect belongs to the root; composing an incumbent parser must not
-  // embed its root annotation in a nullable member.
-  const { $schema: _dialect, ...fragment } = projection;
-  const normalizedProjection = snapshotConstructedProtocolSchema(fragment);
-  const jsonSchema = canonicalProtocolJsonSchema(normalizedProjection);
+  // Executable parsers do not need JSON Schema documents. Materialize each
+  // immutable projection once, only when a descriptor consumer requests it.
+  let normalizedProjection: PluginJsonSchemaV2 | undefined;
+  const readProjection = (): PluginJsonSchemaV2 => {
+    if (normalizedProjection === undefined) {
+      // The dialect belongs to the root, never to an embedded member.
+      const { $schema: _dialect, ...fragment } = typeof projection === 'function' ? projection() : projection;
+      normalizedProjection = snapshotConstructedProtocolSchema(fragment);
+    }
+    return normalizedProjection;
+  };
+  let jsonSchema: PluginJsonSchemaV2 | undefined;
   const parseForPurpose = (value: unknown, purpose: ProtocolParsePurpose): ProtocolSchemaSafeParseResult<TOutput> => {
     if (value === undefined && allowsUndefined) {
       return Object.freeze({ success: true, data: undefined as TOutput });
@@ -474,7 +495,9 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
 
   const safeParse = (value: unknown) => parseForPurpose(value, 'input');
   const schema = Object.freeze({
-    jsonSchema,
+    get jsonSchema() {
+      return jsonSchema ??= canonicalProtocolJsonSchema(readProjection());
+    },
     parse(value: unknown): TOutput {
       const result = safeParse(value);
       if (result.success) return result.data;
@@ -483,7 +506,7 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
     safeParse,
     optional(): ProtocolComposableSchema<TInput | undefined, TOutput | undefined> {
       return createProtocolComposableSchemaForPurpose<TInput | undefined, TOutput | undefined>(
-        normalizedProjection,
+        readProjection,
         parseNormalized,
         true,
         supportsStoredRead,
@@ -491,7 +514,7 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
     },
     nullable(): ProtocolComposableSchema<TInput | null, TOutput | null> {
       return createProtocolComposableSchemaForPurpose<TInput | null, TOutput | null>(
-        { anyOf: [embedProtocolJsonSchema(normalizedProjection, ['anyOf', 0]), { type: 'null' }] },
+        () => ({ anyOf: [embedProtocolJsonSchema(readProjection(), ['anyOf', 0]), { type: 'null' }] }),
         (value, purpose) => value === null
           ? Object.freeze({ success: true, data: null as TOutput | null })
           : parseNormalized(value, purpose) as ProtocolSchemaSafeParseResult<TOutput | null>,
@@ -500,7 +523,11 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
       );
     },
   });
-  if (supportsStoredRead) protocolStoredParsers.set(schema, value => parseForPurpose(value, 'stored'));
+  // This factory already owns the optional boundary, including atomic parsers
+  // that deliberately keep the generic stored-reader path.
+  protocolSchemaLifetimes.set(schema, { allowsUndefined,
+    ...(supportsStoredRead ? { storedParser: (value: unknown) => parseForPurpose(value, 'stored') } : {}),
+  });
   return schema;
 }
 
@@ -517,12 +544,12 @@ function createProtocolComposableSchemaForPurpose<TInput, TOutput>(
 export function isProtocolComposableSchema<TInput, TOutput = TInput>(
   value: unknown,
 ): value is ProtocolComposableSchema<TInput, TOutput> {
-  return isProtocolRecord(value)
+  return isOwnedProtocolComposableSchema(value) || (isProtocolRecord(value)
     && isProtocolRecord(value.jsonSchema)
     && typeof value.parse === 'function'
     && typeof value.safeParse === 'function'
     && typeof value.optional === 'function'
-    && typeof value.nullable === 'function';
+    && typeof value.nullable === 'function');
 }
 
 function requireProtocolComposableSchema<TInput, TOutput>(
@@ -555,6 +582,9 @@ function protocolComposableProjection(schema: ProtocolComposableSchema<unknown, 
 }
 
 function protocolSchemaAllowsUndefined(schema: ProtocolComposableSchema<unknown, unknown>): boolean {
+  const known = protocolSchemaLifetimes.get(schema);
+  if (known) return known.allowsUndefined;
+  // Foreign/custom structural schemas still decide their own optional boundary.
   try {
     return schema.safeParse(undefined).success;
   } catch {
@@ -628,10 +658,13 @@ function readProtocolStringConstraint(options: ProtocolStringOptions): (value: s
 export function defineProtocolLiteral<const TValue extends string | number | boolean | null>(
   value: TValue,
 ): ProtocolComposableSchema<TValue, TValue> {
+  if (value !== null && !['string', 'number', 'boolean'].includes(typeof value)) {
+    throw new TypeError('Protocol literals must be JSON primitives');
+  }
   if (typeof value === 'number' && !Number.isFinite(value)) {
     throw new TypeError('Protocol literal numbers must be finite');
   }
-  const schema = createProtocolComposableSchema<TValue, TValue>(
+  const schema = createProtocolComposableSchemaForPurpose<TValue, TValue>(
     { const: value },
     (input) => pluginJsonValuesEqual(input, value)
       ? { success: true, data: value }
@@ -658,7 +691,7 @@ export function defineProtocolString(
     ...(options.pattern === undefined ? {} : { pattern: options.pattern }),
   });
   const matches = readProtocolStringConstraint(normalized);
-  return createProtocolComposableSchema<string, string>(
+  return createProtocolComposableSchemaForPurpose<string, string>(
     protocolStringProjection(normalized),
     (input) => typeof input === 'string' && matches(input)
       ? { success: true, data: input }
@@ -686,7 +719,7 @@ export function defineProtocolUtf8String(
   const matches = readProtocolStringConstraint(normalized);
   const projection = protocolStringProjection(normalized);
   projection[HAPPIER_MAX_UTF8_BYTES_KEYWORD] = maxUtf8Bytes;
-  return createProtocolComposableSchema<string, string>(projection, (input) => {
+  return createProtocolComposableSchemaForPurpose<string, string>(projection, (input) => {
     if (typeof input !== 'string' || !matches(input)) {
       return createProtocolSingleFailure('invalid_string', 'Value does not satisfy the protocol string constraint');
     }
@@ -728,7 +761,7 @@ export function defineProtocolNumber(
     if (minimum !== undefined) projection.minimum = minimum;
     if (maximum !== undefined) projection.maximum = maximum;
   }
-  return createProtocolComposableSchema<number, number>(projection, (input) => (
+  return createProtocolComposableSchemaForPurpose<number, number>(projection, (input) => (
     typeof input === 'number'
       && Number.isFinite(input)
       && (minimum === undefined || input >= minimum)
@@ -824,13 +857,11 @@ export function defineProtocolObject<
   const policy = options.policy;
   const children: Record<string, ProtocolComposableSchema<unknown, unknown>> = {};
   const storedChildren: Record<string, ProtocolStoredReadSchema<unknown>> = {};
-  const properties: Record<string, PluginJsonSchemaV2> = {};
   const required: string[] = [];
   for (const [key, child] of Object.entries(shape)) {
     const schema = requireProtocolComposableSchema<unknown, unknown>(child, `Protocol object field '${key}'`);
     children[key] = schema;
     storedChildren[key] = createProtocolStoredReadSchema(schema);
-    properties[key] = protocolComposableProjection(schema, ['properties', key]);
     if (!protocolSchemaAllowsUndefined(schema)) required.push(key);
   }
 
@@ -838,29 +869,17 @@ export function defineProtocolObject<
   if (additional !== undefined && policy !== 'additive-open/preserve') {
     throw new TypeError('Typed additionalProperties requires additive-open/preserve');
   }
-  const projection: PluginJsonSchemaV2 = {
+  const additionalSchema = additional === undefined ? undefined
+    : requireProtocolComposableSchema<unknown, unknown>(additional, 'Protocol object additionalProperties schema');
+  const projection = (): PluginJsonSchemaV2 => ({
     type: 'object',
-    properties,
+    properties: Object.fromEntries(Object.entries(children).map(([key, schema]) =>
+      [key, protocolComposableProjection(schema, ['properties', key])])),
     ...(required.length === 0 ? {} : { required }),
-  };
-  let additionalSchema: ProtocolComposableSchema<unknown, unknown> | undefined;
-  if (policy === 'closed') {
-    projection.additionalProperties = false;
-  } else if (policy === 'additive-open/drop') {
-    projection.additionalProperties = true;
-  } else if (additional === undefined) {
-    // `true` is the canonical JSON Schema spelling for accepting then
-    // dropping unknown keys. Preserve needs a distinct emitted spelling so an
-    // exact-generation manifest can reconstruct the Protocol parser without
-    // consulting a target module.
-    projection.additionalProperties = {};
-  } else {
-    additionalSchema = requireProtocolComposableSchema<unknown, unknown>(
-      additional,
-      'Protocol object additionalProperties schema',
-    );
-    projection.additionalProperties = protocolComposableProjection(additionalSchema, ['additionalProperties']);
-  }
+    // Preserve uses a distinct spelling so cold rehydration retains its policy.
+    additionalProperties: policy === 'closed' ? false : policy === 'additive-open/drop' ? true
+      : additionalSchema === undefined ? {} : protocolComposableProjection(additionalSchema, ['additionalProperties']),
+  });
   const storedAdditional = additionalSchema === undefined ? undefined : createProtocolStoredReadSchema(additionalSchema);
   const schema = createProtocolComposableSchemaForPurpose<
     ProtocolObjectInput<TShape, TOptions>,
@@ -946,7 +965,7 @@ export function defineProtocolArray<
   return createProtocolComposableSchemaForPurpose<
     readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
-  >(protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized), (input, purpose) => {
+  >(() => protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized), (input, purpose) => {
     if (!Array.isArray(input)
       || (normalized.minItems !== undefined && input.length < normalized.minItems)
       || (normalized.maxItems !== undefined && input.length > normalized.maxItems)) {
@@ -980,7 +999,7 @@ export function defineProtocolUniqueArray<
   return createProtocolComposableSchemaForPurpose<
     readonly ProtocolSchemaInput<TSchema>[],
     readonly ProtocolSchemaOutput<TSchema>[]
-  >(protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized, true), (input, purpose) => {
+  >(() => protocolArrayProjection(protocolComposableProjection(item, ['items']), normalized, true), (input, purpose) => {
     if (!Array.isArray(input)
       || (normalized.minItems !== undefined && input.length < normalized.minItems)
       || (normalized.maxItems !== undefined && input.length > normalized.maxItems)) {
@@ -1027,10 +1046,10 @@ export function defineProtocolUnion<
   return createProtocolComposableSchemaForPurpose<
     ProtocolSchemaInput<TMembers[number]>,
     ProtocolSchemaOutput<TMembers[number]>
-  >({
+  >(() => ({
     anyOf: schemas.map(({ schema }, index) => protocolComposableProjection(schema, ['anyOf', index])),
     ...(maximum === undefined ? {} : { [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: maximum }),
-  }, (input, purpose) => {
+  }), (input, purpose) => {
     // The bound belongs to the admitted input, before a member may normalize
     // or drop fields. Cold validation measures that same wire value.
     if (maximum !== undefined
@@ -1054,7 +1073,7 @@ export function defineProtocolJsonValue<TValue extends ProtocolJsonValue = Proto
   const maximum = options.maxSerializedUtf8Bytes === undefined
     ? undefined
     : assertPositiveSafeInteger(options.maxSerializedUtf8Bytes, 'JSON value maxSerializedUtf8Bytes');
-  return createProtocolComposableSchema<TValue, TValue>(
+  return createProtocolComposableSchemaForPurpose<TValue, TValue>(
     maximum === undefined ? {} : { [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: maximum },
     (input) => {
       try {
@@ -1098,7 +1117,7 @@ export function defineProtocolCanonicalJsonValue<TValue extends ProtocolJsonValu
     options.maxSerializedUtf8Bytes,
     'JSON value maxSerializedUtf8Bytes',
   );
-  return createProtocolComposableSchema<TValue, TValue>(
+  return createProtocolComposableSchemaForPurpose<TValue, TValue>(
     { [HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD]: maximum },
     (input) => {
       try {

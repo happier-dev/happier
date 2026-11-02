@@ -6,10 +6,26 @@ import { compileActionInputJsonSchema } from '../../actions/actionInputJsonSchem
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { LaunchProfileIdV2ProtocolSchema } from '../../profiles/v2/profileId.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
-import { asProtocolZod } from './internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from './internalProtocolZodAdapter.js';
 import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolJsonValue, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray } from './protocolComposableSchema.js';
 
+import * as strictJson from '../contributions/strictJsonValue.js';
+
 describe('the private neutral-schema bridge for Mini parents', () => {
+  it('composes and parses projected native schemas without constructing JSON documents', () => {
+    const clones = vi.spyOn(strictJson, 'cloneStrictPluginJsonValue');
+    try {
+      const projected = projectZodProtocolSchema(mini.strictObject({ id: mini.string() }));
+      const parent = defineProtocolObject({ item: projected.optional() }, { policy: 'closed' });
+      expect(parent.parse({ item: { id: 'accepted' } })).toEqual({ item: { id: 'accepted' } });
+      expect(parent.safeParse({ item: { id: 7 } }).success).toBe(false);
+      expect(clones.mock.calls.filter(([, path]) => path === 'schema')).toHaveLength(0);
+      expect(structuredClone(parent.jsonSchema)).toEqual(parent.jsonSchema);
+    } finally {
+      clones.mockRestore();
+    }
+  });
+
   it('returns a native Mini schema that composes in a Mini parent', () => {
     const canonical = defineProtocolObject({ value: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
     const adapter = asProtocolZod(canonical);

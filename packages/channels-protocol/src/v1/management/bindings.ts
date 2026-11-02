@@ -241,7 +241,7 @@ export type ConversationBindingResolveInputV1 = ReturnType<
     typeof ConversationBindingResolveInputV1Schema.parse
 >;
 export const ConversationBindingResolveInputV1JsonSchema: PluginJsonSchema =
-    ConversationBindingResolveInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingResolveInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only bounded reason for a resolution path that cannot run. */
 export const ConversationBindingResolutionUnavailableV1ProtocolSchema = defineProtocolObject({
@@ -260,7 +260,7 @@ export type ConversationBindingResolutionUnavailableV1 = ReturnType<
     typeof ConversationBindingResolutionUnavailableV1Schema.parse
 >;
 export const ConversationBindingResolutionUnavailableV1JsonSchema: PluginJsonSchema =
-    ConversationBindingResolutionUnavailableV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingResolutionUnavailableV1Schema.jsonSchema)();
 
 const conversationBindingStaleResultV1 = defineProtocolObject({
     kind: defineProtocolLiteral('stale'),
@@ -286,7 +286,7 @@ export type ConversationBindingResolveResultV1 = ReturnType<
     typeof ConversationBindingResolveResultV1Schema.parse
 >;
 export const ConversationBindingResolveResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingResolveResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingResolveResultV1Schema.jsonSchema)();
 
 const conversationBindingCreateFieldsV1 = {
     connectionId: ConversationConnectionIdV1ProtocolSchema,
@@ -318,7 +318,7 @@ export const ConversationBindingCreateInputV1Schema = ConversationBindingCreateI
 export type ConversationBindingCreateInputV1 = ReturnType<
     typeof ConversationBindingCreateInputV1Schema.parse
 >;
-export const ConversationBindingCreateInputV1JsonSchema: PluginJsonSchema = ConversationBindingCreateInputV1Schema.jsonSchema;
+export const ConversationBindingCreateInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingCreateInputV1Schema.jsonSchema)();
 
 /** Exact retained binding or Automation association read; neither uses display summaries. */
 export const ConversationBindingReadInputV1Schema = defineProtocolUnion([
@@ -327,7 +327,7 @@ export const ConversationBindingReadInputV1Schema = defineProtocolUnion([
 ]);
 export type ConversationBindingReadInputV1 = ReturnType<typeof ConversationBindingReadInputV1Schema.parse>;
 export const ConversationBindingReadInputV1JsonSchema: PluginJsonSchema =
-    ConversationBindingReadInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingReadInputV1Schema.jsonSchema)();
 
 /** Exact binding row projection with its current collection revision. */
 export const ConversationBindingReadResultV1Schema = defineProtocolUnion([
@@ -347,7 +347,7 @@ export const ConversationBindingReadResultV1Schema = defineProtocolUnion([
 ]);
 export type ConversationBindingReadResultV1 = ReturnType<typeof ConversationBindingReadResultV1Schema.parse>;
 export const ConversationBindingReadResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingReadResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingReadResultV1Schema.jsonSchema)();
 
 const conversationBindingUpdateFieldsV1 = {
     bindingId: ConversationBindingIdV1ProtocolSchema,
@@ -378,7 +378,7 @@ export const ConversationBindingUpdateInputV1Schema = ConversationBindingUpdateI
 export type ConversationBindingUpdateInputV1 = ReturnType<
     typeof ConversationBindingUpdateInputV1Schema.parse
 >;
-export const ConversationBindingUpdateInputV1JsonSchema: PluginJsonSchema = ConversationBindingUpdateInputV1Schema.jsonSchema;
+export const ConversationBindingUpdateInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingUpdateInputV1Schema.jsonSchema)();
 
 const conversationBindingUpdateResultV1 = defineProtocolObject({
     kind: defineProtocolUnion([
@@ -409,7 +409,7 @@ export type ConversationBindingSetEnabledInputV1 = ReturnType<
     typeof ConversationBindingSetEnabledInputV1Schema.parse
 >;
 export const ConversationBindingSetEnabledInputV1JsonSchema: PluginJsonSchema =
-    ConversationBindingSetEnabledInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingSetEnabledInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only idempotent binding deletion request. */
 export const ConversationBindingDeleteInputV1ProtocolSchema = defineProtocolObject({
@@ -422,14 +422,14 @@ export type ConversationBindingDeleteInputV1 = ReturnType<
     typeof ConversationBindingDeleteInputV1Schema.parse
 >;
 export const ConversationBindingDeleteInputV1JsonSchema: PluginJsonSchema =
-    ConversationBindingDeleteInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingDeleteInputV1Schema.jsonSchema)();
 
 export const ConversationBindingUpdateResultV1Schema = conversationBindingUpdateResultV1;
 export type ConversationBindingUpdateResultV1 = ReturnType<
     typeof ConversationBindingUpdateResultV1Schema.parse
 >;
 export const ConversationBindingUpdateResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingUpdateResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingUpdateResultV1Schema.jsonSchema)();
 
 /** The only public deletion outcomes; cleanup state remains a retained binding concern. */
 export const ConversationBindingDeleteResultV1Schema = defineProtocolUnion([
@@ -440,14 +440,14 @@ export type ConversationBindingDeleteResultV1 = ReturnType<
     typeof ConversationBindingDeleteResultV1Schema.parse
 >;
 export const ConversationBindingDeleteResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingDeleteResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingDeleteResultV1Schema.jsonSchema)();
 
 export const ConversationAutomationTargetNotVerifiedResultV1Schema = ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema;
 export type ConversationAutomationTargetNotVerifiedResultV1 = ReturnType<
     typeof ConversationAutomationTargetNotVerifiedResultV1Schema.parse
 >;
 export const ConversationAutomationTargetNotVerifiedResultV1JsonSchema: PluginJsonSchema =
-    ConversationAutomationTargetNotVerifiedResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationAutomationTargetNotVerifiedResultV1Schema.jsonSchema)();
 
 /** Guarded binding update outcomes, including current resolver and verifier feedback. */
 export const ConversationBindingMutationResultV1Schema = defineProtocolUnion([
@@ -461,7 +461,7 @@ export type ConversationBindingMutationResultV1 = ReturnType<
     typeof ConversationBindingMutationResultV1Schema.parse
 >;
 export const ConversationBindingMutationResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingMutationResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingMutationResultV1Schema.jsonSchema)();
 
 export const ConversationBindingCreateResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -479,4 +479,4 @@ export type ConversationBindingCreateResultV1 = ReturnType<
     typeof ConversationBindingCreateResultV1Schema.parse
 >;
 export const ConversationBindingCreateResultV1JsonSchema: PluginJsonSchema =
-    ConversationBindingCreateResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationBindingCreateResultV1Schema.jsonSchema)();

@@ -25,7 +25,7 @@ export type ConversationPermissionMediationSourceCurrentnessInputV1 = ReturnType
     typeof ConversationPermissionMediationSourceCurrentnessInputV1Schema.parse
 >;
 export const ConversationPermissionMediationSourceCurrentnessInputV1JsonSchema: PluginJsonSchema =
-    ConversationPermissionMediationSourceCurrentnessInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPermissionMediationSourceCurrentnessInputV1Schema.jsonSchema)();
 
 /** Opaque current/not-current answer; retained binding details never leave the owner. */
 export const ConversationPermissionMediationSourceCurrentnessResultV1Schema = defineProtocolObject({
@@ -38,4 +38,4 @@ export type ConversationPermissionMediationSourceCurrentnessResultV1 = ReturnTyp
     typeof ConversationPermissionMediationSourceCurrentnessResultV1Schema.parse
 >;
 export const ConversationPermissionMediationSourceCurrentnessResultV1JsonSchema: PluginJsonSchema =
-    ConversationPermissionMediationSourceCurrentnessResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPermissionMediationSourceCurrentnessResultV1Schema.jsonSchema)();

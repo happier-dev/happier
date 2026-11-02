@@ -24,7 +24,7 @@ export const ConversationChannelRelationIdV1Schema = ConversationChannelRelation
 export type ConversationChannelRelationIdV1 = ReturnType<
     typeof ConversationChannelRelationIdV1Schema.parse
 >;
-export const ConversationChannelRelationIdV1JsonSchema: PluginJsonSchema = ConversationChannelRelationIdV1Schema.jsonSchema;
+export const ConversationChannelRelationIdV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationChannelRelationIdV1Schema.jsonSchema)();
 
 export const ConversationConnectionIdV1Schema = ConversationChannelRelationIdV1Schema;
 export type ConversationConnectionIdV1 = ConversationChannelRelationIdV1;

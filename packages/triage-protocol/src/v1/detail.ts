@@ -96,4 +96,4 @@ export type TriageDetailSurfaceInputV1 = ReturnType<
     typeof TriageDetailSurfaceInputV1Schema.parse
 >;
 export const TriageDetailSurfaceInputV1JsonSchema: PluginJsonSchema =
-    TriageDetailSurfaceInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => TriageDetailSurfaceInputV1Schema.jsonSchema)();

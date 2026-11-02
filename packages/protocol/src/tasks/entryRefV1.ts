@@ -60,7 +60,7 @@ export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> 
   collisionScope: TriageCollisionScopeV1ProtocolSchema,
   entryId: TriageIdentifierV1ProtocolSchema,
 }, { policy: 'closed' });
-export const TriageEntryRefV1JsonSchema: PluginJsonSchemaV2 = TriageEntryRefV1Schema.jsonSchema;
+export const TriageEntryRefV1JsonSchema: PluginJsonSchemaV2 = /* @__PURE__ */ (() => TriageEntryRefV1Schema.jsonSchema)();
 
 export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
   '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';

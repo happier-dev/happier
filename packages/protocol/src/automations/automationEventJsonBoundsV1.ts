@@ -22,7 +22,7 @@ export const AutomationSourceSelectorIdV1ProtocolSchema = defineProtocolString({
 export const AutomationSourceSelectorIdV1Schema = lazyZodSchema(() => z.string().check(z.regex(new RegExp(AUTOMATION_SOURCE_SELECTOR_ID_V1_PATTERN, 'u'), 'Source selectors must be canonical lowercase RFC 4122 UUID-v4 values')).brand<'AutomationSourceSelectorIdV1'>());
 export type AutomationSourceSelectorIdV1 = z.infer<typeof AutomationSourceSelectorIdV1Schema>;
 export const AutomationSourceSelectorIdV1JsonSchema =
-  AutomationSourceSelectorIdV1ProtocolSchema.jsonSchema;
+  /* @__PURE__ */ (() => AutomationSourceSelectorIdV1ProtocolSchema.jsonSchema)();
 
 const UTF8_ENCODER = new TextEncoder();
 

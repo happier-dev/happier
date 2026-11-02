@@ -265,7 +265,7 @@ export type ConversationConnectionCreateInputV1 = ReturnType<
     typeof ConversationConnectionCreateInputV1Schema.parse
 >;
 export const ConversationConnectionCreateInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionCreateInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionCreateInputV1Schema.jsonSchema)();
 
 /**
  * A transfer selects a newly admitted provider contribution and setup contract
@@ -293,7 +293,7 @@ export type ConversationConnectionTransferInputV1 = ReturnType<
     typeof ConversationConnectionTransferInputV1Schema.parse
 >;
 export const ConversationConnectionTransferInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionTransferInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionTransferInputV1Schema.jsonSchema)();
 
 export const ConversationConnectionUpdateInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
@@ -305,14 +305,14 @@ export type ConversationConnectionUpdateInputV1 = ReturnType<
     typeof ConversationConnectionUpdateInputV1Schema.parse
 >;
 export const ConversationConnectionUpdateInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionUpdateInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionUpdateInputV1Schema.jsonSchema)();
 
 export const ConversationConnectionUpdateResultV1Schema = conversationConnectionMutationResultV1;
 export type ConversationConnectionUpdateResultV1 = ReturnType<
     typeof ConversationConnectionUpdateResultV1Schema.parse
 >;
 export const ConversationConnectionUpdateResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionUpdateResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionUpdateResultV1Schema.jsonSchema)();
 
 export const ConversationConnectionDeleteInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
@@ -322,21 +322,21 @@ export type ConversationConnectionDeleteInputV1 = ReturnType<
     typeof ConversationConnectionDeleteInputV1Schema.parse
 >;
 export const ConversationConnectionDeleteInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionDeleteInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionDeleteInputV1Schema.jsonSchema)();
 
 export const ConversationConnectionDeleteResultV1Schema = conversationConnectionDeleteResultV1;
 export type ConversationConnectionDeleteResultV1 = ReturnType<
     typeof ConversationConnectionDeleteResultV1Schema.parse
 >;
 export const ConversationConnectionDeleteResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionDeleteResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionDeleteResultV1Schema.jsonSchema)();
 
 export const ConversationConnectionCreateResultV1Schema = conversationConnectionCreateResultV1;
 export type ConversationConnectionCreateResultV1 = ReturnType<
     typeof ConversationConnectionCreateResultV1Schema.parse
 >;
 export const ConversationConnectionCreateResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionCreateResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionCreateResultV1Schema.jsonSchema)();
 
 export type ConversationConnectionWebhookEndpointSetupRequiredResultV1 = Extract<
     ConversationConnectionCreateResultV1,
@@ -353,4 +353,4 @@ export type ConversationConnectionTransferResultV1 = ReturnType<
     typeof ConversationConnectionTransferResultV1Schema.parse
 >;
 export const ConversationConnectionTransferResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionTransferResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionTransferResultV1Schema.jsonSchema)();

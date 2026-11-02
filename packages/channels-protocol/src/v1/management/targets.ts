@@ -65,13 +65,13 @@ export const ConversationAllowedPrincipalIdsV1ProtocolSchema = defineProtocolUni
 /** The same allow-list contract is consumed by binding mutations and storage. */
 export const ConversationAllowedPrincipalIdsV1Schema = ConversationAllowedPrincipalIdsV1ProtocolSchema;
 export const ConversationAllowedPrincipalIdsV1JsonSchema: PluginJsonSchema =
-    ConversationAllowedPrincipalIdsV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationAllowedPrincipalIdsV1Schema.jsonSchema)();
 
 /** @internal Shared with policy mutations; safe-integer representation is the only ceiling. */
 export const ConversationInboundDebounceMsV1ProtocolSchema = nonnegativeSafeInteger;
 export const ConversationInboundDebounceMsV1Schema = ConversationInboundDebounceMsV1ProtocolSchema;
 export const ConversationInboundDebounceMsV1JsonSchema: PluginJsonSchema =
-    ConversationInboundDebounceMsV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationInboundDebounceMsV1Schema.jsonSchema)();
 
 const conversationSessionApprovalPolicyV1 = defineProtocolUnion([
     defineProtocolObject({
@@ -175,7 +175,7 @@ export type ChannelSessionSpawnRecipeV1 = ConversationJsonObjectV1;
 export function isChannelSessionSpawnRecipeAuthorableV1(recipe: ChannelSessionSpawnRecipeV1): boolean {
     return !Object.prototype.hasOwnProperty.call(recipe, 'attestedContext');
 }
-export const ConversationBindingTargetV1JsonSchema: PluginJsonSchema = ConversationBindingTargetV1Schema.jsonSchema;
+export const ConversationBindingTargetV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingTargetV1Schema.jsonSchema)();
 
 const conversationBindingV1CommonFields = {
     v: defineProtocolLiteral(1),
@@ -221,4 +221,4 @@ export const ConversationBindingV1ProtocolSchema = defineProtocolUnion([
 
 export const ConversationBindingV1Schema = ConversationBindingV1ProtocolSchema;
 export type ConversationBindingV1 = ReturnType<typeof ConversationBindingV1Schema.parse>;
-export const ConversationBindingV1JsonSchema: PluginJsonSchema = ConversationBindingV1Schema.jsonSchema;
+export const ConversationBindingV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationBindingV1Schema.jsonSchema)();

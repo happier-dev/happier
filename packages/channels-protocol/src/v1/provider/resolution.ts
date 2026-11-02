@@ -94,7 +94,7 @@ export const ConversationResolvedEndpointV1ProtocolSchema = defineProtocolUnion(
 /** The bounded provider-authenticated endpoint shape used across Channels V1. */
 export const ConversationResolvedEndpointV1Schema = ConversationResolvedEndpointV1ProtocolSchema;
 export type ConversationResolvedEndpointV1 = ReturnType<typeof ConversationResolvedEndpointV1Schema.parse>;
-export const ConversationResolvedEndpointV1JsonSchema: PluginJsonSchema = ConversationResolvedEndpointV1Schema.jsonSchema;
+export const ConversationResolvedEndpointV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationResolvedEndpointV1Schema.jsonSchema)();
 
 const conversationEndpointIdentityDirectV1 = defineProtocolObject({
     kind: defineProtocolLiteral('direct'),
@@ -139,7 +139,7 @@ export const ConversationEndpointIdentityV1ProtocolSchema = defineProtocolUnion(
 export const ConversationEndpointIdentityV1Schema = ConversationEndpointIdentityV1ProtocolSchema;
 export type ConversationEndpointIdentityV1 = ReturnType<typeof ConversationEndpointIdentityV1Schema.parse>;
 export const ConversationEndpointIdentityV1JsonSchema: PluginJsonSchema =
-    ConversationEndpointIdentityV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationEndpointIdentityV1Schema.jsonSchema)();
 
 /** Compares only the provider-authenticated endpoint identity, never presentation labels. */
 export function areConversationEndpointIdentitiesEqual(
@@ -166,7 +166,7 @@ export const ConversationResolvedPrincipalV1ProtocolSchema = defineProtocolObjec
 /** The bounded immutable provider principal returned by provider resolution. */
 export const ConversationResolvedPrincipalV1Schema = ConversationResolvedPrincipalV1ProtocolSchema;
 export type ConversationResolvedPrincipalV1 = ReturnType<typeof ConversationResolvedPrincipalV1Schema.parse>;
-export const ConversationResolvedPrincipalV1JsonSchema: PluginJsonSchema = ConversationResolvedPrincipalV1Schema.jsonSchema;
+export const ConversationResolvedPrincipalV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationResolvedPrincipalV1Schema.jsonSchema)();
 
 /** @internal Relative-only bounded query shared by provider and management resolution schemas. */
 export const ConversationResolutionQueryV1ProtocolSchema = defineProtocolUtf8String({
@@ -198,7 +198,7 @@ export type ConversationEndpointResolveInputV1 = ReturnType<
     typeof ConversationEndpointResolveInputV1Schema.parse
 >;
 export const ConversationEndpointResolveInputV1JsonSchema: PluginJsonSchema =
-    ConversationEndpointResolveInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationEndpointResolveInputV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for the optional principal-resolution role. */
 export const ConversationPrincipalResolveInputV1ProtocolSchema = defineProtocolObject({
@@ -212,7 +212,7 @@ export type ConversationPrincipalResolveInputV1 = ReturnType<
     typeof ConversationPrincipalResolveInputV1Schema.parse
 >;
 export const ConversationPrincipalResolveInputV1JsonSchema: PluginJsonSchema =
-    ConversationPrincipalResolveInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPrincipalResolveInputV1Schema.jsonSchema)();
 
 /** Compares provider and management resolution candidates by canonical `(label, id)` order. */
 export function compareCanonicalConversationResolutionCandidatesV1<
@@ -280,7 +280,7 @@ export type ConversationEndpointResolveResultV1 = ReturnType<
     typeof ConversationEndpointResolveResultV1Schema.parse
 >;
 export const ConversationEndpointResolveResultV1JsonSchema: PluginJsonSchema =
-    ConversationEndpointResolveResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationEndpointResolveResultV1Schema.jsonSchema)();
 
 const conversationPrincipalResolveResolvedV1 = defineProtocolObject({
     kind: defineProtocolLiteral('resolved'),
@@ -299,4 +299,4 @@ export type ConversationPrincipalResolveResultV1 = ReturnType<
     typeof ConversationPrincipalResolveResultV1Schema.parse
 >;
 export const ConversationPrincipalResolveResultV1JsonSchema: PluginJsonSchema =
-    ConversationPrincipalResolveResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationPrincipalResolveResultV1Schema.jsonSchema)();

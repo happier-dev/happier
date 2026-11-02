@@ -10,13 +10,13 @@ const conversationPullRequestFieldsV1 = {
   number: defineProtocolNumber({ integer: true, minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
 };
 export const ConversationPullRequestV1Schema = defineProtocolObject(conversationPullRequestFieldsV1, { policy: 'closed' });
-export const ConversationPullRequestV1JsonSchema = ConversationPullRequestV1Schema.jsonSchema;
+export const ConversationPullRequestV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestV1Schema.jsonSchema)();
 const conversationPullRequestStateFieldsV1 = {
   state: defineProtocolUnion([defineProtocolLiteral('open'), defineProtocolLiteral('merged'), defineProtocolLiteral('closed'), defineProtocolLiteral('unknown')]),
   observedAt: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 };
 export const ConversationPullRequestStateV1Schema = defineProtocolObject(conversationPullRequestStateFieldsV1, { policy: 'closed' });
-export const ConversationPullRequestStateV1JsonSchema = ConversationPullRequestStateV1Schema.jsonSchema;
+export const ConversationPullRequestStateV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestStateV1Schema.jsonSchema)();
 export const ConversationScopedPullRequestTriggerV1Schema = defineProtocolObject({
   sessionId: SessionIdSchema,
   triggerId: defineProtocolString({ minLength: 1 }),
@@ -26,7 +26,7 @@ export const ConversationScopedPullRequestTriggerV1Schema = defineProtocolObject
   pullRequest: ConversationPullRequestV1Schema,
 }, { policy: 'closed' });
 export type ConversationScopedPullRequestTriggerV1 = ReturnType<typeof ConversationScopedPullRequestTriggerV1Schema.parse>;
-export const ConversationScopedPullRequestTriggerV1JsonSchema = ConversationScopedPullRequestTriggerV1Schema.jsonSchema;
+export const ConversationScopedPullRequestTriggerV1JsonSchema = /* @__PURE__ */ (() => ConversationScopedPullRequestTriggerV1Schema.jsonSchema)();
 export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('attach'), sessionId: SessionIdSchema, pullRequest: ConversationPullRequestV1Schema,
@@ -40,7 +40,7 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('removeTrigger'), sessionId: SessionIdSchema, triggerId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingInputV1 = ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>;
-export const SessionPullRequestBindingInputV1JsonSchema = SessionPullRequestBindingInputV1Schema.jsonSchema;
+export const SessionPullRequestBindingInputV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingInputV1Schema.jsonSchema)();
 const sessionPullRequestLinksFieldsV1 = {
   sessionId: SessionIdSchema,
   pullRequestLinks: defineProtocolArray(defineProtocolObject({
@@ -53,7 +53,7 @@ const sessionPullRequestLinksFieldsV1 = {
 };
 export const SessionPullRequestLinksV1Schema = defineProtocolObject(sessionPullRequestLinksFieldsV1, { policy: 'closed' });
 export type SessionPullRequestLinksV1 = ReturnType<typeof SessionPullRequestLinksV1Schema.parse>;
-export const SessionPullRequestLinksV1JsonSchema = SessionPullRequestLinksV1Schema.jsonSchema;
+export const SessionPullRequestLinksV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestLinksV1Schema.jsonSchema)();
 
 /** Opened PR links are a projection of retained bindings, not trigger enablement. */
 export function resolveSessionPullRequestLinksV1(bindings: readonly ConversationBindingV1[]): SessionPullRequestLinksV1[] {
@@ -100,4 +100,4 @@ export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('removed') }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingResultV1 = ReturnType<typeof SessionPullRequestBindingResultV1Schema.parse>;
-export const SessionPullRequestBindingResultV1JsonSchema = SessionPullRequestBindingResultV1Schema.jsonSchema;
+export const SessionPullRequestBindingResultV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingResultV1Schema.jsonSchema)();

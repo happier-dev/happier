@@ -55,10 +55,10 @@ function createLazyDefinition<TSchema extends object>(
     if (!schema) {
       const created = create();
       // A deferred composition may return another facade from this owner.
-      // Flatten it before copying internals: otherwise native parent identity
-      // can refer to an intermediate facade instead of the actual schema.
+      // Resolve it before inspecting its prototype, since reflection stays
+      // cold. Copy the actual schema's prototype and internals together.
       const createdLifetime = definitionLifetimes.get(created);
-      const concrete = (canonicalZodIdentity && createdLifetime?.canonicalZodIdentity
+      const concrete = (createdLifetime
         ? createdLifetime.resolve() : created) as TSchema;
       Object.setPrototypeOf(target, Object.getPrototypeOf(concrete));
       const descriptors: PropertyDescriptorMap = Object.getOwnPropertyDescriptors(concrete);
@@ -147,7 +147,6 @@ function createLazyDefinition<TSchema extends object>(
       // fluent parents attached to the public facade, never its hidden target.
       return Reflect.get(target, key, definition);
     },
-    getPrototypeOf() { resolve(); return Reflect.getPrototypeOf(target); },
     ownKeys() { resolve(); return Reflect.ownKeys(target); },
     getOwnPropertyDescriptor(_target, key) { resolve(); return Reflect.getOwnPropertyDescriptor(target, key); },
     has(_target, key) { resolve(); return Reflect.has(target, key); },

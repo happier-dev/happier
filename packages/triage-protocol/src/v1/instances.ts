@@ -213,7 +213,7 @@ export type TriageConfiguredSourceInstanceV1 = ReturnType<
     typeof TriageConfiguredSourceInstanceV1Schema.parse
 >;
 export const TriageConfiguredSourceInstanceV1JsonSchema: PluginJsonSchema =
-    TriageConfiguredSourceInstanceV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => TriageConfiguredSourceInstanceV1Schema.jsonSchema)();
 
 /**
  * @internal One exact-binding discovery failure. Without `localInstanceKey` it

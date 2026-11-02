@@ -1,3 +1,4 @@
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
@@ -550,6 +551,52 @@ describe('definePlugin', () => {
             version: '1.0.0',
             actions: { inspect: { title: 'Inspect' } },
         } as never)).toThrow(/root handler/i);
+    });
+
+    it('shares admitted schema graphs across captured Action declarations', () => {
+        const contract = defineComposableProtocolObject({
+            entryId: defineComposableProtocolString({ minLength: 1 }),
+            nested: defineComposableProtocolObject({ enabled: defineComposableProtocolLiteral(true) }, { policy: 'closed' }),
+        }, { policy: 'closed' });
+        const schema = contract.jsonSchema;
+        const plugins = Array.from({ length: 4 }, (_, pluginIndex) => definePlugin({
+            id: `acme.shared-schema-${pluginIndex}`,
+            version: '1.0.0',
+            actions: Object.fromEntries(Array.from({ length: 128 }, (_, index) => [`inspect-${index}`, {
+                title: 'Inspect', surfaces: ['plugin'] as const,
+                inputSchema: schema, resultSchema: schema,
+                run: () => ({ entryId: 'example', nested: { enabled: true } }),
+            }])),
+        }));
+        const retainedSchemas = new Set(plugins.flatMap(plugin => (
+            plugin.manifest.contributes.actions?.flatMap(action => [action.inputSchema, action.resultSchema]) ?? []
+        )));
+        expect(retainedSchemas.size).toBe(1);
+        expect(retainedSchemas.has(schema)).toBe(true);
+        expect(Object.isFrozen(schema)).toBe(true);
+    });
+
+    it('captures shallow-frozen caller schemas without treating them as admitted graphs', () => {
+        const field = { type: 'string' as const, minLength: 1 };
+        const schema = Object.freeze({
+            type: 'object' as const, properties: { value: field },
+            required: ['value'], additionalProperties: false,
+        });
+        // An original input mapped to an admitted snapshot is not itself branded.
+        normalizePluginJsonSchema(schema);
+        field.minLength = 3;
+        const plugin = definePlugin({
+            id: 'acme.caller-schema', version: '1.0.0',
+            actions: { inspect: {
+                title: 'Inspect', surfaces: ['plugin'], inputSchema: schema,
+                run: () => undefined,
+            } },
+        });
+        field.minLength = 9;
+        expect(plugin.manifest.contributes.actions?.[0]?.inputSchema).toEqual({
+            type: 'object', properties: { value: { type: 'string', minLength: 3 } },
+            required: ['value'], additionalProperties: false,
+        });
     });
 
     it('captures the authored definition graph before later caller mutation', async () => {

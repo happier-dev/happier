@@ -119,7 +119,7 @@ export const ConversationOutboundTextLimitV1ProtocolSchema = defineProtocolObjec
 /** A declared provider-native ceiling; omission in setup means no text ceiling. */
 export const ConversationOutboundTextLimitV1Schema = ConversationOutboundTextLimitV1ProtocolSchema;
 export type ConversationOutboundTextLimitV1 = ReturnType<typeof ConversationOutboundTextLimitV1Schema.parse>;
-export const ConversationOutboundTextLimitV1JsonSchema: PluginJsonSchema = ConversationOutboundTextLimitV1Schema.jsonSchema;
+export const ConversationOutboundTextLimitV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationOutboundTextLimitV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for the contributed setup result. */
 export const ConversationProviderSetupResultV1ProtocolSchema = defineProtocolObject({
@@ -147,7 +147,7 @@ export type ConversationProviderSetupResultV1 = ReturnType<
     typeof ConversationProviderSetupResultV1Schema.parse
 >;
 export const ConversationProviderSetupResultV1JsonSchema: PluginJsonSchema =
-    ConversationProviderSetupResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderSetupResultV1Schema.jsonSchema)();
 
 /**
  * A provider's safe setup observation that asks the present user to resolve a
@@ -167,7 +167,7 @@ export type ConversationProviderSetupRemediationV1 = ReturnType<
     typeof ConversationProviderSetupRemediationV1Schema.parse
 >;
 export const ConversationProviderSetupRemediationV1JsonSchema: PluginJsonSchema =
-    ConversationProviderSetupRemediationV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderSetupRemediationV1Schema.jsonSchema)();
 
 const conversationProviderSetupRemediatedV1 = defineProtocolObject({
     kind: defineProtocolLiteral('remediated'),
@@ -196,7 +196,7 @@ export type ConversationProviderSetupRemediationResultV1 = ReturnType<
     typeof ConversationProviderSetupRemediationResultV1Schema.parse
 >;
 export const ConversationProviderSetupRemediationResultV1JsonSchema: PluginJsonSchema =
-    ConversationProviderSetupRemediationResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderSetupRemediationResultV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for every valid setup role outcome. */
 export const ConversationProviderSetupOutcomeV1ProtocolSchema = defineProtocolUnion([
@@ -209,4 +209,4 @@ export type ConversationProviderSetupOutcomeV1 = ReturnType<
     typeof ConversationProviderSetupOutcomeV1Schema.parse
 >;
 export const ConversationProviderSetupOutcomeV1JsonSchema: PluginJsonSchema =
-    ConversationProviderSetupOutcomeV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderSetupOutcomeV1Schema.jsonSchema)();

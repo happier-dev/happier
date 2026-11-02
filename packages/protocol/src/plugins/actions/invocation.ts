@@ -860,6 +860,8 @@ type PluginActionInvocationPreparation = Readonly<
     kind: 'ready';
     input: StrictJsonValue;
     invoke(options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult>;
+    /** Uses the same admitted input and lifecycle, with no Action result payload. */
+    observe(options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult>;
   }
 >;
 
@@ -885,22 +887,28 @@ export function createPluginActionInvocation(params: Readonly<{
   // schema (AJV compile plus Zod rehydration) costs 0.1-0.7 s. Preparing every
   // Action at registration blocked the daemon event loop for minutes, so each
   // invocation prepares its own schemas on first invoke and keeps them.
-  let prepared: Readonly<{
+  let preparedInput: Readonly<{
     inputValidator: ReturnType<typeof compileSchema>;
-    resultValidator: ReturnType<typeof compileSchema>;
     inputParser: PluginActionInputParser | undefined;
+  }> | null = null;
+  let preparedResult: Readonly<{
+    resultValidator: ReturnType<typeof compileSchema>;
     resultParser: PluginActionResultParser | undefined;
   }> | null = null;
-  const prepareSchemas = () => {
-    if (prepared) return prepared;
-    const resultParser = params.resultParser ?? rehydrateActionParser(params.resultSchema);
-    return prepared = Object.freeze({
+  const prepareInputSchemas = () => {
+    return preparedInput ??= Object.freeze({
       inputValidator: compileSchema(params.inputSchema),
+      inputParser: params.inputParser ?? rehydrateActionParser(params.inputSchema),
+    });
+  };
+  const prepareResultSchemas = () => {
+    if (preparedResult) return preparedResult;
+    const resultParser = params.resultParser ?? rehydrateActionParser(params.resultSchema);
+    return preparedResult = Object.freeze({
       // The author's executable parser owns result shaping. Only raw JSON
       // Schema declarations need the ABI validator; reparsing a projected
       // result distrusts the same author and can reject an already-known effect.
       resultValidator: resultParser ? null : compileSchema(params.resultSchema),
-      inputParser: params.inputParser ?? rehydrateActionParser(params.inputSchema),
       resultParser,
     });
   };
@@ -913,7 +921,7 @@ export function createPluginActionInvocation(params: Readonly<{
       if (options.signal?.aborted) {
         return settled(unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted'));
       }
-      const { inputValidator, inputParser } = prepareSchemas();
+      const { inputValidator, inputParser } = prepareInputSchemas();
       // The public Action call accepts an omitted input for Actions that declare
       // no input contract. Handlers still receive only canonical JSON, so the
       // no-input value is `null`; a declared schema/parser continues to own and
@@ -947,16 +955,20 @@ export function createPluginActionInvocation(params: Readonly<{
       return Object.freeze({
         kind: 'ready', input: normalizedInput,
         invoke: (invokeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, invokeOptions),
+        observe: (observeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, observeOptions, true),
       });
   };
-  const invokePrepared = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult> => {
+  const invokePrepared = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
       if (!params.isCurrent() || params.occurrenceSignal.aborted) {
         return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action occurrenceId is no longer current');
       }
       if (options.signal?.aborted) {
         return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
       }
-      const { resultValidator, resultParser } = prepareSchemas();
+      // Observations return no Action result payload. Input-only preparation
+      // and observations never consume the result document; real invocations
+      // still prepare it before any handler effect can begin.
+      const resultSchemas = observation ? null : prepareResultSchemas();
       const linked = linkAbortSignals(params.occurrenceSignal, options.signal);
       try {
         const handlerInput = Object.freeze({
@@ -1048,6 +1060,8 @@ export function createPluginActionInvocation(params: Readonly<{
             ),
           });
         }
+        if (resultSchemas === null) return Object.freeze({ status: 'executed', value: null });
+        const { resultValidator, resultParser } = resultSchemas;
         const value = settlement.value;
         // A fulfilled handler settlement already won the cancellation race.
         // Retirement afterwards cannot rewrite that known effect as unavailable,

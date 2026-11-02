@@ -50,6 +50,30 @@ function deepSortObjectKeys(value: unknown): unknown {
 }
 
 describe('plugin JSON Schema validation policy', () => {
+  it('preserves required, nullable and foreign optional boundaries during object construction', () => {
+    const field = defineProtocolString();
+    const optional = field.optional();
+    let foreignProbes = 0;
+    // Structural copies model separately bundled SDK schemas. Their projection
+    // cannot reveal optionality; their real parser remains authoritative.
+    const foreign = { ...optional, safeParse(value: unknown) {
+      if (value === undefined) foreignProbes += 1;
+      return optional.safeParse(value);
+    } };
+    const schema = defineProtocolObject({ name: field, nullable: field.nullable(),
+      optional, foreign }, { policy: 'closed' });
+    expect(foreignProbes).toBe(1);
+    expect(schema.jsonSchema.required).toEqual(['name', 'nullable']);
+    const value = { name: 'current', nullable: null };
+    expect(schema.parse(value)).toEqual(value);
+    expect(schema.parse({ ...value, optional: 'present', foreign: 'copied' }))
+      .toEqual({ ...value, optional: 'present', foreign: 'copied' });
+    expect(schema.safeParse({ nullable: null }).success).toBe(false);
+    expect(schema.safeParse({ name: 'current' }).success).toBe(false);
+    expect(schema.safeParse({ ...value, extra: true }).success).toBe(false);
+    expect(createProtocolStoredReadSchema(schema).parse({ ...value, extra: true })).toEqual(value);
+  });
+
   it('reuses validated owned schema snapshots without trusting new immutable or copied inputs', () => {
     const raw = JSON.parse(JSON.stringify(defineProtocolObject({ authority: defineProtocolLiteral('first') },
       { policy: 'closed' }).jsonSchema)) as { properties: { authority: { const: string } } };

@@ -54,7 +54,7 @@ export const ConversationPollInputV1ProtocolSchema = defineProtocolObject({
 
 export const ConversationPollInputV1Schema = ConversationPollInputV1ProtocolSchema;
 export type ConversationPollInputV1 = ReturnType<typeof ConversationPollInputV1Schema.parse>;
-export const ConversationPollInputV1JsonSchema: PluginJsonSchema = ConversationPollInputV1Schema.jsonSchema;
+export const ConversationPollInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationPollInputV1Schema.jsonSchema)();
 
 const retryHintV1 = defineProtocolObject({
     retryAfterMs: defineProtocolNumber({
@@ -100,4 +100,4 @@ export const ConversationPollResultV1ProtocolSchema = defineProtocolUnion([
 
 export const ConversationPollResultV1Schema = ConversationPollResultV1ProtocolSchema;
 export type ConversationPollResultV1 = ReturnType<typeof ConversationPollResultV1Schema.parse>;
-export const ConversationPollResultV1JsonSchema: PluginJsonSchema = ConversationPollResultV1Schema.jsonSchema;
+export const ConversationPollResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationPollResultV1Schema.jsonSchema)();

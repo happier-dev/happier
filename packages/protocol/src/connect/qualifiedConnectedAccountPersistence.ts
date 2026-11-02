@@ -66,7 +66,7 @@ export const QualifiedConnectedAccountRefSchema: ProtocolComposableSchema<{
 }, { policy: 'closed' });
 
 /** Canonical portable JSON Schema projection of the qualified account ref. */
-export const QualifiedConnectedAccountRefJsonSchema = QualifiedConnectedAccountRefSchema.jsonSchema;
+export const QualifiedConnectedAccountRefJsonSchema = /* @__PURE__ */ (() => QualifiedConnectedAccountRefSchema.jsonSchema)();
 
 export type QualifiedConnectedAccountRef = ReturnType<typeof QualifiedConnectedAccountRefSchema.parse>;
 

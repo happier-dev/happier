@@ -43,14 +43,14 @@ export type ConversationConnectionPollRetryInputV1 = ReturnType<
     typeof ConversationConnectionPollRetryInputV1Schema.parse
 >;
 export const ConversationConnectionPollRetryInputV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionPollRetryInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionPollRetryInputV1Schema.jsonSchema)();
 
 export const ConversationConnectionPollRetryResultV1Schema = conversationConnectionPollRetryResultV1;
 export type ConversationConnectionPollRetryResultV1 = ReturnType<
     typeof ConversationConnectionPollRetryResultV1Schema.parse
 >;
 export const ConversationConnectionPollRetryResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionPollRetryResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionPollRetryResultV1Schema.jsonSchema)();
 
 /** The exact manifest-facing declaration for the present-user retry action. */
 export const ConversationConnectionPollRetryManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({

@@ -66,7 +66,7 @@ export type ConversationConnectionTestResultV1 = ReturnType<
     typeof ConversationConnectionTestResultV1Schema.parse
 >;
 export const ConversationConnectionTestResultV1JsonSchema: PluginJsonSchema =
-    ConversationConnectionTestResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationConnectionTestResultV1Schema.jsonSchema)();
 
 /** @internal Relative-only input for optional provider stop operations. */
 export const ConversationProviderConnectionStopInputV1ProtocolSchema = defineProtocolObject({
@@ -88,7 +88,7 @@ export type ConversationProviderConnectionStopInputV1 = ReturnType<
     typeof ConversationProviderConnectionStopInputV1Schema.parse
 >;
 export const ConversationProviderConnectionStopInputV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionStopInputV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionStopInputV1Schema.jsonSchema)();
 
 const conversationProviderConnectionStoppedV1 = defineProtocolObject({
     kind: defineProtocolUnion([
@@ -114,4 +114,4 @@ export type ConversationProviderConnectionStopResultV1 = ReturnType<
     typeof ConversationProviderConnectionStopResultV1Schema.parse
 >;
 export const ConversationProviderConnectionStopResultV1JsonSchema: PluginJsonSchema =
-    ConversationProviderConnectionStopResultV1Schema.jsonSchema;
+    /* @__PURE__ */ (() => ConversationProviderConnectionStopResultV1Schema.jsonSchema)();
