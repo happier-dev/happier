@@ -660,7 +660,6 @@ describe('unavailable plugin invocation services factory', () => {
             },
             http: createStablePluginHttpHost({
                 adapter,
-                resolveNetworkAddresses: async () => ['93.184.216.34'],
             }),
         })(seed, binding);
 

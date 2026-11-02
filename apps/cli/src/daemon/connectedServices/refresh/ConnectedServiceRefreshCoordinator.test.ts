@@ -59,20 +59,6 @@ beforeAll(async () => {
       contributes: getResolvedContributionRegistry(),
       pluginIds: ['happier.agent.codex', 'happier.agent.claude'],
       resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development', registeredRootId: `refresh-fixture:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
-      networkDependencies: {
-        resolveNetworkAddresses: async () => ['8.8.8.8'],
-        openPinnedStream: async (request) => {
-          const response = await globalThis.fetch(request.url, {
-            method: request.method, headers: request.headers,
-            body: request.body ? new TextDecoder().decode(request.body) : undefined,
-            signal: request.signal,
-          });
-          const body = new Uint8Array(await response.arrayBuffer());
-          let delivered = false;
-          return { status: response.status, headers: Object.fromEntries(response.headers.entries()), contentLength: body.length,
-            read: async () => { if (delivered) return null; delivered = true; return body; }, cancel() {} };
-        },
-      },
     }),
   });
 });

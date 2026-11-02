@@ -23,17 +23,14 @@ import type {
     HostCurrentSessionUiServices,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { StoredCredentials } from '@/persistence';
-import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import {
+    createResolvedContributionRegistry,
+    resolveMergedContributionRegistry,
+} from '../projection/registry/createResolvedContributionRegistry';
 import {
     resolveExecutablePluginRuntimeRegistry,
-    type PluginRuntimeNetworkDependencies,
     type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
-import type {
-    PinnedHttpStreamRequest,
-    PinnedHttpStreamResponse,
-} from '@/network/pinnedHttp';
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
@@ -124,78 +121,39 @@ function createBundledAccountDataDependencies(): AccountPluginDataStorageHostDep
     });
 }
 
-/**
- * A public-classified address no bundled service actually answers on. The host
- * admits an origin by resolving it once and then connects to exactly that
- * answer, so seeing this address on the socket proves the connection used the
- * admitted DNS result rather than resolving the hostname a second time.
- */
-const FIXTURE_VALIDATED_ADDRESS = '203.0.114.10';
-
-type ObservedPinnedRequest = Readonly<{
+type ObservedHttpRequest = Readonly<{
     url: string;
     method: string | undefined;
     headers: Readonly<Record<string, string>>;
-    validatedAddresses: readonly string[];
 }>;
 
-function pinnedJsonResponse(
-    body: unknown,
-    init: Readonly<{
-        status?: number;
-        headers?: Readonly<Record<string, string>>;
-    }> = {},
-): PinnedHttpStreamResponse {
-    const bytes = new TextEncoder().encode(JSON.stringify(body));
-    let delivered = false;
-    return Object.freeze({
+function jsonResponse(body: unknown, init: Readonly<{
+    status?: number;
+    headers?: Readonly<Record<string, string>>;
+}> = {}): Response {
+    return new Response(JSON.stringify(body), {
         status: init.status ?? 200,
-        headers: Object.freeze({
-            'content-type': 'application/json',
-            ...(init.headers ?? {}),
-        }),
-        contentLength: bytes.byteLength,
-        read: async () => {
-            if (delivered) return null;
-            delivered = true;
-            return bytes;
-        },
-        cancel: () => {},
+        headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
     });
 }
 
-/**
- * Substitutes the two process-owned network boundaries the plugin HTTP host
- * finally crosses — the DNS answer that admits an origin and the socket pinned
- * to it — so these cases exercise the real admission, credential and
- * currentness path without leaving the machine.
- */
-function createPinnedNetworkFixture(
-    respond: (request: PinnedHttpStreamRequest) => PinnedHttpStreamResponse,
-) {
-    const observed: ObservedPinnedRequest[] = [];
-    const openPinnedStream = vi.fn(async (request: PinnedHttpStreamRequest) => {
-        observed.push(Object.freeze({
-            url: request.url,
-            method: request.method,
-            headers: request.headers,
-            validatedAddresses: request.validatedAddresses,
-        }));
+/** Replace the external HTTP boundary while retaining real host admission. */
+function createNetworkFixture(respond: (request: ObservedHttpRequest) => Response) {
+    const observed: ObservedHttpRequest[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const request = Object.freeze({
+            url: input instanceof Request ? input.url : String(input),
+            method: init?.method,
+            headers: Object.freeze(Object.fromEntries(new Headers(init?.headers).entries())),
+        });
+        observed.push(request);
         return respond(request);
     });
-    const networkDependencies = Object.freeze({
-        openPinnedStream,
-        resolveNetworkAddresses: async () => Object.freeze([FIXTURE_VALIDATED_ADDRESS]),
-    }) satisfies PluginRuntimeNetworkDependencies;
-    return Object.freeze({
-        observed: observed as readonly ObservedPinnedRequest[],
-        openPinnedStream,
-        networkDependencies,
-    });
+    vi.stubGlobal('fetch', fetch);
+    return Object.freeze({ observed: observed as readonly ObservedHttpRequest[], fetch });
 }
 
 describe('executable plugin runtime Connected Accounts integration', () => {
-
     it('exposes the single host established-account owner only while the registry generation is current', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-established-owner-'));
         temporaryRoots.push(happyHomeDir);
@@ -269,11 +227,11 @@ describe('executable plugin runtime Connected Accounts integration', () => {
         temporaryRoots.push(happyHomeDir);
         let configurationCurrent = true;
         let invalidateConfigurationDuringFetch = false;
-        const network = createPinnedNetworkFixture(() => {
+        const network = createNetworkFixture(() => {
             if (invalidateConfigurationDuringFetch) {
                 configurationCurrent = false;
             }
-            return pinnedJsonResponse({
+            return jsonResponse({
                 id: 42,
                 login: 'octocat',
                 email: 'octocat@example.test',
@@ -286,7 +244,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 happyHomeDir,
                 resolveDevelopmentSourceAuthority,
                 pluginIds: ['happier.scm.forge.github'],
-                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({
                 pluginId: 'happier.scm.forge.github',
@@ -342,13 +299,10 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 accountId: '42',
                 displayName: 'octocat',
             });
-            expect(network.openPinnedStream).toHaveBeenCalledOnce();
-            // The admitted address — not a second DNS answer — is what the socket
-            // connected to, so the manifest origin and the connection identity
-            // that carried its credential are asserted together.
+            expect(network.fetch).toHaveBeenCalledOnce();
+            // The credential reaches only the declared exact origin.
             expect(network.observed[0]).toMatchObject({
                 url: 'https://api.github.com/user',
-                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
             });
             expect(staged.get('token')).toBe('github_pat_test');
 
@@ -421,7 +375,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 isCredentialRevisionCurrent: async () => true,
                 signal: new AbortController().signal,
             })).rejects.toThrow('target is no longer current');
-            expect(network.openPinnedStream).toHaveBeenCalledTimes(3);
+            expect(network.fetch).toHaveBeenCalledTimes(3);
         } finally {
             await runtime?.dispose();
         }
@@ -488,7 +442,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-quota-'));
         temporaryRoots.push(happyHomeDir);
-        const network = createPinnedNetworkFixture(() => pinnedJsonResponse(response));
+        const network = createNetworkFixture(() => jsonResponse(response));
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
@@ -496,7 +450,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 happyHomeDir,
                 resolveDevelopmentSourceAuthority,
                 pluginIds: [pluginId],
-                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({ pluginId, localId: serviceId });
             const lease = await runtime.resolveConnectedAccountRuntime?.(service);
@@ -535,7 +488,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             expect(usageRequests).toEqual([expect.objectContaining({
                 url: usageUrl,
                 method: 'GET',
-                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
             })]);
         } finally {
             await runtime?.dispose();
@@ -560,7 +512,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-oauth-'));
         temporaryRoots.push(happyHomeDir);
-        const network = createPinnedNetworkFixture(() => {
+        const network = createNetworkFixture(() => {
             throw new Error('simulated response loss after remote effect');
         });
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
@@ -570,7 +522,6 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 happyHomeDir,
                 resolveDevelopmentSourceAuthority,
                 pluginIds: [pluginId],
-                networkDependencies: network.networkDependencies,
             });
             const service = Object.freeze({ pluginId, localId: serviceId });
             const configuration: PluginConnectedAccountRuntimeConfiguration = Object.freeze({
@@ -660,11 +611,10 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),
             });
-            expect(network.openPinnedStream).toHaveBeenCalledOnce();
+            expect(network.fetch).toHaveBeenCalledOnce();
             expect(network.observed[0]).toMatchObject({
                 url: tokenUrl,
                 method: 'POST',
-                validatedAddresses: [FIXTURE_VALIDATED_ADDRESS],
             });
             expect(settle).not.toHaveBeenCalled();
             await expect(attempts.reconcile({
@@ -674,7 +624,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),
             });
-            expect(network.openPinnedStream).toHaveBeenCalledOnce();
+            expect(network.fetch).toHaveBeenCalledOnce();
         } finally {
             await runtime?.dispose();
         }

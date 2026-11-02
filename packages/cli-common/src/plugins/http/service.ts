@@ -1,4 +1,3 @@
-import { isBaseCredentialDiagnosticKey, splitSensitiveDiagnosticKeySegments } from '@happier-dev/protocol/diagnostics/sensitive-keys';
 import type { PluginRequestInterceptorContributionV1 } from '@happier-dev/protocol';
 import type {
     HttpMethod,
@@ -60,8 +59,6 @@ export type CreatePluginHttpServiceParams = Readonly<{
     interceptorRegistry?: PluginRequestInterceptorRegistryV1;
     pluginId?: string | null;
     operationId?: string;
-    /** Host-private redaction for invocation-scoped credential representations. */
-    redactInterceptorText?(value: string): string;
     /**
      * Host-private custody of credential header names injected for this exact
      * request. Public SDK requests never carry this fact.
@@ -161,11 +158,6 @@ export type StablePluginHttpHostParams<Seed extends PluginHttpInvocationSeed = P
     credentialBindingHost?: StablePluginHttpCredentialBindingHost<Seed, Binding>;
     containsRegisteredSecret?(input: Readonly<{ seed: Seed; value: string }>): boolean;
     purposeHost?: StablePluginHttpPurposeHost<Seed, Binding>;
-    /** Host-private redaction for an invocation-bound interceptor snapshot. */
-    redactInterceptorText?(input: Readonly<{
-        seed: Seed;
-        value: string;
-    }>): string;
     retry?: CreatePluginHttpServiceParams['retry'];
 }>;
 
@@ -190,49 +182,8 @@ function assertPluginNetworkBindingCurrent(
     }
 }
 
-const REDACTED_VALUE = '[redacted]';
 const NO_PRIVATE_CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set();
-const HTTP_CREDENTIAL_QUERY_DIAGNOSTIC_SEGMENTS = new Set([
-    'auth',
-    'authentication',
-    'credential',
-    'credentials',
-    'secret',
-]);
-const HTTP_CREDENTIAL_QUERY_DIAGNOSTIC_SUFFIXES = new Set(['token']);
 const HTTP_METHODS = new Set<HttpMethod>(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-/**
- * The interceptor boundary has one deliberately closed V1 disclosure set.
- * Host-injected credential names remain separately private per request. Do
- * not infer semantic caller headers from keywords: every non-member is
- * intentionally visible and mutable to a matching trusted policy.
- */
-const HTTP_INTERCEPTOR_PROTECTED_HEADER_ALIASES = new Set([
-    'proxy-authorization',
-    'set-cookie',
-    'www-authenticate',
-    'proxy-authenticate',
-    'authentication-info',
-    'proxy-authentication-info',
-    'dpop',
-    'signature',
-    'signature-input',
-    'host',
-    'origin',
-    'referer',
-    'forwarded',
-    'x-client-ip',
-    'x-real-ip',
-    'x-signature',
-    'x-hub-signature-256',
-    'x-user-id',
-    'chatgpt-account-id',
-]);
-const HTTP_INTERCEPTOR_PROTECTED_HEADER_PREFIX_ALIASES = [
-    'sec-',
-    'x-forwarded-',
-] as const;
-
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 // Invocation bindings created by one stable host are distinct service objects,
 // but nested fetches still belong to the same logical async operation.
@@ -353,80 +304,6 @@ function normalizeHeaderName(name: string): string {
     return name.trim().toLowerCase();
 }
 
-function isHttpCredentialQueryDiagnosticKey(key: string): boolean {
-    if (isBaseCredentialDiagnosticKey(key)) return true;
-    const segments = splitSensitiveDiagnosticKeySegments(key);
-    return segments.some((segment) => HTTP_CREDENTIAL_QUERY_DIAGNOSTIC_SEGMENTS.has(segment))
-        || HTTP_CREDENTIAL_QUERY_DIAGNOSTIC_SUFFIXES.has(segments.at(-1) ?? '');
-}
-
-function isProtectedHeader(name: string): boolean {
-    const normalized = normalizeHeaderName(name);
-    return isBaseCredentialDiagnosticKey(normalized)
-        || HTTP_INTERCEPTOR_PROTECTED_HEADER_ALIASES.has(normalized)
-        || HTTP_INTERCEPTOR_PROTECTED_HEADER_PREFIX_ALIASES
-            .some((prefix) => normalized.startsWith(prefix));
-}
-
-function isPrivateCredentialHeader(
-    name: string,
-    privateCredentialHeaderNames: ReadonlySet<string>,
-): boolean {
-    return privateCredentialHeaderNames.has(normalizeHeaderName(name));
-}
-
-function isProtectedInterceptorHeader(
-    name: string,
-    privateCredentialHeaderNames: ReadonlySet<string>,
-): boolean {
-    return isProtectedHeader(name) || isPrivateCredentialHeader(name, privateCredentialHeaderNames);
-}
-
-function redactUrl(url: string): string {
-    try {
-        const parsed = new URL(url);
-        for (const key of [...parsed.searchParams.keys()]) {
-            if (isHttpCredentialQueryDiagnosticKey(key)) parsed.searchParams.set(key, REDACTED_VALUE);
-        }
-        return parsed.toString();
-    } catch {
-        return url;
-    }
-}
-
-function redactInterceptorUrl(
-    url: string,
-    redactInterceptorText: CreatePluginHttpServiceParams['redactInterceptorText'],
-): string {
-    if (!redactInterceptorText) return redactUrl(url);
-    let redacted: string;
-    try {
-        redacted = redactInterceptorText(url);
-    } catch {
-        throw new PluginError({
-            code: 'plugin_fetch_interceptor_failed',
-            message: 'Request interceptor credential redaction failed',
-        });
-    }
-    if (typeof redacted !== 'string') {
-        throw new PluginError({
-            code: 'plugin_fetch_interceptor_failed',
-            message: 'Request interceptor credential redaction failed',
-        });
-    }
-    return redactUrl(redacted);
-}
-
-function redactHeaders(
-    headers: PluginHttpRequest['headers'],
-    privateCredentialHeaderNames: ReadonlySet<string>,
-): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(headers ?? {}).map(([key, value]) => [
-        key,
-        isProtectedInterceptorHeader(key, privateCredentialHeaderNames) ? REDACTED_VALUE : value,
-    ])));
-}
-
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const prototype = Object.getPrototypeOf(value);
@@ -471,26 +348,11 @@ function readPluginInterceptorResult(value: unknown): PluginInterceptorResult | 
         : null;
 }
 
-function snapshotInterceptorRequest(
-    request: PluginHttpRequest,
-    redactInterceptorText: CreatePluginHttpServiceParams['redactInterceptorText'],
-    privateCredentialHeaderNames: ReadonlySet<string>,
-): Readonly<{
-    publicRequest: PluginInterceptedRequest;
-}> {
-    const method = normalizeRequestMethod(request.method);
-    if (!method) {
-        throw new PluginError({
-            code: 'plugin_fetch_interceptor_failed',
-            message: 'Fetch request has an unsupported HTTP method',
-        });
-    }
+function snapshotInterceptorRequest(request: PluginHttpRequest): PluginInterceptedRequest {
     return Object.freeze({
-        publicRequest: Object.freeze({
-            url: redactInterceptorUrl(request.url, redactInterceptorText),
-            method,
-            headers: redactHeaders(request.headers, privateCredentialHeaderNames),
-        }),
+        url: request.url,
+        method: normalizeRequestMethod(request.method)!,
+        headers: Object.freeze({ ...request.headers }),
     });
 }
 
@@ -538,89 +400,6 @@ function snapshotPluginWebSocketOpenInput(
         ...(maxPendingBytes === undefined ? {} : { maxPendingBytes }),
         ...(maxBufferedSendBytes === undefined ? {} : { maxBufferedSendBytes }),
     });
-}
-
-function findHeader(
-    headers: Readonly<Record<string, string>>,
-    normalizedName: string,
-): readonly [string, string] | null {
-    return Object.entries(headers).find(([name]) => normalizeHeaderName(name) === normalizedName) ?? null;
-}
-
-function adaptContinuedRequest(params: Readonly<{
-    pluginId: string;
-    interceptorId: string;
-    effectiveRequest: PluginHttpRequest;
-    publicRequest: PluginInterceptedRequest;
-    result: Extract<PluginInterceptorResult, { decision: 'continue' }>;
-    privateCredentialHeaderNames: ReadonlySet<string>;
-}>): PluginHttpRequest {
-    const returned = params.result.request;
-    // A protected header is withheld from public interceptors and restored
-    // from this exact request after they return. Its recipient and method are
-    // therefore part of the protected request authority: an interceptor may
-    // still refine ordinary headers, but may not carry that header onto a
-    // rewritten endpoint or method. This covers both host-injected names and
-    // the closed standard set, including raw Connected Account Authorization.
-    const carriesProtectedHeader = Object.keys(params.effectiveRequest.headers ?? {}).some((name) => (
-        isProtectedInterceptorHeader(name, params.privateCredentialHeaderNames)
-    ));
-    if (carriesProtectedHeader
-        && (returned.url !== params.publicRequest.url
-            || normalizeRequestMethod(returned.method) !== params.publicRequest.method)) {
-        throw new PluginError({
-            code: 'plugin_fetch_interceptor_failed',
-            message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted to retarget a protected-header request`,
-        });
-    }
-    let nextUrl = params.effectiveRequest.url;
-    if (returned.url !== params.publicRequest.url) {
-        if (params.publicRequest.url !== params.effectiveRequest.url
-            || redactUrl(params.effectiveRequest.url) !== params.effectiveRequest.url
-            || redactUrl(returned.url) !== returned.url
-            || !readHttpUrl(returned.url)) {
-            throw new PluginError({
-                code: 'plugin_fetch_interceptor_failed',
-                message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a forbidden URL mutation`,
-            });
-        }
-        nextUrl = returned.url;
-    }
-
-    const nextHeaders: Record<string, string> = {};
-    for (const [name, value] of Object.entries(returned.headers)) {
-        const normalized = normalizeHeaderName(name);
-        const existing = findHeader(params.effectiveRequest.headers ?? {}, normalized);
-        if (isProtectedInterceptorHeader(name, params.privateCredentialHeaderNames)) {
-            if (!existing || value !== REDACTED_VALUE) {
-                throw new PluginError({
-                    code: 'plugin_fetch_interceptor_failed',
-                    message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a protected header mutation`,
-                });
-            }
-            continue;
-        }
-        nextHeaders[name] = value;
-    }
-    for (const [name, value] of Object.entries(params.effectiveRequest.headers ?? {})) {
-        if (!isProtectedInterceptorHeader(name, params.privateCredentialHeaderNames)) continue;
-        const returnedEntry = findHeader(returned.headers, normalizeHeaderName(name));
-        if (!returnedEntry || returnedEntry[1] !== REDACTED_VALUE) {
-            throw new PluginError({
-                code: 'plugin_fetch_interceptor_failed',
-                message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a protected header mutation`,
-            });
-        }
-        nextHeaders[name] = value;
-    }
-
-    const nextRequest = Object.freeze({
-        ...params.effectiveRequest,
-        url: nextUrl,
-        method: returned.method,
-        headers: Object.freeze(nextHeaders),
-    });
-    return nextRequest;
 }
 
 function isTransientFetchError(error: unknown): boolean {
@@ -780,8 +559,6 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
         if (!registry || registry.declarations.length === 0) return request;
         // Portable hosts track this chain locally; ambient hosts also share keys with nested requests.
         const activeInterceptorKeys = params.operationContext?.getStore() ?? new Set<string>();
-        const privateCredentialHeaderNames = params.readPrivateCredentialHeaderNames?.(request)
-            ?? NO_PRIVATE_CREDENTIAL_HEADER_NAMES;
         const demandedInterceptorKeys = new Set<string>();
         const appliedInterceptorKeys = new Set<string>();
         let effectiveRequest = request;
@@ -835,15 +612,11 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
 
             const key = bindingIdentity(binding.pluginId, binding.contribution.id);
 
-            const snapshot = snapshotInterceptorRequest(
-                effectiveRequest,
-                params.redactInterceptorText,
-                privateCredentialHeaderNames,
-            );
+            const snapshot = snapshotInterceptorRequest(effectiveRequest);
             activeInterceptorKeys.add(key);
             let rawResult: unknown;
             try {
-                rawResult = await binding.invoke(snapshot.publicRequest, signal);
+                rawResult = await binding.invoke(snapshot, signal);
             } catch {
                 throw new PluginError({
                     code: 'plugin_fetch_interceptor_failed',
@@ -866,13 +639,11 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams): 
                 });
             }
             appliedInterceptorKeys.add(key);
-            effectiveRequest = adaptContinuedRequest({
-                pluginId: binding.pluginId,
-                interceptorId: binding.contribution.id,
-                effectiveRequest,
-                publicRequest: snapshot.publicRequest,
-                result,
-                privateCredentialHeaderNames,
+            effectiveRequest = Object.freeze({
+                ...effectiveRequest,
+                url: result.request.url,
+                method: result.request.method,
+                headers: Object.freeze({ ...result.request.headers }),
             });
         }
         return effectiveRequest;
@@ -1025,9 +796,6 @@ export function createStablePluginHttpHost<Seed extends PluginHttpInvocationSeed
             },
             pluginId: seed.plugin.id,
             operationId: seed.contribution?.qualifiedId,
-            ...(params.redactInterceptorText ? {
-                redactInterceptorText: (value: string) => params.redactInterceptorText!({ seed, value }),
-            } : {}),
             readPrivateCredentialHeaderNames: (request) => (
                 privateCredentialHeaderNamesByRequest.get(request)
             ),

@@ -20,9 +20,12 @@ import { markPendingActivationFailed } from '@/app/session/pending/pendingMessag
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { resolveMachineEnvironment, reportMachineEnvironment, skipManagedMachineSetup } from './machineEnvironment';
 
+import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
+
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
-export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
+export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string | null | undefined, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
     if (request.externalActionExecutionAuthorized !== true
+        || !controllerMachineId
         || request.externalActionExecutionMachineId !== controllerMachineId
         || !request.externalActionExecutionRequestId
         || !request.externalActionExecutionCustodianAccountId
@@ -33,6 +36,56 @@ const effects = ["machines.managed.acquire", "machines.managed.inspect", "machin
 function managedRequestAuthority(request: FastifyRequest): 'creation' | 'intent' {
     return request.externalActionEffectActionId === 'machines.managed.acquire' || request.externalActionEffectActionId === 'machines.managed.bootstrap.retry'
         ? 'creation' : 'intent';
+}
+function requireManagedPresentUser(request: FastifyRequest): void {
+    if (!isManagedPresentUser(request)) throw new ManagedMachineError('permission_denied');
+}
+
+/** Row-bound signed execution or present-user custody; domain mutations retain their actor-access owner. */
+async function requireManagedOperationRequest(request: FastifyRequest, input: Readonly<{
+    homeId: string; managedId: string; requestId?: string; controller?: { machineId: string; installationId: string };
+}>, allowedEffects: readonly string[], options: Readonly<{ admission?: boolean; submittedReport?: boolean;
+    controllerDestination?: { machineId: string; installationId: string } | null; creationMutation?: boolean;
+    retainedContext?: boolean }> = {}) {
+    return inReadSnapshot(async tx => {
+        const row = await readManagedMachineInTx(tx, input);
+        if (request.externalActionExecutionAuthorized === true) {
+            let executionMachineId = options.controllerDestination?.machineId ?? row.controllerMachineId;
+            // The issuer already qualified this Account executor. Later calls
+            // consume that signed fact; sharing the daemon does not re-admit an active job.
+            const admittedExecutor = request.externalActionExecutionAuthorizationBinding?.managedAccountExecutor;
+            if (admittedExecutor) executionMachineId ??= request.externalActionExecutionMachineId ?? null;
+            else if (row.controllerMachineId === null || executionMachineId !== row.controllerMachineId) {
+                const machine = request.externalActionExecutionMachineId ? await tx.machine.findUnique({
+                    where: { id: request.externalActionExecutionMachineId },
+                    select: { id: true, accountId: true, kind: true, managedResource: { select: { id: true } } },
+                }) : null;
+                const executor = await resolveSignedManagedAccountExecutorInTx(tx, machine, { custodianAccountId: row.custodianAccountId,
+                    managedId: row.id, enrolledMachineId: row.enrolledMachineId });
+                if (!executor) throw new ManagedMachineError('permission_denied');
+                executionMachineId ??= executor.id;
+            }
+            const proof = requireManagedControllerProof(request, executionMachineId, allowedEffects);
+            if (proof.custodianAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
+            return { ...proof, requestAuthority: managedRequestAuthority(request) };
+        }
+        requireManagedPresentUser(request);
+        // Pair-present recovery keeps its domain actor-access check after credential admission.
+        if (options.creationMutation && row.controllerMachineId !== null) return {
+            requestId: readManagedCurrentRequestId(row), custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const,
+        };
+        if (row.controllerMachineId !== null || input.controller || request.userId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
+        if (options.creationMutation) return { requestId: readManagedCurrentRequestId(row),
+            custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const };
+        if (options.retainedContext && input.requestId === undefined) return {
+            requestId: row.admittedActionRequestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const,
+        };
+        const creation = input.requestId === row.admittedActionRequestId;
+        const submitted = options.submittedReport && readManagedAdmissionState(row.admittedInput).submittedEffect?.requestId === input.requestId;
+        if (!input.requestId || (!options.admission && !creation && !submitted && input.requestId !== readManagedCurrentRequestId(row))) throw new ManagedMachineError('request_conflict');
+        return { requestId: input.requestId, custodianAccountId: row.custodianAccountId,
+            requestAuthority: creation ? 'creation' as const : 'intent' as const };
+    });
 }
 /** Same installation identity authenticates policy-owned HTTP effects; it never mints a public Action envelope. */
 export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'read' | 'activation-failure') {
@@ -234,13 +287,13 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest: request.externalActionExecutionRequestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const { custodianAccountId } = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
+        const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
             ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/context', request.body, 'read')
-            : requireManagedControllerProof(request, request.body.controller.machineId, effects);
+            : await requireManagedOperationRequest(request, request.body, effects, { retainedContext: true });
         return await inTx(async (tx) => {
             const row = await readManagedMachineInTx(tx, request.body);
-            if (row.custodianAccountId !== custodianAccountId) throw new ManagedMachineError("permission_denied");
-            const requestAuthority = managedRequestAuthority(request);
+            if (row.custodianAccountId !== proof.custodianAccountId) throw new ManagedMachineError("permission_denied");
+            const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
             const requestId = requestAuthority === 'creation' ? row.admittedActionRequestId : readManagedCurrentRequestId(row);
             const current = await requireCurrentManagedMachineInTx(tx, { ...request.body, requestId }, { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
             return { machine: await projectManagedMachineInTx(tx, current), requestId };

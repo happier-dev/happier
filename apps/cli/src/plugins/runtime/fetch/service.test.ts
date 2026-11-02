@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { snapshotPluginHttpRequest } from './request';
+import { createPluginInvocationSecretRedactor } from '../invocation/services/logger';
 
 import {
-    PluginHostAccessRequestV2Schema,
+    PluginConnectedAccountDescriptorContributionV2Schema,
     type PluginRequestInterceptorContributionV1,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -16,7 +18,11 @@ import type {
     TargetPluginInterceptedRequest as PluginInterceptedRequest,
     TargetPluginInterceptorResult as PluginInterceptorResult,
 } from '../lifecycle/contributions/targetRequestInterceptors';
-import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '../invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '../invocation/services/factory';
+import { createUnavailablePluginServices } from '../invocation/services/unavailable';
+import { createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationRecord } from '@happier-dev/cli-common/connectedAccounts';
+// Compose the real account owner and factories without extending the plugin's
+// production export surface for this host-boundary test.
 import {
     createStablePluginHttpHost as createProductionStablePluginHttpHost,
     createPluginHttpService as createProductionPluginHttpService,
@@ -25,16 +31,163 @@ import {
     type CreatePluginHttpServiceParams,
     type PluginRequestInterceptorRegistryV1,
 } from './service';
-import type { PluginWebSocketRuntimeOptions } from './webSocket';
-
-// The private-network decision now reaches DNS, the one system boundary this
-// owner touches. Every fixture host resolves to a public address unless a test
-// says otherwise, so admission is decided by resolved addresses, not spelling.
-const testResolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => (
-    hostname === 'localhost' ? ['127.0.0.1'] : ['93.184.216.34']
-);
 
 type CanonicalFetchRequest = Parameters<HttpService['request']>[0];
+
+it.each(['same', 'cross'] as const)('keeps registered custom credentials only on %s-origin 302 redirects', async origin => {
+    const raw = 'registered-header-credential-42';
+    const seed = { plugin: { id: 'acme.headers', version: '1.0.0' },
+        contribution: { id: 'send', qualifiedId: 'acme.headers/actions/send' },
+        occurrenceId: 'header-occurrence', correlationId: 'header-request', surface: 'agent' as const,
+        signal: new AbortController().signal, isOccurrenceCurrent: () => true };
+    const scope = { pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
+    const redactor = createPluginInvocationSecretRedactor();
+    redactor.beginInvocation(scope, seed.signal);
+    redactor.registerRaw(scope, raw);
+    const sent: CanonicalFetchRequest[] = [];
+    const nextUrl = origin === 'same' ? 'https://api.example.test/result' : 'https://other.example.test/result';
+    const host = createProductionStablePluginHttpHost({
+        adapter: { async request(request) {
+            sent.push(request);
+            const headers: Readonly<Record<string, string>> = sent.length === 1 ? { location: nextUrl } : {};
+            return { status: sent.length === 1 ? 302 : 200,
+                headers,
+                finalUrl: request.url, body: new Uint8Array() };
+        }, async openWebSocket() { throw new Error('Not used'); } },
+        containsRegisteredSecret: ({ value }) => redactor.containsRegisteredValue(scope, value),
+    });
+    const service = host.bind(seed, createPluginInvocationServiceBinding(seed.occurrenceId, 'registered-header'));
+    try {
+        await expect(service.request({ url: 'https://api.example.test/start', redirect: 'follow',
+            headers: { 'x-api-key': raw, 'x-request-id': 'visible-request' } })).resolves.toMatchObject({ status: 200 });
+        expect(sent.map(request => request.url)).toEqual(['https://api.example.test/start', nextUrl]);
+        expect(sent[0]?.headers).toEqual({ 'x-api-key': raw, 'x-request-id': 'visible-request' });
+        expect(sent[1]?.headers).toEqual(origin === 'same'
+            ? { 'x-api-key': raw, 'x-request-id': 'visible-request' }
+            : { 'x-request-id': 'visible-request' });
+    } finally { redactor.completeInvocation(scope); }
+});
+
+it.each([307, 308])('refuses cross-origin %s resend of a registered secret body without secret-use declarations', async status => {
+    const raw = 'registered-body-"quoted"\nsecond-line';
+    const seed = { plugin: { id: 'acme.body', version: '1.0.0' },
+        contribution: { id: 'send', qualifiedId: 'acme.body/actions/send' },
+        occurrenceId: 'body-occurrence', correlationId: 'body-request', surface: 'agent' as const,
+        signal: new AbortController().signal, isOccurrenceCurrent: () => true };
+    const scope = { pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
+    const redactor = createPluginInvocationSecretRedactor();
+    redactor.beginInvocation(scope, seed.signal);
+    redactor.registerRaw(scope, raw);
+    const sent: string[] = [];
+    let nextUrl = 'https://other.example.test/resend';
+    const host = createProductionStablePluginHttpHost({
+        adapter: { async request(request) {
+            sent.push(request.url);
+            const headers: Readonly<Record<string, string>> = sent.length === 1 ? { location: nextUrl } : {};
+            return { status: sent.length === 1 ? status : 200,
+                headers,
+                finalUrl: request.url, body: new Uint8Array() };
+        }, async openWebSocket() { throw new Error('Not used'); } },
+        containsRegisteredSecret: ({ value }) => redactor.containsRegisteredValue(scope, value),
+    });
+    const service = host.bind(seed, createPluginInvocationServiceBinding(seed.occurrenceId, 'registered-body'));
+    try {
+        await expect(service.request({ url: 'https://api.example.test/send', method: 'POST', redirect: 'follow',
+            body: new TextEncoder().encode(JSON.stringify({ password: raw })) }))
+            .rejects.toMatchObject({ code: 'credential_request_redirect_refused' });
+        expect(sent).toEqual(['https://api.example.test/send']);
+        sent.length = 0;
+        await expect(service.request({ url: 'https://api.example.test/send', method: 'POST', redirect: 'follow',
+            body: new TextEncoder().encode('ordinary body') })).resolves.toMatchObject({ status: 200 });
+        expect(sent).toEqual(['https://api.example.test/send', nextUrl]);
+        sent.length = 0;
+        nextUrl = 'https://api.example.test/resend';
+        await expect(service.request({ url: 'https://api.example.test/send', method: 'POST', redirect: 'follow',
+            body: new TextEncoder().encode(JSON.stringify({ password: raw })) })).resolves.toMatchObject({ status: 200 });
+        expect(sent).toEqual(['https://api.example.test/send', nextUrl]);
+    } finally { redactor.completeInvocation(scope); }
+});
+
+it('snapshots an explicit Account purpose binding without Voice fields or mutable header names', () => {
+    const headerNames = ['authorization'];
+    const input: CanonicalFetchRequest = { url: 'https://api.example.com/projects', redirect: 'error',
+        credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'upstream',
+            origin: 'https://api.example.com', method: 'GET', headerNames } };
+    const snapshot = snapshotPluginHttpRequest(input);
+    expect(snapshot).toEqual(input);
+    headerNames.push('x-mutated-after-admission');
+    expect(snapshot.credentialBinding).toEqual({ kind: 'connectedAccountPurpose', purpose: 'upstream',
+        origin: 'https://api.example.com', method: 'GET', headerNames: ['authorization'] });
+});
+
+describe('finite HTTP admission lifetime', () => {
+    it('finishes an admitted streamed body after configuration withdrawal with no step authority reads', async () => {
+        let current = true;
+        const isOccurrenceCurrent = vi.fn(() => current);
+        const disposed = vi.fn(async () => {});
+        const host = createProductionStablePluginHttpHost({ adapter: {
+            async request() { throw new Error('Not used'); },
+            async requestStream(request) { return { status: 200, finalUrl: request.url, headers: {},
+                chunks: { async *[Symbol.asyncIterator]() { yield new TextEncoder().encode('first'); yield new TextEncoder().encode('last'); } },
+                dispose: disposed }; },
+            async openWebSocket() { throw new Error('Not used'); },
+        } });
+        const service = host.bind({ plugin: { id: 'acme.stream', version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'acme.stream/actions/read' },
+            occurrenceId: 'stream', correlationId: 'stream-request', surface: 'cli',
+            signal: new AbortController().signal, isOccurrenceCurrent,
+        }, createPluginInvocationServiceBinding('stream', 'stream'));
+        const response = await service.requestStream({ url: 'https://example.test/body', redirect: 'error' });
+        const chunks = response.chunks[Symbol.asyncIterator]();
+        expect(new TextDecoder().decode((await chunks.next()).value)).toBe('first');
+        const readsAtAdmission = isOccurrenceCurrent.mock.calls.length;
+        current = false;
+        expect(new TextDecoder().decode((await chunks.next()).value)).toBe('last');
+        expect(await chunks.next()).toMatchObject({ done: true });
+        expect(isOccurrenceCurrent).toHaveBeenCalledTimes(readsAtAdmission);
+        expect(disposed).toHaveBeenCalledOnce();
+    });
+
+    it('returns an admitted response after revocation within its original admitted binding', async () => {
+        let enter!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>(resolve => { enter = resolve; });
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const revocation = new AbortController();
+        let current = true;
+        let admissionReads = 0;
+        const seed = {
+            plugin: { id: 'acme.finite', version: '1.0.0' },
+            contribution: { id: 'fetch', qualifiedId: 'acme.finite/actions/fetch' },
+            occurrenceId: 'finite-http-occurrence', correlationId: 'finite-http-request',
+            surface: 'cli' as const, signal: new AbortController().signal,
+            retirementSignal: revocation.signal,
+            isOccurrenceCurrent() { admissionReads += 1; return current; },
+        };
+        const host = createProductionStablePluginHttpHost({ adapter: {
+            async request(request) {
+                enter();
+                await held;
+                return { status: 200, headers: {}, finalUrl: request.url,
+                    body: new Uint8Array(Buffer.from('completed')) };
+            },
+            async openWebSocket() { throw new Error('Not used by finite request'); },
+        } });
+        const service = host.bind(seed, {
+            ...createPluginInvocationServiceBinding(seed.occurrenceId, 'finite-http'),
+            networkRevocationSignal: revocation.signal,
+        });
+        const pending = service.request({ url: 'https://example.test/finite', redirect: 'error' });
+        await entered;
+        current = false;
+        revocation.abort('permission withdrawn');
+        release();
+        await expect(pending).resolves.toMatchObject({ status: 200,
+            body: new Uint8Array(Buffer.from('completed')) });
+        expect(admissionReads).toBe(1);
+    });
+});
+
 type TestFetchRequest = Omit<CanonicalFetchRequest, 'body' | 'redirect'> & Readonly<{
     body?: unknown;
     redirect?: CanonicalFetchRequest['redirect'];
@@ -48,17 +201,6 @@ type TestFetchAdapter = (
 ) => Promise<TestFetchResponse>;
 type TestHttpServiceParams = Omit<CreatePluginHttpServiceParams, 'adapter'> & Readonly<{
     adapter?: TestFetchAdapter | null;
-}>;
-
-type TestWebSocketOpenInput = Readonly<{
-    url: string;
-    protocols?: readonly string[];
-}>;
-type WebSocketCapableHttpService = HttpService & Readonly<{
-    openWebSocket(
-        input: TestWebSocketOpenInput,
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<unknown>;
 }>;
 
 type LegacyPolicyInput = Readonly<{
@@ -180,7 +322,6 @@ function createStablePluginHttpHost(
     }>,
 ) {
     return createProductionStablePluginHttpHost({
-        resolveNetworkAddresses: testResolveNetworkAddresses,
         ...params,
         adapter: Object.freeze({
             request: async (
@@ -208,21 +349,197 @@ function createResponse(body: unknown): TestFetchResponse {
 }
 
 describe('createPluginHttpService', () => {
+    it('settles admitted finite HTTP after configuration replacement within its original admitted binding', async () => {
+        const accountService = { pluginId: 'configured.plugin', localId: 'account' };
+        const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+            id: accountService.localId,
+            title: 'Configured service',
+            authentication: { defaultModeId: 'oauth', modes: [{
+                id: 'oauth', kind: 'oauthAuthorizationCode',
+                callbackUrl: 'https://provider.example.test/callback', pkce: 'required', outcomeReconciliation: 'none',
+                configuration: { scope: 'service', changeBehavior: 'refresh', fields: [{
+                    id: 'endpoint', title: 'Endpoint', semantic: 'connectedAccountOrigin', required: true,
+                    schema: { type: 'string', minLength: 1 },
+                }] },
+            }] },
+        });
+        const mode = descriptor.authentication.modes[0]!;
+        const identity = { occurrenceId: 'configured-occurrence', sourceCustody: {
+            kind: 'development' as const, registeredRootId: 'configured-root',
+        } };
+        let record: ConnectedAccountConfigurationRecord = {
+            revision: 'configuration-1', values: { endpoint: 'https://api.example.test' }, secretRefs: {},
+        };
+        const configurationOwner = createConnectedAccountConfigurationOwner({
+            read: async () => record,
+            replace: async ({ replacement }) => {
+                record = { ...replacement, revision: 'configuration-2' };
+                return { status: 'committed', record };
+            },
+            destroyAttempt: async () => {},
+            secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+            isRuntimeCurrent: () => true,
+        });
+        const admission = await configurationOwner.admit({ intent: 'connect', service: accountService, mode, ...identity });
+        if (admission.status !== 'ready') throw new Error('Expected an admitted configuration');
+        const binding = {
+            ...createPluginInvocationServiceBinding(identity.occurrenceId, 'configured-binding'),
+            networkRevocationSignal: configurationOwner.currentnessSignal(admission.snapshot),
+        };
+        let enter!: () => void;
+        let release!: () => void;
+        let transportSignal: AbortSignal | undefined;
+        const entered = new Promise<void>(resolve => { enter = resolve; });
+        const adapter = vi.fn(async (input: TestFetchRequest) => {
+            transportSignal = input.signal;
+            enter();
+            return await new Promise<TestFetchResponse>(resolve => {
+                release = () => resolve(createResponse('late response'));
+            });
+        });
+        const host = createStablePluginHttpHost({ adapter });
+        const http = host.bind({
+            plugin: { id: accountService.pluginId, version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'configured.plugin/actions/read' },
+            occurrenceId: identity.occurrenceId, correlationId: 'configured-http', surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, binding);
+        const pending = http.request({ url: 'https://api.example.test/status', redirect: 'error' })
+            .then(value => ({ value }), error => ({ error }));
+        try {
+            await entered;
+            await expect(configurationOwner.replace({
+                target: admission.snapshot.target, mode, expectedRevision: record.revision,
+                replacement: { values: { endpoint: 'https://replacement.example.test' }, secretRefs: {} }, ...identity,
+            })).resolves.toMatchObject({ status: 'committed' });
+            expect(transportSignal?.aborted).toBe(false);
+            release();
+            await expect(pending).resolves.toMatchObject({ value: { status: 200 } });
+            expect(adapter).toHaveBeenCalledOnce();
+        } finally { release?.(); }
+    });
+
+    it('prepares an immutable read without HTTP and keeps its transport independent of the preparing invocation', async () => {
+        const invocation = new AbortController();
+        const caller = new AbortController();
+        let release!: () => void;
+        let started!: () => void;
+        const entered = new Promise<void>(resolve => { started = resolve; });
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const adapter = vi.fn(async (request: TestFetchRequest) => {
+            started();
+            await pending;
+            expect(request.signal?.aborted).toBe(false);
+            expect(request.headers?.accept).toBe('application/json');
+            expect(new TextDecoder().decode(request.body as Uint8Array)).toBe('query { viewer { login } }');
+            return createResponse('ok');
+        });
+        const host = createStablePluginHttpHost({ adapter });
+        const binding = createPluginInvocationServiceBinding('prepared', 'prepared-binding');
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'caller.plugin/actions/read' },
+            occurrenceId: 'prepared', correlationId: 'prepared', surface: 'agent',
+            signal: invocation.signal, isOccurrenceCurrent: () => true,
+        }, binding);
+        const headers = { accept: 'application/json' };
+        const body = new TextEncoder().encode('query { viewer { login } }');
+        const read = await service.prepareRead({ intent: 'graphqlQuery', method: 'POST',
+            url: 'https://api.example.test/graphql', redirect: 'error', headers, body }, { signal: caller.signal });
+        expect(adapter).not.toHaveBeenCalled();
+        headers.accept = 'changed';
+        body.fill(0);
+        invocation.abort();
+        caller.abort();
+        const response = read.request({ signal: new AbortController().signal });
+        await entered;
+        release();
+        await expect(response).resolves.toMatchObject({ status: 200 });
+        await expect(read.request({ signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_fetch_prepared_read_consumed' });
+        await read.dispose();
+    });
+
+    it('admits prepared reads before transport and settles them after configuration retirement', async () => {
+        const retirement = new AbortController();
+        const adapter = vi.fn(async () => { retirement.abort(); return createResponse('private'); });
+        const host = createStablePluginHttpHost({ adapter });
+        const binding = createPluginInvocationServiceBinding('prepared-policy', 'prepared-policy-binding');
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'caller.plugin/actions/read' },
+            occurrenceId: 'prepared-policy', correlationId: 'prepared-policy', surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, { ...binding, networkRevocationSignal: retirement.signal });
+        const otherOrigin = await service.prepareRead({ intent: 'get', url: 'https://other.example.test/read', redirect: 'error' });
+        await otherOrigin.dispose();
+        // JavaScript callers cannot detach a mutation by mislabelling its method.
+        const mutation = { intent: 'get' as const, method: 'DELETE' as const, url: 'https://api.example.test/read', redirect: 'error' as const };
+        // @ts-expect-error Deliberately cross the public type boundary to verify runtime admission.
+        await expect(service.prepareRead(mutation)).rejects.toMatchObject({ code: 'plugin_fetch_prepared_read_invalid' });
+        expect(adapter).not.toHaveBeenCalled();
+        const read = await service.prepareRead({ intent: 'get', url: 'https://api.example.test/read', redirect: 'error' });
+        await expect(read.request({ signal: new AbortController().signal })).resolves.toMatchObject({ status: 200 });
+        await read.dispose();
+    });
+
+    it('admits a prepared read once, when prepared, without re-admitting transport', async () => {
+        const retirement = new AbortController();
+        const adapter = vi.fn(async () => createResponse('read'));
+        const host = createStablePluginHttpHost({ adapter, });
+        const binding = createPluginInvocationServiceBinding('prepared-once', 'prepared-once-binding');
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'caller.plugin/actions/read' },
+            occurrenceId: 'prepared-once', correlationId: 'prepared-once', surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, { ...binding, networkRevocationSignal: retirement.signal });
+        const read = await service.prepareRead({ intent: 'get', url: 'https://api.example.test/read', redirect: 'error' });
+        await expect(read.request({ signal: new AbortController().signal })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledTimes(1);
+
+        retirement.abort();
+        expect(adapter).toHaveBeenCalledTimes(1);
+    });
+
+    it('disposes a prepared read by aborting only its own transport', async () => {
+        let started!: () => void;
+        let complete!: () => void;
+        let transportSignal: AbortSignal | undefined;
+        const entered = new Promise<void>(resolve => { started = resolve; });
+        const host = createStablePluginHttpHost({ adapter: async (request) => {
+            transportSignal = request.signal;
+            started();
+            return await new Promise<TestFetchResponse>((resolve, reject) => {
+                complete = () => resolve(createResponse('late response'));
+                request.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+            });
+        } });
+        const binding = createPluginInvocationServiceBinding('prepared-dispose', 'prepared-dispose-binding');
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'read', qualifiedId: 'caller.plugin/actions/read' },
+            occurrenceId: 'prepared-dispose', correlationId: 'prepared-dispose', surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, binding);
+        const read = await service.prepareRead({ intent: 'get', url: 'https://api.example.test/read', redirect: 'error' });
+        const result = read.request({ signal: new AbortController().signal }).then(value => ({ value }), error => ({ error }));
+        try {
+            await entered;
+            await read.dispose();
+            expect(transportSignal?.aborted).toBe(true);
+            await expect(result).resolves.toMatchObject({ error: { name: 'AbortError' } });
+        } finally { complete(); }
+    });
+
     it('separates traced HTTP policy and transport waits through the bound host without request content', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
-        let releaseDns!: () => void;
-        let startedDns!: () => void;
         let releaseHttp!: () => void;
         let startedHttp!: () => void;
-        const dnsStarted = new Promise<void>(resolve => { startedDns = resolve; });
-        const dnsBoundary = new Promise<void>(resolve => { releaseDns = resolve; });
         const httpStarted = new Promise<void>(resolve => { startedHttp = resolve; });
         const httpBoundary = new Promise<void>(resolve => { releaseHttp = resolve; });
         const response = createResponse('private-response-marker');
         const host = createProductionStablePluginHttpHost({
-            // DNS and the network adapter are the genuine system boundaries.
-            resolveNetworkAddresses: async () => { startedDns(); await dnsBoundary; return ['93.184.216.34']; },
             adapter: {
                 request: async () => { startedHttp(); await httpBoundary; return response; },
                 openWebSocket: async () => { throw new Error('HTTP-only fixture'); },
@@ -234,12 +551,7 @@ describe('createPluginHttpService', () => {
             occurrenceId: 'external-occurrence', correlationId: 'external-correlation', surface: 'cli' as const,
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         };
-        const service = host.bind(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            seed.occurrenceId, 'external-binding', [{ required: true, request: {
-                id: 'external-http', capability: 'network', reason: 'Read the external service',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }], methods: ['GET'] },
-            } }],
-        ));
+        const service = host.bind(seed, createPluginInvocationServiceBinding(seed.occurrenceId, 'external-binding'));
         const rootRequestId = '284f241a-d497-4fbe-955b-a91c7a7f4a4a';
         const request = { url: 'https://api.example.test/private-path-marker', redirect: 'error' as const,
             headers: { authorization: 'private-header-marker' } };
@@ -248,17 +560,9 @@ describe('createPluginHttpService', () => {
         const observed = pending.then(value => ({ value }), error => ({ error }));
         const records = () => sink.mock.calls.filter(([message]) => message === '[external-action-stage]');
         try {
-            await dnsStarted;
-            expect(records()).toContainEqual(['[external-action-stage]', expect.objectContaining({
-                rootRequestId, stage: 'contributed.http.policy.begin',
-            })]);
-            expect(records()).not.toContainEqual(['[external-action-stage]', expect.objectContaining({
-                stage: 'contributed.http.transport.begin',
-            })]);
-            releaseDns();
             await httpStarted;
             expect(records()).toContainEqual(['[external-action-stage]', expect.objectContaining({
-                rootRequestId, stage: 'contributed.http.policy.end', elapsedMs: expect.any(Number),
+                rootRequestId, stage: 'contributed.http.interceptors.end', elapsedMs: expect.any(Number),
             })]);
             expect(records()).toContainEqual(['[external-action-stage]', expect.objectContaining({
                 rootRequestId, stage: 'contributed.http.transport.begin',
@@ -277,215 +581,8 @@ describe('createPluginHttpService', () => {
             await service.request(request);
             expect(records()).toHaveLength(count);
         } finally {
-            releaseDns(); releaseHttp(); await observed; sink.mockRestore(); vi.unstubAllEnvs();
+            releaseHttp(); await observed; sink.mockRestore(); vi.unstubAllEnvs();
         }
-    });
-
-    it('requires the exact network.client websocket grant instead of inheriting generic HTTP network authority', async () => {
-        const connection: PluginWebSocketConnection = Object.freeze({
-            url: 'wss://gateway.example.test/socket',
-            protocol: 'gateway-v1',
-            closed: Promise.resolve(Object.freeze({ kind: 'remote' as const, wasClean: true })),
-            send: async () => undefined,
-            receive: async () => Object.freeze({ kind: 'closed' as const, close: {
-                kind: 'remote' as const,
-                wasClean: true,
-            } }),
-            close: () => undefined,
-            dispose: () => undefined,
-        });
-        const openWebSocket = vi.fn(async () => connection);
-        const adapter = Object.freeze({
-            request: async () => createResponse('unexpected HTTP request'),
-            openWebSocket,
-        }) as unknown as HttpService;
-        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
-        const seed = Object.freeze({
-            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
-            contribution: Object.freeze({ id: 'run', qualifiedId: 'caller.plugin/actions/run' }),
-            occurrenceId: 'generation-websocket',
-            correlationId: 'correlation-websocket',
-            surface: 'agent' as const,
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        });
-        const httpOnly = host.bind(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-websocket',
-            'binding-http-only',
-            [{
-                required: true,
-                request: {
-                    id: 'http-api',
-                    capability: 'network',
-                    reason: 'Call the HTTPS API',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        )) as WebSocketCapableHttpService;
-        const webSocket = host.bind(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-websocket',
-            'binding-websocket',
-            [{
-                required: true,
-                request: {
-                    id: 'gateway',
-                    capability: 'network.client',
-                    reason: 'Maintain the declared gateway connection',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
-                        transports: ['websocket'],
-                        privateNetwork: false,
-                    },
-                },
-            }],
-        )) as WebSocketCapableHttpService;
-
-        await expect(httpOnly.openWebSocket({ url: 'wss://gateway.example.test/socket' }))
-            .rejects.toMatchObject({ code: 'plugin_websocket_permission_denied' });
-        await expect(webSocket.openWebSocket({ url: 'wss://gateway.example.test/socket' }))
-            .resolves.toBe(connection);
-        expect(openWebSocket).toHaveBeenCalledOnce();
-    });
-
-    it('admits a provider-issued endpoint inside a declared host-suffix family and refuses every lookalike', async () => {
-        const connection: PluginWebSocketConnection = Object.freeze({
-            url: 'wss://gateway-us-east1-b.gateway.test/socket',
-            protocol: '',
-            closed: Promise.resolve(Object.freeze({ kind: 'remote' as const, wasClean: true })),
-            send: async () => undefined,
-            receive: async () => Object.freeze({ kind: 'closed' as const, close: {
-                kind: 'remote' as const,
-                wasClean: true,
-            } }),
-            close: () => undefined,
-            dispose: () => undefined,
-        });
-        const openWebSocket = vi.fn(async () => connection);
-        const host = createProductionStablePluginHttpHost({
-            // Only the declared family resolves publicly here: a name inside the
-            // family that resolves into a private range must still be refused.
-            resolveNetworkAddresses: async (hostname: string) => (
-                hostname === 'internal.gateway.test' ? ['127.0.0.1'] : ['93.184.216.34']
-            ),
-            adapter: Object.freeze({
-                request: async () => createResponse('unexpected HTTP request'),
-                openWebSocket,
-            }),
-        });
-        const seed = Object.freeze({
-            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
-            contribution: Object.freeze({ id: 'gateway', qualifiedId: 'caller.plugin/actions/gateway' }),
-            occurrenceId: 'generation-websocket-family',
-            correlationId: 'correlation-websocket-family',
-            surface: 'agent' as const,
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        });
-        const service = host.bind(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-websocket-family',
-            'binding-websocket-family',
-            [{
-                required: true,
-                request: PluginHostAccessRequestV2Schema.parse({
-                    id: 'gateway',
-                    capability: 'network.client',
-                    reason: 'Maintain the provider-issued gateway connection',
-                    scope: {
-                        targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'gateway.test' }],
-                        transports: ['websocket'],
-                    },
-                }),
-            }],
-        )) as WebSocketCapableHttpService;
-
-        await expect(service.openWebSocket({ url: 'wss://gateway.test/socket' }))
-            .resolves.toBe(connection);
-        await expect(service.openWebSocket({ url: 'wss://gateway-us-east1-b.gateway.test/socket' }))
-            .resolves.toBe(connection);
-        for (const url of [
-            // Suffix confusion, sibling registrable names and a bare prefix.
-            'wss://gateway.test.evil.example/socket',
-            'wss://notgateway.test/socket',
-            'wss://gateway.testz/socket',
-            // A non-standard port and plaintext leave the declared family.
-            'wss://gateway.test:8443/socket',
-            'ws://gateway.test/socket',
-            // A family member that resolves into a private range without the
-            // explicit private-network grant.
-            'wss://internal.gateway.test/socket',
-        ]) {
-            await expect(service.openWebSocket({ url })).rejects.toMatchObject({
-                code: expect.stringMatching(/^plugin_websocket_(permission_denied|insecure_url_denied)$/),
-            });
-        }
-        expect(openWebSocket).toHaveBeenCalledTimes(2);
-    });
-
-    it('admits loopback ws only through explicit network.client private-network intent', async () => {
-        const connection: PluginWebSocketConnection = Object.freeze({
-            url: 'ws://127.0.0.1:4311/socket',
-            protocol: '',
-            closed: Promise.resolve(Object.freeze({ kind: 'remote' as const, wasClean: true })),
-            send: async () => undefined,
-            receive: async () => Object.freeze({ kind: 'closed' as const, close: {
-                kind: 'remote' as const,
-                wasClean: true,
-            } }),
-            close: () => undefined,
-            dispose: () => undefined,
-        });
-        const openWebSocket = vi.fn(async () => connection);
-        const host = createProductionStablePluginHttpHost({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
-            adapter: Object.freeze({
-                request: async () => createResponse('unexpected HTTP request'),
-                openWebSocket,
-            }),
-        });
-        const seed = Object.freeze({
-            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
-            contribution: Object.freeze({ id: 'loopback', qualifiedId: 'caller.plugin/actions/loopback' }),
-            occurrenceId: 'generation-websocket-loopback',
-            correlationId: 'correlation-websocket-loopback',
-            surface: 'agent' as const,
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        });
-        const bind = (id: string, origin: string, privateNetwork?: boolean) => host.bind(
-            seed,
-            createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-websocket-loopback',
-                id,
-                [{
-                    required: true,
-                    request: PluginHostAccessRequestV2Schema.parse({
-                        id,
-                        capability: 'network.client',
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin', origin }],
-                            transports: ['websocket'],
-                            ...(privateNetwork === true ? { privateNetwork: true } : {}),
-                        },
-                    }),
-                }],
-            ),
-        );
-
-        await expect(bind('loopback-allowed', 'http://127.0.0.1:4311', true).openWebSocket({
-            url: 'ws://127.0.0.1:4311/socket',
-        })).resolves.toBe(connection);
-        await expect(bind('loopback-denied', 'http://127.0.0.1:4311').openWebSocket({
-            url: 'ws://127.0.0.1:4311/socket',
-        })).rejects.toMatchObject({ code: 'plugin_websocket_permission_denied' });
-        await expect(bind('public-wss', 'https://gateway.example.test').openWebSocket({
-            url: 'wss://gateway.example.test/socket',
-        })).resolves.toBe(connection);
-
-        expect(openWebSocket).toHaveBeenCalledTimes(2);
     });
 
     it('passes the immutable admitted WebSocket target to the adapter instead of rereading caller input', async () => {
@@ -503,7 +600,6 @@ describe('createPluginHttpService', () => {
         });
         let adapterInput: Parameters<HttpService['openWebSocket']>[0] | null = null;
         const host = createProductionStablePluginHttpHost({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             adapter: Object.freeze({
                 request: async () => createResponse('unexpected HTTP request'),
                 async openWebSocket(input) {
@@ -521,23 +617,7 @@ describe('createPluginHttpService', () => {
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const service = host.bind(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-websocket-snapshot',
-            'binding-websocket-snapshot',
-            [{
-                required: true,
-                request: {
-                    id: 'gateway',
-                    capability: 'network.client',
-                    reason: 'Maintain the declared gateway connection',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
-                        transports: ['websocket'],
-                        privateNetwork: false,
-                    },
-                },
-            }],
-        ));
+        const service = host.bind(seed, createPluginInvocationServiceBinding('generation-websocket-snapshot', 'binding-websocket-snapshot'));
         let reads = 0;
         const mutableInput = Object.defineProperty({}, 'url', {
             enumerable: true,
@@ -555,84 +635,22 @@ describe('createPluginHttpService', () => {
         expect(adapterInput).toEqual({ url: 'wss://gateway.example.test/socket' });
         await expect(service.openWebSocket(null as unknown as Parameters<HttpService['openWebSocket']>[0]))
             .rejects.toMatchObject({ code: 'plugin_websocket_invalid_url' });
+        await expect(service.openWebSocket({ url: 'ws://gateway.example.test/socket' }))
+            .rejects.toMatchObject({ code: 'plugin_websocket_insecure_url_denied' });
+        await expect(service.openWebSocket({ url: 'wss://user:password@gateway.example.test/socket' }))
+            .rejects.toMatchObject({ code: 'plugin_websocket_invalid_url' });
     });
 
-    it('pins the WebSocket transport to the exact address set admitted after currentness checks', async () => {
-        const connection: PluginWebSocketConnection = Object.freeze({
-            url: 'wss://gateway.example.test/socket',
-            protocol: '',
-            closed: Promise.resolve(Object.freeze({ kind: 'remote' as const, wasClean: true })),
-            send: async () => undefined,
-            receive: async () => Object.freeze({ kind: 'closed' as const, close: {
-                kind: 'remote' as const,
-                wasClean: true,
-            } }),
-            close: () => undefined,
-            dispose: () => undefined,
-        });
-        let adapterOptions: PluginWebSocketRuntimeOptions | undefined;
-        const currentness = vi.fn(() => true);
-        const host = createProductionStablePluginHttpHost({
-            resolveNetworkAddresses: async () => ['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'],
-            adapter: Object.freeze({
-                request: async () => createResponse('unexpected HTTP request'),
-                async openWebSocket(_input, options) {
-                    adapterOptions = options;
-                    return connection;
-                },
-            }),
-        });
-        const seed = Object.freeze({
-            plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
-            contribution: Object.freeze({ id: 'pin', qualifiedId: 'caller.plugin/actions/pin' }),
-            occurrenceId: 'generation-websocket-pin',
-            correlationId: 'correlation-websocket-pin',
-            surface: 'agent' as const,
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        });
-        const binding = Object.freeze({
-            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-websocket-pin',
-                'binding-websocket-pin',
-                [{
-                    required: true,
-                    request: PluginHostAccessRequestV2Schema.parse({
-                        id: 'gateway',
-                        capability: 'network.client',
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin', origin: 'https://gateway.example.test' }],
-                            transports: ['websocket'],
-                        },
-                    }),
-                }],
-            ),
-            networkCurrentness: currentness,
-        });
-
-        await expect(host.bind(seed, binding).openWebSocket({
-            url: 'wss://gateway.example.test/socket',
-        })).resolves.toBe(connection);
-
-        expect(currentness).toHaveBeenCalledTimes(3);
-        expect(adapterOptions?.validatedAddresses).toEqual([
-            '2606:2800:220:1:248:1893:25c8:1946',
-            '93.184.216.34',
-        ]);
-    });
-
-    it('refuses a WebSocket when its exact binding retires after DNS and before transport', async () => {
+    it('refuses a WebSocket when its exact binding retires before transport', async () => {
         const adapter = Object.freeze({
             request: async () => createResponse('unexpected HTTP request'),
             openWebSocket: vi.fn(async (): Promise<never> => {
                 throw new Error('transport must not open');
             }),
         });
-        let currentnessReads = 0;
+        const retirement = new AbortController();
         const host = createProductionStablePluginHttpHost({
             adapter,
-            resolveNetworkAddresses: async () => ['93.184.216.34'],
         });
         const seed = Object.freeze({
             plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
@@ -644,30 +662,13 @@ describe('createPluginHttpService', () => {
             isOccurrenceCurrent: () => true,
         });
         const binding = Object.freeze({
-            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-websocket-retire-after-dns',
-                'binding-websocket-retire-after-dns',
-                [{
-                    required: true,
-                    request: {
-                        id: 'gateway',
-                        capability: 'network.client' as const,
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin' as const, origin: 'https://gateway.example.test' }],
-                            transports: ['websocket' as const],
-                            privateNetwork: false,
-                        },
-                    },
-                }],
-            ),
-            networkCurrentness: () => {
-                currentnessReads += 1;
-                return currentnessReads === 1;
-            },
+            ...createPluginInvocationServiceBinding('generation-websocket-retire-after-dns', 'binding-websocket-retire-after-dns'),
+            networkRevocationSignal: retirement.signal,
         });
 
-        await expect(host.bind(seed, binding).openWebSocket({
+        const service = host.bind(seed, binding);
+        retirement.abort();
+        await expect(service.openWebSocket({
             url: 'wss://gateway.example.test/socket',
         })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
         expect(adapter.openWebSocket).not.toHaveBeenCalled();
@@ -689,7 +690,7 @@ describe('createPluginHttpService', () => {
             }),
         });
         const revocation = new AbortController();
-        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
+        const host = createProductionStablePluginHttpHost({ adapter });
         const seed = Object.freeze({
             plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
             contribution: Object.freeze({ id: 'pending-open', qualifiedId: 'caller.plugin/actions/pending-open' }),
@@ -700,31 +701,14 @@ describe('createPluginHttpService', () => {
             isOccurrenceCurrent: () => true,
         });
         const binding = Object.freeze({
-            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-pending-open',
-                'binding-pending-open',
-                [{
-                    required: true,
-                    request: {
-                        id: 'gateway',
-                        capability: 'network.client' as const,
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin' as const, origin: 'https://gateway.example.test' }],
-                            transports: ['websocket' as const],
-                            privateNetwork: false,
-                        },
-                    },
-                }],
-            ),
-            networkCurrentness: () => true,
+            ...createPluginInvocationServiceBinding('generation-pending-open', 'binding-pending-open'),
             networkRevocationSignal: revocation.signal,
         });
         const opening = host.bind(seed, binding).openWebSocket({ url: 'wss://gateway.example.test/socket' });
+        const settled = expect(opening).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
         await openStarted;
         revocation.abort(Object.freeze({ kind: 'configurationReplaced' as const }));
-
-        await expect(opening).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+        await settled;
     });
 
     it('revokes only the exact configured-origin socket and composes with caller, generation, and remote closure', async () => {
@@ -795,26 +779,9 @@ describe('createPluginHttpService', () => {
                 return connection;
             },
         });
-        const host = createProductionStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
+        const host = createProductionStablePluginHttpHost({ adapter });
         const createBinding = (id: string, networkRevocationSignal: AbortSignal) => Object.freeze({
-            ...createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-websocket',
-                id,
-                [{
-                    required: true,
-                    request: {
-                        id,
-                        capability: 'network.client' as const,
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin' as const, origin: 'https://gateway.example.test' }],
-                            transports: ['websocket' as const],
-                            privateNetwork: false,
-                        },
-                    },
-                }],
-            ),
-            networkCurrentness: () => true,
+            ...createPluginInvocationServiceBinding('generation-websocket', id),
             networkRevocationSignal,
         });
         const createSeed = (
@@ -884,7 +851,7 @@ describe('createPluginHttpService', () => {
         expect(remoteRecord.lifecycleAbortCalls()).toBe(0);
     });
 
-    it('exposes a manual 3xx and re-enters interceptors and final policy for an explicit next request', async () => {
+    it('exposes a manual 3xx and re-enters interceptors for an explicit next request', async () => {
         const adapter = vi.fn(async (request: TestFetchRequest) => Object.freeze({
             ...createResponse(null),
             status: request.url.endsWith('/start') ? 302 : 200,
@@ -894,7 +861,6 @@ describe('createPluginHttpService', () => {
             finalUrl: request.url,
         }));
         const interceptor = vi.fn(async () => ({ kind: 'allow' as const }));
-        const revalidateFinalPolicy = vi.fn(async () => {});
         const host = createStablePluginHttpHost({
             adapter,
             interceptorRegistry: legacyInterceptorRegistry([{
@@ -905,21 +871,8 @@ describe('createPluginHttpService', () => {
                 },
                 registration: { id: 'observe', handle: interceptor },
             }]),
-            revalidateFinalPolicy,
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-redirect', [{
-            required: true,
-            request: {
-                id: 'redirect-origins', capability: 'network', reason: 'Redirect destinations',
-                scope: {
-                    targets: [
-                        { kind: 'fixedOrigin', origin: 'https://api.example.test' },
-                        { kind: 'fixedOrigin', origin: 'https://next.example.test' },
-                    ],
-                    methods: ['GET'],
-                },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-redirect');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -939,11 +892,10 @@ describe('createPluginHttpService', () => {
             url: first.headers.location!, method: 'GET', redirect: 'manual',
         })).resolves.toMatchObject({ status: 200, finalUrl: 'https://next.example.test/result' });
         expect(interceptor).toHaveBeenCalledTimes(2);
-        expect(revalidateFinalPolicy).toHaveBeenCalledTimes(2);
         expect(adapter).toHaveBeenCalledTimes(2);
     });
 
-    it('redacts an invocation secret in an interceptor URL and withholds the body without changing terminal I/O', async () => {
+    it('lets trusted interceptors inspect the request URL while preserving opaque terminal body bytes', async () => {
         const token = '123456:telegram-secret';
         const rawUrl = `https://api.telegram.org/bot${token}/getMe`;
         const body = new TextEncoder().encode('chat text must remain terminal-only');
@@ -960,15 +912,8 @@ describe('createPluginHttpService', () => {
                 contribution: { id: 'observe', origins: ['https://api.telegram.org'] },
                 registration: { id: 'observe', handle: interceptor },
             }]),
-            redactInterceptorText: ({ value }) => value.replace(token, '[REDACTED]'),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-redacted-path', [{
-            required: true,
-            request: {
-                id: 'telegram-api', capability: 'network', reason: 'Telegram API access',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.telegram.org' }], methods: ['POST'] },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-redacted-path');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -986,17 +931,17 @@ describe('createPluginHttpService', () => {
 
         const intercepted = interceptor.mock.calls[0]?.[0].originalRequest;
         expect(intercepted).toMatchObject({
-            url: 'https://api.telegram.org/bot[REDACTED]/getMe',
+            url: rawUrl,
         });
         expect(intercepted?.body).toBeUndefined();
-        expect(intercepted?.url).not.toContain(token);
+        expect(intercepted?.url).toContain(token);
         expect(adapter).toHaveBeenCalledOnce();
     });
 
-    it('refuses an interceptor URL mutation after an invocation secret was redacted from the path', async () => {
+    it('lets a trusted interceptor rewrite a credential-bearing URL', async () => {
         const token = '123456:telegram-secret';
         const rawUrl = `https://api.telegram.org/bot${token}/getMe`;
-        const adapter = vi.fn(async () => createResponse('unsafe'));
+        const adapter = vi.fn(async (_request: TestFetchRequest) => createResponse('ok'));
         const host = createStablePluginHttpHost({
             adapter,
             interceptorRegistry: legacyInterceptorRegistry([{
@@ -1010,15 +955,8 @@ describe('createPluginHttpService', () => {
                     }),
                 },
             }]),
-            redactInterceptorText: ({ value }) => value.replace(token, '[REDACTED]'),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-redacted-path-mutation', [{
-            required: true,
-            request: {
-                id: 'telegram-api', capability: 'network', reason: 'Telegram API access',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.telegram.org' }], methods: ['GET'] },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-redacted-path-mutation');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1031,63 +969,14 @@ describe('createPluginHttpService', () => {
             url: rawUrl,
             method: 'GET',
             redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_fetch_interceptor_failed' });
-        expect(adapter).not.toHaveBeenCalled();
-    });
-
-    it('fails closed if invocation URL redaction fails before interceptor dispatch', async () => {
-        const token = '123456:telegram-secret';
-        const rawUrl = `https://api.telegram.org/bot${token}/getMe`;
-        const adapter = vi.fn(async () => createResponse('unsafe'));
-        const interceptor = vi.fn(async () => ({ kind: 'allow' as const }));
-        const host = createStablePluginHttpHost({
-            adapter,
-            interceptorRegistry: legacyInterceptorRegistry([{
-                pluginId: 'acme.policy',
-                contribution: { id: 'observe', origins: ['https://api.telegram.org'] },
-                registration: { id: 'observe', handle: interceptor },
-            }]),
-            redactInterceptorText: () => {
-                throw new Error(token);
-            },
-        });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-redaction-failure', [{
-            required: true,
-            request: {
-                id: 'telegram-api', capability: 'network', reason: 'Telegram API access',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.telegram.org' }], methods: ['GET'] },
-            },
-        }]);
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7', correlationId: 'correlation-redaction-failure', surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        let failure: unknown;
-        try {
-            await service.request({ url: rawUrl, method: 'GET', redirect: 'error' });
-        } catch (error) {
-            failure = error;
-        }
-        expect(failure).toMatchObject({ code: 'plugin_fetch_interceptor_failed' });
-        expect(String(failure)).not.toContain(token);
-        expect(interceptor).not.toHaveBeenCalled();
-        expect(adapter).not.toHaveBeenCalled();
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter.mock.calls[0]?.[0]).toMatchObject({ url: `${rawUrl}?audit=1` });
     });
 
     it('enforces a bound host deadline when a terminal adapter never settles', async () => {
         const adapter = vi.fn(async () => await new Promise<TestFetchResponse>(() => undefined));
         const host = createStablePluginHttpHost({ adapter });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-never-settles', [{
-            required: true,
-            request: {
-                id: 'telegram-api', capability: 'network', reason: 'Telegram API access',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.telegram.org' }], methods: ['GET'] },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-never-settles');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1114,9 +1003,6 @@ describe('createPluginHttpService', () => {
             kind: 'deny' as const,
             code: 'current_callback_must_not_run',
         }));
-        const revalidateFinalPolicy = vi.fn(async () => {
-            throw new Error('current policy callback must not run');
-        });
         const credentialBindingHost = {
             request: vi.fn(async () => {
                 throw new Error('current credential callback must not run');
@@ -1124,28 +1010,9 @@ describe('createPluginHttpService', () => {
         };
         const host = createStablePluginHttpHost({
             adapter,
-            revalidateFinalPolicy,
             credentialBindingHost,
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-g',
-            'binding-retained',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'Retained API access',
-                    scope: {
-                        targets: [{
-                            kind: 'fixedOrigin',
-                            origin: 'https://api.example.test',
-                        }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
+        const binding = createPluginInvocationServiceBinding('generation-g', 'binding-retained');
         const service = host.bind({
             plugin: { id: 'retained.plugin', version: '1.0.0' },
             contribution: {
@@ -1169,7 +1036,6 @@ describe('createPluginHttpService', () => {
                     handle: interceptor,
                 },
             }]),
-            revalidateFinalPolicy: null,
             credentialBindingHost: null,
         });
 
@@ -1182,198 +1048,32 @@ describe('createPluginHttpService', () => {
         });
         expect(adapter).not.toHaveBeenCalled();
         expect(interceptor).toHaveBeenCalledOnce();
-        expect(revalidateFinalPolicy).not.toHaveBeenCalled();
         expect(credentialBindingHost.request).not.toHaveBeenCalled();
     });
 
-    it('revalidates connected-account configuration currentness before terminal I/O', async () => {
-        const adapter = vi.fn(async () => Object.freeze({
-            ...createResponse('ok'),
-            finalUrl: 'https://api.example.test/status',
-        }));
+    it('admits a binding once and refuses an already withdrawn binding without network I/O', async () => {
+        const adapter = vi.fn(async () => createResponse('ok'));
         const host = createStablePluginHttpHost({ adapter });
-        const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-connected-account',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
-        const binding = Object.freeze({
-            ...baseBinding,
-            networkCurrentness: () => false,
-        }) as typeof baseBinding;
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7',
-            correlationId: 'correlation-connected-account',
-            surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        await expect(service.request({
-            url: 'https://api.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-        expect(adapter).not.toHaveBeenCalled();
+        const retirement = new AbortController();
+        const seed = { plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' }, occurrenceId: 'bound', correlationId: 'bound',
+            surface: 'agent' as const, signal: new AbortController().signal, isOccurrenceCurrent: vi.fn(() => true) };
+        const binding = { ...createPluginInvocationServiceBinding('bound', 'bound'), networkRevocationSignal: retirement.signal };
+        const service = host.bind(seed, binding);
+        retirement.abort();
+        await expect(service.request({ url: 'https://api.example.test/status', redirect: 'error' })).resolves.toMatchObject({ status: 200 });
+        expect(seed.isOccurrenceCurrent).toHaveBeenCalledOnce();
+        expect(adapter).toHaveBeenCalledOnce();
+        expect(() => host.bind(seed, binding)).toThrowError(expect.objectContaining({ code: 'plugin_final_generation_retired' }));
+        expect(adapter).toHaveBeenCalledOnce();
     });
 
-    it('keeps exact selected-resource network scopes enforceable', async () => {
-        const adapter = vi.fn(async () => Object.freeze({
-            ...createResponse('ok'),
-            finalUrl: 'https://selected.example.test/status',
-        }));
-        const host = createStablePluginHttpHost({ adapter, resolveNetworkAddresses: testResolveNetworkAddresses });
-        const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-selected-resource',
-            [{
-                required: true,
-                request: {
-                    id: 'account-origin',
-                    capability: 'network',
-                    reason: 'Selected Connected Account origin',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://selected.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
-        const binding = Object.freeze({
-            ...baseBinding,
-            networkScopes: Object.freeze([Object.freeze({
-                authority: 'selectedResource' as const,
-                accessId: 'account-origin',
-                required: true,
-                origins: Object.freeze(['https://selected.example.test']),
-                methods: Object.freeze(['GET' as const]),
-                privateNetwork: false,
-            })]),
-        });
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7', correlationId: 'selected-resource', surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        await expect(service.request({
-            url: 'https://outside.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_resource_not_selected' });
-        expect(adapter).not.toHaveBeenCalled();
-    });
-
-    it('refuses a bound origin that RESOLVES private unless the scope declares private-network access', async () => {
-        // The origin is spelled like any ordinary public name; only its resolved
-        // address makes it private. A literal-hostname test admits it, so this is
-        // the case that proves the decision reaches the resolved-endpoint owner.
-        const resolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => (
-            hostname === 'selected.example.test' ? ['10.0.0.7'] : ['93.184.216.34']
-        );
-        const bindScope = (privateNetwork: boolean) => {
-            const adapter = vi.fn(async () => Object.freeze({
-                ...createResponse('ok'),
-                finalUrl: 'https://selected.example.test/status',
-            }));
-            const host = createStablePluginHttpHost({ adapter, resolveNetworkAddresses });
-            const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'generation-7',
-                `binding-resolved-private-${privateNetwork}`,
-                [{
-                    required: true,
-                    request: {
-                        id: 'account-origin',
-                        capability: 'network',
-                        reason: 'Selected Connected Account origin',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin', origin: 'https://selected.example.test' }],
-                            methods: ['GET'],
-                        },
-                    },
-                }],
-            );
-            const binding = Object.freeze({
-                ...baseBinding,
-                networkScopes: Object.freeze([Object.freeze({
-                    authority: 'selectedResource' as const,
-                    accessId: 'account-origin',
-                    required: true,
-                    origins: Object.freeze(['https://selected.example.test']),
-                    methods: Object.freeze(['GET' as const]),
-                    privateNetwork,
-                })]),
-            });
-            return {
-                adapter,
-                service: host.bind({
-                    plugin: { id: 'caller.plugin', version: '1.0.0' },
-                    contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-                    occurrenceId: 'generation-7',
-                    correlationId: `resolved-private-${privateNetwork}`,
-                    surface: 'agent',
-                    signal: new AbortController().signal,
-                    isOccurrenceCurrent: () => true,
-                }, binding),
-            };
-        };
-
-        const withoutIntent = bindScope(false);
-        await expect(withoutIntent.service.request({
-            url: 'https://selected.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_resource_not_selected' });
-        expect(withoutIntent.adapter).not.toHaveBeenCalled();
-
-        // Declared private-network intent still admits the same destination: this
-        // is credential routing, not a refusal to talk to private networks.
-        const withIntent = bindScope(true);
-        await expect(withIntent.service.request({
-            url: 'https://selected.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).resolves.toMatchObject({ status: 200 });
-        expect(withIntent.adapter).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps manifest disclosure diagnostic when trusted plugin traffic resolves private', async () => {
+    it('allows trusted plugin requests to a private service origin', async () => {
         const adapter = vi.fn(async () => createResponse('private service'));
         const host = createStablePluginHttpHost({
             adapter,
-            resolveNetworkAddresses: async () => ['10.0.0.7'],
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-private-disclosure',
-            [{
-                required: true,
-                request: {
-                    id: 'self-hosted-forge',
-                    capability: 'network',
-                    reason: 'Reach the user-configured self-hosted forge',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://forge.internal.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-private-disclosure');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1392,147 +1092,23 @@ describe('createPluginHttpService', () => {
         expect(adapter).toHaveBeenCalledOnce();
     });
 
-    it('pins each retry to the exact address set admitted by that attempt', async () => {
-        const admittedAddressSets = [
-            Object.freeze(['93.184.216.34']),
-            Object.freeze(['93.184.216.35']),
-        ] as const;
-        let resolution = 0;
-        const resolveNetworkAddresses = vi.fn(async () => (
-            admittedAddressSets[resolution++] ?? admittedAddressSets.at(-1)!
-        ));
-        const transportedAddressSets: readonly string[][] = [];
-        const adapter = vi.fn(async (
-            _request: TestFetchRequest,
-            options: Readonly<{ signal?: AbortSignal; validatedAddresses?: readonly string[] }> = {},
-        ) => {
-            (transportedAddressSets as string[][]).push([...(options.validatedAddresses ?? [])]);
-            if (transportedAddressSets.length === 1) {
-                throw Object.assign(new Error('retry me'), { code: 'ETIMEDOUT' });
-            }
-            return createResponse('ok');
-        });
-        const host = createStablePluginHttpHost({
-            adapter,
-            retry: { maxAttempts: 2, baseDelayMs: 0 },
-            resolveNetworkAddresses,
-        });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-dns-pin',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7',
-            correlationId: 'dns-pin',
-            surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        await expect(service.request({
-            url: 'https://api.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).resolves.toMatchObject({ status: 200 });
-
-        expect(resolveNetworkAddresses).toHaveBeenCalledTimes(2);
-        expect(transportedAddressSets).toEqual(admittedAddressSets);
-    });
-
-    it('refuses HTTP when its exact selected binding retires after DNS and before transport', async () => {
-        const adapter = vi.fn(async () => createResponse('must not dispatch'));
-        let currentnessReads = 0;
-        const host = createStablePluginHttpHost({
-            adapter,
-            resolveNetworkAddresses: async () => ['93.184.216.34'],
-        });
-        const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-http-retire-after-dns',
-            'binding-http-retire-after-dns',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-http-retire-after-dns',
-            correlationId: 'http-retire-after-dns',
-            surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, Object.freeze({
-            ...baseBinding,
-            networkCurrentness: () => {
-                currentnessReads += 1;
-                return currentnessReads === 1;
-            },
-        }));
-
-        await expect(service.request({
-            url: 'https://api.example.test/status',
-            method: 'GET',
-            redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-        expect(adapter).not.toHaveBeenCalled();
-    });
-
-    it('revalidates connected-account configuration currentness before every retry attempt', async () => {
+    it('finishes an admitted retry after configuration retirement within its original admitted binding', async () => {
+        const retirement = new AbortController();
         const adapter = vi.fn(async () => {
-            throw Object.assign(new Error('temporarily unavailable'), { code: 'ETIMEDOUT' });
+            if (adapter.mock.calls.length === 1) {
+                retirement.abort();
+                throw Object.assign(new Error('temporarily unavailable'), { code: 'ETIMEDOUT' });
+            }
+            return createResponse('completed');
         });
         const host = createStablePluginHttpHost({
             adapter,
             retry: { maxAttempts: 2, baseDelayMs: 0 },
         });
-        let currentnessChecks = 0;
-        const baseBinding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-connected-account-retry',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
+        const baseBinding = createPluginInvocationServiceBinding('generation-7', 'binding-connected-account-retry');
         const binding = Object.freeze({
             ...baseBinding,
-            networkCurrentness: () => {
-                currentnessChecks += 1;
-                // First attempt: before and after DNS. The retry then retires
-                // at its own pre-DNS check and never reaches the adapter.
-                return currentnessChecks <= 2;
-            },
+            networkRevocationSignal: retirement.signal,
         }) as typeof baseBinding;
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
@@ -1548,82 +1124,12 @@ describe('createPluginHttpService', () => {
             url: 'https://api.example.test/status',
             method: 'GET',
             redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-        expect(currentnessChecks).toBe(3);
-        expect(adapter).toHaveBeenCalledTimes(1);
+        })).resolves.toMatchObject({ body: new TextEncoder().encode('completed') });
+        expect(adapter).toHaveBeenCalledTimes(2);
+        expect(adapter).toHaveBeenCalledTimes(2);
     });
 
-    it('binds the stable HTTP service and denies an interceptor-rewritten method before terminal I/O', async () => {
-        const adapter = vi.fn(async () => Object.freeze({
-            ...createResponse('ok'),
-            finalUrl: 'https://api.example.test/result',
-            headers: Object.freeze({ 'content-type': 'text/plain' }),
-            arrayBuffer: async () => new Uint8Array([111, 107]).buffer,
-        }));
-        const revalidateFinalPolicy = vi.fn(async (effect: Readonly<{
-            request: TestFetchRequest;
-        }>) => {
-            if (effect.request.method === 'POST') {
-                throw new PluginError({
-                    code: 'plugin_final_resource_not_selected',
-                    message: 'Method was not selected',
-                });
-            }
-        });
-        const host = createStablePluginHttpHost({
-            adapter,
-            interceptorRegistry: legacyInterceptorRegistry([{
-                pluginId: 'acme.policy',
-                contribution: { id: 'rewrite', origins: ['https://api.example.test'] },
-                registration: {
-                    id: 'rewrite',
-                    handle: async ({ effectiveRequest }) => effectiveRequest.url.endsWith('/rewrite')
-                        ? { kind: 'allow', request: { method: 'POST' } }
-                        : { kind: 'allow' },
-                },
-            }]),
-            revalidateFinalPolicy,
-        });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-1', [{
-            required: true,
-            request: {
-                id: 'api', capability: 'network', reason: 'API access',
-                scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }], methods: ['GET'] },
-            },
-        }]);
-        const service = host.bind({
-            plugin: { id: 'caller.plugin', version: '1.0.0' },
-            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-            occurrenceId: 'generation-7', correlationId: 'correlation-1', surface: 'agent',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, binding);
-
-        await expect(service.request({
-            url: 'https://api.example.test/status',
-            method: 'GET', redirect: 'error',
-        })).resolves.toEqual({
-            status: 200,
-            finalUrl: 'https://api.example.test/result',
-            headers: { 'content-type': 'text/plain' },
-            body: new Uint8Array([111, 107]),
-        });
-        await expect(service.request({
-            url: 'https://api.example.test/rewrite',
-            method: 'GET', redirect: 'error',
-        })).rejects.toMatchObject({ code: 'plugin_final_resource_not_selected' });
-        await expect(service.request({
-            url: 'https://api.example.test/redirect',
-            method: 'GET', redirect: 'follow',
-        })).rejects.toMatchObject({ code: 'plugin_fetch_redirect_follow_unavailable' });
-        expect(adapter).toHaveBeenCalledTimes(1);
-        expect(revalidateFinalPolicy).toHaveBeenCalledTimes(2);
-        expect(revalidateFinalPolicy).toHaveBeenLastCalledWith(expect.objectContaining({
-            request: expect.objectContaining({ method: 'POST' }),
-        }));
-    });
-
-    it('refuses to carry a Connected Account credential onto an interceptor-retargeted request', async () => {
+    it('lets trusted interceptors retarget requests after the credential owner binds once', async () => {
         const adapter = vi.fn(async (request: TestFetchRequest) => Object.freeze({
             ...createResponse('ok'),
             finalUrl: request.url,
@@ -1658,22 +1164,7 @@ describe('createPluginHttpService', () => {
             interceptorRegistry: retargetInterceptor,
             credentialBindingHost: credentialBindingHost as never,
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-credential',
-            'binding-credential',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'Connected Account API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
+        const binding = createPluginInvocationServiceBinding('generation-credential', 'binding-credential');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1704,30 +1195,25 @@ describe('createPluginHttpService', () => {
             headers: expect.objectContaining({ authorization: 'Bearer account-secret' }),
         });
 
-        // The interceptor may not move that secret to a target the credential
-        // owner never authorized.
+        // Trusted interceptors may refine the bound request.
         await expect(service.request({
             url: 'https://api.example.test/authorized',
             method: 'GET',
             redirect: 'error',
             credentialBinding,
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a protected-header request'),
-        });
+        })).resolves.toMatchObject({ status: 200 });
         await expect(service.request({
             url: 'https://api.example.test/remethod',
             method: 'GET',
             redirect: 'error',
             credentialBinding,
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a protected-header request'),
-        });
-        expect(adapter).toHaveBeenCalledTimes(1);
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledTimes(3);
+        expect(adapter.mock.calls[1]?.[0]).toMatchObject({ headers: expect.objectContaining({ authorization: expect.stringContaining('Bearer ') }) });
+        expect(adapter.mock.calls[2]?.[0]).toMatchObject({ method: 'DELETE' });
     });
 
-    it('refuses a trusted interceptor\'s same-origin endpoint or method retargeting when a raw Authorization header will be sent', async () => {
+    it('lets a trusted interceptor retarget a request carrying raw Authorization', async () => {
         const adapter = vi.fn(async (request: TestFetchRequest) => Object.freeze({
             ...createResponse('ok'),
             finalUrl: request.url,
@@ -1753,22 +1239,7 @@ describe('createPluginHttpService', () => {
             adapter,
             interceptorRegistry: retargetInterceptor,
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-raw-credential',
-            'binding-raw-credential',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'Connected Account API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET', 'DELETE'],
-                    },
-                },
-            }],
-        );
+        const binding = createPluginInvocationServiceBinding('generation-raw-credential', 'binding-raw-credential');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1798,28 +1269,22 @@ describe('createPluginHttpService', () => {
             }),
         });
 
-        // A broad network grant must not let an installation-wide interceptor
-        // repurpose raw Connected Account credentials into a different endpoint
-        // or a destructive method before the transport boundary.
+        // Raw caller credentials have the same trusted-interceptor contract.
         await expect(service.request({
             url: 'https://api.example.test/endpoint',
             method: 'GET',
             headers,
             redirect: 'error',
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a protected-header request'),
-        });
+        })).resolves.toMatchObject({ status: 200 });
         await expect(service.request({
             url: 'https://api.example.test/method',
             method: 'GET',
             headers,
             redirect: 'error',
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a protected-header request'),
-        });
-        expect(adapter).toHaveBeenCalledTimes(1);
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledTimes(3);
+        expect(adapter.mock.calls[1]?.[0]).toMatchObject({ headers: expect.objectContaining({ authorization: expect.stringContaining('Bearer ') }) });
+        expect(adapter.mock.calls[2]?.[0]).toMatchObject({ method: 'DELETE' });
     });
 
     it('removes invocation abort listeners after a completed stable request', async () => {
@@ -1834,18 +1299,7 @@ describe('createPluginHttpService', () => {
                 arrayBuffer: async () => new Uint8Array([111, 107]).buffer,
             }),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('generation-7', 'binding-listeners', [{
-            required: true,
-            request: {
-                id: 'api',
-                capability: 'network',
-                reason: 'API access',
-                scope: {
-                    targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                    methods: ['GET'],
-                },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-listeners');
         const service = host.bind({
             plugin: { id: 'caller.plugin', version: '1.0.0' },
             contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
@@ -1908,22 +1362,7 @@ describe('createPluginHttpService', () => {
                 ]),
             }),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            'binding-shared-recursion',
-            [{
-                required: true,
-                request: {
-                    id: 'api',
-                    capability: 'network',
-                    reason: 'API access',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                        methods: ['GET'],
-                    },
-                },
-            }],
-        );
+        const binding = createPluginInvocationServiceBinding('generation-7', 'binding-shared-recursion');
         const createSeed = (qualifiedId: string) => Object.freeze({
             plugin: Object.freeze({ id: 'caller.plugin', version: '1.0.0' }),
             contribution: Object.freeze({ id: qualifiedId.split('/').at(-1)!, qualifiedId }),
@@ -1991,7 +1430,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: Object.freeze([
                     {
@@ -2040,7 +1478,6 @@ describe('createPluginHttpService', () => {
         const adapter = vi.fn(async () => createResponse('unsafe'));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: Object.freeze([{
                     pluginId: 'missing.policy',
@@ -2069,7 +1506,6 @@ describe('createPluginHttpService', () => {
         };
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: [{ pluginId: 'owner.policy', contribution }],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2098,7 +1534,6 @@ describe('createPluginHttpService', () => {
         const binding = { ...declaration, invoke };
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: [declaration],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2122,7 +1557,6 @@ describe('createPluginHttpService', () => {
         const declaration = { pluginId: 'owner.policy', contribution };
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: [declaration],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2155,7 +1589,6 @@ describe('createPluginHttpService', () => {
         const declaration = { pluginId: 'owner.policy', contribution };
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: [declaration],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2207,7 +1640,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://example.test'],
             interceptors: [
                 {
                     pluginId: 'z.plugin',
@@ -2286,7 +1718,6 @@ describe('createPluginHttpService', () => {
         const interceptor = vi.fn(async () => ({ kind: 'allow' as const }));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'never', origins: ['https://example.test'] },
@@ -2330,7 +1761,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://example.test'],
             interceptorRegistry: {
                 declarations: [{ pluginId: 'acme.policy', contribution }],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2352,67 +1782,25 @@ describe('createPluginHttpService', () => {
         expect(adapter).not.toHaveBeenCalled();
     });
 
-    it('diagnoses a narrower URL-origin disclosure and continues to the adapter', async () => {
-        const adapter = vi.fn(async () => createResponse('ok'));
-        const mismatches: unknown[] = [];
+    it('lets trusted interceptors rewrite ordinary requests beyond their selection origins and methods', async () => {
+        const adapter = vi.fn(async () => createResponse('rewritten'));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
-            recordDisclosureMismatch(mismatch) {
-                mismatches.push(mismatch);
-                throw new Error('diagnostic sink failed');
-            },
-        });
-
-        await expect(service({ url: 'https://blocked.example.test/status' })).resolves.toMatchObject({ status: 200 });
-        expect(mismatches).toEqual([{
-            capability: 'network',
-            origin: 'https://blocked.example.test',
-            method: 'GET',
-        }]);
-        expect(adapter).toHaveBeenCalledOnce();
-    });
-
-    it('diagnoses an absent URL-origin disclosure and continues to the adapter', async () => {
-        const adapter = vi.fn(async () => createResponse('ok'));
-        const mismatches: unknown[] = [];
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: [],
-            recordDisclosureMismatch: (mismatch) => { mismatches.push(mismatch); },
-        });
-
-        await expect(service({ url: 'https://api.example.test/status' })).resolves.toMatchObject({ status: 200 });
-        expect(mismatches).toEqual([{
-            capability: 'network',
-            origin: 'https://api.example.test',
-            method: 'GET',
-        }]);
-        expect(adapter).toHaveBeenCalledOnce();
-    });
-
-    it('rejects interceptor rewrites to undeclared URL origins before adapter execution', async () => {
-        const adapter = vi.fn(async () => createResponse('unused'));
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
-                contribution: { id: 'rewrite', origins: ['https://api.example.test'] },
+                contribution: { id: 'rewrite', origins: ['https://api.example.test'], methods: ['GET'] },
                 registration: {
                     id: 'rewrite',
                     handle: async () => ({
                         kind: 'allow',
-                        request: { url: 'https://blocked.example.test/status' },
+                        request: { url: 'https://destination.example.test/status', method: 'POST' },
                     }),
                 },
             }],
         });
 
-        await expect(service({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
-            code: 'plugin_fetch_url_scope_denied',
-        });
-        expect(adapter).not.toHaveBeenCalled();
+        await expect(service({ url: 'https://api.example.test/status' })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://destination.example.test/status', method: 'POST' }));
     });
 
     it('admits the rewritten destination through its matching request policies before adapter execution', async () => {
@@ -2433,7 +1821,6 @@ describe('createPluginHttpService', () => {
         }));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://source.example.test', 'https://destination.example.test'],
             interceptorRegistry: {
                 declarations: [
                     { pluginId: 'rewrite.policy', contribution: rewriteContribution },
@@ -2480,7 +1867,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://example.test'],
         });
 
         await expect(service({
@@ -2499,7 +1885,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://example.test'],
         });
 
         await expect(service({
@@ -2508,91 +1893,6 @@ describe('createPluginHttpService', () => {
         })).rejects.toMatchObject({
             name: 'AbortError',
         });
-    });
-
-    it('retries transient adapter failures while keeping attempt state host-private', async () => {
-        const attempts: number[] = [];
-        const adapter = vi.fn(async () => {
-            if (adapter.mock.calls.length === 1) {
-                throw Object.assign(new Error('temporarily unavailable'), {
-                    code: 'ETIMEDOUT',
-                });
-            }
-            return createResponse('ok');
-        });
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: ['https://example.test'],
-            retry: {
-                maxAttempts: 2,
-                baseDelayMs: 0,
-            },
-            revalidateFinalPolicy: ({ attempt }) => {
-                attempts.push(attempt);
-            },
-        });
-
-        await expect(service({ url: 'https://example.test/retry' })).resolves.toBeDefined();
-        expect(adapter).toHaveBeenCalledTimes(2);
-        expect(attempts).toEqual([1, 2]);
-    });
-
-    it('revalidates current policy against the rewritten request immediately before every network attempt', async () => {
-        const order: string[] = [];
-        const contribution: PluginRequestInterceptorContributionV1 = {
-            id: 'rewrite', origins: ['https://example.test'], methods: ['GET'],
-        };
-        const adapter = vi.fn(async () => {
-            order.push('adapter');
-            if (adapter.mock.calls.length === 1) {
-                throw Object.assign(new Error('temporarily unavailable'), { code: 'ETIMEDOUT' });
-            }
-            return createResponse('ok');
-        });
-        const revalidateFinalPolicy = vi.fn(async ({ request, attempt }) => {
-            order.push(`policy:${attempt}:${request.headers?.['x-rewritten'] ?? 'missing'}`);
-        });
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: ['https://example.test'],
-            retry: { maxAttempts: 2 },
-            revalidateFinalPolicy,
-            interceptorRegistry: {
-                declarations: [{ pluginId: 'acme.policy', contribution }],
-                activateContributionsOnDemand: async () => {},
-                readBindings: () => [{
-                    pluginId: 'acme.policy', contribution,
-                    invoke: async (request) => ({
-                        decision: 'continue',
-                        request: { ...request, headers: { ...request.headers, 'x-rewritten': 'yes' } },
-                    }),
-                }],
-            },
-        });
-
-        await expect(service({ url: 'https://example.test/retry' }))
-            .resolves.toMatchObject({ body: new TextEncoder().encode('ok') });
-        expect(order).toEqual([
-            'policy:1:yes', 'adapter',
-            'policy:2:yes', 'adapter',
-        ]);
-        expect(revalidateFinalPolicy).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not reach the network when final policy is revoked after interception', async () => {
-        const adapter = vi.fn(async () => createResponse('unsafe'));
-        const denial = new PluginError({
-            code: 'plugin_fetch_interceptor_denied',
-            message: 'revoked',
-        });
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: ['https://example.test'],
-            revalidateFinalPolicy: async () => { throw denial; },
-        });
-
-        await expect(service({ url: 'https://example.test/data' })).rejects.toBe(denial);
-        expect(adapter).not.toHaveBeenCalled();
     });
 
     it('does not duplicate interceptor effects when the terminal adapter retries', async () => {
@@ -2605,7 +1905,6 @@ describe('createPluginHttpService', () => {
         });
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             retry: { maxAttempts: 2 },
             interceptors: [{
                 pluginId: 'acme.policy',
@@ -2620,164 +1919,28 @@ describe('createPluginHttpService', () => {
         expect(interceptor).toHaveBeenCalledTimes(1);
     });
 
-    it('redacts the closed v1 security-sensitive header set from interceptor input and rejects credential replacement', async () => {
-        const seen: TestFetchRequest[] = [];
-        const adapter = vi.fn(async (request) => createResponse({
-            authorization: request.headers?.authorization,
-            user: request.headers?.['x-user-id'],
-            safe: request.headers?.accept,
-            url: request.url,
-            body: request.body,
-        }));
-        const service = createPluginHttpService({
-            adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
-            interceptors: [{
-                pluginId: 'acme.policy',
-                contribution: { id: 'credential-policy', origins: ['https://api.example.test'] },
-                registration: {
-                    id: 'credential-policy',
-                    handle: async ({ originalRequest, effectiveRequest }) => {
-                        seen.push(originalRequest, effectiveRequest);
-                        return {
-                            kind: 'allow',
-                            request: {
-                                headers: {
-                                    set: { authorization: 'Bearer replacement' },
-                                },
-                            },
-                        };
-                    },
-                },
-            }],
+    it('lets trusted interceptors inspect, replace and remove credential headers', async () => {
+        const adapter = vi.fn(async (_request: TestFetchRequest) => createResponse('ok'));
+        const interceptor = vi.fn(async ({ effectiveRequest }: LegacyPolicyInput) => {
+            expect(effectiveRequest.headers).toMatchObject({ authorization: 'Bearer original', cookie: 'session=original', 'x-user-id': 'user-1' });
+            return { kind: 'allow' as const, request: { headers: { set: { authorization: 'Bearer replacement' }, remove: ['cookie'] } } };
         });
-
-        await expect(service({
-            url: [
-                'https://api.example.test/status?token=secret&visible=yes',
-                'authorization=authorization-secret&accessToken=access-token-secret',
-                'refresh_token=refresh-token-secret&api_key=api-key-secret',
-                'clientSecret=client-secret&password=password-secret&cookie=cookie-secret',
-                'jwt=jwt-secret&private_key=private-key-secret&private.key=private-key-dot-secret',
-                'private:key=private-key-colon-secret&passphrase=passphrase-secret',
-                'sessionCount=7&tokenCount=8&secretary=meeting-notes',
-            ].join('&'),
-            headers: {
-                authorization: 'Bearer original',
-                accessToken: 'access-token-secret',
-                refresh_token: 'refresh-token-secret',
-                apiKey: 'api-key-secret',
-                client_secret: 'client-secret',
-                password: 'password-secret',
-                cookie: 'cookie-secret',
-                jwt: 'jwt-secret',
-                privateKey: 'private-key-secret',
-                'private.key': 'private-key-dot-secret',
-                'private:key': 'private-key-colon-secret',
-                passphrase: 'passphrase-secret',
-                sessionCount: 'seven-sessions',
-                tokenCount: 'eight-tokens',
-                secretary: 'meeting-notes',
-                'chatgpt-account-id': 'account-1',
-                'x-user-id': 'user-1',
-                'x-forwarded-for': '203.0.113.10',
-                'x-forwarded-email': 'user@example.test',
-                'x-real-ip': '203.0.113.11',
-                accept: 'application/json',
-            },
-            body: {
-                apiKey: 'secret',
-                visible: true,
-            },
-        })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-        });
-        expect(adapter).not.toHaveBeenCalled();
-
-        expect(seen).toEqual([
-            expect.objectContaining({
-                url: expect.stringContaining('https://api.example.test/status?token=%5Bredacted%5D&visible=yes'),
-                headers: expect.objectContaining({
-                    authorization: '[redacted]',
-                    cookie: '[redacted]',
-                    'x-forwarded-for': '[redacted]',
-                    'x-forwarded-email': '[redacted]',
-                    'x-real-ip': '[redacted]',
-                    'chatgpt-account-id': '[redacted]',
-                    'x-user-id': '[redacted]',
-                    accessToken: '[redacted]',
-                    refresh_token: '[redacted]',
-                    apiKey: '[redacted]',
-                    client_secret: '[redacted]',
-                    password: '[redacted]',
-                    jwt: '[redacted]',
-                    privateKey: '[redacted]',
-                    'private.key': '[redacted]',
-                    'private:key': '[redacted]',
-                    passphrase: '[redacted]',
-                    accept: 'application/json',
-                }),
-            }),
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    authorization: '[redacted]',
-                    cookie: '[redacted]',
-                    'x-forwarded-for': '[redacted]',
-                    'x-forwarded-email': '[redacted]',
-                    'x-real-ip': '[redacted]',
-                    'chatgpt-account-id': '[redacted]',
-                    'x-user-id': '[redacted]',
-                    accessToken: '[redacted]',
-                    refresh_token: '[redacted]',
-                    apiKey: '[redacted]',
-                    client_secret: '[redacted]',
-                    password: '[redacted]',
-                    jwt: '[redacted]',
-                    privateKey: '[redacted]',
-                    'private.key': '[redacted]',
-                    'private:key': '[redacted]',
-                    passphrase: '[redacted]',
-                    accept: 'application/json',
-                }),
-            }),
-        ]);
-
-        const interceptorUrl = new URL(seen[0]?.url ?? 'https://invalid.test');
-        for (const key of [
-            'authorization',
-            'accessToken',
-            'refresh_token',
-            'api_key',
-            'clientSecret',
-            'password',
-            'cookie',
-            'jwt',
-            'private_key',
-            'private.key',
-            'private:key',
-            'passphrase',
-        ]) {
-            expect(interceptorUrl.searchParams.get(key)).toBe('[redacted]');
-        }
-        for (const key of ['authorization', 'cookie']) {
-            expect(seen[0]?.headers?.[key]).toBe('[redacted]');
-        }
-        expect(interceptorUrl.searchParams.get('sessionCount')).toBe('7');
-        expect(interceptorUrl.searchParams.get('tokenCount')).toBe('8');
-        expect(interceptorUrl.searchParams.get('secretary')).toBe('meeting-notes');
-        expect(seen[0]?.headers).toMatchObject({
-            sessionCount: 'seven-sessions',
-            tokenCount: 'eight-tokens',
-            secretary: 'meeting-notes',
-        });
+        const service = createPluginHttpService({ adapter, interceptors: [{
+            pluginId: 'acme.policy', contribution: { id: 'credentials', origins: ['https://api.example.test'] },
+            registration: { id: 'credentials', handle: interceptor },
+        }] });
+        await expect(service({ url: 'https://api.example.test/status', headers: {
+            authorization: 'Bearer original', cookie: 'session=original', 'x-user-id': 'user-1',
+        } })).resolves.toMatchObject({ status: 200 });
+        expect(adapter.mock.calls[0]?.[0].headers).toMatchObject({ authorization: 'Bearer replacement', 'x-user-id': 'user-1' });
+        expect(adapter.mock.calls[0]?.[0].headers).not.toHaveProperty('cookie');
     });
 
-    it('allows a matching trusted interceptor to inspect and rewrite caller headers outside the closed v1 set', async () => {
+    it('allows a matching trusted interceptor to inspect and rewrite caller headers', async () => {
         const seen: TestFetchRequest[] = [];
         const adapter = vi.fn(async (request) => createResponse(request.headers?.['x-tenant-label'] ?? 'missing'));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'tenant-policy', origins: ['https://api.example.test'] },
@@ -2813,8 +1976,8 @@ describe('createPluginHttpService', () => {
 
         expect(seen).toEqual([expect.objectContaining({
             headers: {
-                authorization: '[redacted]',
-                'x-forwarded-for': '[redacted]',
+                authorization: 'Bearer host-owned',
+                'x-forwarded-for': '203.0.113.10',
                 'x-tenant-label': 'tenant-caller-value',
             },
         })]);
@@ -2831,7 +1994,6 @@ describe('createPluginHttpService', () => {
         const seenBodies: unknown[] = [];
         const service = createPluginHttpService({
             adapter: async (request) => createResponse(request.body),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'body-policy', origins: ['https://api.example.test'] },
@@ -2867,7 +2029,6 @@ describe('createPluginHttpService', () => {
     it('maps deny and thrown request-policy handlers to distinct host failures', async () => {
         const denied = createPluginHttpService({
             adapter: async () => createResponse('unused'),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'deny', origins: ['https://api.example.test'] },
@@ -2884,7 +2045,6 @@ describe('createPluginHttpService', () => {
 
         const failed = createPluginHttpService({
             adapter: async () => createResponse('unused'),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'throw', origins: ['https://api.example.test'] },
@@ -2903,11 +2063,10 @@ describe('createPluginHttpService', () => {
         await expect(failed({ url: 'https://api.example.test/status' })).rejects.not.toThrow('handler exploded');
     });
 
-    it('rejects method rewrites outside the interceptor declaration', async () => {
-        const adapter = vi.fn(async () => createResponse('unsafe'));
+    it('allows ordinary method rewrites outside the interceptor selection declaration', async () => {
+        const adapter = vi.fn(async () => createResponse('rewritten'));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'get-only', origins: ['https://api.example.test'], methods: ['GET'] },
@@ -2918,16 +2077,13 @@ describe('createPluginHttpService', () => {
             }],
         });
 
-        await expect(service({ url: 'https://api.example.test/data', method: 'GET' })).rejects.toMatchObject({
-            code: 'plugin_fetch_interceptor_failed',
-        });
-        expect(adapter).not.toHaveBeenCalled();
+        await expect(service({ url: 'https://api.example.test/data', method: 'GET' })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledWith(expect.objectContaining({ method: 'POST' }));
     });
 
     it('classifies malformed request-policy results as interceptor failures', async () => {
         const malformed = createPluginHttpService({
             adapter: async () => createResponse('unused'),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'malformed', origins: ['https://api.example.test'] },
@@ -2951,7 +2107,6 @@ describe('createPluginHttpService', () => {
         const adapter = vi.fn(async () => createResponse('unsafe'));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptorRegistry: {
                 declarations: [{ pluginId: 'acme.policy', contribution }],
                 activateContributionsOnDemand: async () => Object.freeze([]),
@@ -2979,7 +2134,6 @@ describe('createPluginHttpService', () => {
     it('classifies invalid allow request patches as interceptor failures', async () => {
         const invalidPatch = createPluginHttpService({
             adapter: async () => createResponse('unused'),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'invalid-patch', origins: ['https://api.example.test'] },
@@ -3006,7 +2160,6 @@ describe('createPluginHttpService', () => {
         const adapter = vi.fn(async () => createResponse('unused'));
         const bodyPatch = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'body-patch', origins: ['https://api.example.test'] },
@@ -3035,7 +2188,6 @@ describe('createPluginHttpService', () => {
         const adapter = vi.fn(async () => createResponse('unused'));
         const responsePatch = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'response-patch', origins: ['https://api.example.test'] },
@@ -3065,7 +2217,6 @@ describe('createPluginHttpService', () => {
         const operationIds: string[] = [];
         const service = createPluginHttpService({
             adapter: async () => createResponse('ok'),
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'operation-policy', origins: ['https://api.example.test'] },
@@ -3096,7 +2247,6 @@ describe('createPluginHttpService', () => {
         });
         service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'self', origins: ['https://api.example.test'] },
@@ -3135,7 +2285,6 @@ describe('createPluginHttpService', () => {
         const adapter = vi.fn(async (request) => createResponse(request.url));
         const service = createPluginHttpService({
             adapter,
-            allowedUrlOrigins: ['https://api.example.test'],
             interceptors: [{
                 pluginId: 'acme.policy',
                 contribution: { id: 'self', origins: ['https://api.example.test'] },

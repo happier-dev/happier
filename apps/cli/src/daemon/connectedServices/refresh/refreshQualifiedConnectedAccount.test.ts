@@ -46,24 +46,6 @@ async function createHarness() {
       kind: 'development', registeredRootId: `qualified-refresh:${pluginId}`,
       canonicalRoot: rootPath, observedRevision: 1,
     }),
-    networkDependencies: {
-      resolveNetworkAddresses: async () => ['8.8.8.8'],
-      // The provider transport is the boundary; keep plugin refresh and K real.
-      openPinnedStream: async (request) => {
-        const response = await fetch(request.url);
-        const body = new Uint8Array(await response.arrayBuffer());
-        let delivered = false;
-        return {
-          status: response.status, headers: {}, contentLength: body.length,
-          read: async () => {
-            if (delivered) return null;
-            delivered = true;
-            return body;
-          },
-          cancel() {},
-        };
-      },
-    },
   });
   createdRegistries.push(registry);
   let generationCurrent = true;

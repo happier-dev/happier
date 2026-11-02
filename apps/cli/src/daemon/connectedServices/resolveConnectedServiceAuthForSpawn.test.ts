@@ -896,19 +896,6 @@ beforeAll(async () => {
           'happier.agent.pi',
         ],
         connectedAccounts: externalPurposeOwner!,
-        networkDependencies: {
-          resolveNetworkAddresses: async () => ['8.8.8.8'],
-          openPinnedStream: async (request) => {
-            if (request.url !== 'https://auth.openai.com/oauth/token') throw new Error('unexpected_refresh_provider');
-            const body = new TextEncoder().encode(JSON.stringify({ error: 'invalid_grant' }));
-            let delivered = false;
-            return { status: 400, headers: {}, contentLength: body.length, read: async () => {
-              if (delivered) return null;
-              delivered = true;
-              return body;
-            }, cancel() {} };
-          },
-        },
       }),
     });
 });

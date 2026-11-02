@@ -303,28 +303,6 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       happyHomeDir,
       runtimeOptions: {
         pluginIds: [service.pluginId],
-        networkDependencies: {
-          resolveNetworkAddresses: async () => ['8.8.8.8'],
-          openPinnedStream: async (request) => {
-            const response = await fetch(request.url, {
-              method: request.method,
-              headers: request.headers,
-              ...(request.body === undefined ? {} : { body: new Uint8Array(request.body).buffer }),
-              signal: request.signal,
-            });
-            const body = new Uint8Array(await response.arrayBuffer());
-            let delivered = false;
-            return {
-              status: response.status, headers: {}, contentLength: body.length,
-              read: async () => {
-                if (delivered) return null;
-                delivered = true;
-                return body;
-              },
-              cancel() {},
-            };
-          },
-        },
       },
     });
     const registry = admitted.registry;

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import axios from 'axios';
 import { ConnectedServiceBindingsV2IngressSchema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, FeaturesResponseSchema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, sealAccountScopedBlobCiphertext, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import type { ApiClient } from '@/api/api';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
@@ -82,6 +82,17 @@ const purposeOwner = createConnectedAccountPurposeBindingOwner({
   assertTargetAccountMaterializable: async () => { throw new Error('unexpected listed materialization'); },
 });
 
+beforeEach(() => {
+  // Plugin HTTP uses global fetch after removal of the pinned-network adapter.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url !== 'https://auth.openai.com/oauth/token') throw new Error('Unexpected provider transport');
+    return new Response(JSON.stringify(providerRejectsRefresh
+      ? { error: 'invalid_grant' }
+      : { access_token: 'refreshed-access', refresh_token: 'refreshed-refresh', id_token: 'fixture-id', expires_in: 3600 }),
+    { status: providerRejectsRefresh ? 400 : 200 });
+  });
+});
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'happier-qualified-spawn-'));
   lease = await pluginReloadController.acquireRuntimeRegistry({
@@ -90,17 +101,6 @@ beforeAll(async () => {
       resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development', registeredRootId: `qualified-spawn:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
       connectedAccounts: purposeOwner,
       qualifiedConnectedAccountEstablishedRuntimeOwner: established,
-      networkDependencies: {
-        resolveNetworkAddresses: async () => ['8.8.8.8'],
-        openPinnedStream: async (request) => {
-          if (request.url !== 'https://auth.openai.com/oauth/token') throw new Error('Unexpected provider transport');
-          const body = new TextEncoder().encode(JSON.stringify(providerRejectsRefresh
-            ? { error: 'invalid_grant' }
-            : { access_token: 'refreshed-access', refresh_token: 'refreshed-refresh', id_token: 'fixture-id', expires_in: 3600 }));
-          let delivered = false;
-          return { status: providerRejectsRefresh ? 400 : 200, headers: {}, contentLength: body.length, read: async () => { if (delivered) return null; delivered = true; return body; }, cancel() {} };
-        },
-      },
     }),
   });
 });

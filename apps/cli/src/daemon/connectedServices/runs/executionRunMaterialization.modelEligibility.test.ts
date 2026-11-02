@@ -237,25 +237,38 @@ async function createScenario() {
     let providerExchanges = 0;
     let providerGate: Promise<void> | null = null;
     let providerEntered: (() => void) | null = null;
+  const hostFetch = globalThis.fetch;
+  // Only the external provider transport is substituted; the production HTTP
+  // policy, Connected Account runtime, refresh CAS and native-home writes stay real.
+  const providerFetch = async (
+    ...[input, options]: Parameters<typeof fetch>
+  ) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const parsedUrl = new URL(url);
+    // Daemon control stays on real loopback HTTP beneath the composed client.
+    if (parsedUrl.protocol === 'http:' && parsedUrl.hostname === '127.0.0.1')
+      return hostFetch(input, options);
+    if (url !== 'https://auth.openai.com/oauth/token')
+      throw new Error('Unexpected provider transport');
+    providerExchanges += 1;
+    providerEntered?.();
+    await providerGate;
+    return new Response(
+      JSON.stringify({
+        access_token: `refreshed-access-${providerExchanges}`,
+        refresh_token: `refreshed-refresh-${providerExchanges}`,
+        id_token: 'fixture-id-token',
+        expires_in: 3600,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+  vi.stubGlobal('fetch', providerFetch);
     const runtimeLease = await pluginReloadController.acquireRuntimeRegistry({
         resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
             happyHomeDir: root, pluginIds: ['happier.agent.codex'], connectedAccounts: purposeOwner,
             scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() },
             qualifiedConnectedAccountEstablishedRuntimeOwner: established,
-            networkDependencies: {
-                resolveNetworkAddresses: async () => ['8.8.8.8'],
-                openPinnedStream: async (request) => {
-                    if (request.url !== 'https://auth.openai.com/oauth/token') throw new Error('Unexpected provider transport');
-                    providerExchanges += 1;
-                    providerEntered?.();
-                    await providerGate;
-                    const body = new TextEncoder().encode(JSON.stringify({ access_token: `refreshed-access-${providerExchanges}`,
-                        refresh_token: `refreshed-refresh-${providerExchanges}`, id_token: 'fixture-id-token', expires_in: 3600 }));
-                    let delivered = false;
-                    return { status: 200, headers: {}, contentLength: body.length,
-                        read: async () => { if (delivered) return null; delivered = true; return body; }, cancel() {} };
-                },
-            },
             resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development',
                 registeredRootId: `composed-run-fixture:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
         }),
@@ -462,6 +475,7 @@ describe('composed finite Run model recovery', () => {
     beforeAll(async () => { scenario = await createScenario(); });
     beforeEach(() => { scenario.reset(); });
     afterEach(async () => { await scenario?.release(); });
+        vi.unstubAllGlobals();
     afterAll(async () => { await scenario?.close(); });
     it.each(['captured', 'evidence-only'] as const)('recovers %s capacity through real Run materialization, HTTP, shared policy and scheduler without changing pool or parent authority', async (source) => {
         const materialized = await scenario.materialize();

@@ -6885,3 +6885,20 @@ through plugin-specific Actions or setting subscriptions. See
 [public author guide](../apps/docs/content/docs/plugins/agent-runtimes/index.mdx#idle-compaction-unreleased-03).
 This is an unreleased development contract; a declaration alone does not prove a
 loaded native operation or provider cache lifetime.
+
+
+### Plugin HTTP trust and redirects (0.3 development source)
+
+Native plugins are trusted, in-process code with ambient socket access.
+`privateNetwork` in a network declaration is an installation disclosure, not a
+network restriction. Plugin HTTP and WebSocket services use the platform's DNS
+and transport without a separate private-address classifier or address pinning.
+Provider endpoint safety and webhook destination checks have independent owners
+and retain their own locality rules.
+
+Manifest network origins, methods and `network.client` capabilities do not fence
+trusted plugin HTTP or WebSockets. Trusted request interceptors receive the URL
+and headers and may rewrite either, including bound credential headers and the
+request method. Their declarations select which requests invoke them; they do
+not constrain the rewritten destination. The SDK interceptor request remains
+bodyless, and transcript/diagnostic redaction stays with its existing owner.

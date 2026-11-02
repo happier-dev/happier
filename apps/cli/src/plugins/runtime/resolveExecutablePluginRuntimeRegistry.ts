@@ -434,16 +434,13 @@ import {
 } from './invocation/actionExecutor';
 import {
     createStablePluginHttpHost,
-    type StablePluginHttpFinalPolicyEffect,
 } from './fetch/service';
 import {
     createVoiceAccountPluginHttpCredentialBindingHost,
 } from './fetch/voiceAccountCredentialBinding';
 import {
     createGlobalFetchRuntime,
-    type GlobalFetchRuntimeDependencies,
 } from './fetch/globalFetchRuntime';
-import type { PluginNetworkAddressResolver } from './fetch/originLocality';
 import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import {
     createPluginMcpSessionResolver,
@@ -1817,9 +1814,7 @@ async function assertCommittedResourceActivationIdentity(params: Readonly<{
  * for the addresses the admission decision validated, and a composed host that
  * substitutes one without the other would still leave the machine.
  */
-export type PluginRuntimeNetworkDependencies = Readonly<{
-    resolveNetworkAddresses?: PluginNetworkAddressResolver;
-}> & GlobalFetchRuntimeDependencies;
+
 
 export type PluginRuntimeMachineAdmissionTransport = CliActionMachineAdmissionTransport;
 
@@ -1925,7 +1920,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Invalidates projections after a same-generation lazy activation fails terminally. */
         onTerminalActivationFailure?: (pluginId: string) => void;
         /** Process-owned network boundaries for this registry's one plugin HTTP host. */
-        networkDependencies?: PluginRuntimeNetworkDependencies;
         /** Testable port for the canonical Account plugin-settings persistence owner. */
         accountSettingsRecordAdapter?: PluginAccountSettingsRecordAdapter;
 
@@ -3963,29 +3957,12 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }))),
     });
     const stableHttpHost = createStablePluginHttpHost({
-        adapter: createGlobalFetchRuntime(
-            params?.networkDependencies?.openPinnedStream
-                ? { openPinnedStream: params.networkDependencies.openPinnedStream }
-                : {},
-        ),
-        ...(params?.networkDependencies?.resolveNetworkAddresses
-            ? { resolveNetworkAddresses: params.networkDependencies.resolveNetworkAddresses }
-            : {}),
-        redactInterceptorText({ seed, value }) {
-            return invocationServiceOwners.redactDiagnosticText({
-                pluginId: seed.plugin.id,
-                occurrenceId: seed.occurrenceId,
-                correlationId: seed.correlationId,
+        containsRegisteredSecret({ seed, value }) {
+            return invocationServiceOwners.containsRegisteredDiagnosticValue({
+                pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId,
             }, value);
         },
-        recordDisclosureMismatch({ seed, mismatch }) {
-            invocationServiceOwners.recordHostDiagnostic(seed, {
-                code: 'plugin_host_access_disclosure_mismatch',
-                severity: 'warning',
-                message: 'Network operation is outside the plugin manifest disclosure',
-                details: mismatch,
-            });
-        },
+        adapter: createGlobalFetchRuntime(),
         credentialBindingHost: createVoiceAccountPluginHttpCredentialBindingHost({
             voiceProviders: authoritativeContributes.voiceProviders ?? Object.freeze([]),
             // App-client requests are account-scoped and must not inherit a
@@ -4001,7 +3978,6 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             },
         }),
         interceptorRegistry: currentGlobalRequestInterceptorRegistry,
-        revalidateFinalPolicy: async (effect) => await revalidateStableHttpFinalPolicy(effect),
     });
     const managedDependencySourceModel = createV2ManagedDependencySourceModel({
         platform: resolveManagedDependencyHostPlatform(),
@@ -5314,81 +5290,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             throw new PluginError({ code: decision.code, message: 'MCP operation is not currently authorized' });
         }
     };
-    const revalidateStableHttpFinalPolicy = async (
-        effect: StablePluginHttpFinalPolicyEffect,
-    ): Promise<void> => {
-        const pluginId = effect.seed.plugin.id;
-        const current = resolveCurrentFinalPolicyRuntime(pluginId);
-        if (
-            !current?.applied
-            || effect.seed.occurrenceId !== current.occurrenceId
-            || !effect.seed.sourceCustody
-            || !pluginSourceCustodyEqual(
-                effect.seed.sourceCustody,
-                current.sourceCustody,
-            )
-        ) {
-            throw new PluginError({
-                code: 'plugin_final_generation_retired',
-                message: 'Plugin runtime is no longer current',
-            });
-        }
-        const target = resolveExactActivationTarget(pluginId);
-        if (!target) {
-            throw new PluginError({
-                code: 'plugin_final_package_untrusted',
-                message: 'Plugin package identity is unavailable',
-            });
-        }
-        let url: URL;
-        try {
-            url = new URL(effect.request.url);
-        } catch {
-            throw new PluginError({
-                code: 'plugin_final_resource_not_selected',
-                message: 'Fetch URL is not currently authorized',
-            });
-        }
-        if (
-            (url.protocol !== 'http:' && url.protocol !== 'https:')
-            || url.username.length > 0
-            || url.password.length > 0
-        ) {
-            throw new PluginError({
-                code: 'plugin_final_resource_not_selected',
-                message: 'Fetch URL is not currently authorized',
-            });
-        }
-        const method = (effect.request.method ?? 'GET').toUpperCase();
-        const supportedMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-        if (!supportedMethods.has(method)) {
-            throw new PluginError({
-                code: 'plugin_final_resource_not_selected',
-                message: 'Fetch method is not currently authorized',
-            });
-        }
-        const authorizationFacts = resolvePluginFinalPolicyAuthorizationFacts({
-            pluginId,
-            current,
-            targetGenerationMode: 'retained',
-            // Network declarations are cooperative disclosure. Exact selected
-            // Connected Account origins/currentness are rechecked by the
-            // stable HTTP owner before this trust/generation decision.
-            resourceSelections: Object.freeze([]),
-        });
-        const decision = evaluatePluginFinalPolicy({
-            ...authorizationFacts,
-            serviceAvailability: [Object.freeze({
-                id: 'http',
-                required: true,
-                status: 'available' as const,
-            })],
-            currentIntent: 'notRequired',
-        });
-        if (decision.outcome !== 'visible') {
-            throw new PluginError({ code: decision.code, message: 'Fetch operation is not currently authorized' });
-        }
-    };
+
     const resolveTargetActionAuthorizationFacts = (
         action: ResolvedTargetAction,
         purpose?: 'declaration',
@@ -5522,15 +5424,20 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 [],
                 seed.contribution.qualifiedId,
             );
-            return stableHttpHost.bind(seed, binding, {
-                revalidateFinalPolicy: async (effect) => {
-                    await revalidateStableHttpFinalPolicy(effect);
-                    if (input.endpointPolicy) {
-                        await revalidateVoiceSpeechHttpEndpoint({
-                            policy: input.endpointPolicy,
-                            requestUrl: effect.request.url,
-                        });
-                    }
+            const transport = createGlobalFetchRuntime();
+            const validateRecipient = async (requestUrl: string) => {
+                if (input.endpointPolicy) await revalidateVoiceSpeechHttpEndpoint({ policy: input.endpointPolicy, requestUrl });
+            };
+            // This compares the actual recipient with the selected credential scope;
+            // it does not re-admit the Action or plugin generation.
+            return stableHttpHost.prepareAdapterBinding!(seed, binding)({ ...transport,
+                async request(request, options) {
+                    await validateRecipient(request.url);
+                    return await transport.request(request, options);
+                },
+                async requestStream(request, options) {
+                    await validateRecipient(request.url);
+                    return await transport.requestStream!(request, options);
                 },
             });
         },

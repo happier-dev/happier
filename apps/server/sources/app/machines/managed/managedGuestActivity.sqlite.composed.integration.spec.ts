@@ -1,4 +1,5 @@
 import { readManagedAdmissionState } from '@/app/machines/managed/managedRows';
+import { registerManagedMachineRoutes } from './managedRoutes';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -147,6 +148,32 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             controller: { machineId: test.controller.id, installationId: test.controller.installationId } })).toBeNull();
         await db.managedMachine.update({ where: { id: test.row.id }, data: { intentRevision: 2 } });
         expect(await verify(MANAGED_ACTIVITY_READ_RPC_METHOD)).toBeNull();
+    });
+
+    it('finishes signed managed HTTP calls after its admitted Account daemon is shared', async () => {
+        const test = await setup('account', 'machines.managed.power.set', 'plain', false, false, 'daemon');
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.controller.id,
+            principal: { kind: 'account', accountId: test.requester.id }, level: 'admin' }));
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app); registerManagedMachineRoutes(app); await app.ready();
+        try {
+            const path = '/v1/machines/managed/controller/context';
+            const body = { homeId, managedId: test.row.id, expectedIntentRevision: test.row.intentRevision };
+            const headers = {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: test.authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: test.actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(test.authorization.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: test.authorization.token, effectActionId: test.actionId, target: test.authorization.binding.target,
+                    installationId: test.controller.installationId!, requestId: test.authorization.binding.requestId,
+                    method: 'POST', path, body, privateKey: test.keys.secretKey }),
+            };
+            const response = await app.inject({ method: 'POST', url: path, payload: body, headers });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ machine: { id: test.row.id } });
+        } finally { await app.close(); }
     });
 
     it('refuses an Account root on a foreign null row or a replaced control intent/request', async () => {

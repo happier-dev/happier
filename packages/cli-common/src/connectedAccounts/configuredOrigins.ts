@@ -1,22 +1,10 @@
-import type {
-    PluginConnectedAccountDescriptorContributionV2,
-} from '@happier-dev/protocol';
-import type { ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext } from './authenticationTypes.js';
-import type { PluginContributionRef } from '../plugins/registration/contracts.js';
-
-
+import type { PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol';
 import { normalizeConnectedAccountConfiguredOrigin } from '@happier-dev/protocol/connect/execute-configuration-action';
 export { normalizeConnectedAccountConfiguredOrigin } from '@happier-dev/protocol/connect/execute-configuration-action';
 
-type RuntimeConfiguration = PluginConnectedAccountAuthenticationContext['configuration'];
-
-function sameService(left: PluginContributionRef, right: PluginContributionRef): boolean {
-    return left.pluginId === right.pluginId && left.localId === right.localId;
-}
-
 /**
  * The two configured facts of one Connected Account endpoint. `origin` is the
- * network origin HostAccess governs and always means `scheme://host[:port]`.
+ * network origin used for routing and always means `scheme://host[:port]`.
  * `base` is the configured service base a source routes by, which for a
  * path-prefixed deployment carries the path segment the account lives beneath.
  * They are one declaration seen from two sides: `base` always begins with
@@ -25,7 +13,6 @@ function sameService(left: PluginContributionRef, right: PluginContributionRef):
 export type ConnectedAccountConfiguredEndpoint = Readonly<{
     origin: string;
     base: string;
-    grantTargetKind: 'connectedAccountOrigin' | 'fixedOrigin';
 }>;
 
 /**
@@ -65,24 +52,14 @@ export function normalizeConnectedAccountConfiguredBase(
     return Object.freeze({
         origin: url.origin,
         base,
-        grantTargetKind: 'connectedAccountOrigin',
     });
 }
 
 function originEndpoint(
     value: string,
-    grantTargetKind: ConnectedAccountConfiguredEndpoint['grantTargetKind'],
 ): ConnectedAccountConfiguredEndpoint {
     const origin = normalizeConnectedAccountConfiguredOrigin(value).origin;
-    return Object.freeze({ origin, base: origin, grantTargetKind });
-}
-
-function configurationService(
-    configuration: RuntimeConfiguration,
-): PluginContributionRef {
-    return configuration.target.kind === 'account'
-        ? configuration.target.account.service
-        : configuration.target.service;
+    return Object.freeze({ origin, base: origin });
 }
 
 type ConnectedAccountDescriptorModeConfiguration = NonNullable<
@@ -116,7 +93,7 @@ function readOwnEnumerableString(
  * resolves to no origin at all rather than to something a caller could reach.
  * `connectedAccountBase` persists a service base that may live beneath a path
  * segment, and projects both facts: the base a source routes by and the origin
- * HostAccess governs.
+ * used to route the request.
  */
 export function projectConnectedAccountConfiguredEndpoints(input: Readonly<{
     configuration: ConnectedAccountDescriptorModeConfiguration | undefined;
@@ -145,7 +122,7 @@ export function projectConnectedAccountConfiguredEndpoints(input: Readonly<{
             continue;
         }
         if (semantic.value === 'connectedAccountOrigin') {
-            endpoints.push(originEndpoint(configured, 'connectedAccountOrigin'));
+            endpoints.push(originEndpoint(configured));
             continue;
         }
         const originByValue = Object.getOwnPropertyDescriptor(field, 'originByValue');
@@ -159,68 +136,7 @@ export function projectConnectedAccountConfiguredEndpoints(input: Readonly<{
                 `Connected-account configured endpoint field '${field.id}' declares no origin for its configured choice`,
             );
         }
-        endpoints.push(originEndpoint(routed, 'fixedOrigin'));
+        endpoints.push(originEndpoint(routed));
     }
     return Object.freeze(endpoints);
-}
-
-/**
- * Projects only descriptor-typed endpoint fields from the already normalized
- * host configuration snapshot. The descriptor supplies field semantics, never
- * an endpoint value or HostAccess grant.
- */
-export function resolveHostOwnedConnectedAccountConfiguredEndpoints(input: Readonly<{
-    service: PluginContributionRef;
-    descriptor: PluginConnectedAccountDescriptorContributionV2;
-    configuration: RuntimeConfiguration;
-}>): readonly ConnectedAccountConfiguredEndpoint[] {
-    if (
-        input.descriptor.id !== input.service.localId
-        || !sameService(configurationService(input.configuration), input.service)
-    ) {
-        throw new Error(
-            'Connected-account configured origin descriptor does not match the exact configuration target',
-        );
-    }
-    const mode = input.descriptor.authentication.modes.find(
-        (candidate) => candidate.id === input.configuration.target.modeId,
-    );
-    if (!mode) {
-        throw new Error(
-            'Connected-account configured origin authentication mode is unavailable',
-        );
-    }
-    const descriptorConfiguration =
-        'configuration' in mode ? mode.configuration : undefined;
-    if (!descriptorConfiguration) return Object.freeze([]);
-    if (
-        (descriptorConfiguration.scope === 'service'
-            && input.configuration.target.kind !== 'service')
-        || (descriptorConfiguration.scope === 'account'
-            && input.configuration.target.kind === 'service')
-    ) {
-        throw new Error(
-            'Connected-account configured origin scope does not match the exact configuration target',
-        );
-    }
-    return projectConnectedAccountConfiguredEndpoints({
-        configuration: descriptorConfiguration,
-        values: input.configuration.values,
-    });
-}
-
-/**
- * The network-origin view of the same projection. HostAccess governs by origin
- * alone, so a path-prefixed base narrows to the origin it was derived from
- * rather than widening or splitting the admitted network target.
- */
-export function resolveHostOwnedConnectedAccountConfiguredOrigins(input: Readonly<{
-    service: PluginContributionRef;
-    descriptor: PluginConnectedAccountDescriptorContributionV2;
-    configuration: RuntimeConfiguration;
-}>): readonly string[] {
-    return Object.freeze(
-        resolveHostOwnedConnectedAccountConfiguredEndpoints(input)
-            .map((endpoint) => endpoint.origin),
-    );
 }

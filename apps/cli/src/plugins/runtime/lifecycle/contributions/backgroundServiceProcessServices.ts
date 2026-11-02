@@ -15,11 +15,7 @@ export { BACKGROUND_SERVICE_PROCESS_LOCAL_SERVICE_IDS, BACKGROUND_SERVICE_PROCES
 /** The daemon copies its admitted policy; child construction does not interpret HostAccess. */
 export type BackgroundServiceProcessLocalPolicy = Readonly<{
     binding: Pick<PluginInvocationServiceBinding,
-        'id' | 'occurrenceId' | 'availability' | 'unavailableDiagnostics'
-        | 'filesystemScopes' | 'filesystemRequestIds'
-        | 'processExecutables' | 'processEnvKeys' | 'processRequestIds' | 'environmentRequestIds'
-        | 'networkOrigins' | 'networkHostSuffixes' | 'networkRequestIds' | 'networkScopes'
-        | 'networkClientOrigins' | 'networkClientHostSuffixes' | 'networkClientRequestIds' | 'networkClientScopes'>;
+        'id' | 'occurrenceId'>;
     filesystemRoots?: Readonly<{ pluginData: string; workspace?: string; projects: readonly (readonly [string, string])[] }>;
     environment?: Readonly<Record<string, string>>;
 }>;
@@ -39,8 +35,10 @@ export type BackgroundServiceProcessLocalHost = Readonly<{
     agentCli?: NonNullable<PluginInvocationServicesFactoryParams['exec']>['agentCli'];
     assertLaunchCurrent?: NonNullable<PluginInvocationServicesFactoryParams['exec']>['assertLaunchCurrent'];
     http?: Readonly<{
-        request(input: Parameters<PluginServices['http']['request']>[0], options: Parameters<PluginServices['http']['request']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<PluginServices['http']['request']>;
-        openWebSocket(input: Parameters<PluginServices['http']['openWebSocket']>[0], options: Parameters<PluginServices['http']['openWebSocket']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<PluginServices['http']['openWebSocket']>;
+        request(input: Parameters<ReturnType<StablePluginHttpHost['bind']>['request']>[0], options: Parameters<ReturnType<StablePluginHttpHost['bind']>['request']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<ReturnType<StablePluginHttpHost['bind']>['request']>;
+        requestStream(input: Parameters<ReturnType<StablePluginHttpHost['bind']>['requestStream']>[0], options: Parameters<ReturnType<StablePluginHttpHost['bind']>['requestStream']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<ReturnType<StablePluginHttpHost['bind']>['requestStream']>;
+        prepareRead(input: Parameters<ReturnType<StablePluginHttpHost['bind']>['prepareRead']>[0], options: Parameters<ReturnType<StablePluginHttpHost['bind']>['prepareRead']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<ReturnType<StablePluginHttpHost['bind']>['prepareRead']>;
+        openWebSocket(input: Parameters<ReturnType<StablePluginHttpHost['bind']>['openWebSocket']>[0], options: Parameters<ReturnType<StablePluginHttpHost['bind']>['openWebSocket']>[1], adapter: PluginHttpRuntimeAdapter): ReturnType<ReturnType<StablePluginHttpHost['bind']>['openWebSocket']>;
     }>;
 }>;
 
@@ -93,12 +91,7 @@ export function createBackgroundServiceProcessServices(params: Readonly<{
             isOccurrenceCurrent: () => !lifetime.signal.aborted,
         };
         const base = createPluginInvocationServiceBinding(policy.binding.occurrenceId, policy.binding.id);
-        const binding: PluginInvocationServiceBinding = {
-            ...base, ...policy.binding,
-            availability: Object.fromEntries(PLUGIN_SERVICE_IDS.map((serviceId) => [serviceId,
-                BACKGROUND_SERVICE_PROCESS_LOCAL_SERVICE_IDS.some((id) => id === serviceId) ? policy.binding.availability[serviceId] : 'unavailable',
-            ])) as PluginInvocationServiceBinding['availability'],
-        };
+        const binding: PluginInvocationServiceBinding = { ...base, ...policy.binding };
         const privateHost = params.clientServices.__backgroundServiceProcessLocal as BackgroundServiceProcessLocalHost | undefined;
         if (!privateHost?.writeLog) {
             throw new PluginError({ code: 'background_service_process_logger_unavailable', message: 'Daemon invocation log redaction is unavailable' });
@@ -116,6 +109,8 @@ export function createBackgroundServiceProcessServices(params: Readonly<{
         const http: StablePluginHttpHost | undefined = privateHost?.http ? {
             bind: () => ({
                 request: (input, options) => privateHost.http!.request(input, options, transport),
+                requestStream: (input, options) => privateHost.http!.requestStream(input, options, transport),
+                prepareRead: (input, options) => privateHost.http!.prepareRead(input, options, transport),
                 openWebSocket: (input, options) => privateHost.http!.openWebSocket(input, options, transport),
             }),
         } : undefined;

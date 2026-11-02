@@ -164,8 +164,6 @@ describe('background process invocation services', () => {
             filesystemRoots: { pluginData: '/tmp/plugin', workspace: '/tmp/workspace', projects: new Map() },
             http: createStablePluginHttpHost({
                 adapter: { request: async () => { throw new Error('daemon performed HTTP I/O'); }, openWebSocket: async () => { throw new Error('not requested'); } },
-                resolveNetworkAddresses: async () => ['93.184.216.34'],
-                revalidateFinalPolicy: async () => { revalidated = true; },
             }),
         });
         const binding = createPluginInvocationServiceBinding('occurrence', 'binding');
@@ -173,13 +171,12 @@ describe('background process invocation services', () => {
             const prepared = await host.prepareBackgroundServiceProcessLocalPolicy({
                 plugin: { id: 'fixture', version: '1.0.0' }, contribution: { id: 'worker', qualifiedId: 'fixture/backgroundServices/worker' },
                 occurrenceId: 'occurrence', correlationId: 'invocation', surface: 'background', signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
-            }, { ...binding, availability: { ...binding.availability, logger: 'available', fs: 'available', http: 'available' }, filesystemScopes: [], networkOrigins: ['https://example.test'] });
+            }, binding);
             expect(prepared.localPolicy.filesystemRoots?.workspace).toBe('/tmp/workspace');
             const response = await prepared.services.__backgroundServiceProcessLocal.http!.request({ url: 'https://example.test/data', redirect: 'error' }, {}, {
-                request: async (_request, options) => ({ status: 200, finalUrl: 'https://example.test/data', headers: {}, body: new Uint8Array([options?.validatedAddresses?.length ?? 0]) }),
+                request: async () => ({ status: 200, finalUrl: 'https://example.test/data', headers: {}, body: new Uint8Array([1]) }),
                 openWebSocket: async () => { throw new Error('not requested'); },
             });
-            expect(revalidated).toBe(true);
             expect(response.body).toEqual(new Uint8Array([1]));
         } finally { controller.abort(); await host.dispose(); }
     });
@@ -201,7 +198,7 @@ describe('background process invocation services', () => {
         const owner = createBackgroundServiceProcessServices({
             metadata: { plugin: { id: 'fixture', version: '1.0.0' }, contribution: { id: 'worker', qualifiedId: 'fixture/backgroundServices/worker' } },
             signal: new AbortController().signal, clientServices: { __backgroundServiceProcessLocal: { async writeLog() {} } },
-            localPolicy: { binding: { ...binding, availability: { ...binding.availability, logger: 'available', fs: 'available' }, filesystemScopes: [{ root: 'pluginData', access: ['read', 'write'] }] },
+            localPolicy: { binding,
                 filesystemRoots: { pluginData: directory, workspace: directory, projects: [] },
             },
         });

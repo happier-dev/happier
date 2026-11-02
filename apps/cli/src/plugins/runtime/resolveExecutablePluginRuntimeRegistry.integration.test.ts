@@ -60,10 +60,6 @@ import {
     resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction,
     type RetainedManagedProviderRuntimeInvocationScope,
 } from './resolveExecutablePluginRuntimeRegistry';
-import type {
-    PinnedHttpStreamRequest,
-    PinnedHttpStreamResponse,
-} from '@/network/pinnedHttp';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { adaptTargetActivationFacts } from '@/plugins/projection/introspection/targetActivationFacts';
 import { mapPluginSourceToDiagnosticSource } from '@/plugins/projection/introspection/source';
@@ -122,15 +118,6 @@ function requireManagedImmutableGenerationId(
     return sourceCustody.immutableGenerationId;
 }
 
-/**
- * A public-classified address nothing answers on. The canonical locality policy
- * rejects the reserved documentation ranges outright (`203.0.113.0/24` is
- * `unsafe`), so this sits just outside them. Admission resolves a configured
- * origin once and the socket must connect to exactly that answer, so observing
- * this address on the pinned request proves the transport reused the admitted
- * DNS result instead of resolving the hostname again.
- */
-const NOVEL_ACCOUNT_VALIDATED_ADDRESS = '203.0.114.10';
 const SAMPLE_PLUGIN_QUALIFIED_AGENT_ID = `${SAMPLE_PLUGIN_ID}/${SAMPLE_PLUGIN_PROVIDER_ID}`;
 
 async function createTrustedLocalLinkInstall(params: Readonly<{
@@ -2653,46 +2640,16 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             },
         });
 
-        // Origin admission makes one private-network decision per configured
-        // origin and then pins the socket to exactly that answer, so both
-        // process-owned boundaries are substituted together. Substituting only
-        // `globalThis.fetch` left the real resolver classifying the fixture
-        // hostname as unresolvable/private and failed admission closed. Neither
-        // the locality policy nor the admission path is weakened here.
-        const resolveNetworkAddresses = vi.fn(async (hostname: string) => {
-            if (hostname !== 'tenant.example.test') {
-                throw new Error(`unexpected DNS lookup for ${hostname}`);
-            }
-            return Object.freeze([NOVEL_ACCOUNT_VALIDATED_ADDRESS]);
-        });
-        const pinnedRequests: Readonly<{
-            url: string;
-            method: string | undefined;
-            validatedAddresses: readonly string[];
-        }>[] = [];
-        const openPinnedStream = vi.fn(async (request: PinnedHttpStreamRequest) => {
-            pinnedRequests.push(Object.freeze({
-                url: request.url,
-                method: request.method,
-                validatedAddresses: request.validatedAddresses,
+        const requests: Readonly<{ url: string; method: string | undefined }>[] = [];
+        vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async (input, init) => {
+            requests.push(Object.freeze({
+                url: input instanceof Request ? input.url : String(input),
+                method: init?.method,
             }));
-            const bytes = new TextEncoder().encode('{}');
-            let delivered = false;
-            return Object.freeze({
-                status: 200,
-                headers: Object.freeze({ 'content-type': 'application/json' }),
-                contentLength: bytes.byteLength,
-                read: async () => {
-                    if (delivered) return null;
-                    delivered = true;
-                    return bytes;
-                },
-                cancel: () => {},
-            }) satisfies PinnedHttpStreamResponse;
-        });
+            return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+        }));
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir,
-            networkDependencies: { resolveNetworkAddresses, openPinnedStream },
         });
         try {
             expect(runtimeRegistry.activatedPluginIds.has('acme.novel.accounts')).toBe(false);
@@ -2761,12 +2718,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 status: 'connected',
                 accountId: 'novel-1',
             });
-            // The socket must carry exactly the address admission resolved, not a
-            // second lookup performed by the transport.
-            expect(pinnedRequests).toEqual([{
+            expect(requests).toEqual([{
                 url: 'https://tenant.example.test/session',
                 method: 'POST',
-                validatedAddresses: [NOVEL_ACCOUNT_VALIDATED_ADDRESS],
             }]);
 
             let currentnessChecks = 0;
@@ -2793,7 +2747,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             await expect(staleInvocation).rejects.toMatchObject({
                 message: 'Connected-account authentication runtime is no longer current',
             });
-            expect(pinnedRequests).toHaveLength(1);
+            expect(requests).toHaveLength(1);
             const introspection = adaptTargetActivationFacts({
                 generation: runtimeRegistry.generation!,
                 candidates: runtimeRegistry.contributes.introspectionContributions ?? [],

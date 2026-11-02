@@ -56,6 +56,7 @@ export type PluginInvocationSecretRedactor = Readonly<{
     registerConfidentialPaths(scope: PluginInvocationSecretRedactionScope, paths: readonly string[], nonStringPaths: readonly string[]): void;
     isConfidentialPath(scope: PluginInvocationSecretRedactionScope, path: readonly string[]): boolean;
     projectIssue(scope: PluginInvocationSecretRedactionScope, value: unknown): ReturnType<typeof projectTargetActionDiagnosticIssue>;
+    containsRegisteredValue(scope: PluginInvocationSecretRedactionScope, value: string): boolean;
     redact(scope: PluginInvocationSecretRedactionScope, value: string): string;
     completeInvocation(scope: PluginInvocationSecretRedactionScope): void;
     retireGeneration(occurrenceId: string, pluginId: string): void;
@@ -155,6 +156,15 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
                 ? projectTargetActionDiagnosticIssue(value, {
                     paths: [...state.confidentialPaths], nonStringPaths: [...state.nonStringPaths],
                 }) : null;
+        },
+        containsRegisteredValue(scope, value): boolean {
+            const state = statesByScope.get(secretRedactionScopeKey(scope));
+            if (!state) return false;
+            if (state.saturated) return true;
+            for (const registered of state.values) {
+                if (value.includes(registered)) return true;
+            }
+            return false;
         },
         redact(scope, value): string {
             const state = statesByScope.get(secretRedactionScopeKey(scope));

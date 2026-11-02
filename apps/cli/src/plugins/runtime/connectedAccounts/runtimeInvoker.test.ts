@@ -703,11 +703,6 @@ describe('connected-account runtime invoker', () => {
                 },
             }),
             interceptorRegistry,
-            redactInterceptorText: ({ seed, value }) => owners.redactDiagnosticText({
-                pluginId: seed.plugin.id,
-                occurrenceId: seed.occurrenceId,
-                correlationId: seed.correlationId,
-            }, value),
         });
         const authenticationLogs: PluginInvocationLogRecord[] = [];
         owners = createProductionPluginInvocationServiceOwners({
@@ -848,18 +843,16 @@ describe('connected-account runtime invoker', () => {
 
         expect(interceptedRequests).toEqual([
             {
-                url: 'https://api.telegram.org/bot[REDACTED]/getMe',
+                url: rawUrl,
                 method: 'POST',
                 headers: {},
             },
             {
-                url: 'https://api.telegram.org/bot[REDACTED]/getMe',
+                url: issuedUrl,
                 method: 'POST',
                 headers: {},
             },
         ]);
-        expect(JSON.stringify(interceptedRequests)).not.toContain(token);
-        expect(JSON.stringify(interceptedRequests)).not.toContain(issuedToken);
         expect(terminalRequests).toEqual([
             expect.objectContaining({ url: rawUrl, body }),
             expect.objectContaining({ url: issuedUrl }),

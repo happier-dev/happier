@@ -1019,16 +1019,10 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             throw new PluginError({ code: 'background_service_process_managed_runtime_unavailable', message: 'Managed provider custody cannot be transferred to a background service child' });
         }
         const roots = operation?.filesystemRoots ?? filesystemRoots ?? params?.resolveFilesystemRoots?.(seed.plugin.id) ?? undefined;
-        const { id, occurrenceId, availability, unavailableDiagnostics, filesystemScopes, filesystemRequestIds,
-            processExecutables, processEnvKeys, processRequestIds, environmentRequestIds,
-            networkOrigins, networkHostSuffixes, networkRequestIds, networkScopes,
-            networkClientOrigins, networkClientHostSuffixes, networkClientRequestIds, networkClientScopes } = binding;
+        const { id, occurrenceId, processEnvKeys } = binding;
         const environment = operation ? operation.environment ?? {} : process.env;
         const localPolicy: BackgroundServiceProcessLocalPolicy = {
-            binding: { id, occurrenceId, availability, unavailableDiagnostics, filesystemScopes, filesystemRequestIds,
-                processExecutables, processEnvKeys, processRequestIds, environmentRequestIds,
-                networkOrigins, networkHostSuffixes, networkRequestIds, networkScopes,
-                networkClientOrigins, networkClientHostSuffixes, networkClientRequestIds, networkClientScopes },
+            binding: { id, occurrenceId },
             ...(roots ? { filesystemRoots: { pluginData: roots.pluginData, workspace: roots.workspace, projects: [...roots.projects] } } : {}),
             environment: Object.fromEntries((processEnvKeys ?? []).flatMap((key) => {
                 const value = environment[key];
@@ -1037,7 +1031,8 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         };
         const systemTools = operation?.systemTools ?? params?.exec?.systemToolsForPlugin?.(seed.plugin.id);
         const http = params?.http;
-        if (binding.availability.http === 'available' && !http?.bindWithAdapter) {
+        const bindHttpAdapter = http?.prepareAdapterBinding?.(seed, binding, operation?.httpBinding);
+        if (http && !bindHttpAdapter) {
             throw new PluginError({ code: 'background_service_process_http_policy_unavailable', message: 'HTTP policy owner cannot place its physical transport in this child' });
         }
         return {
@@ -1077,9 +1072,14 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                     seed.retainCleanup?.({ async dispose() { release(); } });
                     return { ...resolved, release };
                 } } : {}),
-                ...(http?.bindWithAdapter ? { http: {
-                    request: (input, options, adapter) => http.bindWithAdapter!(seed, binding, adapter, operation?.httpBinding).request(input, options),
-                    openWebSocket: (input, options, adapter) => http.bindWithAdapter!(seed, binding, adapter, operation?.httpBinding).openWebSocket(input, options),
+                ...(bindHttpAdapter ? { http: {
+                    request: (input, options, adapter) => bindHttpAdapter(adapter).request(input, options),
+                    requestStream: (input, options, adapter) => bindHttpAdapter(adapter).requestStream(input, options),
+                    prepareRead: (input, options, adapter) => {
+                        const boundHttp = bindHttpAdapter(adapter);
+                        return boundHttp.prepareRead(input, options);
+                    },
+                    openWebSocket: (input, options, adapter) => bindHttpAdapter(adapter).openWebSocket(input, options),
                 } } : {}),
             } },
         };
@@ -1138,6 +1138,12 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 signal: seed.signal,
                 isOccurrenceCurrent: seed.isOccurrenceCurrent,
             }) ?? null;
+        },
+        containsRegisteredDiagnosticValue(
+            scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,
+            value: string,
+        ): boolean {
+            return secretRedactor.containsRegisteredValue(scope, value);
         },
         redactDiagnosticText(
             scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>,

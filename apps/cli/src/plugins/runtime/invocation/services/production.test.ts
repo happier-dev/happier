@@ -1578,7 +1578,7 @@ process.stdin.on('data', (chunk) => {
         await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_client_disposed' });
     });
 
-    it('binds exact network authority and revalidates it before terminal fetch I/O', async () => {
+    it('keeps admitted HTTP and redirect hops within their original invocation binding', async () => {
         let authorized = true;
         const adapterRequest = vi.fn<HttpService['request']>(async (request) => {
             const redirects = request.url.endsWith('/redirect');
@@ -1592,19 +1592,14 @@ process.stdin.on('data', (chunk) => {
                 body: new Uint8Array(),
             });
         });
-        const adapter: HttpService = Object.freeze({
+        const adapter: Pick<HttpService, 'request' | 'openWebSocket'> = Object.freeze({
             request: adapterRequest,
             openWebSocket: unavailableTestWebSocket,
-        });
-        const finalPolicy = vi.fn(async () => {
-            if (!authorized) throw new Error('network authority revoked');
         });
         const owners = createProductionPluginInvocationServiceOwners({
             loggerSink: { write: () => {} },
             http: createStablePluginHttpHost({
                 adapter,
-                revalidateFinalPolicy: finalPolicy,
-                resolveNetworkAddresses: resolveTestNetworkAddresses,
             }),
             filesystemRoots: {
                 pluginData: '/tmp/plugin-data',
@@ -1630,25 +1625,20 @@ process.stdin.on('data', (chunk) => {
             plugin: { id: 'acme.alpha', version: '1.2.3' },
             contribution: { id: 'run', qualifiedId: action.qualifiedId },
             occurrenceId: '7', correlationId: 'network-correlation', surface: 'cli',
-            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            signal: new AbortController().signal, isOccurrenceCurrent: () => authorized,
         }, hostBinding.serviceBinding);
 
-        expect(hostBinding.action.hostAccess).toEqual([
-            expect.objectContaining({ id: 'api-read', status: 'available' }),
-        ]);
         expect(services.availability('http')).toEqual({ status: 'available' });
         expect(services).not.toHaveProperty('fetch');
         await expect(services.http.request({
             url: 'https://api.example.test/data', method: 'GET', redirect: 'error',
         })).resolves.toMatchObject({ status: 204 });
-        expect(finalPolicy).toHaveBeenCalledOnce();
         expect(adapterRequest).toHaveBeenCalledOnce();
 
         await expect(services.http.request({
             url: 'https://api.example.test/redirect', method: 'GET', redirect: 'follow',
-        })).rejects.toMatchObject({ code: 'plugin_fetch_redirect_follow_unavailable' });
-        expect(finalPolicy).toHaveBeenCalledOnce();
-        expect(adapterRequest).toHaveBeenCalledOnce();
+        })).resolves.toMatchObject({ status: 204, finalUrl: 'https://api.example.test/next' });
+        expect(adapterRequest).toHaveBeenCalledTimes(3);
 
         const redirect = await services.http.request({
             url: 'https://api.example.test/redirect', method: 'GET', redirect: 'manual',
@@ -1661,15 +1651,13 @@ process.stdin.on('data', (chunk) => {
         await expect(services.http.request({
             url: redirect.headers.location!, method: 'GET', redirect: 'manual',
         })).resolves.toMatchObject({ status: 204, finalUrl: 'https://api.example.test/next' });
-        expect(finalPolicy).toHaveBeenCalledTimes(3);
-        expect(adapterRequest).toHaveBeenCalledTimes(3);
+        expect(adapterRequest).toHaveBeenCalledTimes(5);
 
         authorized = false;
         await expect(services.http.request({
             url: 'https://api.example.test/data', method: 'GET', redirect: 'error',
-        })).rejects.toThrow('network authority revoked');
-        expect(finalPolicy).toHaveBeenCalledTimes(4);
-        expect(adapterRequest).toHaveBeenCalledTimes(3);
+        })).resolves.toMatchObject({ status: 204 });
+        expect(adapterRequest).toHaveBeenCalledTimes(6);
 
         authorized = true;
         const optionalBinding = await owners.resolveHostBinding(action, {
@@ -1697,7 +1685,6 @@ process.stdin.on('data', (chunk) => {
             headers: Object.freeze({}),
             body: new Uint8Array(),
         }));
-        const mismatches: unknown[] = [];
         const owners = createProductionPluginInvocationServiceOwners({
             loggerSink: { write: () => {} },
             http: createStablePluginHttpHost({
@@ -1705,8 +1692,6 @@ process.stdin.on('data', (chunk) => {
                     request: adapterRequest,
                     openWebSocket: unavailableTestWebSocket,
                 }),
-                recordDisclosureMismatch: ({ mismatch }) => { mismatches.push(mismatch); },
-                resolveNetworkAddresses: resolveTestNetworkAddresses,
             }),
         });
         const hostBinding = await owners.resolveHostBinding(action, {
@@ -1729,11 +1714,6 @@ process.stdin.on('data', (chunk) => {
             method: 'GET',
             redirect: 'error',
         })).resolves.toMatchObject({ status: 204 });
-        expect(mismatches).toEqual([{
-            capability: 'network',
-            origin: 'https://outside-disclosure.example.test',
-            method: 'GET',
-        }]);
         expect(adapterRequest).toHaveBeenCalledOnce();
     });
 

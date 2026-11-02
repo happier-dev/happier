@@ -1,15 +1,15 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { readBoundedPluginHttpResponseBody } from '@happier-dev/cli-common/plugins/http';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import {
-  openPinnedHttpStream,
-  type PinnedHttpStreamTransport,
-} from '@/network/pinnedHttp';
-import {
-  MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES,
   type PluginHttpRuntimeAdapter,
   type PluginHttpRuntimeRequestOptions,
 } from './service';
 import { createPluginWebSocketConnection } from './webSocket';
+import { loadUndici } from '@/utils/loadUndici';
+import { snapshotPluginHttpStreamRequest, wrapPluginHttpStream } from './stream';
+
+let httpDispatcher: import('undici').Agent | undefined;
 
 function headersToRecord(headers: Headers | undefined): Readonly<Record<string, string>> {
   if (!headers || typeof headers.forEach !== 'function') {
@@ -32,37 +32,6 @@ function toFetchBody(body: Uint8Array | undefined): FetchBody | undefined {
   return body as FetchBody;
 }
 
-function createResponseTooLargeError(): PluginError {
-  return new PluginError({
-    code: 'plugin_fetch_response_too_large',
-    message: 'Plugin fetch response exceeded the stable response-body limit',
-  });
-}
-
-function hasOversizedDeclaredResponseBody(response: Response): boolean {
-  const contentLength = response.headers.get('content-length');
-  if (contentLength === null || !/^\d+$/.test(contentLength)) {
-    return false;
-  }
-  const declaredBytes = Number(contentLength);
-  return !Number.isSafeInteger(declaredBytes)
-    || declaredBytes > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES;
-}
-
-function createRedirectRefusedError(): PluginError {
-  return new PluginError({
-    code: 'plugin_fetch_redirect_follow_unavailable',
-    message: 'Plugin fetch redirect following is unavailable until each redirect hop can be reauthorized',
-  });
-}
-
-function createValidatedAddressRequiredError(): PluginError {
-  return new PluginError({
-    code: 'plugin_fetch_adapter_unavailable',
-    message: 'Plugin fetch connection has no validated network address',
-  });
-}
-
 function createRequestAbortController(signal: AbortSignal | undefined): Readonly<{
   controller: AbortController;
   dispose(): void;
@@ -83,155 +52,132 @@ function createRequestAbortController(signal: AbortSignal | undefined): Readonly
   };
 }
 
-async function readBoundedResponseBody(
-  response: Response,
-  requestAbort: AbortController,
-): Promise<Uint8Array> {
-  const responseBody = response.body;
-  if (!responseBody) {
-    return new Uint8Array();
-  }
-  if (hasOversizedDeclaredResponseBody(response)) {
-    const error = createResponseTooLargeError();
-    requestAbort.abort(error);
-    void responseBody.cancel(error).catch(() => undefined);
-    throw error;
-  }
-  const reader = responseBody.getReader();
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value.byteLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES - byteLength) {
-        const error = createResponseTooLargeError();
-        requestAbort.abort(error);
-        void reader.cancel(error).catch(() => undefined);
-        throw error;
-      }
-      byteLength += value.byteLength;
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (chunks.length === 0) return new Uint8Array();
-  if (chunks.length === 1) return chunks[0]!;
-  const body = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
+/** Normalize native Node/Bun peer representations once; unavailable capture is not HTTP failure. */
+function readTlsPeer(url: string, fingerprint: unknown, validFrom: unknown, validTo: unknown): HttpResponse['tlsPeer'] {
+    if (typeof fingerprint !== 'string' || !/^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/i.test(fingerprint)
+        || typeof validFrom !== 'string' || typeof validTo !== 'string') return;
+    const notBefore = Date.parse(validFrom);
+    const notAfter = Date.parse(validTo);
+    if (!Number.isFinite(notBefore) || !Number.isFinite(notAfter) || notAfter <= notBefore) return;
+    return Object.freeze({ url, fingerprint256: fingerprint, notBefore, notAfter });
 }
 
-async function readBoundedPinnedResponseBody(
-  response: Awaited<ReturnType<typeof openPinnedHttpStream>>,
-): Promise<Uint8Array> {
-  if (
-    response.contentLength !== null
-    && response.contentLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES
-  ) {
-    response.cancel();
-    throw createResponseTooLargeError();
-  }
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  for (;;) {
-    const chunk = await response.read();
-    if (chunk === null) break;
-    if (chunk.byteLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES - byteLength) {
-      response.cancel();
-      throw createResponseTooLargeError();
-    }
-    byteLength += chunk.byteLength;
-    chunks.push(chunk);
-  }
-  if (chunks.length === 0) return new Uint8Array();
-  if (chunks.length === 1) return chunks[0]!;
-  const body = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-}
-
-function pinnedHeadersToRecord(
-  headers: Readonly<Record<string, string | undefined>>,
-): Readonly<Record<string, string>> {
-  return Object.freeze(Object.fromEntries(
-    Object.entries(headers).flatMap(([key, value]) => (
-      value === undefined ? [] : [[key, value]]
-    )),
-  ));
-}
-
-export type GlobalFetchRuntimeDependencies = Readonly<{
-  /**
-   * Socket boundary for an already-admitted origin. It defaults to the process
-   * HTTP owner; a composed host substitutes it so the terminal boundary stays
-   * as replaceable as `globalThis.fetch` is on the unpinned path.
-   */
-  openPinnedStream?: PinnedHttpStreamTransport;
-}>;
-
-export function createGlobalFetchRuntime(
-  dependencies: GlobalFetchRuntimeDependencies = {},
-): PluginHttpRuntimeAdapter {
-  const openPinnedStream = dependencies.openPinnedStream ?? openPinnedHttpStream;
+export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
+  const open = async (request: Parameters<HttpService['request']>[0], options: PluginHttpRuntimeRequestOptions) => {
+    const requestAbort = createRequestAbortController(options.signal);
+        let observationDispatcher: import('undici').Agent | undefined;
+        let tlsPeer: HttpResponse['tlsPeer'];
+        const dispose = async () => {
+            requestAbort.dispose();
+            await observationDispatcher?.destroy();
+        };
+    try {
+      requestAbort.controller.signal.throwIfAborted();
+            const { Agent, buildConnector } = await loadUndici();
+      requestAbort.controller.signal.throwIfAborted();
+            let nativeTlsValidation: Readonly<{
+                rejectUnauthorized: true;
+                checkServerIdentity(hostname: string, certificate: import('node:tls').PeerCertificate): Error | undefined;
+            }> | undefined;
+            if (request.observeTlsPeer && new URL(request.url).protocol === 'https:') {
+                const observe = (fingerprint: unknown, validFrom: unknown, validTo: unknown) => {
+                    if (requestAbort.controller.signal.aborted) return;
+                    tlsPeer = readTlsPeer(request.url, fingerprint, validFrom, validTo);
+                };
+                if (process.versions.bun) {
+                    const { checkServerIdentity } = await import('node:tls');
+                    nativeTlsValidation = {
+                        rejectUnauthorized: true,
+                        checkServerIdentity(hostname, certificate) {
+                            // Bun validates the chain before this callback, which replaces
+                            // its hostname check. Preserve native hostname validation first.
+                            const failure = checkServerIdentity(hostname, certificate);
+                            if (failure) return failure;
+                            observe(certificate.fingerprint256, certificate.valid_from, certificate.valid_to);
+                            return undefined;
+                        },
+                    };
+                } else {
+                    // This request's own validated socket proves which peer was observed;
+                    // reusing a shared pooled socket cannot establish that observation.
+                    const connect = buildConnector({ rejectUnauthorized: true });
+                    observationDispatcher = new Agent({
+                        headersTimeout: 0, bodyTimeout: 0,
+                        connect(connectOptions, callback) {
+                            connect(connectOptions, (...result) => {
+                                if (result[0]) { callback(result[0], null); return; }
+                                const socket = result[1];
+                                try {
+                                    if ('getPeerX509Certificate' in socket && socket.authorized) {
+                                        const certificate = socket.getPeerX509Certificate();
+                                        if (certificate) observe(certificate.fingerprint256, certificate.validFrom, certificate.validTo);
+                                    }
+                                } catch { /* Missing native metadata leaves certificate evidence unknown. */ }
+                                callback(null, socket);
+                            });
+                        },
+                    });
+                }
+            }
+            const dispatcher = observationDispatcher ?? (httpDispatcher ??= new Agent({ headersTimeout: 0, bodyTimeout: 0 }));
+      // Both body modes retain the invocation's deadline; Node/Bun add no shorter cutoff.
+      const init = {
+        method: request.method, headers: request.headers, body: toFetchBody(request.body),
+        signal: requestAbort.controller.signal,
+        redirect: request.redirect === 'follow' ? 'manual' : request.redirect,
+        dispatcher, timeout: false,
+                ...(nativeTlsValidation ? { tls: nativeTlsValidation } : {}),
+            } satisfies RequestInit & { dispatcher: typeof dispatcher; timeout: false; tls?: typeof nativeTlsValidation };
+      const response = await globalThis.fetch(request.url, init);
+            return { response, requestAbort, tlsPeer, dispose };
+        } catch (error) { await dispose(); throw error; }
+  };
   return Object.freeze({
     async request(
       request: Parameters<HttpService['request']>[0],
       options: PluginHttpRuntimeRequestOptions = {},
     ) {
-      const requestAbort = createRequestAbortController(options.signal);
+      const { response, requestAbort, tlsPeer, dispose } = await open(request, options);
       try {
-        if (options.validatedAddresses !== undefined) {
-          if (options.validatedAddresses.length === 0) {
-            throw createValidatedAddressRequiredError();
-          }
-          const response = await openPinnedStream({
-            url: request.url,
-            validatedAddresses: options.validatedAddresses,
-            headers: request.headers ?? Object.freeze({}),
-            method: request.method,
-            ...(request.body === undefined ? {} : { body: request.body }),
-            signal: requestAbort.controller.signal,
-          });
-          if (response.status >= 300 && response.status < 400 && request.redirect !== 'manual') {
-            response.cancel();
-            throw createRedirectRefusedError();
-          }
-          const body = await readBoundedPinnedResponseBody(response);
-          return Object.freeze({
-            status: response.status,
-            finalUrl: request.url,
-            headers: pinnedHeadersToRecord(response.headers),
-            body,
-          });
+        let body: Uint8Array;
+        if (request.responseBody === 'discard') {
+          await response.body?.cancel();
+          body = new Uint8Array();
+        } else {
+          body = await readBoundedPluginHttpResponseBody(response, requestAbort.controller);
         }
-        const response = await globalThis.fetch(request.url, {
-          method: request.method,
-          headers: request.headers,
-          body: toFetchBody(request.body),
-          signal: requestAbort.controller.signal,
-          redirect: request.redirect,
-        });
-        const body = await readBoundedResponseBody(response, requestAbort.controller);
+        requestAbort.controller.signal.throwIfAborted();
         return Object.freeze({
           status: response.status,
           finalUrl: response.url || request.url,
           headers: headersToRecord(response.headers),
           body,
+          ...(tlsPeer ? { tlsPeer } : {}),
         });
       } finally {
-        requestAbort.dispose();
+        await dispose();
       }
+    },
+    async requestStream(request: Parameters<NonNullable<PluginHttpRuntimeAdapter['requestStream']>>[0], options: PluginHttpRuntimeRequestOptions = {}) {
+      const { response, requestAbort, dispose: disposeRequest } = await open(snapshotPluginHttpStreamRequest(request), options);
+      const reader = response.body?.getReader();
+      let disposal: Promise<void> | undefined;
+      const dispose = (): Promise<void> => disposal ??= (async () => {
+        requestAbort.controller.abort();
+        try { await reader?.cancel(requestAbort.controller.signal.reason); }
+        catch { /* Aborting the native fetch may already have closed its body. */ }
+        finally { reader?.releaseLock(); await disposeRequest(); }
+      })();
+      return wrapPluginHttpStream({
+        status: response.status, finalUrl: response.url || request.url, headers: headersToRecord(response.headers),
+        chunks: { [Symbol.asyncIterator]: () => ({
+          next: async (): Promise<IteratorResult<Uint8Array>> => {
+            if (!reader) return { done: true, value: undefined };
+            const item = await reader.read();
+            return item.done ? { done: true, value: undefined } : { done: false, value: item.value };
+          },
+        }) }, dispose,
+      }, { signal: options.signal });
     },
     async openWebSocket(input, options = {}) {
       return await createPluginWebSocketConnection(input, options);
