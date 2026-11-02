@@ -7,6 +7,11 @@ export type MachineSharingCopy = Readonly<{
     effectiveLoss: string; overlap: string; custodianProtected: string; revoked: string;
     unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
     destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; ownerOnly: string; pendingKey: string; sharedPurposeUnsupported: string }>;
+    /** Guest execution without separate users: the people added run as the owner. */
+    fallback: Readonly<{ lead: string; detail: string; offer: string; turnOn: string; previewing: string;
+        reviewUsers: string; reviewFolders: string; reviewSessions: string; reviewAdmin: string; confirm: string;
+        applying: string; alreadyOn: string; changed: string; reviewAgain: string; failed: string; locked: string;
+        unknown: string; unavailable: string; approval: string }>;
     terminals: Readonly<{ projectEmpty: string; opening: string; sharedOsLead: string; sharedOsDetail: string; denied: string;
         rootDenied: string; offline: string; openUnknown: string; unavailable: string; failed: string }>;
 }>;
@@ -35,6 +40,15 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         unpublished: machine(copy.unpublished), custodianOnly: machine(copy.custodianOnly), upgradeRequired: machine(copy.upgradeRequired),
         unpublishedTag: copy.unpublishedTag,
         unpublishedMember: (parameters: Readonly<{ machine: string; person: string }>) => format(copy.unpublishedMember, parameters),
+        fallback: {
+            lead: machine(copy.fallback.lead), detail: machine(copy.fallback.detail), offer: machine(copy.fallback.offer),
+            turnOn: copy.fallback.turnOn, previewing: machine(copy.fallback.previewing), reviewUsers: machine(copy.fallback.reviewUsers),
+            reviewFolders: copy.fallback.reviewFolders, reviewSessions: machine(copy.fallback.reviewSessions),
+            reviewAdmin: machine(copy.fallback.reviewAdmin), confirm: copy.fallback.confirm, applying: machine(copy.fallback.applying),
+            alreadyOn: copy.fallback.alreadyOn, changed: machine(copy.fallback.changed), reviewAgain: copy.fallback.reviewAgain,
+            failed: copy.fallback.failed, locked: machine(copy.fallback.locked), unknown: machine(copy.fallback.unknown),
+            unavailable: machine(copy.fallback.unavailable), approval: copy.fallback.approval,
+        },
     }, destinations: {
         recipientEncryptionIncompatible: copy.recipientEncryptionIncompatible,
         yours: copy.destinations.yours, created: copy.destinations.created,

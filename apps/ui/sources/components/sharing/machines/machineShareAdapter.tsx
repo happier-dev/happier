@@ -13,6 +13,7 @@ import { SharePrincipalVisual } from '../buildShareSheetSelectionStep';
 import type { ShareSheetAdapter } from '../shareSheetTypes';
 import type { MachineShareGrantRow, useMachineShareController } from './useMachineShareController';
 import { MachineShareTrustDisclosure } from './MachineShareTrustDisclosure';
+import { MachineSeparateUsersOffer } from './MachineSeparateUsersOffer';
 
 /** Domain meaning only. ShareSheet retains list, picker, focus, Back and removal anatomy. */
 export function createMachineShareAdapter(input: Readonly<{
@@ -20,15 +21,23 @@ export function createMachineShareAdapter(input: Readonly<{
     openApproval?: (artifactId: string) => void;
 }>): ShareSheetAdapter<MachineShareGrantRow> {
     const { machineName: machine, controller } = input;
+    const own = controller.viewerRow;
+    const recipient = own !== null;
+    const guest = controller.guestExecution;
+    const runsAsYou = guest.showOwnerUserDisclosure;
     const adapter: ShareSheetAdapter<MachineShareGrantRow> = {
         namespace: 'machine-share', title: t('machines.sharing.title'),
         showLeadingOnDirectorySteps: true,
-        // The level meanings live once, inside the trust disclosure: Can use is the section's own
-        // description, so only what Manage adds is said there (lab m-share legend).
+        // The sheet leads with the trust fact in one line; Details explains it once: what Manage adds (only to
+        // someone who can give it; Can use is the section's own description), why to trust, a plain machine's readability.
         levels: {
             view: { label: t('machines.sharing.use') },
-            admin: { label: t('machines.sharing.manage') },
+            admin: { label: t('machines.sharing.manage'),
+                ...(controller.response?.canManage ? { help: t('machines.sharing.manageHelp', { machine }) } : {}) },
         },
+        notes: [t(recipient ? 'machines.sharing.recipientTrustDetail'
+            : runsAsYou ? 'machines.sharing.fallback.detail' : 'machines.sharing.trustedOsDetail', { machine }),
+            ...(controller.response?.access.resourceMode === 'plain' ? [t('machines.sharing.plain')] : [])],
         principalTags: (principal, row) => [
             ...(principal.ref.kind === 'account' ? [] : [t('machines.sharing.allMembers')]),
             ...(row?.canPrepareKeys ? [t('machines.destinations.pendingKey')] : []),
@@ -72,17 +81,16 @@ export function createMachineShareAdapter(input: Readonly<{
         sections: context => {
             // The trust fact is said to whoever reads it: the owner learns what sharing exposes of their
             // operating-system user; someone it is shared with learns whose user their work runs as.
-            const own = controller.viewerRow;
             const leading: SelectionListSectionDescriptor[] = [{ kind: 'static', id: 'machine-trust', options: [{
                 id: 'machine-trust', label: t(own ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine }), disabled: true,
                 // The block sits at the rows' inset, so its edge lines up with the people under it in the
                 // page section and in the sheet alike (lab m-share A/S), never flush with the sheet's edge.
                 content: <SectionContentRow showDivider={false}><MachineShareTrustDisclosure idPrefix={context.idPrefix}
-                    lead={t(own ? 'machines.sharing.recipientTrustLead' : 'machines.sharing.trustedOsLead', { machine })}
-                    detail={t(own ? 'machines.sharing.recipientTrustDetail' : 'machines.sharing.trustedOsDetail', { machine })}
-                    // What Manage adds matters only to someone who can give it.
-                    legend={controller.response?.canManage ? [{ label: t('machines.sharing.manage'), text: t('machines.sharing.manageHelp', { machine }) }] : []}
-                    notes={controller.response?.access.resourceMode === 'plain' ? [t('machines.sharing.plain')] : []} /></SectionContentRow>,
+                    lead={t(recipient ? 'machines.sharing.recipientTrustLead'
+                        : runsAsYou ? 'machines.sharing.fallback.lead' : 'machines.sharing.trustedOsLead', { machine })}>
+                    {!recipient && guest.canEnableSeparateUsers ? <MachineSeparateUsersOffer machine={machine} guestExecution={guest}
+                        idPrefix={context.idPrefix} openApproval={input.openApproval} /> : null}
+                </MachineShareTrustDisclosure></SectionContentRow>,
             }] }];
             // Access that comes through a Team or Group names it; direct access needs no line.
             const through = own ? controller.inherited[0] : undefined;

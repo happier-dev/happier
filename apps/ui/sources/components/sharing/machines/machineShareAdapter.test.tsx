@@ -38,6 +38,41 @@ const initial: MachineAccessGrantsListResponseV1 = {
 };
 
 describe('Machine sharing through the canonical controller and sheet', () => {
+    it('projects guest placement from the exact Machine policy without changing grants', async () => {
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://guest-placement.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            let current: ReturnType<typeof useMachineShareController> | undefined;
+            function Surface() { current = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope }); return null; }
+            screen = await renderScreen(<Surface />);
+            await vi.waitFor(() => expect(current?.response?.canManage).toBe(true));
+            expect(current?.guestExecution.placement).toBeNull();
+            for (const [platform, agentIsolation, placement, offer] of [
+                ['linux', undefined, 'daemon', true],
+                ['linux', { enabled: true }, 'sharedAgent', true],
+                ['linux', { enabled: true, memberProvisioning: 'linuxUsersV1' }, 'member', false],
+                ['linux', { enabled: false, memberProvisioning: 'linuxUsersV1' }, 'daemon', true],
+                ['darwin', { enabled: false }, 'daemon', false],
+                ['win32', { enabled: false }, 'daemon', false],
+            ] as const) {
+                const base = createMachineFixture({ id: 'machine' });
+                await act(async () => getStorage().getState().applyMachines([
+                    { ...base, metadata: { ...base.metadata!, platform, ...(agentIsolation ? { agentIsolation } : {}) } },
+                ], true, { sourceServerId: scope.serverId }));
+                expect(current?.guestExecution).toMatchObject({ placement, showOwnerUserDisclosure: placement !== 'member', canEnableSeparateUsers: offer });
+            }
+            expect(home.requests.filter(request => request.path.startsWith('/v1/machines/') && request.method !== 'GET')).toEqual([]);
+        } finally {
+            await screen?.unmount();
+            getStorage().getState().applyMachines([], true, { sourceServerId: home.homes.machine!.id });
+            const { clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
+            clearMachineRequestReachabilityForTest();
+            await home.dispose();
+        }
+    });
+
     it('keeps the mounted share modal presence bound to its exact Home and Account', async () => {
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-share-presence.test', accountId: 'alice' }],
             route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
@@ -463,9 +498,8 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(`Bob: ${t('machines.sharing.effectiveLoss')}`);
             expect(screen.findByTestId('machine-share-trusted-os')).not.toBeNull();
             expect(screen.getTextContent()).toContain(t('machines.sharing.trustedOsLead', { machine: 'Devbox' }));
-            expect(screen.findByTestId('machine-share-manage-consequence')).not.toBeNull();
-            // The level label and what it adds are two parts, never one run-on sentence.
-            expect(screen.getTextContent()).toContain(`${t('machines.sharing.manage')} — ${t('machines.sharing.manageHelp', { machine: 'Devbox' })}`);
+            // The trust fact is one line at the point of choice; its explanation waits behind Details.
+            expect(screen.getTextContent()).not.toContain(t('machines.sharing.trustedOsDetail', { machine: 'Devbox' }));
             expect(screen.findByTestId('machine-share-remove-confirm:account:bob')).toBeNull();
             expect(screen.findByTestId('machine-share-remove:account:bob')).not.toBeNull();
             await vi.waitFor(() => expect(screen.findByTestId('machine-share-browse:team')).not.toBeNull());
@@ -474,6 +508,13 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             await screen.pressByTestIdAsync('machine-share-editor:list:header:leading:back-chip');
             expect(screen.findByTestId('machine-share-search')?.props.value).toBe('Bob');
             expect(screen.findByTestId('machine-share-remove:account:bob')).not.toBeNull();
+            // Details holds the same facts: why to trust them, what Manage adds (label and meaning as two parts,
+            // never one run-on sentence) and the plain machine's readability.
+            await screen.pressByTestIdAsync('machine-share-help');
+            const details = screen.getTextContent();
+            expect(details).toContain(t('machines.sharing.trustedOsDetail', { machine: 'Devbox' }));
+            expect(details).toContain(`${t('machines.sharing.manage')} — ${t('machines.sharing.manageHelp', { machine: 'Devbox' })}`);
+            expect(details).toContain(t('machines.sharing.plain'));
         } finally { await home.dispose(); }
     });
 
@@ -593,7 +634,9 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const text = screen.getTextContent();
             expect(text).toContain(t('machines.sharing.recipientTrustLead', { machine: 'Devbox' }));
             expect(text).not.toContain(t('machines.sharing.trustedOsLead', { machine: 'Devbox' }));
-            expect(screen.findByTestId('machine-share-manage-consequence')).toBeNull();
+            await screen.pressByTestIdAsync('machine-share-help');
+            expect(screen.getTextContent()).toContain(t('machines.sharing.recipientTrustDetail', { machine: 'Devbox' }));
+            expect(screen.getTextContent()).not.toContain(t('machines.sharing.manageHelp', { machine: 'Devbox' }));
             expect(text).toContain(t('machines.sharing.through', { audience: 'Teammates' }));
             await screen.pressByTestIdAsync('machine-share-your-access');
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');

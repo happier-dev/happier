@@ -9,80 +9,42 @@ import { Typography } from '@/constants/Typography';
 
 /**
  * D24 at the point of choice (lab `m-share`): the operating-system trust fact, said once at the head
- * of the machine's share sheet as its own quiet block. The leading sentence is the one thing to know
- * before adding someone, so it carries the emphasis; what follows explains it, and further facts
- * (what Manage adds, a plain machine's readability) come after as quieter lines.
+ * of the machine's share sheet as one line. Why it holds, what Manage adds and a plain machine's
+ * readability sit behind the sheet's one Details disclosure (the adapter's level help and notes).
  */
-export function MachineShareTrustDisclosure(
-  props: Readonly<{
-    lead: string;
-    detail: string;
-    /** What each access level adds, read as "Can manage — …" (the sheet's one level legend). */
-    legend?: readonly Readonly<{ label: string; text: string }>[];
-    notes: readonly string[];
-    idPrefix: string;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  return (
-    <View style={styles.block} accessibilityRole="text">
-      <View style={styles.glyph}>
-        <Icon name="key" size={16} color={theme.colors.text.secondary} />
-      </View>
-      <View style={styles.text}>
-        <View testID={`${props.idPrefix}machine-share-trusted-os`}>
-          <Text style={styles.lead}>{props.lead}</Text>
-          <Text style={styles.detail}>{props.detail}</Text>
+export function MachineShareTrustDisclosure(props: Readonly<{ lead: string; idPrefix: string;
+    /** What the owner can do about it, in the lead's own column (the Linux separate-users offer). */
+    children?: React.ReactNode }>) {
+    const { theme } = useUnistyles();
+    return <View style={styles.line} testID={`${props.idPrefix}machine-share-trusted-os`} accessibilityRole="text">
+        <View style={styles.glyph}>
+            <Icon name="key" size={16} color={theme.colors.text.secondary} />
         </View>
-        {(props.legend ?? []).map((line, index) => (
-          <Text
-            key={line.label}
-            testID={index === 0 ? `${props.idPrefix}machine-share-manage-consequence` : undefined}
-            style={styles.detail}
-          >
-            <Text style={styles.legendLabel}>{line.label}</Text>
-            {` — ${line.text}`}
-          </Text>
-        ))}
-        {props.notes.map((note, index) => (
-          <Text key={index} style={styles.detail}>
-            {note}
-          </Text>
-        ))}
-      </View>
-    </View>
-  );
+        <View style={styles.column}>
+            <Text style={styles.lead}>{props.lead}</Text>
+            {props.children}
+        </View>
+    </View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  block: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space.s10,
-    padding: theme.space.s12,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface.elevated,
-  },
-  glyph: {
-    paddingTop: 1,
-  },
-  text: {
-    flex: 1,
-    minWidth: 0,
-    gap: theme.space.s6,
-  },
-  lead: {
-    ...Typography.default('semiBold'),
-    ...happierPageTextMetrics('rowDescription'),
-    color: theme.colors.text.primary,
-  },
-  legendLabel: {
-    ...Typography.default('semiBold'),
-    color: theme.colors.text.primary,
-  },
-  detail: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('rowDescription'),
-    color: theme.colors.text.secondary,
-  },
+    line: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s10,
+        paddingVertical: theme.space.s8,
+    },
+    glyph: {
+        paddingTop: 1,
+    },
+    column: {
+        flex: 1,
+        minWidth: 0,
+        gap: theme.space.s6,
+    },
+    lead: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('rowDescription'),
+        color: theme.colors.text.primary,
+    },
 }));

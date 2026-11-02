@@ -89,6 +89,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const names = React.useRef(new Map<string, string>());
     const response = state.response;
     const guestExecution = useMachineGuestExecution({ machineId, scope, execute, canManage: response?.canManage === true });
+    // The grant confirmation is worded after commit; it reads the current placement, not a render-time copy.
+    const guestExecutionRef = React.useRef(guestExecution);
+    guestExecutionRef.current = guestExecution;
     const responseRef = React.useRef(response);
     responseRef.current = response;
     // The Action policy decides whether a confirmation shows; this only words it. A grant names the
@@ -99,8 +102,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         const message = grant?.success
             ? [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
                 t(grant.data.level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use')}`,
-                t('machines.sharing.trustedOsLead', { machine: machineName }),
-                t('machines.sharing.trustedOsDetail', { machine: machineName })].join('\n\n')
+                ...(guestExecutionRef.current.showOwnerUserDisclosure
+                    ? [t('machines.sharing.fallback.lead', { machine: machineName }), t('machines.sharing.fallback.detail', { machine: machineName })]
+                    : [t('machines.sharing.trustedOsLead', { machine: machineName }), t('machines.sharing.trustedOsDetail', { machine: machineName })])].join('\n\n')
             : presentation.summary ?? '';
         return Modal.confirm(presentation.title ?? t('approvals.untitled'), message,
             { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
