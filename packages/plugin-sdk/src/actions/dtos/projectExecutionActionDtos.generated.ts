@@ -253,6 +253,51 @@ export type ProjectExecutionActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
+                    kind: 'partial';
+                    savedSecrets: {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                    }[];
+                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
+                    errorCode: string;
+                    environmentId?: string | undefined;
+                    revision?: number | undefined;
+                    targetLinkId?: string | undefined;
+                    definition?: undefined | {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    };
+                    deployment?: undefined | {
+                        deploymentId: string;
+                        deploymentRevision: number;
+                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                    } | {
+                        kind: 'pending';
+                        actionOperationId: string;
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    };
+                    unknownSecret?: undefined | {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        ref: string;
+                    };
+                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -557,6 +602,51 @@ export type ProjectExecutionActionResultById = {
                         targetMachineId: string;
                     } | undefined;
                 } | {
+                    kind: 'partial';
+                    savedSecrets: {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                    }[];
+                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
+                    errorCode: string;
+                    environmentId?: string | undefined;
+                    revision?: number | undefined;
+                    targetLinkId?: string | undefined;
+                    definition?: undefined | {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    };
+                    deployment?: undefined | {
+                        deploymentId: string;
+                        deploymentRevision: number;
+                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                    } | {
+                        kind: 'pending';
+                        actionOperationId: string;
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    };
+                    unknownSecret?: undefined | {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        ref: string;
+                    };
+                } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
                     kind: 'pendingApproval';
@@ -860,6 +950,51 @@ export type ProjectExecutionActionResultById = {
                         sourceMachineId: string;
                         targetMachineId: string;
                     } | undefined;
+                } | {
+                    kind: 'partial';
+                    savedSecrets: {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                    }[];
+                    phase: 'bindings' | 'deploy' | 'environment' | 'generation' | 'metadata' | 'target';
+                    errorCode: string;
+                    environmentId?: string | undefined;
+                    revision?: number | undefined;
+                    targetLinkId?: string | undefined;
+                    definition?: undefined | {
+                        kind: 'stored';
+                        contentRevision: number;
+                        composeDigest: string;
+                    };
+                    deployment?: undefined | {
+                        deploymentId: string;
+                        deploymentRevision: number;
+                        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'waitingApproval';
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                    } | {
+                        kind: 'pending';
+                        actionOperationId: string;
+                        ok: true;
+                        environmentId: string;
+                        revision: number;
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                    };
+                    unknownSecret?: undefined | {
+                        name: string;
+                        phase: 'build' | 'runtime';
+                        ref: string;
+                    };
                 } | {
                     reviewedEffect: JsonValue;
                     reviewedEffectDigest: string;
