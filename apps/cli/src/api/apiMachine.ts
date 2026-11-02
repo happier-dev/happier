@@ -4247,6 +4247,12 @@ export class ApiMachineClient {
         includeSessionCapabilities = true,
         currentServerFeatures?: FeaturesResponse,
     ): Promise<MachineOperationProtocolCapabilitiesV1 | null> {
+        // Resolve Home support before sampling the live handlers. A delayed
+        // feature read must not later replace a newly admitted reply target
+        // with the capability snapshot from before that target became ready.
+        const snapshot = currentServerFeatures
+            ? { status: 'ready' as const, features: currentServerFeatures }
+            : await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.();
         let capabilities = this.currentMachineOperationProtocolCapabilities(includeSessionCapabilities);
         if (!capabilities) return null;
 
@@ -4260,9 +4266,6 @@ export class ApiMachineClient {
         // proof that its strict Machine projection accepts this new leaf. Older,
         // malformed, disabled, or dependency-disabled Homes therefore keep the
         // handler installed locally but receive no incompatible advertisement.
-        const snapshot = currentServerFeatures
-            ? { status: 'ready' as const, features: currentServerFeatures }
-            : await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.();
         const personalBroker = this.providerBrokerAccountConnectionIngressLive
             && snapshot?.status === 'ready'
             && readServerEnabledBit(snapshot.features, 'providers') === true

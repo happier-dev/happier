@@ -104,7 +104,7 @@ it('carries an accepted Workflow terminal return through the Machine publication
   expect(packets[1]).toMatchObject({ v: 1, operation: 'approved_replay' });
 });
 
-it('recovers a refused reply advertisement and delivers a fresh Workflow leaf through Session input admission', async () => {
+it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the first fresh Workflow input after %s without a target update', async scenario => {
   vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
   const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(51));
   os.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
@@ -113,8 +113,12 @@ it('recovers a refused reply advertisement and delivers a fresh Workflow leaf th
   os.credentials = credentials;
   const sessionId = 'c' + '9'.repeat(24);
   let published: ReturnType<typeof MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.parse>['capabilities'] = {};
-  let refuseAdvertisement = true;
+  let refuseAdvertisement = scenario === 'refused_advertisement';
   let refused = false;
+  let holdFeatures = false;
+  let releaseFeatures: () => void = () => {};
+  let earlierPublication: Promise<void> | undefined;
+  let publishEarlier: (() => Promise<void>) | undefined;
   let birth: ReturnType<typeof buildCommittedLaunchMetadata> | undefined;
   let localId = '';
   const admitted: unknown[] = [];
@@ -146,7 +150,14 @@ it('recovers a refused reply advertisement and delivers a fresh Workflow leaf th
   const session = () => createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
     machineId: 'target-machine', metadata: JSON.stringify({ machineId: 'target-machine', path: '/repo', ...birth }) });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
-    if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1, entries: [], nextAfter: null } };
+    if (url.includes('/session-message-replies/pending')) {
+      if (scenario === 'late_feature_snapshot' && !earlierPublication) {
+        holdFeatures = true;
+        earlierPublication = publishEarlier!();
+        holdFeatures = false;
+      }
+      return { status: 200, data: { v: 1, entries: [], nextAfter: null } };
+    }
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (url.endsWith('/v1/machines/target-machine')) return { status: 200, data: { machine: { id: 'target-machine',
@@ -171,7 +182,13 @@ it('recovers a refused reply advertisement and delivers a fresh Workflow leaf th
     return { type: 'success', sessionId, sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
   });
   const client = new ApiMachineClient(credentials.token, { id: 'target-machine', encryptionKey: new Uint8Array(32),
-    encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+      resolveServerFeaturesSnapshot: async () => {
+        if (holdFeatures) await new Promise<void>(resolve => { releaseFeatures = resolve; });
+        return undefined;
+      },
+    });
+  publishEarlier = () => client.setProjectFiniteExecutionLive(true);
   client.setRPCHandlers({ spawnSession: async () => { throw new Error('Launch uses the exact Machine process boundary'); },
     sessionSpawnV1OutcomeRequired: true,
     resolveSpawnSessionByNonce: async () => { throw new Error('No replacement launch'); },
@@ -179,19 +196,25 @@ it('recovers a refused reply advertisement and delivers a fresh Workflow leaf th
   installControlRegistrations(client);
   try {
     client.connect();
-    await vi.waitFor(() => expect(refused).toBe(true));
-    expect(published.sessionMessageReply).toBeUndefined();
-    refuseAdvertisement = false;
+    if (scenario === 'refused_advertisement') {
+      await vi.waitFor(() => expect(refused).toBe(true));
+      expect(published.sessionMessageReply).toBeUndefined();
+      refuseAdvertisement = false;
+    }
     // The existing publication scheduler must recover without a new Session,
     // reconnect, input hint or caller retry to manufacture another opportunity.
     await vi.waitFor(() => expect(published.sessionMessageReply).toEqual({ protocolVersions: [1] }), { timeout: 5_000 });
+    // A publication started before reply readiness must not overwrite the
+    // acknowledged target while its Home feature read was in flight.
+    releaseFeatures();
+    await earlierPublication;
     const machineAdmissionTransport = client.enqueueSessionPendingByMachine.bind(client);
     const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId: 'target-machine', machineAdmissionTransport,
       createFreshConversation: createProductionFreshWorkflowSessionConversation({ credentials,
         serverId: configuration.activeServerId, machineId: 'target-machine', workDepth: 0, originRunId: 'run-1', machineAdmissionTransport }),
       resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
       resolveExistingSessionConversation: async () => null });
-    const result = await execute({ runId: 'run-1', step: { kind: 'step', id: 'work', document: { text: 'Review', references: [], attachments: [] },
+    const stepInput: Parameters<typeof execute>[0] = { runId: 'run-1', step: { kind: 'step', id: 'work', document: { text: 'Review', references: [], attachments: [] },
       input: [], result: { kind: 'text' } }, invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
         invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'inv-1' },
       input: { text: 'Review', references: [], attachments: [], values: [] },
@@ -199,11 +222,13 @@ it('recovers a refused reply advertisement and delivers a fresh Workflow leaf th
         connectedServices: { v: 2, bindingsByServiceId: {} } }, executionTarget: { kind: 'session' },
       authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
       workspace: { machineId: 'target-machine', directory: '/repo', checkoutRootPath: '/repo' },
-      beforeInputAdmission: async () => {}, onInputAccepted: async () => {} });
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => {} };
+    const result = await execute(stepInput);
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'completed', result: '' });
     expect(birth).toBeDefined();
-    expect(admitted).toEqual([expect.objectContaining({ sessionId, targetMachineId: 'target-machine', reply: { mode: 'wait' } })]);
-  } finally { await client.shutdown(); }
+    expect(admitted).toEqual([expect.objectContaining({ sessionId, targetMachineId: 'target-machine', reply: { mode: 'wait',
+      workflow: { purpose: 'invocation', runId: stepInput.runId, invocationRecordId: stepInput.invocation.logicalInvocationRecordId } } })]);
+  } finally { releaseFeatures(); await client.shutdown(); }
 });
 
 it.each([false, true])('recovers a Discussion result through the actual Session publisher without admitting a new Session input (hosted requester: %s)', async hostedRequester => {
