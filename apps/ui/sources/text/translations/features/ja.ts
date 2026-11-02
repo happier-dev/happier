@@ -1651,6 +1651,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { ja: {
+        providers: {
+            pageDescription: ({ machine }) => `エージェントが ${machine} の画面を見て操作する方法。`,
+            sectionTitle: "プロバイダー",
+            sectionDescription: "エージェントは、オンの別のプロバイダーを指定しない限りデフォルトを使います。",
+            offlineDescription: ({ machine }) => `${machine} はオフラインのため、今はプロバイダーをオンにできません。`,
+            cuaDescription: "高速。画面に表示された内容で操作します。",
+            agentDesktopDescription: "名前の付いたコントロールを操作します。低速ですが、トークンが少なく済みます。",
+            status: {
+                checking: "確認中…",
+                installsOnEnable: "オンにするとインストールされます",
+                installing: "インストール中…",
+                installed: "インストール済み",
+                missing: "未インストール",
+                failed: "インストールできませんでした",
+                unavailable: "このマシンでは利用できません",
+            },
+            install: "インストール",
+            retry: "再試行",
+            defaultTitle: "デフォルト",
+            makeDefault: "デフォルトにする",
+            loadFailedTitle: "コンピューター操作の設定を読み込めません",
+            saveFailed: "変更を保存できませんでした",
+            summaryPair: ({ first, second }) => `${first}、${second}`,
+        },
         approval: {
             sectionTitle: 'コンピュータ上で',
             act: {
@@ -5929,6 +5953,7 @@ const machineDetailPageTranslations = { ja: translated({
                 sharing: "共有",
                 agents: "エージェント",
                 terminal: "ターミナル",
+                computer: "コンピューター操作",
                 connection: "接続",
                 tools: "ツール",
                 doctor: "診断",

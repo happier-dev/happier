@@ -1651,6 +1651,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { ca: {
+        providers: {
+            pageDescription: ({ machine }) => `Com veuen i controlen els agents la pantalla de ${machine}.`,
+            sectionTitle: "Proveïdors",
+            sectionDescription: "Els agents fan servir el predeterminat tret que en demanin un altre d’activat.",
+            offlineDescription: ({ machine }) => `${machine} està fora de línia; ara no es poden activar proveïdors.`,
+            cuaDescription: "Ràpid. Treballa amb el que hi ha a la pantalla.",
+            agentDesktopDescription: "Actua sobre controls amb nom. Més lent, gasta menys tokens.",
+            status: {
+                checking: "Comprovant…",
+                installsOnEnable: "S’instal·la quan l’activis",
+                installing: "Instal·lant…",
+                installed: "Instal·lat",
+                missing: "No instal·lat",
+                failed: "No s’ha pogut instal·lar",
+                unavailable: "No disponible en aquesta màquina",
+            },
+            install: "Instal·la",
+            retry: "Torna-ho a provar",
+            defaultTitle: "Per defecte",
+            makeDefault: "Fes-lo predeterminat",
+            loadFailedTitle: "No es pot carregar la configuració del control de l’ordinador",
+            saveFailed: "No s’ha pogut desar el canvi",
+            summaryPair: ({ first, second }) => `${first} i ${second}`,
+        },
         approval: {
             sectionTitle: 'A l’ordinador',
             act: {
@@ -5934,6 +5958,7 @@ const machineDetailPageTranslations = { ca: translated({
                 sharing: "Compartició",
                 agents: "Agents",
                 terminal: "Terminal",
+                computer: "Control de l’ordinador",
                 connection: "Connexió",
                 tools: "Eines",
                 doctor: "Diagnòstic",

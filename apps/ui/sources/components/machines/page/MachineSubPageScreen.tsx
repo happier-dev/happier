@@ -9,6 +9,7 @@ import { MachineDetailsSection } from '@/components/machines/details/MachineDeta
 import { MachineDoctorPageBody } from '@/components/machines/doctorSnapshot/MachineDoctorPageBody';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
 import { MachineTerminalPageBody } from '@/components/machines/terminal/MachineTerminalPageBody';
+import { MachineComputerUseSection } from '@/components/machines/computer/MachineComputerUseSection';
 import { MachineAlertsPage } from '@/components/machines/vitals/MachineAlertsPage';
 import { MachineDirectConnectionSection } from '@/components/settings/connections/DirectConnectionSettings';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -90,6 +91,7 @@ export function MachineSubPageScreen() {
                 // Someone the machine is shared with reads what they can do here, not what adding people does.
                 description={target.machine && page === 'sharing'
                     ? t(target.machine.isShared ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine: target.machineSentenceName })
+                    : target.machine && page === 'computer' ? t('computerUse.providers.pageDescription', { machine: target.machineSentenceName })
                     : null}
             />
             {target.machine ? (
@@ -141,6 +143,8 @@ function MachineSubPageBody(props: Readonly<{
             return <MachineAgentsSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} titled={false} />;
         case 'terminal':
             return <MachineTerminalPageBody machine={machine} serverId={serverId} isServerSwitching={target.isServerSwitching} refreshKey={props.refreshKey} />;
+        case 'computer':
+            return <MachineComputerUseSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} online={target.online === true} />;
         case 'connection':
             return <MachineDirectConnectionSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} />;
         case 'installables':

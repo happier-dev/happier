@@ -351,5 +351,6 @@
   "binoculars": "binoculars",
   "widget-group": "layout",
   "widget-ungroup": "exclude-square",
-  "#alias:pane-arrangement": "square-half"
+  "#alias:pane-arrangement": "square-half",
+  "cursor": "cursor"
 }

@@ -1651,6 +1651,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { it: {
+        providers: {
+            pageDescription: ({ machine }) => `Come gli agenti vedono e controllano lo schermo di ${machine}.`,
+            sectionTitle: "Provider",
+            sectionDescription: "Gli agenti usano il predefinito, a meno che non chiedano un altro provider attivo.",
+            offlineDescription: ({ machine }) => `${machine} è offline, quindi ora non puoi attivare provider.`,
+            cuaDescription: "Veloce. Lavora su ciò che è sullo schermo.",
+            agentDesktopDescription: "Agisce su controlli con nome. Più lento, usa meno token.",
+            status: {
+                checking: "Verifica…",
+                installsOnEnable: "Si installa quando lo attivi",
+                installing: "Installazione…",
+                installed: "Installato",
+                missing: "Non installato",
+                failed: "Installazione non riuscita",
+                unavailable: "Non disponibile su questa macchina",
+            },
+            install: "Installa",
+            retry: "Riprova",
+            defaultTitle: "Predefinito",
+            makeDefault: "Rendi predefinito",
+            loadFailedTitle: "Impossibile caricare le impostazioni di controllo del computer",
+            saveFailed: "Impossibile salvare la modifica",
+            summaryPair: ({ first, second }) => `${first} e ${second}`,
+        },
         approval: {
             sectionTitle: 'Sul computer',
             act: {
@@ -5934,6 +5958,7 @@ const machineDetailPageTranslations = { it: translated({
                 sharing: "Condivisione",
                 agents: "Agenti",
                 terminal: "Terminale",
+                computer: "Controllo del computer",
                 connection: "Connessione",
                 tools: "Strumenti",
                 doctor: "Diagnostica",

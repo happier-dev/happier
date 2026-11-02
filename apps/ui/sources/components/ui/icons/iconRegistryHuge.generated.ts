@@ -72,6 +72,7 @@ import CpuIcon from '@hugeicons/core-free-icons/CpuIcon';
 import CreditCardIcon from '@hugeicons/core-free-icons/CreditCardIcon';
 import CrosshairIcon from '@hugeicons/core-free-icons/CrosshairIcon';
 import CubeIcon from '@hugeicons/core-free-icons/CubeIcon';
+import Cursor01Icon from '@hugeicons/core-free-icons/Cursor01Icon';
 import DashboardSpeed01Icon from '@hugeicons/core-free-icons/DashboardSpeed01Icon';
 import DashboardSquare01Icon from '@hugeicons/core-free-icons/DashboardSquare01Icon';
 import Delete01Icon from '@hugeicons/core-free-icons/Delete01Icon';
@@ -329,6 +330,7 @@ export const HUGE_ICON_REGISTRY = {
     'crosshair': CrosshairIcon,
     'cube': CubeIcon,
     'currency-dollar': Dollar01Icon,
+    'cursor': Cursor01Icon,
     'desktop': ComputerPhoneSyncIcon,
     'device-mobile': SmartPhone01Icon,
     'discord-logo': DiscordIcon,

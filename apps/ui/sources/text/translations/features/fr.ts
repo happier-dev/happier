@@ -1651,6 +1651,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { fr: {
+        providers: {
+            pageDescription: ({ machine }) => `Comment les agents voient et contrôlent l’écran de ${machine}.`,
+            sectionTitle: "Fournisseurs",
+            sectionDescription: "Les agents utilisent le fournisseur par défaut, sauf s’ils en demandent un autre activé.",
+            offlineDescription: ({ machine }) => `${machine} est hors ligne : impossible d’activer un fournisseur pour l’instant.`,
+            cuaDescription: "Rapide. Travaille à partir de l’écran.",
+            agentDesktopDescription: "Agit sur des contrôles nommés. Plus lent, consomme moins de tokens.",
+            status: {
+                checking: "Vérification…",
+                installsOnEnable: "S’installe quand vous l’activez",
+                installing: "Installation…",
+                installed: "Installé",
+                missing: "Non installé",
+                failed: "Installation impossible",
+                unavailable: "Indisponible sur cette machine",
+            },
+            install: "Installer",
+            retry: "Réessayer",
+            defaultTitle: "Par défaut",
+            makeDefault: "Définir par défaut",
+            loadFailedTitle: "Impossible de charger les réglages de contrôle de l’ordinateur",
+            saveFailed: "Impossible d’enregistrer la modification",
+            summaryPair: ({ first, second }) => `${first} et ${second}`,
+        },
         approval: {
             sectionTitle: 'Sur l’ordinateur',
             act: {
@@ -5932,6 +5956,7 @@ const machineDetailPageTranslations = { fr: translated({
                 sharing: "Partage",
                 agents: "Agents",
                 terminal: "Terminal",
+                computer: "Contrôle de l’ordinateur",
                 connection: "Connexion",
                 tools: "Outils",
                 doctor: "Diagnostic",

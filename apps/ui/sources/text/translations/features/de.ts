@@ -1645,6 +1645,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { de: {
+        providers: {
+            pageDescription: ({ machine }) => `Wie Agenten den Bildschirm von ${machine} sehen und steuern.`,
+            sectionTitle: "Anbieter",
+            sectionDescription: "Agenten nutzen den Standard, außer sie verlangen einen anderen aktivierten Anbieter.",
+            offlineDescription: ({ machine }) => `${machine} ist offline, daher können gerade keine Anbieter aktiviert werden.`,
+            cuaDescription: "Schnell. Arbeitet mit dem, was auf dem Bildschirm ist.",
+            agentDesktopDescription: "Bedient benannte Steuerelemente. Langsamer, braucht weniger Tokens.",
+            status: {
+                checking: "Wird geprüft…",
+                installsOnEnable: "Wird beim Aktivieren installiert",
+                installing: "Wird installiert…",
+                installed: "Installiert",
+                missing: "Nicht installiert",
+                failed: "Installation fehlgeschlagen",
+                unavailable: "Auf diesem Rechner nicht verfügbar",
+            },
+            install: "Installieren",
+            retry: "Erneut versuchen",
+            defaultTitle: "Standard",
+            makeDefault: "Als Standard festlegen",
+            loadFailedTitle: "Einstellungen zur Computersteuerung können nicht geladen werden",
+            saveFailed: "Änderung konnte nicht gespeichert werden",
+            summaryPair: ({ first, second }) => `${first} und ${second}`,
+        },
         approval: {
             sectionTitle: 'Auf dem Computer',
             act: {
@@ -5926,6 +5950,7 @@ const machineDetailPageTranslations = { de: translated({
                 sharing: "Freigabe",
                 agents: "Agenten",
                 terminal: "Terminal",
+                computer: "Computersteuerung",
                 connection: "Verbindung",
                 tools: "Werkzeuge",
                 doctor: "Diagnose",

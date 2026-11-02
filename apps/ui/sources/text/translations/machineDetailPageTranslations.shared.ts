@@ -44,6 +44,7 @@ export const english = {
             sharing: "Sharing",
             agents: "Agents",
             terminal: "Terminal",
+            computer: "Computer control",
             connection: "Connection",
             tools: "Tools",
             doctor: "Doctor",

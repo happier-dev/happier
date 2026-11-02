@@ -1673,6 +1673,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { ru: {
+        providers: {
+            pageDescription: ({ machine }) => `Как агенты видят экран ${machine} и управляют им.`,
+            sectionTitle: "Провайдеры",
+            sectionDescription: "Агенты используют провайдер по умолчанию, если не попросят другой включённый.",
+            offlineDescription: ({ machine }) => `${machine} не в сети, поэтому сейчас нельзя включить провайдеры.`,
+            cuaDescription: "Быстрый. Работает с тем, что на экране.",
+            agentDesktopDescription: "Действует через именованные элементы. Медленнее, тратит меньше токенов.",
+            status: {
+                checking: "Проверка…",
+                installsOnEnable: "Установится при включении",
+                installing: "Установка…",
+                installed: "Установлен",
+                missing: "Не установлен",
+                failed: "Не удалось установить",
+                unavailable: "Недоступен на этой машине",
+            },
+            install: "Установить",
+            retry: "Повторить",
+            defaultTitle: "По умолчанию",
+            makeDefault: "Сделать по умолчанию",
+            loadFailedTitle: "Не удалось загрузить настройки управления компьютером",
+            saveFailed: "Не удалось сохранить изменение",
+            summaryPair: ({ first, second }) => `${first} и ${second}`,
+        },
         approval: {
             sectionTitle: 'На компьютере',
             act: {
@@ -5961,6 +5985,7 @@ const machineDetailPageTranslations = { ru: translated({
                 sharing: "Доступ",
                 agents: "Агенты",
                 terminal: "Терминал",
+                computer: "Управление компьютером",
                 connection: "Подключение",
                 tools: "Инструменты",
                 doctor: "Диагностика",

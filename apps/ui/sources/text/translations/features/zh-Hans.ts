@@ -1646,6 +1646,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { 'zh-Hans': {
+        providers: {
+            pageDescription: ({ machine }) => `代理如何查看和控制 ${machine} 的屏幕。`,
+            sectionTitle: "提供方",
+            sectionDescription: "除非代理指定其他已开启的提供方，否则使用默认项。",
+            offlineDescription: ({ machine }) => `${machine} 处于离线状态，暂时无法开启提供方。`,
+            cuaDescription: "速度快，基于屏幕内容操作。",
+            agentDesktopDescription: "按名称操作控件。速度较慢，消耗的 token 更少。",
+            status: {
+                checking: "正在检查…",
+                installsOnEnable: "开启后安装",
+                installing: "正在安装…",
+                installed: "已安装",
+                missing: "未安装",
+                failed: "无法安装",
+                unavailable: "此机器不支持",
+            },
+            install: "安装",
+            retry: "重试",
+            defaultTitle: "默认",
+            makeDefault: "设为默认",
+            loadFailedTitle: "无法加载计算机控制设置",
+            saveFailed: "无法保存更改",
+            summaryPair: ({ first, second }) => `${first}、${second}`,
+        },
         approval: {
             sectionTitle: '在电脑上',
             act: {
@@ -5924,6 +5948,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 sharing: "共享",
                 agents: "智能体",
                 terminal: "终端",
+                computer: "计算机控制",
                 connection: "连接",
                 tools: "工具",
                 doctor: "诊断",

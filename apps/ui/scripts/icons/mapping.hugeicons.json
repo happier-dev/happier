@@ -254,5 +254,6 @@
   "binoculars": "BinocularsIcon",
   "layout": "GroupItemsIcon",
   "exclude-square": "UngroupItemsIcon",
-  "pane-arrangement": "LayoutRightIcon"
+  "pane-arrangement": "LayoutRightIcon",
+  "cursor": "Cursor01Icon"
 }

@@ -1646,6 +1646,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { 'zh-Hant': {
+        providers: {
+            pageDescription: ({ machine }) => `代理如何查看和控制 ${machine} 的螢幕。`,
+            sectionTitle: "提供者",
+            sectionDescription: "除非代理指定其他已開啟的提供者，否則使用預設項。",
+            offlineDescription: ({ machine }) => `${machine} 目前離線，暫時無法開啟提供者。`,
+            cuaDescription: "速度快，依據螢幕內容操作。",
+            agentDesktopDescription: "依名稱操作控制項。速度較慢，耗用的 token 較少。",
+            status: {
+                checking: "正在檢查…",
+                installsOnEnable: "開啟後安裝",
+                installing: "正在安裝…",
+                installed: "已安裝",
+                missing: "未安裝",
+                failed: "無法安裝",
+                unavailable: "此機器不支援",
+            },
+            install: "安裝",
+            retry: "重試",
+            defaultTitle: "預設",
+            makeDefault: "設為預設",
+            loadFailedTitle: "無法載入電腦控制設定",
+            saveFailed: "無法儲存變更",
+            summaryPair: ({ first, second }) => `${first}、${second}`,
+        },
         approval: {
             sectionTitle: '在電腦上',
             act: {
@@ -5924,6 +5948,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 sharing: "共享",
                 agents: "代理",
                 terminal: "終端機",
+                computer: "電腦控制",
                 connection: "連線",
                 tools: "工具",
                 doctor: "診斷",

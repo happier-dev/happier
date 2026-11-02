@@ -1662,6 +1662,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { pl: {
+        providers: {
+            pageDescription: ({ machine }) => `Jak agenci widzą i obsługują ekran ${machine}.`,
+            sectionTitle: "Dostawcy",
+            sectionDescription: "Agenci używają domyślnego, chyba że poproszą o innego włączonego dostawcę.",
+            offlineDescription: ({ machine }) => `${machine} jest offline, więc teraz nie można włączyć dostawców.`,
+            cuaDescription: "Szybki. Działa na tym, co widać na ekranie.",
+            agentDesktopDescription: "Działa na nazwanych kontrolkach. Wolniejszy, zużywa mniej tokenów.",
+            status: {
+                checking: "Sprawdzanie…",
+                installsOnEnable: "Instaluje się po włączeniu",
+                installing: "Instalowanie…",
+                installed: "Zainstalowano",
+                missing: "Nie zainstalowano",
+                failed: "Nie udało się zainstalować",
+                unavailable: "Niedostępny na tej maszynie",
+            },
+            install: "Zainstaluj",
+            retry: "Spróbuj ponownie",
+            defaultTitle: "Domyślny",
+            makeDefault: "Ustaw jako domyślny",
+            loadFailedTitle: "Nie można wczytać ustawień sterowania komputerem",
+            saveFailed: "Nie udało się zapisać zmiany",
+            summaryPair: ({ first, second }) => `${first} i ${second}`,
+        },
         approval: {
             sectionTitle: 'Na komputerze',
             act: {
@@ -5952,6 +5976,7 @@ const machineDetailPageTranslations = { pl: translated({
                 sharing: "Udostępnianie",
                 agents: "Agenci",
                 terminal: "Terminal",
+                computer: "Sterowanie komputerem",
                 connection: "Połączenie",
                 tools: "Narzędzia",
                 doctor: "Diagnostyka",

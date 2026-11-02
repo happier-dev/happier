@@ -1,5 +1,7 @@
 import type { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
 import { t } from '@/text';
+import { COMPUTER_PROVIDER_DISPLAY_NAMES } from '@/sync/domains/computer/computerProviderSettings';
+import type { ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
 
 /** "Claude and Codex are ready": the agents the last inventory read found ready, from what the app holds. */
 export function describeMachineAgentsReady(titles: readonly string[]): string | null {
@@ -30,4 +32,11 @@ export function describeMachineTerminalHost(host: ReturnType<typeof resolveTermi
     if (host === 'zellij') return 'Zellij';
     if (host === 'herdr') return 'Herdr';
     return t('machineDetailPage.summaries.terminalDirect');
+}
+
+/** Computer control's row names the providers agents may use, the default first ("Cua", "Cua and Agent Desktop"). */
+export function describeMachineComputerUse(settings: ComputerUseSettingsV1): string {
+    const names = [settings.defaultProvider, ...settings.enabledProviders.filter((provider) => provider !== settings.defaultProvider)]
+        .map((provider) => COMPUTER_PROVIDER_DISPLAY_NAMES[provider]);
+    return names.length === 2 ? t('computerUse.providers.summaryPair', { first: names[0]!, second: names[1]! }) : names[0]!;
 }

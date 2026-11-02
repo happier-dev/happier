@@ -15,10 +15,12 @@ import { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
+import { readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 
 import { useMachinesDoor } from './machinesDoor';
 import {
     describeMachineAgentsReady,
+    describeMachineComputerUse,
     describeMachineDoctorSummary,
     describeMachineSharingSummary,
     describeMachineTerminalHost,
@@ -29,6 +31,7 @@ const ROW_ICONS: Readonly<Record<MachineThisMachinePageId, IconName>> = {
     sharing: 'users',
     agents: 'sparkle',
     terminal: 'terminal',
+    computer: 'cursor',
     connection: 'arrows-left-right',
     installables: 'cube',
     doctor: 'first-aid-kit',
@@ -54,6 +57,7 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
     const sessionUseTmux = useSetting('sessionUseTmux');
     const sessionTmuxByMachineId = useSetting('sessionTmuxByMachineId');
     const sessionTerminalHostByMachineId = useSetting('sessionTerminalHostByMachineId');
+    const computerUseByMachineId = useSetting('computerUseByMachineId');
     const settings = { sessionTerminalHost, sessionUseTmux, sessionTmuxByMachineId, sessionTerminalHostByMachineId };
     const terminalHost = resolveTerminalHost({ settings, machineId });
     const connection = useMachineDirectConnectionSummary(machineId);
@@ -71,6 +75,7 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
         sharing: describeMachineSharingSummary(props.machine),
         agents: agentsReady ?? undefined,
         terminal: describeMachineTerminalHost(terminalHost),
+        computer: describeMachineComputerUse(readComputerUseSettingsForMachine({ computerUseByMachineId }, machineId)),
         connection,
         installables: undefined,
         doctor: describeMachineDoctorSummary(doctor),

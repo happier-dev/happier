@@ -76,6 +76,7 @@ import { CreditCardIcon } from 'phosphor-react-native/src/icons/CreditCard';
 import { CrosshairIcon } from 'phosphor-react-native/src/icons/Crosshair';
 import { CubeIcon } from 'phosphor-react-native/src/icons/Cube';
 import { CurrencyDollarIcon } from 'phosphor-react-native/src/icons/CurrencyDollar';
+import { CursorIcon } from 'phosphor-react-native/src/icons/Cursor';
 import { DesktopIcon } from 'phosphor-react-native/src/icons/Desktop';
 import { DeviceMobileIcon } from 'phosphor-react-native/src/icons/DeviceMobile';
 import { DiamondIcon } from 'phosphor-react-native/src/icons/Diamond';
@@ -338,6 +339,7 @@ export const ICON_REGISTRY = {
     'crosshair': CrosshairIcon,
     'cube': CubeIcon,
     'currency-dollar': CurrencyDollarIcon,
+    'cursor': CursorIcon,
     'desktop': DesktopIcon,
     'device-mobile': DeviceMobileIcon,
     'diamond': DiamondIcon,

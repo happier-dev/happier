@@ -1651,6 +1651,30 @@ type MachineParams = Shared_computerUseTranslations.MachineParams;
 type ComputerUseTranslations = Shared_computerUseTranslations.ComputerUseTranslations;
 
 const computerUseTranslations = { pt: {
+        providers: {
+            pageDescription: ({ machine }) => `Como os agentes veem e controlam a tela de ${machine}.`,
+            sectionTitle: "Provedores",
+            sectionDescription: "Os agentes usam o padrão, a menos que peçam outro provedor ativado.",
+            offlineDescription: ({ machine }) => `${machine} está offline, então não é possível ativar provedores agora.`,
+            cuaDescription: "Rápido. Trabalha com o que está na tela.",
+            agentDesktopDescription: "Age sobre controles com nome. Mais lento, usa menos tokens.",
+            status: {
+                checking: "Verificando…",
+                installsOnEnable: "É instalado quando você o ativa",
+                installing: "Instalando…",
+                installed: "Instalado",
+                missing: "Não instalado",
+                failed: "Não foi possível instalar",
+                unavailable: "Indisponível nesta máquina",
+            },
+            install: "Instalar",
+            retry: "Tentar novamente",
+            defaultTitle: "Padrão",
+            makeDefault: "Tornar padrão",
+            loadFailedTitle: "Não foi possível carregar as configurações de controle do computador",
+            saveFailed: "Não foi possível salvar a alteração",
+            summaryPair: ({ first, second }) => `${first} e ${second}`,
+        },
         approval: {
             sectionTitle: 'No computador',
             act: {
@@ -5934,6 +5958,7 @@ const machineDetailPageTranslations = { pt: translated({
                 sharing: "Partilha",
                 agents: "Agentes",
                 terminal: "Terminal",
+                computer: "Controle do computador",
                 connection: "Ligação",
                 tools: "Ferramentas",
                 doctor: "Diagnóstico",

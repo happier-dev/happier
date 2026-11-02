@@ -5,6 +5,24 @@ export type MachineParams = Readonly<{ machine: string }>;
 
 
 export type ComputerUseTranslations = Readonly<{
+    /** Machine page → Computer control: the providers agents use to see and control the screen. */
+    providers: Readonly<{
+        pageDescription: (params: MachineParams) => string;
+        sectionTitle: string;
+        sectionDescription: string;
+        offlineDescription: (params: MachineParams) => string;
+        cuaDescription: string;
+        agentDesktopDescription: string;
+        status: Readonly<{ checking: string; installsOnEnable: string; installing: string; installed: string; missing: string; failed: string; unavailable: string }>;
+        install: string;
+        retry: string;
+        /** Where the default's switch would be: it is always on. */
+        defaultTitle: string;
+        makeDefault: string;
+        loadFailedTitle: string;
+        saveFailed: string;
+        summaryPair: (params: Readonly<{ first: string; second: string }>) => string;
+    }>;
     approval: Readonly<{
         /** The approval page section that says what happens on the computer. */
         sectionTitle: string;
@@ -201,6 +219,30 @@ export type ComputerUseTranslations = Readonly<{
 
 
 export const computerUseTranslationsEnglish = { en: {
+        providers: {
+            pageDescription: ({ machine }) => `How agents see and control ${machine}’s screen.`,
+            sectionTitle: "Providers",
+            sectionDescription: "Agents use the default unless they ask for another provider that’s on.",
+            offlineDescription: ({ machine }) => `${machine} is offline, so providers can’t be turned on right now.`,
+            cuaDescription: "Fast. Works from what’s on screen.",
+            agentDesktopDescription: "Acts on named controls. Slower, uses fewer tokens.",
+            status: {
+                checking: "Checking…",
+                installsOnEnable: "Installs when you turn it on",
+                installing: "Installing…",
+                installed: "Installed",
+                missing: "Not installed",
+                failed: "Couldn’t install",
+                unavailable: "Not available on this machine",
+            },
+            install: "Install",
+            retry: "Try again",
+            defaultTitle: "Default",
+            makeDefault: "Make default",
+            loadFailedTitle: "Can’t load computer control settings",
+            saveFailed: "Couldn’t save the change",
+            summaryPair: ({ first, second }) => `${first} and ${second}`,
+        },
         approval: {
             sectionTitle: 'On the computer',
             act: {
