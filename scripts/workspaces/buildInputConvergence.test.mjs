@@ -12,6 +12,51 @@ import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env
 import { ensureWorkspacePackagesBuiltForComponent } from './ensureWorkspacePackagesBuilt.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 
+test('captured package builds resolve tooling workspace imports outside the build closure', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-capture-tooling-imports-' });
+  const sourceDir = fixture.path('repo');
+  const packageDir = join(sourceDir, 'packages/example');
+  const toolingDir = join(sourceDir, 'apps/stack/scripts/utils/managed_lima');
+  const toolDependencyDir = join(sourceDir, 'packages/cli-common');
+  for (const dir of [join(packageDir, 'src'), toolingDir, toolDependencyDir]) {
+    await mkdir(dir, { recursive: true });
+  }
+  for (const app of ['ui', 'cli', 'server']) {
+    await mkdir(join(sourceDir, 'apps', app), { recursive: true });
+    await writeFile(join(sourceDir, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
+      ...(app === 'ui' ? { dependencies: { '@happier-dev/example': 'workspace:*' } } : {}) }));
+  }
+  await writeFile(join(sourceDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['packages/*', 'apps/*'] }));
+  await writeFile(join(sourceDir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n  - apps/*\n');
+  await writeFile(join(sourceDir, 'pnpm-lock.yaml'), '# fixture\n');
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/example', type: 'module',
+    main: './dist/index.js', exports: { '.': './dist/index.js', './input': './src/input.mjs' },
+    scripts: { build: 'fixture-build' } }));
+  await writeFile(join(packageDir, 'src/index.ts'), 'export const ready = true;\n');
+  await writeFile(join(packageDir, 'src/input.mjs'), 'export const input = "captured";\n');
+  await writeFile(join(toolDependencyDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli-common', type: 'module',
+    exports: { './machineLima': './machineLima.mjs' } }));
+  await writeFile(join(toolDependencyDir, 'machineLima.mjs'), 'export const profile = "tooling-ready";\n');
+  await writeFile(join(toolingDir, 'profiles.mjs'),
+    'import { profile } from "@happier-dev/cli-common/machineLima";\n'
+    + 'import { input } from "@happier-dev/example/input";\nexport const result = profile + ":" + input;\n');
+  const result = await ensureWorkspacePackagesBuiltForComponent(join(sourceDir, 'apps/ui'), {
+    env: { ...process.env }, publicationMode: 'artifact',
+    workspaceBuildBoundary: {
+      prepareEnv: async (_dir, env) => env,
+      // Replace only the compiler process; import its copied tooling with real Node resolution.
+      runPackageBuild: async (capturedPackageDir, { env }) => {
+        await writeFile(join(packageDir, 'src/input.mjs'), 'export const input = "live";\n');
+        const tooling = join(capturedPackageDir, '../../apps/stack/scripts/utils/managed_lima/profiles.mjs');
+        const { result } = await import(pathToFileURL(tooling).href);
+        await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), `export const profile = ${JSON.stringify(result)};\n`);
+      },
+    },
+  });
+  assert.deepEqual(result.built, ['@happier-dev/example']);
+  assert.equal(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), 'export const profile = "tooling-ready:captured";\n');
+});
+
 test('captured dependencies survive reusing a captured workspace through its source alias', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-captured-dependency-alias-' });
   const installed = fixture.path('installed');

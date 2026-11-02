@@ -4,6 +4,8 @@ import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_f
 import { createHash } from 'node:crypto';
 import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
+import cliDistBuildManifest from '../../packages/cli-common/cliDistBuildManifest.cjs';
+import { packageNameOfSpecifier, readWorkspacePackages } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
 
 export async function readBuildInputDependencies({ sourceDir, env = process.env }) {
@@ -163,16 +165,34 @@ export async function mountInstalledNodeModules({ sourceModules, targetModules, 
 }
 
 /**
- * Reuse installed external tools, but resolve first-party packages inside the
- * capture. Publishers must never write through a link into live node_modules.
- * @param {{ sourceDir: string, captureDir: string, workspaceDirs: string[] }} input
+ * Reuse installed tools, resolving captured first-party packages inside the
+ * capture and tooling-only workspaces through their existing source owners.
+ * Publishers must never write through a link into live node_modules.
+ * @param {{ sourceDir: string, captureDir: string, workspaceDirs: string[], capturedFiles?: string[] }} input
  */
-export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs }) {
+export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs, capturedFiles = [] }) {
   const workspaces = new Map();
   for (const dir of workspaceDirs) {
     const capturedDir = join(captureDir, dir);
     const metadata = JSON.parse(await readFile(join(capturedDir, 'package.json'), 'utf8'));
     if (typeof metadata.name === 'string' && metadata.name.startsWith('@happier-dev/')) workspaces.set(metadata.name, capturedDir);
+  }
+  // Copied build tooling has workspace imports beyond the package build graph.
+  // Reuse its installed source owners, just like other unrelated workspaces;
+  // captured packages always take precedence over those live tooling links.
+  if (capturedFiles.length) {
+    const packages = await readWorkspacePackages(sourceDir);
+    for (const file of capturedFiles) {
+      if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
+      const path = join(captureDir, file);
+      if (!(await lstat(path)).isFile()) continue;
+      for (const specifier of cliDistBuildManifest.extractModuleSpecifiers(await readFile(path, 'utf8'))) {
+        const name = packageNameOfSpecifier(specifier);
+        if (name.startsWith('@happier-dev/') && !workspaces.has(name) && packages.has(name)) {
+          workspaces.set(name, packages.get(name).root);
+        }
+      }
+    }
   }
   for (const dir of ['', ...workspaceDirs]) {
     const sourceModules = join(sourceDir, dir, 'node_modules');

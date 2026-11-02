@@ -1053,7 +1053,7 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
     };
     await mount(monorepoRoot, repoDir);
     await mountCapturedWorkspaceDependencies({ sourceDir: monorepoRoot, captureDir: repoDir,
-      workspaceDirs: capturedDirs.map(dir => relative(monorepoRoot, dir)) });
+      workspaceDirs: capturedDirs.map(dir => relative(monorepoRoot, dir)), capturedFiles: capture.files });
     const capturePackageDir = join(repoDir, relative(monorepoRoot, packageDir));
     const captureDependencyDirs = dependencyDirs.map(dir => join(repoDir, relative(monorepoRoot, dir)));
     const identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR || monorepoRoot;
