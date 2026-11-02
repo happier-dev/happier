@@ -230,6 +230,8 @@ export type {
 } from './media/liveStreamPlayerTypes.js';
 export type {
   HappierLiveStreamInputGesture,
+  HappierLiveStreamInputMode,
+  HappierLiveStreamViewTransform,
   HappierLiveStreamGestureGeometry,
   HappierLiveStreamPoint,
   HappierLiveStreamInputControlKind,
