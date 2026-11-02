@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import timers from 'node:timers/promises';
-import { redactFailureDiagnostic, runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
+import { appendBoundedTail, redactFailureDiagnostic, runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
 import { prepareDevTargetSourceCommand, runDevTargetCommand } from './executor.mjs';
 import { resolveDevTargetSshConfigFile } from './mutagen_runtime.mjs';
 import { classifyDevTargetSshDiagnostic, resolveDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
@@ -452,14 +452,27 @@ async function runQaBrowserAttempt({ target, stackName, stackBaseDir, sessionNam
         }
         if (workerFinished || cancelled) break;
         let diagnosticReason;
+        let stderrTail = '';
+        let phase = 'cdp-discovery';
+        let forwardFailureRecord;
         tunnel = spawnProcess(`browser-forward:${sessionName}`, 'ssh', forwardArgs, forwardEnv,
           { silent: true, persistOutput: false, onLine: ({ stream, line }) => {
-            if (stream === 'stderr') diagnosticReason = classifyDevTargetSshDiagnostic(line) ?? diagnosticReason;
+            if (stream !== 'stderr') return;
+            diagnosticReason = classifyDevTargetSshDiagnostic(line) ?? diagnosticReason;
+            stderrTail = appendBoundedTail(stderrTail, `[${new Date().toISOString()}] ${redactFailureDiagnostic(line, env)}\n`);
           } });
         const forward = tunnel;
         const forwardFailure = result => {
           const code = resolveDevTargetSshDiagnostic({ ...result, diagnosticReason }) ?? 'ssh-connection-failed';
-          return Object.assign(new Error(`[dev-targets] QA browser SSH forward exited (${result?.code ?? result?.signal}); unavailable: ${code}`), { code });
+          if (!forwardFailureRecord) {
+            forwardFailureRecord = { at: new Date().toISOString(), code, phase,
+              exitCode: result?.code ?? null, signal: result?.signal ?? null, stderrTail: stderrTail.trim() };
+            if (!workerFinished && !cancelled && !lifecycleFinished) {
+              process.stderr.write(`[dev-targets] QA browser SSH forward failure: ${JSON.stringify(forwardFailureRecord)}\n`);
+            }
+          }
+          return Object.assign(new Error(`[dev-targets] QA browser SSH forward exited (${result?.code ?? result?.signal}); unavailable: ${code}`),
+            { code, forwardFailure: forwardFailureRecord });
         };
         const readinessAbort = new AbortController();
         const readinessSignal = AbortSignal.any([signal, readinessAbort.signal]);
@@ -482,8 +495,11 @@ async function runQaBrowserAttempt({ target, stackName, stackBaseDir, sessionNam
                 } catch { /* Forward establishment is observed before declaring readiness. */ }
                 await timers.setTimeout(100, undefined, { signal: readinessSignal });
               }
-              if (!readiness) await requestQaBrowserCdp({ port: localPort, debuggerPath: ready.debuggerPath,
-                method: 'Browser.getVersion', signal: readinessSignal, WebSocketImpl });
+              if (!readiness) {
+                phase = 'cdp-attach';
+                await requestQaBrowserCdp({ port: localPort, debuggerPath: ready.debuggerPath,
+                  method: 'Browser.getVersion', signal: readinessSignal, WebSocketImpl });
+              }
             })(),
             ...admissionTimeout,
             forward.completion.then(result => {
@@ -508,6 +524,7 @@ async function runQaBrowserAttempt({ target, stackName, stackBaseDir, sessionNam
         } finally {
           readinessAbort.abort();
         }
+        phase = 'ready';
         if (!readiness) {
           readiness = { stackName, sessionName, target: target.name, localFallback: false,
             cdpUrl: `ws://127.0.0.1:${localPort}${ready.debuggerPath}`, cdpHttpUrl: `http://127.0.0.1:${localPort}`,

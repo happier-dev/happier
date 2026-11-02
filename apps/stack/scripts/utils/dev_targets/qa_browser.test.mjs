@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { createHash, X509Certificate } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -453,6 +453,77 @@ async function captureReadyRemote(_command, args) {
     alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true },
   }]) : '' };
 }
+
+for (const phase of ['ready', 'cdp-discovery', 'cdp-attach', 'signaled']) {
+test(`QA browser terminal retains redacted forward exit evidence during ${phase}`, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-forward-evidence-' });
+  const signals = new EventEmitter();
+  const sensitive = randomUUID();
+  const terminal = [];
+  t.mock.method(process.stderr, 'write', chunk => { terminal.push(String(chunk)); return true; });
+  let finishWorker;
+  const worker = { stdin: new PassThrough(), completion: new Promise(resolve => { finishWorker = resolve; }) };
+  worker.stdin.on('data', () => finishWorker({ code: 0 }));
+  let forward;
+  const failForward = () => forward.stdin.end('fail');
+  class PendingCdpSocket extends EventTarget {
+    constructor() { super(); failForward(); }
+    close() {}
+  }
+  const completion = runQaBrowserSession({
+    target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
+    stackName: 'forward-evidence', stackBaseDir: root, sessionName: 'forward-evidence', url: 'http://127.0.0.1:19364',
+    env: { ...process.env, QA_BROWSER_TEST_TOKEN: sensitive },
+    onReady: failForward,
+  }, { signalSource: signals, capture: captureReadyRemote,
+    spawnProcess: (label, _command, _args, env, options) => {
+      if (!label.startsWith('browser-forward:')) {
+        setImmediate(() => options.onLine({ stream: 'stdout', line: 'HSTACK_QA_BROWSER={"port":40201,"debuggerPath":"/devtools/browser/fixture","pid":12,"proxyPort":40202}' }));
+        return worker;
+      }
+      // Substitute only the SSH executable; exercise real stderr and close events,
+      // including the final unterminated diagnostic line.
+      forward = spawnProc(label, process.execPath, ['-e', `
+        process.stdin.once('data', () => {
+          process.stderr.write('Connection reset by peer\\nBearer ' + process.env.QA_BROWSER_TEST_TOKEN);
+          process.stdin.destroy();
+          ${phase === 'signaled' ? "process.kill(process.pid, 'SIGTERM');" : 'process.exitCode = 255;'}
+        });
+      `], env, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
+      void forward.completion.then(() => setImmediate(() => signals.emit('SIGINT')));
+      return forward;
+    },
+    stopProcess: child => child === worker ? finishWorker({ code: 0 }) : killProcessTree(child, 'SIGINT', { graceMs: 2_000 }),
+    fetchImpl: async (_url, { signal }) => {
+      if (phase !== 'cdp-discovery') return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://fixture' }) };
+      failForward();
+      return await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+    ...(phase === 'cdp-attach' ? { WebSocketImpl: PendingCdpSocket } : {}),
+  });
+  try {
+    await completion.catch(() => {});
+    assert.ok(forward, 'the real forward process must have started');
+    const prefix = '[dev-targets] QA browser SSH forward failure: ';
+    const records = terminal.filter(line => line.startsWith(prefix));
+    assert.equal(records.length, 1, 'the existing terminal must retain one forward failure record');
+    const record = JSON.parse(records[0].slice(prefix.length));
+    assert.equal(record.code, phase === 'signaled' ? 'remote-doctor-failed' : 'ssh-connection-failed');
+    assert.equal(record.exitCode, phase === 'signaled' ? null : 255);
+    assert.equal(record.signal, phase === 'signaled' ? 'SIGTERM' : null);
+    assert.equal(record.phase, phase === 'signaled' ? 'ready' : phase);
+    assert.ok(Number.isFinite(Date.parse(record.at)), 'exit evidence has a timestamp');
+    assert.match(record.stderrTail, /\[\d{4}-\d{2}-\d{2}T[^\]]+\] Connection reset by peer/);
+    assert.ok(record.stderrTail.includes('<redacted>'), 'unterminated stderr is redacted before publication');
+    assert.ok(!terminal.join('').includes(sensitive), 'terminal records must not disclose credentials');
+  } finally {
+    signals.emit('SIGINT');
+    if (forward) await killProcessTree(forward, 'SIGINT', { graceMs: 2_000 });
+    await completion.catch(() => {});
+  }
+});
+}
+
 
 test('lane browser forwards are retired only by their owning QA Stack browser inventory', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-qa-browser-ownership-' });
