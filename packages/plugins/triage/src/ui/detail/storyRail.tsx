@@ -7,12 +7,14 @@ import {
   CodeBlock,
   HAPPIER_WORK_STATUS_SEMANTIC_TONE,
   Icon,
+  IconButton,
   ReviewSeverity,
   Row,
   Stack,
   Status,
   Step,
   Text,
+  WidgetFrame,
   usePluginHostApi,
   usePluginTranslation,
   useReviewCommentProposalsForEntry,
@@ -90,9 +92,6 @@ export function TriageAgentStep(props: Readonly<{
   const title = readTriageSessionTitle(props.live.state, text);
   const content = (
     <>
-      {status === null ? null : (
-        <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={text(status.labelKey, status.label, status.labelParams)} pulsing={status.live} />
-      )}
       {shown.length === 0 ? null : (
         <Stack gap="xsmall">
           <Text
@@ -141,16 +140,29 @@ export function TriageAgentStep(props: Readonly<{
     </>
   );
   if (props.variant === 'card') {
+    // The Activity's last word (lab c7 Activity): the agent's card — its mark, the Session's name, where it works and
+    // its state, and the arrow that opens the Session — not a bare title and status line under the timeline.
+    const agent = props.live.state?.agent;
+    const sessionId = props.sessions[0]?.sessionId;
+    const openLabel = `${text('plugins.triage.surface.detail.session.open', 'Open session')} ${title}`;
     return (
-      <Stack gap="small" testID="triage-activity-agent">
-        <Row gap="small" align="center">
-          <Stack grow>
-            <Text variant="label" value={title} />
-          </Stack>
-          {whereLabel === undefined ? null : <Text variant="micro" tone="secondary" value={whereLabel} />}
-        </Row>
-        {content}
-      </Stack>
+      <WidgetFrame
+        frameStyle="card"
+        placement="companion"
+        testID="triage-activity-agent"
+        {...(agent?.brand === undefined ? {} : { mark: <BrandMark pluginId={agent.brand.pluginId} size="small" externallyLabelled /> })}
+        title={title}
+        {...(whereLabel === undefined ? {} : { source: whereLabel })}
+        {...(status === null ? {} : {
+          meta: <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={text(status.labelKey, status.label, status.labelParams)} pulsing={status.live} />,
+        })}
+        {...(sessionId === undefined ? {} : {
+          accessory: <IconButton icon={<Icon name="external" tone="secondary" />} accessibilityLabel={openLabel}
+            busy={opener.busySessionId === sessionId} onPress={() => { void opener.open(sessionId); }} />,
+        })}
+      >
+        {shown.length === 0 ? null : content}
+      </WidgetFrame>
     );
   }
   return (

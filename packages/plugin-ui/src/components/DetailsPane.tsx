@@ -215,6 +215,9 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
           : { meta: [{ key: 'subtitle', text: props.subtitle, icon: props.subtitleLeading }] })}
         {...(props.leading === undefined ? {} : { leading: props.leading })}
         actions={props.actions}
+        // A detail's actions are its item's own quiet controls (pin, open at the source): they hang from the title's
+        // first line, as in the details pane's band, instead of wrapping onto a row of their own on a phone.
+        actionsLayout="hang"
         renderBack={hostBack ? null : back}
       />
     </HappierPageHeadingBindingContext.Provider>
