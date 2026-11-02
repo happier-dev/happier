@@ -391,7 +391,10 @@ export class RpcHandlerManager {
             return { error: 'RPC encryption material is unavailable', errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED };
         }
         let rpcContent: SocketRpcContent = admittedContent;
-        const confidential = this.readUnprefixedMethod(request.method) === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE;
+        const privateMethod = this.readUnprefixedMethod(request.method);
+        const confidential = privateMethod === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
+            || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ
+            || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY;
         let callId: string | null = null;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
             diagnostic.outcomeCode = readOutcomeCode(result);

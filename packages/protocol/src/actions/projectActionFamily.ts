@@ -1,3 +1,4 @@
+export { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
@@ -17,16 +18,10 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 export { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema,
   type ProjectSetupConsentFailureDetailsV1, type ProjectSetupConsentScopeV1 } from './projectSetupConsentFailure.js';
-import { PROJECT_ACTION_IDS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
+import { PROJECT_ACTION_IDS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { PROJECT_ACTION_IDS_V1, isProjectActionIdV1, isProjectWorkspaceSyncPreparationActionV1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1,
   type ProjectWorkerNoAcceptanceFailureDetailsV1 } from './projectWorkerRefusal.js';
-
-export const PROJECT_FINITE_ACTION_RPC_METHODS_V1 = {
-  'projects.prepare': RPC_METHODS.DAEMON_PROJECTS_PREPARE,
-  'projects.script.run': RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN,
-  'projects.compute.exec': RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC,
-} as const;
 
 /** These requester Project operations use native/Account ports, not a Machine RPC method. */
 export function isRequesterProjectExecutionActionV1(actionId: string): actionId is 'projects.open' | 'projects.trust.list' | 'projects.trust.revoke' {

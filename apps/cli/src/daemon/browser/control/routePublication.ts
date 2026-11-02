@@ -1,3 +1,4 @@
+import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/importCookies";
 import type { BrowserStoragePartitionOwner } from '@/daemon/browser/storage/partitions';
 import { invalidateProcessLaunchDiscovery } from "@/processes/launchNotification";
 import { join, resolve } from "node:path";
@@ -360,6 +361,7 @@ setBrowserRecordingRoutesProvider?: (
             !browserControlRoutes
           ) {
             browserControlRoutes = createBrowserDaemonControlRoutes({
+              importCookies: createBrowserProfileCookieImporter(browserSidecarControlAdapterResult.contextCapture),
               broker: browserControlBroker,
               captureRegistry: params.liveStreamCaptureRegistry,
               automation: () => browserAutomationServiceForCapture,

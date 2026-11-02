@@ -159,6 +159,7 @@ function createRuntimeActionSpecFor<
     placements: [],
     surfaces: {
       ...resolveRuntimeActionSurfaces(actionId),
+      ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true, mcp: true } : {}),
       ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: !requiresAnsweringClient, cli: !requiresAnsweringClient, voice: !requiresAnsweringClient } : {}),
       ...(domainRpc ? { cli: true, voice: true } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
@@ -168,6 +169,8 @@ function createRuntimeActionSpecFor<
     sideEffectClass,
     outputSchema: params.outputSchema,
     inputSchema: params.inputSchema,
+    ...(actionId === 'browser.profile.logins.import' ? {
+      bindings: { mcpToolName: 'browser_profile_logins_import' } } : {}),
     ...(actionId === 'browser.context.annotation.attachDraft' || (BROWSER_ANNOTATION_DRAFT_ACTION_IDS as readonly string[]).includes(actionId)
       ? { executionPlacement: 'client' as const } : {}),
     ...(actionId === 'browser.context.attachToComposer' ? {

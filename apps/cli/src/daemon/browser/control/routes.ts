@@ -8,10 +8,14 @@ import {
 } from './types';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 import type { BrowserAutomationDaemonService } from '../automation/service';
+import type { createBrowserProfileCookieImporter } from '../profiles/importCookies';
+import type { BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
+
 
 export type BrowserDaemonControlRoutes = Readonly<{
   dispatchCommand(command: unknown, context?: Pick<ActionExecutorContext, 'authority' | 'bypassApprovals' | 'signal'>): Promise<BrowserCommandDispatchResultV1>;
   listViews(browserSessionId: string): readonly BrowserDaemonViewV1[];
+  importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
 }>;
 
 function readCommandId(input: unknown): string {
@@ -33,6 +37,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   broker: Pick<BrowserDaemonControlBroker, 'dispatchCommand'> & Partial<Pick<BrowserDaemonControlBroker, 'listViews'>>;
   captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>;
   automation?: () => BrowserAutomationDaemonService | null;
+  importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
 }>): BrowserDaemonControlRoutes {
   async function dispatchToBroker(command: BrowserCommandV1, signal?: AbortSignal): Promise<BrowserCommandDispatchResultV1> {
     const result = await input.broker.dispatchCommand(command, signal ? { signal } : undefined);
@@ -45,6 +50,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   }
 
   return {
+    ...(input.importCookies ? { importCookies: input.importCookies } : {}),
     listViews(browserSessionId) {
       return (input.broker.listViews?.(browserSessionId) ?? []).map(view => {
         const source = input.captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });

@@ -6,6 +6,7 @@ import type { RuntimeActionIdV1 } from './actionIds.js';
 // their `external`/`externalNavigation`/`write` host-effect semantics (a navigate is not a
 // `destructive` host effect). Do not widen this set to drive the consent floor - use the safety set.
 export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
+  'browser.profile.logins.import',
   'projects.service.relocate',
   'browser.sandbox.install',
   'browser.diagnostics.eval',

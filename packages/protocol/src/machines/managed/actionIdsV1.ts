@@ -1,4 +1,7 @@
 import { RPC_METHODS } from '../../rpc/methods.js';
+export const MANAGED_ACTIVITY_READ_RPC_METHOD = 'managed.activity.read';
+export const MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD = 'managed.admission.drain.confirm';
+
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
   'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.references.get',

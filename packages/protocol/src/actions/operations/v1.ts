@@ -24,18 +24,11 @@ export function canRetainProjectSetupReviewV1(actionId: string): boolean {
     || actionId === 'execution.run.start' || actionId === 'execution.run.ensure_or_start';
 }
 
-export const ACTION_OPERATION_RPC_METHODS_V1 = Object.freeze({
-  list: 'actionOperation.list.v1',
-  get: 'actionOperation.get.v1',
-  cancel: 'actionOperation.cancel.v1',
-} as const);
+export { ACTION_OPERATION_RPC_METHODS_V1 } from './methodsV1.js';
 
 /** Same observation owner, with current domain associations. V1 readers retain
  * their original framing without development-only managed/task references. */
-export const ACTION_OPERATION_RPC_METHODS_V2 = Object.freeze({
-  list: 'actionOperation.list.v2',
-  get: 'actionOperation.get.v2',
-} as const);
+export { ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
 
 /** Dev-current reader retained only while already-running 0.3 processes drain. */
 export const ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1 = 'action-operation-snapshot.v1';

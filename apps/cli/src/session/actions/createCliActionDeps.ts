@@ -13,6 +13,7 @@
 
 
 
+import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
@@ -905,6 +906,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(approvalsStore?.promptLibraryStore.organization ? { artifactFolders: approvalsStore.promptLibraryStore.organization,
       promptStacks: approvalsStore.promptLibraryStore.organization, skillRules: approvalsStore.skillRules } : {}),
     prepareLocalServiceStartApproval,
+    browserProfileLoginsImport: async ({ input, context }) => {
+      if (input.kind !== 'cookies') return { status: 'unavailable', code: 'passkey_import_unavailable' };
+      return importBrowserProfileCookiesV1(input, call => callMachineAction({ machineId: call.machineId,
+        method: call.method, request: call.input, context, signal: context.signal, exactMachine: true,
+        effectActionId: 'browser.profile.logins.import', timeoutMs: null }), context.signal);
+    },
     runtimeActionExecute,
     ...(approvalsStore ? { memoryLibrary: {
       serverId: actionHomeId,

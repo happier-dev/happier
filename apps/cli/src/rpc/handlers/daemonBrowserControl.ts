@@ -1,3 +1,6 @@
+import { listBrowserCookieSources, readBrowserCookieSource } from '@/daemon/browser/profiles/cookieSources';
+import { BrowserCookieSourceReadV1Schema, BrowserCookieSourceResultV1Schema, BrowserCookieApplyV1Schema,
+    BrowserLoginSourcesResultV1Schema, BrowserProfileLoginsImportResultV1Schema } from '@happier-dev/protocol/browser/profile/v1';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { DaemonBrowserControlDispatchRequestV1Schema, DaemonBrowserControlDispatchResponseV1Schema, DaemonBrowserViewListRequestV1Schema, DaemonBrowserViewListResponseV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import type { DaemonBrowserControlDispatchResponseV1 } from '@happier-dev/protocol';
@@ -36,6 +39,21 @@ export function registerDaemonBrowserControlHandler(
     rpc: RpcHandlerRegistrar,
     options: DaemonBrowserControlHandlerOptions = {},
 ): void {
+    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, async () =>
+        BrowserLoginSourcesResultV1Schema.parse(await listBrowserCookieSources()));
+    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ, async (raw: unknown, context?: RpcHandlerContext) => {
+        const request = BrowserCookieSourceReadV1Schema.safeParse(raw);
+        if (!request.success) return { status: 'unavailable', code: 'source_format_unsupported' };
+        return BrowserCookieSourceResultV1Schema.parse(await readBrowserCookieSource({ ...request.data.source,
+            sites: request.data.sites, signal: context?.signal }));
+    });
+    rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY, async (raw: unknown, context?: RpcHandlerContext) => {
+        const request = BrowserCookieApplyV1Schema.safeParse(raw);
+        if (!request.success) return { status: 'unavailable', code: 'import_failed' };
+        return BrowserProfileLoginsImportResultV1Schema.parse(options.browserControl?.importCookies
+            ? await options.browserControl.importCookies(request.data, context?.signal)
+            : { status: 'unavailable', code: 'engine_unsupported' });
+    });
     rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, async (raw: unknown) => {
         const request = DaemonBrowserViewListRequestV1Schema.parse(raw);
         if (!options.browserControl) return unavailableBrowserControl();

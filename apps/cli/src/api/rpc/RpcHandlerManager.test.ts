@@ -1582,6 +1582,29 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     if (mode === 'e2ee') expect(typeof res).toBe('string');
   });
 
+  it.each(['plain', 'e2ee'] as const)(
+    'keeps private browser credential exchanges out of receipts and exception replies in %s', async mode => {
+    for (const method of [RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY]) {
+      const logs: unknown[] = [];
+      const receipt = vi.fn(() => null);
+      const key = new Uint8Array(32).fill(19);
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine',
+        ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionKey: key, encryptionVariant: 'dataKey' as const }),
+        logger: (message, data) => logs.push({ message, data }), projectTransportAcknowledgement: receipt });
+      rpc.registerHandler(method, () => { throw new Error('COOKIE_SENTINEL /native/path'); });
+      const params = { value: 'COOKIE_SENTINEL' };
+      const failureResponse = await rpc.handleRequest({ method: `machine:${method}`,
+        params: mode === 'plain' ? params : await sealRpcRequest(key, `machine:${method}`, params) });
+      const failure = mode === 'plain' ? failureResponse : await openRpcResponse(key, failureResponse);
+      expect(JSON.stringify({ failure, logs })).not.toContain('COOKIE_SENTINEL');
+      rpc.registerHandler(method, () => ({ status: 'ready', cookies: [{ value: 'COOKIE_SENTINEL' }] }));
+      const response = await rpc.handleRequest({ method: `machine:${method}`,
+        params: mode === 'plain' ? {} : await sealRpcRequest(key, `machine:${method}`, {}), transportResponseEnvelopeVersion: 1 });
+      if (mode === 'e2ee') expect(JSON.stringify(response)).not.toContain('COOKIE_SENTINEL');
+      expect(receipt).not.toHaveBeenCalled();
+    }
+    });
+
   it('passes a server-stamped permission actor to the transport handler but never fabricates one locally', async () => {
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1',

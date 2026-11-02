@@ -156,8 +156,7 @@ export function projectExternalActionExecutionResultV1(value: unknown): ActionEx
 }
 
 /** Closed server-to-exact-daemon method; never a public Action or SDK method. */
-export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 =
-  'daemon.actions.external.dispatch' as const;
+export { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../rpc/methods.js';
 
 /**
  * Recovers only safe correlation from a purported protected outer frame. It

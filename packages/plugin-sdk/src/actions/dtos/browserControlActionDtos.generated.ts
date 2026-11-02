@@ -356,6 +356,26 @@ export type BrowserControlActionInputById = {
         viewId: string;
         kind: 'stop';
     };
+    readonly "browser.profile.logins.import": {
+        kind: 'cookies';
+        sourceMachineId: string;
+        sites: string[];
+        machineId: string;
+        browserSessionId: string;
+        viewId: string;
+        profileId: string;
+        source?: undefined | {
+            browser: 'chromium' | 'firefox' | 'safari';
+            profileId: string;
+        };
+    } | {
+        kind: 'passkeys';
+        refs: string[];
+        machineId: string;
+        browserSessionId: string;
+        viewId: string;
+        profileId: string;
+    };
 };
 export type BrowserControlActionResultById = {
     readonly "browser.workspace.open": {
@@ -7480,5 +7500,20 @@ export type BrowserControlActionResultById = {
             reasonCode: string;
             navigationGeneration?: number | undefined;
         })[];
+    };
+    readonly "browser.profile.logins.import": {
+        status: 'completed';
+        records: {
+            domain: string;
+            name: string;
+            status: 'failed' | 'imported' | 'skipped';
+            code?: 'app_bound_encryption' | 'canceled' | 'destination_unavailable' | 'engine_unsupported' | 'expired' | 'import_failed' | 'import_unknown' | 'partition_unsupported' | 'passkey_import_unavailable' | 'permission_denied' | 'profile_mismatch' | 'source_format_unsupported' | 'source_locked' | 'source_unavailable' | undefined;
+            reason?: 'this passkey tracks a usage counter' | undefined;
+        }[];
+    } | {
+        status: 'needs_source';
+    } | {
+        status: 'unavailable';
+        code: 'app_bound_encryption' | 'canceled' | 'destination_unavailable' | 'engine_unsupported' | 'expired' | 'import_failed' | 'import_unknown' | 'partition_unsupported' | 'passkey_import_unavailable' | 'permission_denied' | 'profile_mismatch' | 'source_format_unsupported' | 'source_locked' | 'source_unavailable';
     };
 };

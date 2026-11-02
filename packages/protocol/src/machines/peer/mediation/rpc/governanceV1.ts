@@ -1,8 +1,8 @@
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
-import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
-import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/managedIntentV1.js';
-import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSources.js';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
+import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
 
@@ -254,6 +254,10 @@ const READ_ONLY_RPC_GOVERNANCE = Object.freeze({
 } satisfies Readonly<Record<string, MachineRpcGovernanceClassification>>);
 
 const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES,
+  RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
+  RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY,
+  // Private operands of the admitted login-import Action; never an agent-readable key API.
   SESSION_RPC_METHODS.SESSION_GUARD_NOTICE,
   SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1,
   SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE,

@@ -10,6 +10,7 @@ import type { DeploymentPromoteInputV1 } from '../../deployments/deploymentActio
 import type { DeploymentDeployInputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentRollbackInputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../workflows/workflowDefinitionV1.js';
+import type { BrowserProfileLoginsImportV1, BrowserProfileLoginsImportResultV1 } from '../../browser/profile/loginsV1.js';
 import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, DeploymentActionOutputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
@@ -1540,6 +1541,9 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<ActionExecuteResult>;
   runtimeActionExecute?: RuntimeActionExecute;
+  /** Admitted private host exchange; public operands and results contain selection metadata only. */
+  browserProfileLoginsImport?: (args: Readonly<{ input: BrowserProfileLoginsImportV1;
+    context: ActionExecutorContext }>) => Promise<BrowserProfileLoginsImportResultV1>;
   /** Private live custody; never dispatched through Action arguments or observers. */
   confidentialSecretFill?: (args: Readonly<{
     actionId: PrivateSecretContinuationV1['actionId'];

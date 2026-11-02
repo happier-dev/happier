@@ -1,3 +1,6 @@
+/** Closed server-to-exact-daemon method; never a public Action or SDK method. */
+export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 = 'daemon.actions.external.dispatch' as const;
+
 /**
  * Canonical RPC method literals, separated from the RPC barrel so browser-safe
  * consumers can read ActionSpecs without evaluating daemon-only projections.
@@ -33,6 +36,9 @@ export const RPC_METHODS = {
   MACHINE_SETUP_REMOVE: 'machines.setup.remove',
   MACHINE_SETUP_PLAN: 'machines.setup.plan',
 
+  DAEMON_BROWSER_PROFILE_LOGIN_SOURCES: 'daemon.browser.profile.loginSources',
+  DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ: 'daemon.browser.profile.cookieSource.read',
+  DAEMON_BROWSER_PROFILE_COOKIES_APPLY: 'daemon.browser.profile.cookies.apply',
   USAGE_SOURCES_DISCOVER: 'usage.sources.discover',
   USAGE_SOURCES_GET: 'usage.sources.get',
   USAGE_SOURCES_CONSENT_SET: 'usage.sources.consent.set',

@@ -7461,3 +7461,24 @@ Inspection does not save a posture or change firewall
 rules. The optional native-facts field is an unreleased 0.3 closed Protocol
 extension requiring matching development readers; there is no persisted-format
 migration or released compatibility adapter.
+
+In 0.3 development, `browser.profile.logins.import` uses one closed `kind`-based
+Action for a selected managed profile. Public operands contain Machine, Session,
+view, profile and source selections; public results contain per-record metadata.
+Cookie values travel only through private Machine RPC, using the existing
+Account-mode transport. E2EE exchanges remain encrypted toward Home; Plain
+exchanges are server-readable and the confirmation must disclose that fact.
+The Session agent and anyone able to drive that browser can use imported logins.
+
+Native cookie discovery runs only when the import confirmation opens. Source
+discovery, source reads and destination insertion require Machine Manage through
+the canonical RPC route policy. The standard Firefox profile locations on
+Windows, macOS and Linux are supported for SQLite schemas 10–17; unknown formats,
+Chromium and Safari source stores return typed unsupported results.
+Partition/container cookies are skipped explicitly. Source stores are opened
+read-only and only the chosen profile and sites are queried. The destination is
+managed Chromium through CDP; a system WebView is unsupported. Imported data
+shares the existing ephemeral profile's Session-close, logout and explicit-purge
+lifetime. Source logout does not revoke a copied login. Partial/unknown native
+outcomes are visible and never automatically replayed. Real OS/browser and
+cross-Machine login validation remains with RU2's composed QA wave.

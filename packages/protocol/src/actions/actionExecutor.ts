@@ -4926,6 +4926,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (isRuntimeActionIdV1(actionId)) {
+        if (actionId === 'browser.profile.logins.import') {
+          if (!deps.browserProfileLoginsImport) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          try {
+            return completeActionResult(await deps.browserProfileLoginsImport({
+              input: parsed.data as import('../browser/profile/loginsV1.js').BrowserProfileLoginsImportV1, context: ctx,
+            }));
+          } catch {
+            // Native/source exceptions may contain cookie or key material. Never publish them.
+            return completeActionResult({ status: 'unavailable', code: 'import_unknown' });
+          }
+        }
         const result = await dispatchRuntimeAction({
           actionId,
           input: parsed.data,

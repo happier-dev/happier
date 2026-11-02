@@ -46,8 +46,7 @@ export type ManagedIntentInput = Readonly<z.infer<typeof ManagedIntentInputSchem
 export type ManagedIntentResult = Readonly<z.infer<typeof ManagedIntentResultSchema>>;
 export type ActivityDecisionV1 = Readonly<z.infer<typeof ActivityDecisionV1Schema>>;
 
-export const MANAGED_ACTIVITY_READ_RPC_METHOD = 'managed.activity.read';
-export const MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD = 'managed.admission.drain.confirm';
+export { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from './actionIdsV1.js';
 
 /** Exact retained-row correlation; requester authority comes from signed Machine ingress. */
 export const ManagedActivityReadRequestV1Schema = lazyDefinition(() => z.strictObject({

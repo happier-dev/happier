@@ -66,3 +66,6 @@ export const BrowserProfileV1Schema = lazyZodSchema(() => z.strictObject({
     }
   })));
 export type BrowserProfileV1 = z.infer<typeof BrowserProfileV1Schema>;
+
+export * from './loginsV1.js';
+export * from './importCookiesV1.js';

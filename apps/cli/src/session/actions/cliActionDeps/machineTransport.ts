@@ -100,6 +100,11 @@ export function createCliMachineActionTransport(
       const method = getActionSpec(actionId).bindings?.rpcMethod;
       return method ? [method] : [];
     }),
+    // Native browser stores belong to the OS user. Always spend authenticated
+    // Machine ingress so a shared-Machine Use requester cannot bypass Manage locally.
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY,
     RPC_METHODS.DAEMON_VITALS_WATCH, RPC_METHODS.DAEMON_PROCESSES_WATCH,
     RPC_METHODS.DAEMON_STORAGE_WATCH, RPC_METHODS.DAEMON_GUARD_WATCH,
     // Issuer-side approval has no receiving Machine stamp. Open's ordinary

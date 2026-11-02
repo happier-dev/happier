@@ -5328,3 +5328,15 @@ Canonical owners:
 - Session message format: `apps/cli/src/api/types.ts`
 - Server message ingestion: `apps/server/sources/app/api/socket/sessionUpdateHandler.ts`
 - Artifact/KV routes: `apps/server/sources/app/api/routes/artifactsRoutes.ts`, `apps/server/sources/app/kv/kvMutate.ts`
+
+## Browser login import (unreleased 0.3)
+
+Browser login import uses private Machine RPC for selected native cookie values;
+public Action operands and results contain selection and outcome metadata only.
+E2EE Machine RPC protects these values from Home, while Plain transport is
+server-readable. Source and destination can be different Machines. Native source
+enumeration/reads and destination insertion require Manage on a shared Machine.
+The selected managed profile owns imported browser state and its existing purge
+lifecycle. The Session agent and anyone who can drive that browser can use the
+imported logins; this feature does not isolate them from same-UID processes.
+See [Browser login import](actions.md) for the current development adapter scope.

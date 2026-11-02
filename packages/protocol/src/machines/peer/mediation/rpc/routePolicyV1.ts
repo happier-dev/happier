@@ -1,16 +1,16 @@
-import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../actions/externalActionApi.js';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
-import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { resolveSocketRpcSessionAuthorization } from '../../../../rpc/socket.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
-import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/managedIntentV1.js';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions/externalActionApi.js';
-import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionFamily.js';
-import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSources.js';
-import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../actions/specs/localServices.js';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionIdsV1.js';
+import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
+import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
 
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
@@ -324,6 +324,10 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, 'Daemon-local browser control command dispatch (human-owner navigate/reload/stop/close/setTarget on a daemon-authoritative view) routed to the shared control broker with typed validation and no durable server mutation or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE, 'Daemon-local present-user computer Action dispatch (target list/select, look, stop, hand back, privacy pane) to the computer owner with typed validation and no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, 'Session-filtered browser view discovery projects the daemon control owner and live capture readiness without server persistence or mutation.'),
+  ...([RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY] as const).map(method => ({ ...directEphemeral(method,
+      'Private native browser login exchange. Manage grants access to the Machine OS user and its browser stores.'),
+    sharedMachineAccess: 'manage' as const })),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT, 'Daemon-local browser diagnostics snapshot read with bounded redacted events and no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_RECORDING_START, 'Daemon-local browser recording start command with typed runtime validation and no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_RECORDING_STOP, 'Daemon-local browser recording stop command with typed runtime validation and no server persistence or cross-device fanout.'),
