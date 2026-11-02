@@ -186,6 +186,43 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     expect(launchArgs).not.toContain('bypassPermissions');
   });
 
+  it.each([
+    { permissionMode: 'default', sandbox: undefined, allowed: false },
+    { permissionMode: 'safe-yolo', sandbox: undefined, allowed: false },
+    { permissionMode: 'bypassPermissions', sandbox: undefined, allowed: false },
+    { permissionMode: 'default', sandbox: '1', allowed: true },
+  ] as const)('preserves root permission intent using the effective child sandbox ($permissionMode/$sandbox)', async ({ permissionMode, sandbox, allowed }) => {
+    const uidDescriptor = Object.getOwnPropertyDescriptor(process, 'getuid');
+    Object.defineProperty(process, 'getuid', { configurable: true, value: () => 0 });
+    patchProcessPlatform('linux');
+    try {
+      // The child overlay, rather than the runner's environment, decides sandbox status.
+      await withPatchedEnv({ IS_SANDBOX: '1', CLAUDE_CODE_BUBBLEWRAP: undefined }, async () => {
+        const spawn = await buildClaudeUnifiedTerminalSpawn({
+          path: '/workspace/project',
+          first: { message: 'hello', mode: { permissionMode } },
+          envOverlay: { IS_SANDBOX: sandbox ?? '0' },
+          deps: {
+            resolveClaudeCliPath: () => '/usr/local/bin/claude',
+            isClaudeCliJavaScriptFile: () => false,
+            ensureClaudeJsRuntimeExecutable: async () => '/managed/node',
+            terminalLaunchSpecRunnerPath: '/happier/scripts/terminal_launch_spec_runner.cjs',
+            resolveCommandInvocation: ({ command, args }) => ({ command, args: [...args] }),
+          },
+        });
+        const launch = await readLaunchSpecFromSpawn(spawn);
+        expect(launch.args?.includes('--allow-dangerously-skip-permissions')).toBe(allowed);
+        if (permissionMode !== 'default') {
+          expect(launch.args).toEqual(expect.arrayContaining(['--permission-mode', permissionMode === 'safe-yolo' ? 'auto' : permissionMode]));
+        }
+        expect(launch.env?.IS_SANDBOX).toBe(sandbox ?? '0');
+      });
+    } finally {
+      if (uidDescriptor) Object.defineProperty(process, 'getuid', uidDescriptor);
+      else Reflect.deleteProperty(process, 'getuid');
+    }
+  });
+
   it('writes per-session runner diagnostics paths into the launch spec when a happy session id is available', async () => {
     const spawn = await buildClaudeUnifiedTerminalSpawn({
       path: '/workspace/project',

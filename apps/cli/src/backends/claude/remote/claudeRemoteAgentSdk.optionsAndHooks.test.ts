@@ -2667,32 +2667,49 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
     });
 
-    it('always sets allowDangerouslySkipPermissions so permission mode can escalate to bypassPermissions at runtime', async () => {
-        let capturedOptions: any = null;
+    it.each([
+        { uid: 1000, sandbox: undefined, bubblewrap: undefined, allowed: true },
+        { uid: 0, sandbox: undefined, bubblewrap: undefined, allowed: false },
+        { uid: 0, sandbox: '0', bubblewrap: 'true', allowed: false },
+        { uid: 0, sandbox: '1', bubblewrap: undefined, allowed: true },
+        { uid: 0, sandbox: undefined, bubblewrap: '1', allowed: true },
+    ])('pre-enables bypass only where Claude permits it ($uid/$sandbox/$bubblewrap)', async ({ uid, sandbox, bubblewrap, allowed }) => {
+        const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'linux' });
+        const uidDescriptor = Object.getOwnPropertyDescriptor(process, 'getuid');
+        const previousSandbox = process.env.IS_SANDBOX;
+        const previousBubblewrap = process.env.CLAUDE_CODE_BUBBLEWRAP;
+        Object.defineProperty(process, 'getuid', { configurable: true, value: () => uid });
+        if (sandbox === undefined) delete process.env.IS_SANDBOX;
+        else process.env.IS_SANDBOX = sandbox;
+        if (bubblewrap === undefined) delete process.env.CLAUDE_CODE_BUBBLEWRAP;
+        else process.env.CLAUDE_CODE_BUBBLEWRAP = bubblewrap;
+        try {
+            let capturedOptions: any = null;
 
-        const createQuery = vi.fn((_params: any) => {
-            capturedOptions = _params.options;
-            return {
-                async *[Symbol.asyncIterator]() {
-                    yield { type: 'result' } as any;
-                },
-                close: vi.fn(),
-                setPermissionMode: vi.fn(),
-                setModel: vi.fn(),
-                setMaxThinkingTokens: vi.fn(),
-                supportedCommands: vi.fn(async () => []),
-                supportedModels: vi.fn(async () => []),
-            } as any;
-        });
-
-        const runOnce = async (modeOverrides: any) => {
-            capturedOptions = null;
-            let didSendFirst = false;
-            const nextMessage = vi.fn(async () => {
-                if (didSendFirst) return null;
-                didSendFirst = true;
-                return { message: 'hello', mode: makeMode(modeOverrides) };
+            const createQuery = vi.fn((_params: any) => {
+                capturedOptions = _params.options;
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
             });
+
+            const runOnce = async (modeOverrides: any) => {
+                capturedOptions = null;
+                let didSendFirst = false;
+                const nextMessage = vi.fn(async () => {
+                    if (didSendFirst) return null;
+                    didSendFirst = true;
+                    return { message: 'hello', mode: makeMode(modeOverrides) };
+                });
 
                 await claudeRemoteAgentSdk({
                     sessionId: null,
@@ -2702,19 +2719,31 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                     claudeExecutablePath: '/tmp/claude',
                     canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
                     isAborted: () => false,
-                nextMessage,
-                onReady: () => {},
-                onSessionFound: () => {},
-                onMessage: () => {},
-                createQuery,
-            } as any);
+                    nextMessage,
+                    onReady: () => {},
+                    onSessionFound: () => {},
+                    onMessage: () => {},
+                    createQuery,
+                } as any);
 
-            return capturedOptions;
-        };
+                return capturedOptions;
+            };
 
-        expect((await runOnce({ permissionMode: 'default' }))?.allowDangerouslySkipPermissions).toBe(true);
-        expect((await runOnce({ permissionMode: 'bypassPermissions' }))?.allowDangerouslySkipPermissions).toBe(true);
-        expect((await runOnce({ permissionMode: 'default', agentModeId: 'plan' }))?.allowDangerouslySkipPermissions).toBe(true);
+            for (const permissionMode of ['default', 'safe-yolo', 'acceptEdits', 'bypassPermissions'] as const) {
+                const options = await runOnce({ permissionMode });
+                expect(options?.allowDangerouslySkipPermissions).toBe(allowed);
+                expect(options?.permissionMode).toBe(permissionMode === 'default' ? null : permissionMode === 'safe-yolo' ? 'auto' : permissionMode);
+            }
+            expect((await runOnce({ permissionMode: 'default', agentModeId: 'plan' }))?.allowDangerouslySkipPermissions).toBe(allowed);
+        } finally {
+            Object.defineProperty(process, 'platform', platformDescriptor);
+            if (uidDescriptor) Object.defineProperty(process, 'getuid', uidDescriptor);
+            else Reflect.deleteProperty(process, 'getuid');
+            if (previousSandbox === undefined) delete process.env.IS_SANDBOX;
+            else process.env.IS_SANDBOX = previousSandbox;
+            if (previousBubblewrap === undefined) delete process.env.CLAUDE_CODE_BUBBLEWRAP;
+            else process.env.CLAUDE_CODE_BUBBLEWRAP = previousBubblewrap;
+        }
     });
 
     it('uses the Agent SDK omit sentinel when Happier resolves to default, but passes non-default modes', async () => {

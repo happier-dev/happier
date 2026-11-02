@@ -17,7 +17,7 @@ import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
-import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
+import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode, shouldAllowClaudePermissionBypass } from '@/backends/claude/utils/permissionMode';
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
 import { normalizeAvailableCommands } from '@/agent/acp/commands/publishSlashCommands';
@@ -759,7 +759,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
             // selected settingSources. Its runtime treats null as the omit sentinel, so use that
             // at this external boundary while continuing to pass explicit non-default modes.
             permissionMode: mappedPermissionMode === 'default' ? null : mappedPermissionMode,
-            allowDangerouslySkipPermissions: true,
+            allowDangerouslySkipPermissions: shouldAllowClaudePermissionBypass(claudeSubprocessEnv),
             ...(resolvedEffort ? { effort: resolvedEffort } : {}),
             model: argOverrides.model ?? mode.model,
             fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,

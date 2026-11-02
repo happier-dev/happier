@@ -4,6 +4,16 @@ import type { PermissionMode } from '@/api/types';
 /** Derived from SDK's QueryOptions - the modes Claude actually supports */
 export type ClaudeSdkPermissionMode = NonNullable<QueryOptions['permissionMode']>;
 
+/** Keep live bypass switching available without making ordinary root launches fail. */
+export function shouldAllowClaudePermissionBypass(env: Readonly<NodeJS.ProcessEnv>): boolean {
+    // Claude Code also checks the capability flag at startup, even in default/auto mode.
+    // Only honor sandbox assertions already present in the effective child environment.
+    return process.platform === 'win32'
+        || process.getuid?.() !== 0
+        || env.IS_SANDBOX === '1'
+        || env.CLAUDE_CODE_BUBBLEWRAP === '1';
+}
+
 /**
  * Normalize the session-control flag we pass through Happier CLI when spawning Claude.
  *

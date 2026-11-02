@@ -6,7 +6,7 @@ import type { CommandInvocation } from '@happier-dev/cli-common/process';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
 
-import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '../utils/permissionMode';
+import { resolveClaudeSdkPermissionModeFromEnhancedMode, shouldAllowClaudePermissionBypass } from '../utils/permissionMode';
 import { getClaudeSystemPrompt } from '../utils/systemPrompt';
 import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from '../utils/resolveClaudeCliPath';
 import { ensureClaudeJsRuntimeExecutable } from '../utils/ensureClaudeJsRuntimeExecutable';
@@ -247,6 +247,7 @@ function resolveStatuslineOverlaySettings<Mode extends EnhancedMode>(params: Rea
 function buildClaudeArgs<Mode extends EnhancedMode>(
   input: ClaudeUnifiedTerminalSpawnInput<Mode>,
   statuslineSettings: ClaudeStatuslineOverlaySettings | undefined,
+  env: Readonly<NodeJS.ProcessEnv>,
 ): string[] {
   const args: string[] = [];
   const terminalOptions = resolveClaudeTerminalCliOptions({
@@ -288,7 +289,9 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
     args.push('--mcp-config', input.happierMcpConfigJson.trim());
   }
 
-  args.push('--allow-dangerously-skip-permissions');
+  if (shouldAllowClaudePermissionBypass(env)) {
+    args.push('--allow-dangerously-skip-permissions');
+  }
 
   if (permissionMode !== 'default') {
     args.push('--permission-mode', permissionMode);
@@ -420,7 +423,7 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
   }), happierSessionId ?? '');
   const statuslineSettings = resolveStatuslineOverlaySettings({ input, deps, env });
   const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(
-    buildClaudeArgs(input, statuslineSettings),
+    buildClaudeArgs(input, statuslineSettings, env),
   );
   const args = materializedMcpConfig.args;
 

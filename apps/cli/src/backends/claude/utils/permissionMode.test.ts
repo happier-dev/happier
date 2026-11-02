@@ -3,8 +3,29 @@ import {
     mapToClaudeMode,
     normalizeClaudeHappyCliSessionControlPermissionMode,
     resolveClaudeSdkPermissionModeFromEnhancedMode,
+    shouldAllowClaudePermissionBypass,
 } from './permissionMode';
 import type { PermissionMode } from '@/api/types';
+
+describe('Claude bypass capability across platforms', () => {
+    it.each([
+        { platform: 'win32', uid: 0, allowed: true },
+        { platform: 'darwin', uid: 0, allowed: false },
+        { platform: 'linux', uid: undefined, allowed: true },
+    ])('preserves native eligibility on $platform with uid $uid', ({ platform, uid, allowed }) => {
+        const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        const uidDescriptor = Object.getOwnPropertyDescriptor(process, 'getuid');
+        Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
+        Object.defineProperty(process, 'getuid', { configurable: true, value: uid === undefined ? undefined : () => uid });
+        try {
+            expect(shouldAllowClaudePermissionBypass({})).toBe(allowed);
+        } finally {
+            Object.defineProperty(process, 'platform', platformDescriptor);
+            if (uidDescriptor) Object.defineProperty(process, 'getuid', uidDescriptor);
+            else Reflect.deleteProperty(process, 'getuid');
+        }
+    });
+});
 
 describe('mapToClaudeMode', () => {
     describe('Codex modes are mapped to Claude equivalents', () => {
