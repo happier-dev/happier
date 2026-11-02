@@ -37,6 +37,7 @@ export async function readConnectedServiceQuotaView(params: Readonly<{
             fetchedAt: record.fetchedAt ?? record.snapshot.fetchedAtMs,
             staleAfterMs: record.staleAfterMs ?? record.snapshot.staleAfterMs,
             status: normalizeResponseStatus(record.status),
+            ...(record.metadata?.refreshErrorAt !== undefined ? { refreshErrorAt: record.metadata.refreshErrorAt } : {}),
             ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}),
         },
     };

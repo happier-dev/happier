@@ -2722,8 +2722,6 @@ export const pl: TranslationStructure = {
     },
     quota: {
       refreshing: "Odświeżanie użycia…",
-      refreshTimedOut: "Odświeżanie nie zostało zakończone. Komputer odświeżający te dane może być w trybie offline.",
-      refreshRateLimited: "Dostawca ograniczył to odświeżanie. Wyświetlane jest ostatnie znane użycie.",
       loading: "Ładowanie…",
       error: ({ message }: { message: string }) => `Błąd: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Ostatnia aktualizacja: ${time}`,
@@ -4923,6 +4921,8 @@ export const pl: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "Nie udało się odświeżyć użycia. Spróbuj ponownie.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Nie udało się odświeżyć użycia. Spróbuj ponownie po ${time}.`,
     machineRpcDecryptionFailed: "Nie można odszyfrować danych tego komputera. Zaloguj się przy użyciu pasującego klucza konta i spróbuj ponownie.",
     machineRpcContextUnavailable: "Połączenie z tym komputerem jest niedostępne. Odśwież komputery i spróbuj ponownie.",
     networkError: "Wystąpił błąd sieci",

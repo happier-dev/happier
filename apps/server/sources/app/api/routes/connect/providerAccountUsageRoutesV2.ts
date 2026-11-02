@@ -69,6 +69,7 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
                     staleAfterMs: z.number().int().nonnegative(),
                     status: z.enum(["ok", "unavailable", "estimated", "error"]),
                     materialFingerprint: z.string().min(1).max(256).optional(),
+                    refreshErrorAt: z.number().int().nonnegative().optional(),
                 }).passthrough(),
                 source: ConnectedServiceUsageSourceV1Schema.optional(),
             }).strict(),
@@ -109,6 +110,7 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
                 fetchedAt: request.body.metadata.fetchedAt,
                 staleAfterMs: request.body.metadata.staleAfterMs,
                 materialFingerprint: request.body.metadata.materialFingerprint,
+                refreshErrorAt: request.body.metadata.refreshErrorAt,
                 sealedPayload: request.body.sealed,
             };
             let sourceOutcome: ProviderAccountUsageSourceLinkOutcome | undefined;
@@ -152,6 +154,7 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
                         staleAfterMs: z.number().int().nonnegative(),
                         status: z.enum(["ok", "unavailable", "estimated", "error"]),
                         refreshRequestedAt: z.number().int().nonnegative().optional(),
+                        refreshErrorAt: z.number().int().nonnegative().optional(),
                     }),
                     sources: z.array(ConnectedServiceUsageSourceV1Schema),
                 }),
@@ -181,6 +184,7 @@ export function registerProviderAccountUsageRoutesV2(app: Fastify): void {
                 staleAfterMs: record.staleAfterMs ?? 0,
                 status: normalizeResponseStatus(record.status),
                 ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}),
+                ...(record.metadata?.refreshErrorAt !== undefined ? { refreshErrorAt: record.metadata.refreshErrorAt } : {}),
             },
             sources: sources.map(toConnectedServiceUsageSourceV1),
         });

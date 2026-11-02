@@ -216,6 +216,32 @@ export const ProviderAccountUsageDiagnosticV1Schema = lazySchema(() => z.object(
 }));
 export type ProviderAccountUsageDiagnosticV1 = z.infer<typeof ProviderAccountUsageDiagnosticV1Schema>;
 
+function getProviderAccountUsageRefreshError(
+  snapshot: Pick<ProviderAccountUsageSnapshotV1, 'state' | 'diagnostics'>,
+): ProviderAccountUsageDiagnosticV1 | undefined {
+  if (snapshot.state !== 'error_last_known_good') return undefined;
+  return snapshot.diagnostics?.reduce<ProviderAccountUsageDiagnosticV1 | undefined>((latest, diagnostic) => {
+    if (diagnostic.observedAtMs === undefined) return latest;
+    return latest?.observedAtMs === undefined || diagnostic.observedAtMs > latest.observedAtMs ? diagnostic : latest;
+  }, undefined);
+}
+
+export function getProviderAccountUsageRefreshErrorAt(
+  snapshot: Pick<ProviderAccountUsageSnapshotV1, 'state' | 'diagnostics'>,
+): number | undefined {
+  return getProviderAccountUsageRefreshError(snapshot)?.observedAtMs;
+}
+
+export function isProviderAccountUsageRefreshRequestSettled(params: Readonly<{
+  refreshRequestedAt: number | undefined;
+  fetchedAt: number;
+  refreshErrorAt?: number;
+}>): boolean {
+  return params.refreshRequestedAt !== undefined
+    && (params.fetchedAt >= params.refreshRequestedAt
+      || (params.refreshErrorAt !== undefined && params.refreshErrorAt >= params.refreshRequestedAt));
+}
+
 export const ProviderAccountUsageSnapshotV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
   recordId: ProviderAccountUsageRecordIdSchema,
@@ -321,6 +347,7 @@ export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
   const parsedSource = ConnectedServiceUsageSourceV1Schema.parse(source);
   const serviceId = parsedSource.serviceId;
   const profileId = parsedSource.profileId;
+  const refreshError = getProviderAccountUsageRefreshError(parsed);
 
   return {
     v: 1,
@@ -339,6 +366,7 @@ export function projectProviderAccountUsageToConnectedServiceQuotaSnapshot(
     staleAtMs: parsed.fetchedAtMs + parsed.staleAfterMs,
     source: mapUsageSourceToQuotaSource(parsed.source),
     confidence: mapUsageConfidenceToQuotaConfidence(parsed.confidence),
+    ...(refreshError ? { evidence: refreshError } : {}),
     ...(parsed.recoveryCredits ? { recoveryCredits: parsed.recoveryCredits satisfies ConnectedServiceQuotaRecoveryCreditsV1 } : {}),
     ...(parsed.recoveryCreditDetails ? { recoveryCreditDetails: parsed.recoveryCreditDetails } : {}),
     ...(parsed.subscription ? { subscription: parsed.subscription } : {}),

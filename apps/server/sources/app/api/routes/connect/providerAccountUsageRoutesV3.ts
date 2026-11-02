@@ -8,6 +8,7 @@ import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverF
 import { db } from "@/storage/db";
 import {
     ConnectedServiceIdSchema,
+    getProviderAccountUsageRefreshErrorAt,
     ConnectedServiceProfileIdSchema,
     ConnectedServiceUsageSourceV1Schema,
     ProviderAccountUsageRecordIdSchema,
@@ -171,6 +172,7 @@ export function registerProviderAccountUsageRoutesV3(app: Fastify): void {
                 fetchedAt: request.body.metadata.fetchedAt,
                 staleAfterMs: request.body.metadata.staleAfterMs,
                 materialFingerprint: request.body.metadata.materialFingerprint,
+                refreshErrorAt: getProviderAccountUsageRefreshErrorAt(parsed.data),
                 snapshot: {
                     ...parsed.data,
                     ...(request.body.metadata.subscription ? { subscription: request.body.metadata.subscription } : {}),
@@ -220,6 +222,7 @@ export function registerProviderAccountUsageRoutesV3(app: Fastify): void {
                         staleAfterMs: z.number().int().nonnegative(),
                         status: z.enum(["ok", "unavailable", "estimated", "error"]),
                         refreshRequestedAt: z.number().int().nonnegative().optional(),
+                        refreshErrorAt: z.number().int().nonnegative().optional(),
                     }),
                     sources: z.array(ConnectedServiceUsageSourceV1Schema),
                 }),
@@ -253,6 +256,7 @@ export function registerProviderAccountUsageRoutesV3(app: Fastify): void {
                 staleAfterMs: record.staleAfterMs ?? record.snapshot.staleAfterMs,
                 status: normalizeResponseStatus(record.status),
                 ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}),
+                ...(record.metadata?.refreshErrorAt !== undefined ? { refreshErrorAt: record.metadata.refreshErrorAt } : {}),
             },
             sources: sources.map(toConnectedServiceUsageSourceV1),
         });

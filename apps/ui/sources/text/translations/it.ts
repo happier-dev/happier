@@ -3139,8 +3139,6 @@ export const it: TranslationStructure = {
     },
     quota: {
       refreshing: "Aggiornamento dell’utilizzo…",
-      refreshTimedOut: "L’aggiornamento non è stato completato. La macchina che aggiorna questi dati potrebbe essere offline.",
-      refreshRateLimited: "Il provider ha limitato questo aggiornamento. Viene mostrato l’ultimo utilizzo noto.",
       loading: "Caricamento…",
       error: ({ message }: { message: string }) => `Errore: ${message}`,
       lastUpdated: ({ time }: { time: string }) =>
@@ -5246,6 +5244,8 @@ export const it: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "Impossibile aggiornare l’utilizzo. Riprova.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Impossibile aggiornare l’utilizzo. Riprova dopo ${time}.`,
     machineRpcDecryptionFailed: "Impossibile decifrare i dati di questa macchina. Accedi con la chiave dell’account corrispondente e riprova.",
     machineRpcContextUnavailable: "La connessione a questa macchina non è disponibile. Aggiorna le macchine e riprova.",
     networkError: "Si è verificato un errore di rete",

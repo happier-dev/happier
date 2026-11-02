@@ -27,6 +27,7 @@ export const ProviderAccountUsageStatusSchema = z.enum([
 
 export const ProviderAccountUsageRecordMetadataSchema = z.object({
     materialFingerprint: z.string().trim().min(1).max(256).optional(),
+    refreshErrorAt: z.number().int().nonnegative().optional(),
     subscription: ProviderAccountSubscriptionV1Schema.optional(),
     recoveryCreditDetails: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1Schema.optional(),
 }).strict();

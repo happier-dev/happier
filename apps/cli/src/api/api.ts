@@ -1497,6 +1497,7 @@ export class ApiClient {
       staleAfterMs: number;
       status: 'ok' | 'unavailable' | 'estimated' | 'error';
       materialFingerprint?: string;
+      refreshErrorAt?: number;
     };
   }): Promise<void> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -1561,6 +1562,7 @@ export class ApiClient {
       staleAfterMs: number;
       status: 'ok' | 'unavailable' | 'estimated' | 'error';
       refreshRequestedAt?: number;
+      refreshErrorAt?: number;
     };
   } | null> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -1600,6 +1602,7 @@ export class ApiClient {
         staleAfterMs: z.number(),
         status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
         refreshRequestedAt: z.number().optional(),
+        refreshErrorAt: z.number().optional(),
       }).safeParse(rawRecord.metadata);
       if (!metadataParsed.success) {
         throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response', metadataParsed.error);
@@ -1645,6 +1648,8 @@ export class ApiClient {
       fetchedAt: number;
       staleAfterMs: number;
       status: 'ok' | 'unavailable' | 'estimated' | 'error';
+      refreshRequestedAt?: number;
+      refreshErrorAt?: number;
     };
   } | null> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -1684,6 +1689,7 @@ export class ApiClient {
         staleAfterMs: z.number(),
         status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
         refreshRequestedAt: z.number().optional(),
+        refreshErrorAt: z.number().optional(),
       }).safeParse((raw as any).metadata);
 
       if (!metadataParsed.success) {
@@ -1862,6 +1868,7 @@ export class ApiClient {
       staleAfterMs: number;
       status: 'ok' | 'unavailable' | 'estimated' | 'error';
       refreshRequestedAt?: number;
+      refreshErrorAt?: number;
     };
   } | null> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -1919,6 +1926,7 @@ export class ApiClient {
         staleAfterMs: z.number(),
         status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
         refreshRequestedAt: z.number().optional(),
+        refreshErrorAt: z.number().optional(),
       }).safeParse(rawRecord.metadata);
       if (!metadataParsed.success) {
         throw createConnectedServiceQuotaProtocolError('Invalid provider account usage snapshot response', metadataParsed.error);
@@ -1965,6 +1973,7 @@ export class ApiClient {
       staleAfterMs: number;
       status: 'ok' | 'unavailable' | 'estimated' | 'error';
       refreshRequestedAt?: number;
+      refreshErrorAt?: number;
     };
   } | null> {
     const serverUrl = resolveServerHttpBaseUrl();
@@ -2012,6 +2021,7 @@ export class ApiClient {
         staleAfterMs: z.number(),
         status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
         refreshRequestedAt: z.number().optional(),
+        refreshErrorAt: z.number().optional(),
       }).safeParse((raw as any).metadata);
 
       if (!metadataParsed.success) {

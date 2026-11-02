@@ -787,7 +787,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     expect(usageCalls).toBe(2);
   });
 
-  it('bypasses the Retry-After cooldown for a forced refresh attempt', async () => {
+  it('preserves provider Retry-After for a forced refresh attempt', async () => {
     const now = 5_100_000;
     const fetchMock429 = vi.fn(async () => ({
       ok: false,
@@ -836,10 +836,9 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     clock += 60_000;
 
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-    const forced = await fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true });
-    expect(forced).toMatchObject({ serviceId: 'claude-subscription', profileId: 'work' });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0] ?? '')).toContain('/api/oauth/usage');
+    await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true }))
+      .rejects.toMatchObject({ quotaFetchErrorCode: 'provider_backoff', retryAfterMs: 840_000 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('records cooldown before fetching so repeated provider failures do not immediately refetch', async () => {

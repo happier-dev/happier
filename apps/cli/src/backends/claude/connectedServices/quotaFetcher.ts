@@ -715,7 +715,10 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
         throw createMissingClaudeCodeScopeQuotaError();
       }
     }
-    throw new Error(`Anthropic usage fetch failed (${response.status}): ${response.statusText}`);
+    throw new ConnectedServiceQuotaFetchError(
+      `Anthropic usage fetch failed (${response.status}): ${response.statusText}`,
+      { status: response.status, quotaFetchErrorCode: response.status === 403 ? 'auth_failure' : 'provider_backoff' },
+    );
   }
 
   return {
@@ -823,10 +826,15 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       }
       const backoffKey = buildCredentialBackoffKey(record);
       const backoffUntil = backoffKey ? (retryAfterBackoffByCredentialKey.get(backoffKey) ?? 0) : 0;
-      // A user-requested refresh makes one attempt past the cooldown; a fresh 429
-      // re-arms it below via observeRateLimit.
-      if (backoffUntil > now && force !== true) {
-        return null;
+      // Explicit refresh may bypass the local read cooldown, never a provider boundary.
+      if (backoffUntil > now) {
+        if (backoffKey && providerBackoffCredentialKeys.has(backoffKey)) {
+          if (force === true) throw new ConnectedServiceQuotaFetchError('Claude quota read deferred by provider Retry-After', {
+            quotaFetchErrorCode: 'provider_backoff', retryAfterMs: backoffUntil - now,
+          });
+          return null;
+        }
+        if (force !== true) return null;
       }
       if (backoffKey) providerBackoffCredentialKeys.delete(backoffKey);
       if (backoffKey) {

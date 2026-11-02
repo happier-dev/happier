@@ -2645,8 +2645,6 @@ export const ru: TranslationStructure = {
     },
     quota: {
       refreshing: "Обновление использования…",
-      refreshTimedOut: "Обновление не завершилось. Компьютер, обновляющий эти данные, может быть не в сети.",
-      refreshRateLimited: "Провайдер ограничил это обновление. Показывается последнее известное использование.",
       loading: "Загрузка…",
       error: ({ message }: { message: string }) => `Ошибка: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Обновлено: ${time}`,
@@ -4839,6 +4837,8 @@ export const ru: TranslationStructure = {
   },
 
     errors: {
+    quotaRefreshFailed: "Не удалось обновить данные об использовании. Повторите попытку.",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `Не удалось обновить данные об использовании. Повторите попытку после ${time}.`,
     machineRpcDecryptionFailed: "Не удалось расшифровать данные этого компьютера. Войдите с соответствующим ключом аккаунта и попробуйте снова.",
     machineRpcContextUnavailable: "Подключение к этому компьютеру недоступно. Обновите список компьютеров и попробуйте снова.",
     networkError: "Произошла ошибка сети",

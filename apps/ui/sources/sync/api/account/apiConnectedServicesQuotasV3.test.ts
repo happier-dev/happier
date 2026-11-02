@@ -56,7 +56,7 @@ describe('apiConnectedServicesQuotasV3', () => {
               meters: [],
             },
           },
-          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'error', refreshErrorAt: 10 },
         }),
       };
     });
@@ -64,7 +64,8 @@ describe('apiConnectedServicesQuotasV3', () => {
 
     const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
     const res = await getConnectedServiceQuotaSnapshotPlain(credentials, { serviceId: 'openai-codex', profileId: 'work' });
-    expect(res?.serviceId).toBe('openai-codex');
+    expect(res?.snapshot.serviceId).toBe('openai-codex');
+    expect(res).toMatchObject({ snapshot: { fetchedAt: 1 }, metadata: { fetchedAt: 1, status: 'error', refreshErrorAt: 10 } });
     expect(fetchMock).toHaveBeenCalledWith(
       matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/profiles/work/quotas'),
       expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),

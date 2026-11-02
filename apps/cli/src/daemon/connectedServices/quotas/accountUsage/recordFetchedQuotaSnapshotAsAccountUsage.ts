@@ -3,7 +3,10 @@ import type {
   ConnectedServiceUsageSourceV1,
   ConnectedServiceQuotaSnapshotV1,
   ProviderAccountUsageSnapshotV1,
+  ProviderAccountUsageDiagnosticV1,
 } from '@happier-dev/protocol';
+
+import { logger } from '@/ui/logger';
 
 import type { ProviderAccountUsagePersistenceScheduler } from '../../accountUsage/persistence';
 import { isProviderAccountUsageStoreMutationAccepted } from '../../accountUsage/store';
@@ -28,6 +31,7 @@ type RecordFetchedQuotaSnapshotContext = Readonly<{
     snapshot: ConnectedServiceQuotaSnapshotV1;
     materialFingerprint?: string;
     sourceProviderAccountId?: string | null;
+    refreshError?: ProviderAccountUsageDiagnosticV1;
   }>): Promise<void>;
   handleAccountUsageChanged(input: Readonly<{
     sessionId: string;
@@ -54,6 +58,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     groupContexts?: ReadonlyArray<ConnectedServiceQuotaGroupContext> | null;
     groupTargets?: ReadonlyArray<ActiveGroupQuotaSwitchTarget> | null;
     persistDurably?: boolean;
+    refreshError?: ProviderAccountUsageDiagnosticV1;
   }>,
 ): Promise<ProviderAccountUsageSnapshotV1 | null> {
     const store = context.accountUsageStore;
@@ -113,6 +118,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
       snapshot: input.snapshot,
       observedAtMs: input.now,
       sourceProviderAccountId: input.sourceProviderAccountId,
+      refreshError: input.refreshError,
     });
     const profileObservation = {
       sources: [{
@@ -131,11 +137,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     latest ??= profileSnapshot;
 
     for (const groupId of displayOnlyGroupIds) {
-      const groupSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-        snapshot: input.snapshot,
-        observedAtMs: input.now,
-        sourceProviderAccountId: input.sourceProviderAccountId,
-      });
+      const groupSnapshot = profileSnapshot;
       const groupObservation = {
         sources: [{
           serviceId: input.serviceId,
@@ -154,11 +156,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     }
     for (const [groupId, groupGenerations] of groupGenerationsById.entries()) {
       for (const groupGeneration of groupGenerations) {
-        const groupSnapshot = buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-          snapshot: input.snapshot,
-          observedAtMs: input.now,
-          sourceProviderAccountId: input.sourceProviderAccountId,
-        });
+        const groupSnapshot = profileSnapshot;
         const groupObservation = {
           sources: [{
             serviceId: input.serviceId,
@@ -179,19 +177,28 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     }
 
     if (latest && effectiveMutationRecorded && input.persistDurably !== false) {
-      if (context.accountUsagePersistence) {
-        await context.accountUsagePersistence.recordInBandSnapshot(latest, {
-          sources: [...persistenceSourcesByKey.values()],
-        }).catch(() => null);
-      } else if (input.accountMode === 'plain' || input.accountMode === 'e2ee') {
-        await context.persistQuotaSnapshotWithServerWork({
-          accountMode: input.accountMode,
+      try {
+        if (context.accountUsagePersistence) {
+          await context.accountUsagePersistence.recordInBandSnapshot(latest, {
+            sources: [...persistenceSourcesByKey.values()],
+          });
+        } else if (input.accountMode === 'plain' || input.accountMode === 'e2ee') {
+          await context.persistQuotaSnapshotWithServerWork({
+            accountMode: input.accountMode,
+            serviceId: input.serviceId,
+            profileId: input.profileId,
+            snapshot: input.snapshot,
+            ...(input.refreshError ? { refreshError: input.refreshError } : {}),
+            ...(input.sourceProviderAccountId ? { sourceProviderAccountId: input.sourceProviderAccountId } : {}),
+            materialFingerprint: computeProviderAccountUsageSnapshotFingerprint(latest, context.quotaFingerprintHmacKey),
+          });
+        }
+      } catch {
+        // Persistence is best effort; its failure must not suppress local quota policy.
+        logger.warnFile('[ConnectedServices] Failed to persist quota observation', {
           serviceId: input.serviceId,
           profileId: input.profileId,
-          snapshot: input.snapshot,
-          ...(input.sourceProviderAccountId ? { sourceProviderAccountId: input.sourceProviderAccountId } : {}),
-          materialFingerprint: computeProviderAccountUsageSnapshotFingerprint(latest, context.quotaFingerprintHmacKey),
-        }).catch(() => null);
+        });
       }
     }
 

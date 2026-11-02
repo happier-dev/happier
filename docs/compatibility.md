@@ -157,6 +157,45 @@ usage-record owner and refuses it when disabled. Subscription gating does not
 erase independently supported recovery details. Tests use the exact released
 strict body and sealed-envelope declarations, rather than reconstructed readers.
 
+### Quota refresh outcomes (0.2 development)
+
+Provider observation time and refresh completion are separate facts. Protocol's
+`isProviderAccountUsageRefreshRequestSettled` settles a request only when
+`fetchedAt >= refreshRequestedAt` or `refreshErrorAt >= refreshRequestedAt`.
+A failure uses the existing `error_last_known_good` snapshot state and diagnostic
+`observedAtMs`; it preserves the last provider observation and meters. The quota
+projection carries the diagnostic as evidence, including retry timing when known.
+The server clears `refreshRequestedAt` through its usage-record write policy;
+the UI follows that marker after a successfully opened read rather than inferring
+completion from meter freshness.
+
+The released server and CLI stable baseline is 0.2.17 at
+`a2c45c86804b24e60ac0b76146a3ef36dfcaa15b`. The inspected active previews are
+server 0.2.18-preview.2 and CLI 0.2.18-preview.1 at
+`67123c84ca168ac6f7847532a531eaa7f5566111`. Their versioned release
+`latest.json` assets name those build commits and downloadable binary checksums:
+[stable server](https://github.com/happier-dev/happier/releases/download/server-v0.2.17/latest.json),
+[stable CLI](https://github.com/happier-dev/happier/releases/download/cli-v0.2.17/latest.json),
+[preview server](https://github.com/happier-dev/happier/releases/download/server-v0.2.18-preview.2/latest.json)
+and [preview CLI](https://github.com/happier-dev/happier/releases/download/cli-v0.2.18-preview.1/latest.json).
+This establishes published artifacts, not a claim about a running deployment.
+
+Both inspected server versions have strict V3 plain-write metadata. Updated
+daemons therefore keep that write shape unchanged: the server derives
+`refreshErrorAt` from the already-supported plain snapshot diagnostics. V2 sealed
+write metadata is passthrough, so the daemon adds optional `refreshErrorAt` there;
+the server cannot inspect the encrypted diagnostic. Updated reads add the same
+optional metadata fact; released UI and CLI readers accept it without changing
+the existing snapshot shape. Source-link identity and authorization are unchanged.
+
+An older server accepts these writes but cannot use the new failure fact to
+settle the request. An older daemon does not produce that fact. Older UIs retain
+their existing completion presentation; accepting additive metadata does not
+give them the new failure UX. Prompt failure completion therefore depends on
+updated producers, server lifecycle handling and UI consumers, while ordinary
+quota reads and successful provider observations retain their existing contract.
+No failure path advances provider observation time to emulate a successful read.
+
 ### Browser request headers and CORS
 
 A new request header is both a wire-contract change and, for cross-origin web clients,

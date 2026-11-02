@@ -2565,8 +2565,6 @@ export const en = {
         },
         quota: {
             refreshing: 'Refreshing usage…',
-            refreshTimedOut: 'Refresh did not finish. The machine that refreshes this data may be offline.',
-            refreshRateLimited: 'The provider rate-limited this refresh. Showing last known usage.',
             loading: 'Loading…',
             error: ({ message }: { message: string }) => `Error: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Last updated: ${time}`,
@@ -4585,6 +4583,8 @@ export const en = {
     },
 
     errors: {
+        quotaRefreshFailed: "Could not refresh usage. Try again.",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `Could not refresh usage. Try again after ${time}.`,
         machineRpcDecryptionFailed: "Unable to decrypt data from this machine. Sign in with the matching account key and try again.",
         machineRpcContextUnavailable: "This machine’s connection is unavailable. Refresh your machines and try again.",
         networkError: 'Network error occurred',

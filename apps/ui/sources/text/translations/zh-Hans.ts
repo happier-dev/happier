@@ -2618,8 +2618,6 @@ export const zhHans: TranslationStructure = {
     },
     quota: {
       refreshing: "正在刷新用量…",
-      refreshTimedOut: "刷新未完成。刷新此数据的机器可能处于离线状态。",
-      refreshRateLimited: "提供商限制了此次刷新。正在显示上次已知用量。",
       loading: "加载中…",
       error: ({ message }: { message: string }) => `错误：${message}`,
       lastUpdated: ({ time }: { time: string }) => `最后更新：${time}`,
@@ -4753,6 +4751,8 @@ export const zhHans: TranslationStructure = {
   },
 
   errors: {
+    quotaRefreshFailed: "无法刷新用量。请重试。",
+    quotaRefreshRetryAt: ({ time }: { time: string }) => `无法刷新用量。请在 ${time} 后重试。`,
     machineRpcDecryptionFailed: "无法解密此机器的数据。请使用匹配的账户密钥登录后重试。",
     machineRpcContextUnavailable: "此机器的连接不可用。请刷新机器列表后重试。",
     networkError: "发生网络错误",

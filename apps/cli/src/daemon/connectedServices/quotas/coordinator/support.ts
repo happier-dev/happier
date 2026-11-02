@@ -143,6 +143,7 @@ export type QuotaApi = Readonly<{
           staleAfterMs: number;
           status: 'ok' | 'unavailable' | 'estimated' | 'error';
           refreshRequestedAt?: number;
+          refreshErrorAt?: number;
           materialFingerprint?: string;
         }>;
       }>
@@ -156,6 +157,7 @@ export type QuotaApi = Readonly<{
           staleAfterMs: number;
           status: 'ok' | 'unavailable' | 'estimated' | 'error';
           refreshRequestedAt?: number;
+          refreshErrorAt?: number;
           materialFingerprint?: string;
         }>;
       }>
@@ -189,7 +191,7 @@ export type QuotaApi = Readonly<{
     recordKey: ProviderAccountUsageRecordKeyV1;
     source?: ConnectedServiceUsageSourceV1;
     sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
-    metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error'; materialFingerprint?: string }>;
+    metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error'; materialFingerprint?: string; refreshErrorAt?: number }>;
   }>) => Promise<void>;
   registerProviderAccountUsageSnapshotPlain?: (args: Readonly<{
     recordId: string;
@@ -773,12 +775,6 @@ export function annotateSnapshotAsStale(
       },
     })),
   };
-}
-
-/** A provider 429 refusal of a quota fetch. */
-export function isQuotaRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  return (error as Readonly<{ status?: unknown }>).status === 429;
 }
 
 export function isQuotaUnknownFallbackSnapshot(snapshot: ConnectedServiceQuotaSnapshotV1): boolean {

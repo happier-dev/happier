@@ -44,7 +44,7 @@ describe('apiConnectedServicesQuotasV2', () => {
         status: 200,
         json: async () => ({
           sealed: { format: 'account_scoped_v1', ciphertext: 'cipher' },
-          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+          metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'error', refreshRequestedAt: 9, refreshErrorAt: 8 },
         }),
       };
     });
@@ -53,6 +53,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     const { getConnectedServiceQuotaSnapshotSealed } = await import('./apiConnectedServicesQuotasV2');
     const res = await getConnectedServiceQuotaSnapshotSealed(credentials, { serviceId: 'openai-codex', profileId: 'work' });
     expect(res?.sealed?.ciphertext).toBe('cipher');
+    expect(res?.metadata).toMatchObject({ fetchedAt: 1, status: 'error', refreshRequestedAt: 9, refreshErrorAt: 8 });
     expect(fetchMock).toHaveBeenCalledWith(
       matchServerFetchUrl('https://api.example.test/v2/connect/openai-codex/profiles/work/quotas'),
       expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),

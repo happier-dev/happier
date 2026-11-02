@@ -1361,8 +1361,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         quota: {
             refreshing: '正在重新整理用量…',
-            refreshTimedOut: '重新整理未完成。重新整理這項資料的機器可能處於離線狀態。',
-            refreshRateLimited: '供應商限制了此次重新整理。正在顯示上次已知用量。',
             loading: '載入中…',
             error: ({ message }: { message: string }) => `錯誤：${message}`,
             lastUpdated: ({ time }: { time: string }) => `最後更新：${time}`,
@@ -4461,6 +4459,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     errors: {
+        quotaRefreshFailed: "無法重新整理用量。請再試一次。",
+        quotaRefreshRetryAt: ({ time }: { time: string }) => `無法重新整理用量。請在 ${time} 後重試。`,
         machineRpcDecryptionFailed: "無法解密此機器的資料。請使用相符的帳戶金鑰登入後再試。",
         machineRpcContextUnavailable: "此機器的連線無法使用。請重新整理機器清單後再試。",
         networkError: '發生網路錯誤',
