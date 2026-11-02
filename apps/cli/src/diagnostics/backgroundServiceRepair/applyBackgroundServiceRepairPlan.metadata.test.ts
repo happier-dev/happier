@@ -1,7 +1,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const boundary = vi.hoisted(() => ({
   failWritePath: null as string | null,
@@ -11,16 +11,18 @@ const boundary = vi.hoisted(() => ({
   stateReadFailure: false,
   activityReadFailure: false,
 }));
-// Only filesystem failure and OS service commands are replaced; planner and installer stay real.
-vi.mock('node:fs/promises', async (original) => {
-  const actual = await original<typeof import('node:fs/promises')>();
-  return { ...actual, writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+// Preserve the shared filesystem boundary (including the native launcher fixture).
+// Only inject the write failure; planner and installer stay real.
+beforeEach(async () => {
+  const filesystem = await import('node:fs/promises');
+  const originalWriteFile = filesystem.writeFile;
+  vi.spyOn(filesystem, 'writeFile').mockImplementation(async (...args) => {
     if (String(args[0]) === boundary.failWritePath) {
       boundary.failWritePath = null;
       throw new Error('replacement definition write failed');
     }
-    return await actual.writeFile(...args);
-  } };
+    return await originalWriteFile(...args);
+  });
 });
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
@@ -43,7 +45,7 @@ import { readInstalledDaemonServiceInstallOptions, readInstalledDaemonServiceMan
 import { buildBackgroundServiceRepairPlan } from './buildBackgroundServiceRepairPlan';
 import { applyBackgroundServiceRepairPlan } from './applyBackgroundServiceRepairPlan';
 
-afterEach(() => { vi.unstubAllEnvs(); boundary.failWritePath = null; boundary.commands.length = 0; boundary.enabled = true; boundary.running = false; boundary.stateReadFailure = false; boundary.activityReadFailure = false; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); boundary.failWritePath = null; boundary.commands.length = 0; boundary.enabled = true; boundary.running = false; boundary.stateReadFailure = false; boundary.activityReadFailure = false; });
 
 it.each([false, true])('preserves the prior login trigger, bundle attribution and ownership through repair (rollback=%s)', async (rollback) => {
   const home = await mkdtemp(join(tmpdir(), 'repair-definition-metadata-'));
