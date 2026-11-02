@@ -24,6 +24,8 @@ import type { SocketRpcTransportAcknowledgementV1 } from '@happier-dev/protocol/
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
+    ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { isSocketRpcActionApiServerOriginAuthorizationContext, isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext, isSocketRpcSessionServerStartServerOriginAuthorizationContext, isSocketRpcMachineAccessLossServerOriginAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, parseSocketRpcAuthorizationContext, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -759,7 +761,7 @@ export class RpcHandlerManager {
             let decryptedParams: unknown;
             try {
                 const decoded = await socketRpcCodec.decodeRequestParams(
-                    isServerOriginRequest ? { mode: 'plain' } : rpcContent,
+                    isServerOriginRequest || this.isContentFreeManagedActivityRequest(request) ? { mode: 'plain' } : rpcContent,
                     request.params,
                     request.method,
                 );
@@ -1010,6 +1012,9 @@ export class RpcHandlerManager {
                 this.readUnprefixedMethod(request.method),
             );
             const result = await handler(decryptedParams, Object.freeze({
+                // The same codec choice as encodeResponse for this call, fixed at admission.
+                contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
+                    ? 'plain' : rpcContent.mode,
                 signal: controller.signal,
                 reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
                 reportOperationDiagnostics: (operation: RpcOperationDiagnostics) => this.reportOperationDiagnostics(diagnostic, operation),
@@ -1135,6 +1140,8 @@ export class RpcHandlerManager {
     ): Promise<unknown> {
         const prefixedMethod = this.getPrefixedMethod(method);
         const requestStartedAtMs = Date.now();
+        // In-process admission fixes the content mode at invocation, like a dispatched call.
+        const admittedContentMode = this.rpcContent?.mode;
         const callerInputConstraints = options?.rpcContext?.callerInputConstraints
             ?? options?.localActionContext?.callerInputConstraints;
         return this.observeRequest(prefixedMethod, undefined, async diagnostic => {
@@ -1172,6 +1179,7 @@ export class RpcHandlerManager {
                         requesterSessionBootstrap: options.rpcContext.requesterSessionBootstrap,
                     } : {}),
                     ...(callerInputConstraints ? { callerInputConstraints } : {}),
+                    ...(admittedContentMode ? { contentMode: admittedContentMode } : {}),
                     signal,
                     requestStartedAtMs,
                     reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
@@ -1512,7 +1520,7 @@ export class RpcHandlerManager {
 
     private encodeResponse(request: RpcRequest, response: unknown, callId: string | null, rpcContent: SocketRpcContent): Promise<unknown> {
         return socketRpcCodec.encodeResponse(
-            this.isServerOriginRequest(request) ? { mode: 'plain' } : rpcContent,
+            this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request) ? { mode: 'plain' } : rpcContent,
             response,
             callId,
         );
@@ -1595,6 +1603,13 @@ export class RpcHandlerManager {
         if (execution && id !== null) this.activeHandlerExecutions.set(id, {
             ...execution, sessionEffect: Object.freeze({ ...effect }),
         });
+    }
+
+    private isContentFreeManagedActivityRequest(request: RpcRequest): boolean {
+        if (this.localMachineId !== this.scopePrefix || request.machineAdmission?.machineId !== this.scopePrefix) return false;
+        if (request.method === this.getPrefixedMethod(MANAGED_ACTIVITY_READ_RPC_METHOD)) return ManagedActivityReadRequestV1Schema.safeParse(request.params).success;
+        return request.method === this.getPrefixedMethod(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD)
+            && ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(request.params).success;
     }
 
     private readServerOriginRpcFamily(request: RpcRequest) {

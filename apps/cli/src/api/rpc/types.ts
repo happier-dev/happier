@@ -68,6 +68,8 @@ export type RpcOperationDiagnostics = Readonly<{
 }>;
 
 export type RpcHandlerContext = Readonly<{
+    /** Content codec admitted for this exact call (its reply uses it); absent when no material was admitted. */
+    contentMode?: 'plain' | 'e2ee';
     reportOperationDiagnostics?: (diagnostics: RpcOperationDiagnostics) => void;
     /** Receiving Action adapter's effect target; activity only, never admission authority. */
     reportSessionEffect?: (effect: Readonly<{ sessionId: string; actionId: string }>) => void;
