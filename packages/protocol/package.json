@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./actions/executor/deploymentRoleChild": {
+      "happier-source": "./src/actions/executor/deploymentRoleChild.ts",
+      "types": "./dist/actions/executor/deploymentRoleChild.d.ts",
+      "default": "./dist/actions/executor/deploymentRoleChild.js"
+    },
     "./deployments/deploymentChildRpcV1": {
       "happier-source": "./src/deployments/deploymentChildRpcV1.ts",
       "types": "./dist/deployments/deploymentChildRpcV1.d.ts",
