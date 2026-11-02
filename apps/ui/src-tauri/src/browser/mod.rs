@@ -1,3 +1,4 @@
+mod keyboard;
 mod platform;
 mod types;
 
@@ -130,6 +131,11 @@ struct DesktopBrowserViewState {
     rename_all_fields = "camelCase"
 )]
 enum DesktopBrowserViewEvent {
+    KeyboardShortcut {
+        browser_session_id: String,
+        view_id: String,
+        event: keyboard::BrowserKeyboardEvent,
+    },
     PageInfoChanged {
         browser_session_id: String,
         view_id: String,
@@ -1789,6 +1795,8 @@ impl WryDesktopBrowserView {
         let crash_info = page_info.clone();
         let load_info = page_info.clone();
         let history_info = page_info;
+        let keyboard_info = history_info.clone();
+        let host_window = window.clone();
         let mut builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_id(view_id)
             .with_url(url)
@@ -1838,6 +1846,19 @@ impl WryDesktopBrowserView {
                 let message = request.into_body();
                 if message == "happier:history-changed" {
                     publish_native_page_info(&history_info.key, &history_info.inner);
+                } else if let Some(event) = keyboard::parse_keyboard_message(&message) {
+                    // Focusing a DOM field cannot release the child view's native responder.
+                    if let Some(host) = host_window.app_handle().get_webview_window(host_window.label()) {
+                        let _ = host.set_focus();
+                    }
+                    let sender = keyboard_info.inner.lock().expect("browser state lock poisoned")
+                        .event_senders.get(&keyboard_info.key).cloned();
+                    if let Some(sender) = sender {
+                        (sender.0)(DesktopBrowserViewEvent::KeyboardShortcut {
+                            browser_session_id: keyboard_info.key.browser_session_id.clone(),
+                            view_id: keyboard_info.key.view_id.clone(), event,
+                        });
+                    }
                 } else {
                     diagnostics.record_message(message);
                 }
