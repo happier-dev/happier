@@ -5039,7 +5039,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 owner: { kind: 'sessionBoard' as const, sessionId } } } : {}) } : undefined;
             try {
               return { ok: true, result: {
-                ...(schemaPath !== undefined || ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli'
+                ...(schemaPath !== undefined || ctx.surface === 'agent' || ctx.surface === 'mcp'
                   ? projectActionSpecSchemaSections(definition, schemaPath) : { actionSpec: definition }),
                 ...(invocationContext ? { invocationContext } : {}),
               } };

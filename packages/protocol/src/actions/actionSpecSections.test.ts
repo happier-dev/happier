@@ -3,8 +3,26 @@ import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, project
 import { getActionSpec, listActionSpecs } from './actionSpecs.js';
 import { projectActionSpecSchemaSections, readCompleteActionSpecV1 } from './actionSpecSections.js';
 import { freezeActionCompletionContractV1 } from './actionCompletion.js';
+import { createActionExecutor } from './actionExecutor.js';
 
 describe('Action schema sections', () => {
+  it('reads each complete native Workflow leaf through one CLI Action admission', async () => {
+    const executor = createActionExecutor({});
+    const leaves = ['machines.setup.apply', 'deployments.deploy'] as const;
+    const reads: string[] = [];
+    for (const actionId of leaves) {
+      const definition = await readCompleteActionSpecV1({ actionId, read: async input => {
+        reads.push(input.id);
+        const result = await executor.execute('action.spec.get', input, { surface: 'cli' });
+        if (!result.ok) throw new Error(result.errorCode);
+        return result.result;
+      } });
+      expect(freezeWorkflowActionContractV1(definition)).toEqual(
+        freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId), { surface: 'cli' })));
+    }
+    expect(reads, 'one root execute per distinct native leaf, independent of schema section count').toEqual(leaves);
+  });
+
   it('carries native completion contracts through full sectioned discovery', async () => {
     const spec = getActionSpec('subagents.plan.start');
     const full = projectActionDefinitionForExternalDiscovery(actionSpecToActionDefinitionV1(spec));

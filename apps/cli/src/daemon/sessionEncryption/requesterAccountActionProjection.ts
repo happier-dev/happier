@@ -327,7 +327,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
   // SOURCE constructors consume installed custody, but retained ports and Settings
   // refresh keep the exact signed request's full currentness owner.
   const isProjectionCurrent = sourcePreparation
-    ? async () => await isCurrent() && await input.isCurrent() && await isCurrent()
+    ? input.isCurrent
     : isCurrent;
   let phase = 'requester_profile';
   const refused = (branch = phase, observedMode?: 'plain' | 'e2ee') => refuseAdmission(phase, branch, undefined, observedMode);

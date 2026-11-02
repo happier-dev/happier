@@ -621,13 +621,6 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             },
         ) });
         if (accountMode.kind !== 'resolved') return;
-        const currentCredentials = await input.readCredentials().catch(() => null);
-        if (!isDeepStrictEqual(currentCredentials, credentials)) {
-            if (currentCredentials && readAccountIdFromToken(currentCredentials.token) !== accountId) {
-                logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
-            }
-            return;
-        }
         if (accountMode.mode === 'plain') {
             for (const snapshot of admitted) {
                 input.publishContent({ t: 'plain', v: projectActionOperationSnapshotForV1Reader(snapshot) });

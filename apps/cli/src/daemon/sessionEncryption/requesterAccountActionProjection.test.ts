@@ -67,6 +67,37 @@ function bootstrap(credentials: StoredCredentials, isCurrent = async () => true)
 }
 
 describe('admitted requester Action projection', () => {
+  it('prepares SOURCE projection with one source observation and no bracketing custody reads', async () => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      throw new Error('Unexpected SOURCE projection read');
+    });
+    const observations: string[] = [];
+    const admitted = await requesterAccountOwner.admitRequesterAccountActionContext({
+      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' } },
+      credentials: { token: 'bob-source-projection', encryption: null }, serverId: 'home-profile', serverIdentityId: 'stable-home',
+      serverHttpBaseUrl: 'https://requester-home.test',
+      purpose: { kind: 'workspace_sync_prepare', controller: { machineId: 'controller', installationId: 'installation' },
+        request: { sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' } },
+      isCurrent: async () => { observations.push('source'); return true; },
+      isCustodyCurrent: async () => { observations.push('custody'); return true; },
+    });
+    if (!admitted) throw new Error('Missing SOURCE projection');
+    try {
+      const sourceReads = observations.filter(value => value === 'source');
+      // Admission and the completed SOURCE projection each observe the source once.
+      expect(sourceReads).toHaveLength(2);
+      const custodyReads = observations.filter(value => value === 'custody').length;
+      expect(await admitted.isCurrent()).toBe(true);
+      expect(observations.filter(value => value === 'source')).toHaveLength(sourceReads.length + 1);
+      expect(observations.filter(value => value === 'custody'), 'no custody rereads around the SOURCE observation')
+        .toHaveLength(custodyReads);
+    } finally { await admitted.dispose(); }
+  });
+
   it('does not inspect installed credentials from the parallel Settings floor before requester identity admission', async () => {
     // Credential storage and Home HTTP are system boundaries. Keep the real
     // currentness helper so its legacy-recovery branch remains observable.

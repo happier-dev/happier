@@ -123,7 +123,10 @@ describe('Action operation snapshot producer compatibility', () => {
     credentials = { token, encryption: null };
     retireDuringModeRead = true;
     await publisher(failed);
-    expect(emit).not.toHaveBeenCalled();
+    expect(emit).toHaveBeenCalledOnce();
+    // Rotation takes effect at the next batch admission; the admitted batch finishes.
+    await publisher(failed);
+    expect(emit).toHaveBeenCalledOnce();
   });
   it('collapses queued revisions to the terminal snapshot instead of delivering stale progress first', async () => {
     const accountId = 'plain-account';
@@ -135,8 +138,9 @@ describe('Action operation snapshot producer compatibility', () => {
       return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     }).mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
     const publishContent = vi.fn();
+    const readCredentials = vi.fn(async () => ({ token, encryption: null }));
     const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => accountId,
-      serverBaseUrl: 'https://home.example', readCredentials: async () => ({ token, encryption: null }), publishContent });
+      serverBaseUrl: 'https://home.example', readCredentials, publishContent });
     const accepted: ActionOperationSnapshotV1 = { version: 1, operationId: 'power', revision: 1,
       actionId: 'machines.managed.power.set', state: 'accepted', scope: { accountId, machineId: 'controller' },
       title: 'Suspend', createdAt: 1, cancellation: 'supported' };
@@ -153,6 +157,7 @@ describe('Action operation snapshot producer compatibility', () => {
     await Promise.all(publications);
 
     expect(get).toHaveBeenCalledTimes(2);
+    expect(readCredentials, 'one credential read per drained batch').toHaveBeenCalledTimes(get.mock.calls.length);
     expect(publishContent.mock.calls.map(([content]) => content.t === 'plain' ? content.v : null)).toEqual([
       projectActionOperationSnapshotForV1Reader(accepted),
       projectActionOperationSnapshotForV1Reader(succeeded),
@@ -234,7 +239,7 @@ describe('Action operation snapshot producer compatibility', () => {
       content: { t: 'encrypted', c: 'sealed-snapshot' },
     });
   });
-  it('withholds queued publication after credentials move to another Account and accepts same-Account refresh', async () => {
+  it('finishes admitted publication and withholds the next foreign-Account batch while accepting same-Account refresh', async () => {
     const token = (subject: string, refresh: string) => `e30.${Buffer.from(JSON.stringify({ sub: subject, refresh })).toString('base64url')}.signature`;
     const publishContent = vi.fn();
     const warning = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
@@ -254,11 +259,13 @@ describe('Action operation snapshot producer compatibility', () => {
       const queued = publisher(snapshot);
       subject = 'account-b';
       await queued;
-      expect(publishContent).not.toHaveBeenCalled();
-      expect(warning).toHaveBeenCalled();
-      subject = 'account-a'; refresh = 'rotated-token';
+      expect(publishContent).toHaveBeenCalledOnce();
       await publisher({ ...snapshot, revision: 2 });
       expect(publishContent).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalled();
+      subject = 'account-a'; refresh = 'rotated-token';
+      await publisher({ ...snapshot, revision: 3 });
+      expect(publishContent).toHaveBeenCalledTimes(2);
     } finally { warning.mockRestore(); }
   });
 
