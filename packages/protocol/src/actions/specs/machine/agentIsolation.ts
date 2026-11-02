@@ -3,7 +3,8 @@ export { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './agentIsolationActionIdsV1.
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationPreviewResultV1Schema,
-  MachineAgentIsolationSetInputV1Schema, MachineAgentIsolationSetResultV1Schema } from '../../../machines/agentIsolationV1.js';
+  MachineAgentIsolationSetInputV1Schema, MachineAgentIsolationSetResultV1Schema,
+  MachineAgentIsolationStatusInputV1Schema, MachineAgentIsolationOwnStatusV1Schema } from '../../../machines/agentIsolationV1.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 import type { ActionOperationReentryPolicyV1 } from '../../operations/v1.js';
 
@@ -21,10 +22,12 @@ const isolationReentry: ActionOperationReentryPolicyV1 = (snapshot, input) => {
 export type MachineAgentIsolationActionId = typeof MACHINE_AGENT_ISOLATION_ACTION_IDS[number];
 export const MachineAgentIsolationActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_AGENT_ISOLATION_ACTION_IDS));
 export const MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS = {
+  'machines.agentIsolation.status': MachineAgentIsolationStatusInputV1Schema,
   'machines.agentIsolation.preview': MachineAgentIsolationPreviewInputV1Schema,
   'machines.agentIsolation.set': MachineAgentIsolationSetInputV1Schema,
 } as const;
 export const MACHINE_AGENT_ISOLATION_ACTION_OUTPUT_SCHEMAS = {
+  'machines.agentIsolation.status': MachineAgentIsolationOwnStatusV1Schema,
   'machines.agentIsolation.preview': MachineAgentIsolationPreviewResultV1Schema,
   'machines.agentIsolation.set': MachineAgentIsolationSetResultV1Schema,
 } as const;
@@ -34,6 +37,14 @@ const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: 
   { path: 'enabled', title: 'Enable separate Agent user', widget: 'boolean', required: true }] as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: true } as const;
 export const MACHINE_AGENT_ISOLATION_ACTION_SPECS = [
+  { id: 'machines.agentIsolation.status', title: 'Read own execution protection',
+    description: 'Reads your execution protection and setup readiness on the target Machine without provisioning or returning other members’ identities or paths.',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,
+    approval: { result: 'required' }, toolExposure: { agent: 'discoverable_only' },
+    bindings: { rpcMethod: 'machines.agentIsolation.status', mcpToolName: 'machines_agent_isolation_status', voiceClientToolName: 'getMachineAgentIsolationStatus' },
+    inputSchema: MachineAgentIsolationStatusInputV1Schema, outputSchema: MachineAgentIsolationOwnStatusV1Schema,
+    cli: { acceptsServerId: true, commands: [{ path: ['machines', 'agent-isolation', 'status'], visibility: 'canonical' }] },
+    inputHints: { fields: fields.filter(field => field.path !== 'enabled') } },
   { id: 'machines.agentIsolation.preview', title: 'Review Agent isolation',
     description: 'Reads the exact workspace and process effects on the target Machine before changing Agent isolation.',
     safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [], surfaces,

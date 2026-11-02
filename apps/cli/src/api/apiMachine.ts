@@ -356,6 +356,7 @@ import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwn
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationInput } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { registerDaemonMachineAdminAccessRpcHandlers, type DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
+import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1, getMachineAdminAccessV1 } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -1481,6 +1482,16 @@ export class ApiMachineClient {
                         this.retryMachineControlReadinessPublication({ socket, transportGeneration });
                     }
                 });
+            },
+        });
+        registerDaemonMachineAgentIsolationRpcHandlers(this.rpcHandlerManager, {
+            read: () => this.getAgentIsolationSnapshot(),
+            readCanonicalHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null,
+            target: () => {
+                const custodianAccountId = readAccountIdFromToken(this.token);
+                const installationId = this.machineRuntimeInstallationId;
+                return custodianAccountId && installationId ? { serverId: this.machineRuntimeServerId,
+                    machineId: this.machine.id, installationId, custodianAccountId } : null;
             },
         });
         registerDaemonCommittedServiceHealthDeliveryRpcHandler(this.rpcHandlerManager, {

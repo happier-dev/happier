@@ -87,6 +87,8 @@ export function createCliMachineActionTransport(
   // Derive every Action method from the canonical families; watches share that ingress.
   const authenticatedMachineIngressMethods = new Set<string>([
     ...[
+      ...ACTION_ID_FAMILIES_V1.machine_agent_isolation,
+      ...ACTION_ID_FAMILIES_V1.machine_admin_access,
       ...ACTION_ID_FAMILIES_V1.machine_work_summary,
       ...ACTION_ID_FAMILIES_V1.machine_vitals,
       ...ACTION_ID_FAMILIES_V1.machine_resources,

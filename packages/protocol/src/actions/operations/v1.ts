@@ -1,6 +1,7 @@
 import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { MachineAgentIsolationReadyPreviewV1Schema } from '../../machines/agentIsolationV1.js';
 import { z } from 'zod/mini';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
@@ -79,6 +80,7 @@ export const ActionOperationReentryDecisionV1Schema = lazyZodSchema(() => z.enum
 export type ActionOperationReentryDecisionV1 = z.infer<typeof ActionOperationReentryDecisionV1Schema>;
 export type ActionOperationReentryPolicyV1 = (
   snapshot: ActionOperationSnapshotV1,
+  input?: unknown,
 ) => ActionOperationReentryDecisionV1;
 export const ActionOperationReentryPolicyV1Schema = lazyZodSchema(() => z.custom<ActionOperationReentryPolicyV1>(
   (value) => typeof value === 'function',
@@ -311,10 +313,11 @@ export type ActionOperationDomainRefV1 = Readonly<z.infer<typeof ActionOperation
 
 const ActionOperationTimestampV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 
-export const ActionOperationObservationV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.enum(['outcome_uncertain', 'stop_unconfirmed']),
-  code: ActionOperationErrorCodeV1Schema,
-}));
+export const ActionOperationObservationV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.enum(['outcome_uncertain', 'stop_unconfirmed']), code: ActionOperationErrorCodeV1Schema }),
+  z.strictObject({ kind: z.literal('review_required'), code: z.literal('agent_isolation_effect_changed'),
+    machineId: ActionOperationIdentifierV1Schema, enabled: z.boolean(), current: MachineAgentIsolationReadyPreviewV1Schema }),
+]));
 export type ActionOperationObservationV1 = Readonly<z.infer<typeof ActionOperationObservationV1Schema>>;
 
 export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
@@ -364,6 +367,10 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   }
   if (terminal && snapshot.observation !== undefined) {
     context.addIssue({ code: 'custom', path: ['observation'], message: 'Unconfirmed observations cannot accompany terminal process evidence.' });
+  }
+  if (snapshot.observation?.kind === 'review_required' && (snapshot.actionId !== 'machines.agentIsolation.set'
+    || snapshot.observation.machineId !== snapshot.scope.machineId)) {
+    context.addIssue({ code: 'custom', path: ['observation'], message: 'Isolation review belongs to its exact Machine operation.' });
   }
   if (snapshot.setupReview && (terminal || snapshot.domainRef?.kind !== 'projectCommand'
     || !canRetainProjectSetupReviewV1(snapshot.actionId)

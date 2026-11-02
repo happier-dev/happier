@@ -37,13 +37,18 @@ export const MachineAgentIsolationStatusV1Schema = lazyZodSchema(() => z.union([
 export type MachineAgentIsolationStatusV1 = z.infer<typeof MachineAgentIsolationStatusV1Schema>;
 
 export const AgentIsolationEffectPlanV1Schema = lazyZodSchema(() => z.strictObject({
+  memberProvisioning: z.optional(z.literal('linuxUsersV1')),
   roots: z.array(z.strictObject({ rootId: id, path: id,
     changes: z.array(z.enum(['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'])) })),
   ancestorAcls: z.array(z.strictObject({ path: id, add: z.literal('x') })),
   sessionsToReplace: version, requiresAdmin: z.boolean(), planDigest: id,
 }));
 export type AgentIsolationEffectPlanV1 = z.infer<typeof AgentIsolationEffectPlanV1Schema>;
-const previewInput = { serverId: z.optional(id), machineId: id, enabled: z.boolean() };
+const previewInput = { serverId: z.optional(id), machineId: id, enabled: z.boolean(),
+  memberProvisioning: z.optional(z.literal('linuxUsersV1')) };
+/** Own readiness is a read result, never global launch or provisioning authority. */
+export const MachineAgentIsolationStatusInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: z.optional(id), machineId: id }));
+export type MachineAgentIsolationStatusInputV1 = z.infer<typeof MachineAgentIsolationStatusInputV1Schema>;
 export const MachineAgentIsolationPreviewInputV1Schema = lazyZodSchema(() => z.strictObject(previewInput));
 export type MachineAgentIsolationPreviewInputV1 = z.infer<typeof MachineAgentIsolationPreviewInputV1Schema>;
 export const MachineAgentIsolationReadyPreviewV1Schema = lazyZodSchema(() => z.strictObject({

@@ -9903,6 +9903,7 @@ export * from './machines/setup/machineRecipeV1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, MachinePresetItemV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1, type MachinePresetItemV1 } from './machines/managed/machineSetupV1.js';
 export * from './deployments/storedAppInputV1.js';
 export * from './machines/agentIsolationV1.js';
+export * from './actions/specs/machine/agentIsolation.js';
 export * from './machines/adminAccessV1.js';
 export * from './deployments/deploymentChildRpcV1.js';
 
