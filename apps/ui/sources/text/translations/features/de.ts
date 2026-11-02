@@ -8485,8 +8485,8 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { de: {
-        enablement: {"account": "In deinem Konto", "machine": "Auf diesem Computer", "description": "Beides muss aktiviert sein, damit das Plugin hier läuft. Beim Deaktivieren bleiben Daten und Verbindungen erhalten."},
-        rowStatus: { enabled: 'Aktiviert', disabled: 'Deaktiviert', incompatible: 'Nicht kompatibel', trustRemoved: 'Vertrauen entzogen', needsAttention: 'Benötigt Aufmerksamkeit' },
+        enablement: {"account": "In deinem Konto", "machine": "Auf diesem Computer", "description": "Beides muss aktiviert sein, damit das Plugin hier läuft. Beim Deaktivieren bleiben Daten und Verbindungen erhalten.", "accountScope": "Alle deine Computer", "accountOff": "In deinem Konto deaktiviert, daher läuft es auf keinem deiner Computer. Daten und Verbindungen bleiben erhalten.", "machineOff": "Auf diesem Computer deaktiviert. Deine anderen Computer sind nicht betroffen; Daten und Verbindungen bleiben erhalten."},
+        rowStatus: { enabled: 'Aktiviert', disabled: 'Deaktiviert', incompatible: 'Nicht kompatibel', trustRemoved: 'Vertrauen entzogen', needsAttention: 'Benötigt Aufmerksamkeit', offInAccount: 'Im Konto deaktiviert' },
         developmentPhase: { observing: 'Wird beobachtet', preparingDependencies: 'Abhängigkeiten werden vorbereitet', compiling: 'Wird kompiliert', validating: 'Wird geprüft', active: 'Aktiv', retainedIncumbent: 'Vorherige Version aktiv', unavailable: 'Nicht verfügbar' },
         developmentDiagnostic: { manifestMissing: 'In diesem Ordner gibt es kein Plugin-Manifest. Füge .happier-plugin/plugin.json hinzu oder wähle den Ordner des Plugins.', projectMissing: 'Dieser Ordner existiert nicht mehr. Entferne ihn aus der Entwicklung oder wähle den aktuellen Ort des Plugins.' },
         rowSource: { bundled: 'In Happier enthalten', npm: 'npm-Paket', archive: 'Archivdatei', localPath: 'Lokaler Ordner', other: 'Konfigurierte Quelle' },

@@ -1,13 +1,14 @@
 
 
 export const english = {
-    enablement: {"account": "In your Account", "machine": "On this machine", "description": "Both must be enabled for this plugin to run here. Turning it off keeps its data and connections."},
+    enablement: {"account": "In your Account", "machine": "On this machine", "description": "Both must be enabled for this plugin to run here. Turning it off keeps its data and connections.", "accountScope": "All your machines", "accountOff": "Off in your Account, so it doesn't run on any of your machines. Its data and connections are kept.", "machineOff": "Off on this machine. Your other machines aren't affected, and its data and connections are kept."},
     rowStatus: {
         enabled: 'Enabled',
         disabled: 'Disabled',
         incompatible: 'Not compatible',
         trustRemoved: 'Trust removed',
         needsAttention: 'Needs attention',
+        offInAccount: 'Off in your Account',
     },
     developmentPhase: { observing: 'Watching', preparingDependencies: 'Preparing dependencies', compiling: 'Compiling', validating: 'Validating', active: 'Active', retainedIncumbent: 'Previous version active', unavailable: 'Unavailable' },
     developmentDiagnostic: { manifestMissing: 'No plugin manifest in this folder. Add .happier-plugin/plugin.json, or choose the plugin’s own folder.', projectMissing: 'This folder is gone. Remove it from development, or choose where the plugin lives now.' },

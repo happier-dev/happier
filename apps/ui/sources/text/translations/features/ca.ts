@@ -8484,8 +8484,8 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { ca: {
-        enablement: {"account": "Al teu compte", "machine": "En aquesta màquina", "description": "Tots dos han d’estar activats perquè el connector funcioni aquí. Desactivar-lo conserva les dades i connexions."},
-        rowStatus: { enabled: 'Activat', disabled: 'Desactivat', incompatible: 'No compatible', trustRemoved: 'Confiança retirada', needsAttention: 'Requereix atenció' },
+        enablement: {"account": "Al teu compte", "machine": "En aquesta màquina", "description": "Tots dos han d’estar activats perquè el connector funcioni aquí. Desactivar-lo conserva les dades i connexions.", "accountScope": "Totes les teves màquines", "accountOff": "Desactivat al teu compte, així que no funciona a cap de les teves màquines. Se’n conserven les dades i connexions.", "machineOff": "Desactivat en aquesta màquina. Les altres màquines no es veuen afectades i se’n conserven les dades i connexions."},
+        rowStatus: { enabled: 'Activat', disabled: 'Desactivat', incompatible: 'No compatible', trustRemoved: 'Confiança retirada', needsAttention: 'Requereix atenció', offInAccount: 'Desactivat al compte' },
         developmentPhase: { observing: 'Observant', preparingDependencies: 'Preparant dependències', compiling: 'Compilant', validating: 'Validant', active: 'Actiu', retainedIncumbent: 'Versió anterior activa', unavailable: 'No disponible' },
         developmentDiagnostic: { manifestMissing: 'No hi ha cap manifest del connector en aquesta carpeta. Afegeix .happier-plugin/plugin.json o tria la carpeta del connector.', projectMissing: 'Aquesta carpeta ja no existeix. Treu-la del desenvolupament o tria on és ara el connector.' },
         rowSource: { bundled: 'Inclòs amb Happier', npm: 'Paquet npm', archive: 'Fitxer d’arxiu', localPath: 'Carpeta local', other: 'Font configurada' },

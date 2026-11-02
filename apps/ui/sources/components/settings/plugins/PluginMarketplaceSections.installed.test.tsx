@@ -93,6 +93,8 @@ describe('Installed plugins collection', () => {
         const toggle = screen.findByTestId('settings.plugins.marketplace.installed.bundled.action.disable')!;
         expect(toggle.props.value).toBe(true);
         expect(toggle.props.disabled).toBe(false);
+        // The switch is on, so the row names the scope that keeps the plugin inactive.
+        expect(screen.getTextContent()).toContain('settingsPlugins.rowStatus.offInAccount');
         await React.act(async () => { toggle.props.onValueChange(false); });
         expect(onRunAction).toHaveBeenCalledExactlyOnceWith('disable', 'bundled');
     });

@@ -8480,8 +8480,8 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { fr: {
-        enablement: {"account": "Dans votre compte", "machine": "Sur cette machine", "description": "Les deux doivent être activés pour utiliser ce plugin ici. Le désactiver conserve ses données et connexions."},
-        rowStatus: { enabled: 'Activé', disabled: 'Désactivé', incompatible: 'Non compatible', trustRemoved: 'Confiance retirée', needsAttention: 'À vérifier' },
+        enablement: {"account": "Dans votre compte", "machine": "Sur cette machine", "description": "Les deux doivent être activés pour utiliser ce plugin ici. Le désactiver conserve ses données et connexions.", "accountScope": "Toutes vos machines", "accountOff": "Désactivé dans votre compte : il ne fonctionne sur aucune de vos machines. Ses données et connexions sont conservées.", "machineOff": "Désactivé sur cette machine. Vos autres machines ne sont pas concernées, et ses données et connexions sont conservées."},
+        rowStatus: { enabled: 'Activé', disabled: 'Désactivé', incompatible: 'Non compatible', trustRemoved: 'Confiance retirée', needsAttention: 'À vérifier', offInAccount: 'Désactivé dans le compte' },
         developmentPhase: { observing: 'Surveillance', preparingDependencies: 'Préparation des dépendances', compiling: 'Compilation', validating: 'Validation', active: 'Actif', retainedIncumbent: 'Version précédente active', unavailable: 'Indisponible' },
         developmentDiagnostic: { manifestMissing: 'Aucun manifeste de plugin dans ce dossier. Ajoute .happier-plugin/plugin.json, ou choisis le dossier du plugin.', projectMissing: 'Ce dossier n’existe plus. Retire-le du développement, ou choisis l’emplacement actuel du plugin.' },
         rowSource: { bundled: 'Inclus avec Happier', npm: 'Paquet npm', archive: 'Fichier d’archive', localPath: 'Dossier local', other: 'Source configurée' },

@@ -376,6 +376,9 @@ function projectInstalledPluginRows(
             ? null
             : offline
             ? t('settingsPlugins.surfaces.lastKnown', { status: presentation.status.label })
+            // The switch is this machine's; when the Account keeps the plugin off, that is the reason to name.
+            : !needsDecision && entry.accountEnabled === false
+                ? t('settingsPlugins.rowStatus.offInAccount')
             : presentation.status.id === 'enabled' && props.presentation === 'list'
                 ? null : presentation.attentionLabel ?? presentation.status.label;
         // A healthy, enabled plugin says where it runs; anything else keeps its own status.
@@ -593,15 +596,18 @@ export function PluginRoutineOperationSettlementRow(props: Readonly<{
             accessibilityLiveRegion="polite"
             aria-live="polite"
         >
-            <Item
-                testID={`settings.plugins.${props.scope}.operationSettlement.row`}
-                title={props.settlement.message}
-                subtitle={props.settlement.detail}
-                subtitleLines={0}
-                icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
-                showChevron={false}
-                mode="info"
-            />
+            {/* A group, so the outcome sits on the page column with the sections it follows. */}
+            <ItemGroup>
+                <Item
+                    testID={`settings.plugins.${props.scope}.operationSettlement.row`}
+                    title={props.settlement.message}
+                    subtitle={props.settlement.detail}
+                    subtitleLines={0}
+                    icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
+                    showChevron={false}
+                    mode="info"
+                />
+            </ItemGroup>
         </View>
     );
 }

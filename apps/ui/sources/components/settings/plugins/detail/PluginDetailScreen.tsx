@@ -141,6 +141,7 @@ function PluginDetailCurrentContent(props: Readonly<{
             {installed && scopedEnablement ? (
                 <PluginEnablementSection
                     installed={installed}
+                    machineLabel={state.administrationTargetLabel?.machine ?? null}
                     disabled={actionsDisabled}
                     onChange={(action, scope) => state.runInstalledPluginAction(action, installed.pluginId, scope)}
                 />

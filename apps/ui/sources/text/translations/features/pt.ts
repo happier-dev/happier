@@ -8484,8 +8484,8 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { pt: {
-        enablement: {"account": "Na sua conta", "machine": "Nesta máquina", "description": "Ambos devem estar ativados para o plugin funcionar aqui. Desativá-lo mantém os dados e as conexões."},
-        rowStatus: { enabled: 'Ativado', disabled: 'Desativado', incompatible: 'Não compatível', trustRemoved: 'Confiança removida', needsAttention: 'Requer atenção' },
+        enablement: {"account": "Na sua conta", "machine": "Nesta máquina", "description": "Ambos devem estar ativados para o plugin funcionar aqui. Desativá-lo mantém os dados e as conexões.", "accountScope": "Todas as suas máquinas", "accountOff": "Desativado na sua conta, por isso não funciona em nenhuma das suas máquinas. Os dados e as conexões são mantidos.", "machineOff": "Desativado nesta máquina. As suas outras máquinas não são afetadas, e os dados e as conexões são mantidos."},
+        rowStatus: { enabled: 'Ativado', disabled: 'Desativado', incompatible: 'Não compatível', trustRemoved: 'Confiança removida', needsAttention: 'Requer atenção', offInAccount: 'Desativado na conta' },
         developmentPhase: { observing: 'A observar', preparingDependencies: 'A preparar dependências', compiling: 'A compilar', validating: 'A validar', active: 'Ativo', retainedIncumbent: 'Versão anterior ativa', unavailable: 'Indisponível' },
         developmentDiagnostic: { manifestMissing: 'Esta pasta não tem manifesto de plugin. Adicione .happier-plugin/plugin.json ou escolha a pasta do plugin.', projectMissing: 'Esta pasta já não existe. Remova-a do desenvolvimento ou escolha onde o plugin está agora.' },
         rowSource: { bundled: 'Incluído no Happier', npm: 'Pacote npm', archive: 'Ficheiro de arquivo', localPath: 'Pasta local', other: 'Origem configurada' },

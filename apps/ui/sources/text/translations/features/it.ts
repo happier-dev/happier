@@ -8484,8 +8484,8 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { it: {
-        enablement: {"account": "Nel tuo account", "machine": "Su questa macchina", "description": "Entrambi devono essere attivi per eseguire il plugin qui. Disattivarlo conserva dati e connessioni."},
-        rowStatus: { enabled: 'Attivo', disabled: 'Disattivato', incompatible: 'Non compatibile', trustRemoved: 'Fiducia revocata', needsAttention: 'Richiede attenzione' },
+        enablement: {"account": "Nel tuo account", "machine": "Su questa macchina", "description": "Entrambi devono essere attivi per eseguire il plugin qui. Disattivarlo conserva dati e connessioni.", "accountScope": "Tutte le tue macchine", "accountOff": "Disattivato nel tuo account, quindi non funziona su nessuna delle tue macchine. Dati e connessioni restano conservati.", "machineOff": "Disattivato su questa macchina. Le altre macchine non sono interessate e dati e connessioni restano conservati."},
+        rowStatus: { enabled: 'Attivo', disabled: 'Disattivato', incompatible: 'Non compatibile', trustRemoved: 'Fiducia revocata', needsAttention: 'Richiede attenzione', offInAccount: 'Disattivato nell’account' },
         developmentPhase: { observing: 'In osservazione', preparingDependencies: 'Preparazione dipendenze', compiling: 'Compilazione', validating: 'Convalida', active: 'Attivo', retainedIncumbent: 'Versione precedente attiva', unavailable: 'Non disponibile' },
         developmentDiagnostic: { manifestMissing: 'In questa cartella non c’è un manifesto del plugin. Aggiungi .happier-plugin/plugin.json o scegli la cartella del plugin.', projectMissing: 'Questa cartella non esiste più. Rimuovila dallo sviluppo o scegli dove si trova ora il plugin.' },
         rowSource: { bundled: 'Incluso in Happier', npm: 'Pacchetto npm', archive: 'File di archivio', localPath: 'Cartella locale', other: 'Origine configurata' },
