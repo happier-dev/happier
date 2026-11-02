@@ -235,6 +235,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
   // Infer semantic binding root writes only from actual page-attached storage callbacks.
   const semanticWrites = new Map<string, Set<string>>();
   for (const file of files) {
+    const dependency = modules.has(file.filePath);
     const source = module(file.filePath)!.source;
     function bindings(node: ts.Node): void {
       if (ts.isPropertyAssignment(node) && node.name.getText(source).replaceAll(/['"]/g, '') === 'storage') {
@@ -284,6 +285,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       ts.forEachChild(node, bindings);
     }
     bindings(source);
+    if (!dependency) modules.delete(file.filePath);
   }
 
   function checkAction(actionId: string, site: Site): void {
@@ -343,6 +345,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       exclusions.push({ filePath: file.filePath, line: 1, reason: 'pre-sign-in bootstrap (WAVE5)' });
       continue;
     }
+    // Keep operand dependencies, but release census-only syntax trees after each file.
+    const dependency = modules.has(file.filePath);
     const source = module(file.filePath)!.source;
     const aliases = new Map<string, string>();
     type Binding = Readonly<{ initializer?: ts.Expression; annotation?: ts.TypeNode; parameter?: boolean; writer?: string; dispatch?: boolean;
@@ -738,6 +742,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       ts.forEachChild(node, visit);
     }
     visit(source);
+    if (!dependency) modules.delete(file.filePath);
   }
   return { actions, settings, findings, exclusions };
 }
