@@ -9,11 +9,9 @@ import {
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
-import {
-  resumeActionExecutionResult,
-  type ActionApprovalContinuation,
-} from '@/components/approvals/actionApprovalContinuation';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+
+import { useScopedActionRun } from '../useScopedActionRun';
 
 import {
   configureMachineNetwork,
@@ -60,71 +58,23 @@ const invalidOutput = (actionId: ActionId): Failure => ({
 export function useMachineNetworkReview(
   input: Readonly<{ serverId: string; machineId: string }>,
 ) {
-  const { binding: lifetime } = useServerCredentialAccountScopeBinding(
-    input.serverId,
-  );
+  const { lifetime, run, abort, inFlight } = useScopedActionRun(input.serverId);
   const [review, setReview] = React.useState<MachineNetworkReview>({
     kind: 'idle',
   });
-  const flight = React.useRef<AbortController | null>(null);
 
   // A change of Machine, Home or Account binding ends this review's interest; the durable approval stays put.
   React.useEffect(
     () => () => {
-      flight.current?.abort();
-      flight.current = null;
+      abort();
       setReview({ kind: 'idle' });
     },
-    [input.serverId, input.machineId, lifetime],
-  );
-
-  const run = React.useCallback(
-    async (
-      actionId: ActionId,
-      actionInput: unknown,
-      invoke: (signal: AbortSignal) => Promise<ActionExecuteResult>,
-      onApproval: (approval: ActionApprovalContinuation) => void,
-    ): Promise<ActionExecuteResult | null> => {
-      if (!lifetime)
-        return {
-          ok: false,
-          errorCode: 'action_account_scope_changed',
-          error: 'action_account_scope_changed',
-        };
-      const controller = new AbortController();
-      flight.current = controller;
-      const retirement = lifetime.onRetire(() => controller.abort());
-      let result: ActionExecuteResult;
-      try {
-        result = await resumeActionExecutionResult({
-          result: await invoke(controller.signal),
-          actionId,
-          actionInput,
-          scope: lifetime.scope,
-          signal: controller.signal,
-          onApprovalPending: (approval) => {
-            if (!controller.signal.aborted) onApproval(approval);
-          },
-        });
-      } catch (error: unknown) {
-        result = {
-          ok: false,
-          errorCode: 'action_failed',
-          error: error instanceof Error ? error.message : String(error),
-        };
-      } finally {
-        retirement.dispose();
-        if (flight.current === controller) flight.current = null;
-      }
-      // A cancelled or retired review settles nothing on screen.
-      return controller.signal.aborted ? null : result;
-    },
-    [lifetime],
+    [input.serverId, input.machineId, lifetime, abort],
   );
 
   const prepare = React.useCallback(
     async (change: MachineReachabilityChangeV1) => {
-      if (flight.current) return;
+      if (inFlight()) return;
       const target = { serverId: input.serverId, machineId: input.machineId };
       setReview({ kind: 'preparing', change, approval: null });
       const result = await run(
@@ -162,7 +112,7 @@ export function useMachineNetworkReview(
   );
 
   const apply = React.useCallback(async () => {
-    if (flight.current || review.kind !== 'review') return;
+    if (inFlight() || review.kind !== 'review') return;
     const plan = review.plan;
     setReview({ kind: 'applying', plan, approval: null });
     const result = await run(
@@ -195,10 +145,9 @@ export function useMachineNetworkReview(
   }, [input.serverId, lifetime, review, run]);
 
   const cancel = React.useCallback(() => {
-    flight.current?.abort();
-    flight.current = null;
+    abort();
     setReview({ kind: 'idle' });
-  }, []);
+  }, [abort]);
 
   return { review, prepare, apply, cancel };
 }

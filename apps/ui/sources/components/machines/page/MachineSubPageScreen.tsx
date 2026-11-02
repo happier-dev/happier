@@ -8,6 +8,7 @@ import { MachineAgentsSection } from '@/components/machines/agents/MachineAgents
 import { MachineDetailsSection } from '@/components/machines/details/MachineDetailsSection';
 import { MachineDoctorPageBody } from '@/components/machines/doctorSnapshot/MachineDoctorPageBody';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
+import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineTerminalPageBody } from '@/components/machines/terminal/MachineTerminalPageBody';
 import { MachineComputerUseSection } from '@/components/machines/computer/MachineComputerUseSection';
 import { MachineAlertsPage } from '@/components/machines/vitals/MachineAlertsPage';
@@ -25,6 +26,7 @@ import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
 import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
 
 import { MachineTabSubHead } from './MachineTabSubHead';
@@ -65,11 +67,14 @@ export function MachineSubPageScreen() {
             setIsRefreshing(false);
         }
     }, [refreshInventory, target.serverId]);
+    // The way back names the machine once its name is read; while its details are still being read it says Back,
+    // never the loading placeholder as if it were the name.
+    const backLabel = target.machine && !isMachineDisplayHydrating(target.machine) ? target.machineName : t('machine.back');
     const screenOptions = React.useMemo(() => ({
         headerShown: !hostedInCollection,
         headerTitle: '',
-        headerBackTitle: target.machine ? target.machineName : t('machine.back'),
-    } as const), [language, hostedInCollection, target.machine, target.machineName]);
+        headerBackTitle: backLabel,
+    } as const), [language, hostedInCollection, backLabel]);
 
     const pageHref = target.machineId ? machinePageHref({ door, target: { machineId: target.machineId, serverId: target.serverId || undefined } }) : null;
     const goBack = React.useCallback(() => {
@@ -86,12 +91,13 @@ export function MachineSubPageScreen() {
                 placement="page"
                 underNativeChrome={underChrome}
                 title={t(MACHINE_SUB_PAGE_TITLE_KEYS[page])}
-                back={!pageHref ? null : { label: target.machine ? target.machineName : t('machine.back'), onPress: goBack, testID: `machine-sub-page-back-${page}` }}
+                back={!pageHref ? null : { label: backLabel, onPress: goBack, testID: `machine-sub-page-back-${page}` }}
                 // Sharing's page is its one section (lab m-share A): the head says what it does, the section repeats nothing.
                 // Someone the machine is shared with reads what they can do here, not what adding people does.
                 description={target.machine && page === 'sharing'
                     ? t(target.machine.isShared ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine: target.machineSentenceName })
                     : target.machine && page === 'computer' ? t('computerUse.providers.pageDescription', { machine: target.machineSentenceName })
+                    : target.machine && page === 'security' ? t('machineDetailPage.security.description', { machine: target.machineSentenceName })
                     : null}
             />
             {target.machine ? (
@@ -147,6 +153,9 @@ function MachineSubPageBody(props: Readonly<{
             return <MachineComputerUseSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} online={target.online === true} />;
         case 'connection':
             return <MachineDirectConnectionSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} />;
+        case 'security':
+            return <MachineSecuritySection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
+                installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey} />;
         case 'installables':
             return <MachineInstallablesSection machineId={machine.id} serverId={serverId} />;
         case 'doctor':

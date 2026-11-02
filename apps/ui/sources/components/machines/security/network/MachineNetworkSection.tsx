@@ -829,6 +829,7 @@ function NetworkReviewFoot(
       ? describePostureChanges(saved, change.posture, props.providerTitle)
       : [];
   return (
+    <>
     <ItemGroup
       testID="machine-network-review-card"
       title={t('machineDetailPage.network.reviewTitle', { machine })}
@@ -870,6 +871,9 @@ function NetworkReviewFoot(
           }
         />
       ) : null}
+    </ItemGroup>
+    {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it. */}
+    <ItemGroup surface="none">
       <SectionButtonRow>
         <RoundButton
           testID="machine-network-apply"
@@ -888,6 +892,7 @@ function NetworkReviewFoot(
         />
       </SectionButtonRow>
     </ItemGroup>
+    </>
   );
 }
 

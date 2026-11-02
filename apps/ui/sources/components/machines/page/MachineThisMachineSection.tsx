@@ -33,6 +33,7 @@ const ROW_ICONS: Readonly<Record<MachineThisMachinePageId, IconName>> = {
     terminal: 'terminal',
     computer: 'cursor',
     connection: 'arrows-left-right',
+    security: 'shield',
     installables: 'cube',
     doctor: 'first-aid-kit',
     details: 'info',
@@ -77,6 +78,8 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
         terminal: describeMachineTerminalHost(terminalHost),
         computer: describeMachineComputerUse(readComputerUseSettingsForMachine({ computerUseByMachineId }, machineId)),
         connection,
+        // Updates are read only while Security is open (Plan 10: no detail subscription while closed).
+        security: undefined,
         installables: undefined,
         doctor: describeMachineDoctorSummary(doctor),
         details: [host, platform].filter(Boolean).join(' · ') || undefined,
